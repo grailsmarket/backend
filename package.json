@@ -1,0 +1,41 @@
+{
+  "name": "grails-backend",
+  "version": "1.0.0",
+  "description": "ENS Name Secondary Marketplace Backend System",
+  "private": true,
+  "workspaces": [
+    "services/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "build": "npm run build:deploy",
+    "build:local": "npm run build --workspaces",
+    "build:deploy": "./scripts/build-simple.sh",
+    "build:railway": "./scripts/build-railway.sh",
+    "build:shared": "cd services/shared && npm run build",
+    "build:api": "cd services/api && npm run build",
+    "build:indexer": "cd services/indexer && npm run build",
+    "build:wal-listener": "cd services/wal-listener && npm run build",
+    "start:api": "node services/api/dist/api/src/index.js",
+    "start:indexer": "node services/indexer/dist/indexer/src/index.js",
+    "start:wal-listener": "node services/wal-listener/dist/wal-listener/src/index.js",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "migrate": "npm run migrate -w @grails/shared",
+    "seed": "npm run seed -w @grails/shared"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "prettier": "^3.2.4",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "tsx": "^4.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

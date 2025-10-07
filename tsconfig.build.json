@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "paths": {
+      "@grails/shared": ["./services/shared/src"],
+      "@grails/shared/*": ["./services/shared/src/*"]
+    }
+  },
+  "include": [
+    "services/*/src/**/*"
+  ],
+  "exclude": ["node_modules", "**/dist"]
+}
