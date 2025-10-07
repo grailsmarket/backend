@@ -1,0 +1,776 @@
+import WebSocket from 'ws';
+import { config, getPostgresPool } from '../../../shared/src';
+import { logger } from '../utils/logger';
+import { ENSResolver } from '../services/ens-resolver';
+
+interface PhoenixMessage {
+  topic: string;
+  event: string;
+  payload: any;
+  ref: number;
+}
+
+interface OpenSeaEvent {
+  event_type: string;
+  payload: any;
+  sent_at: string;
+  event_timestamp: number;
+}
+
+export class OpenSeaStreamListener {
+  private ws: WebSocket | null = null;
+  private pool = getPostgresPool();
+  private resolver = new ENSResolver();
+  private isRunning = false;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectInterval = 5000;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private ref = 0;
+
+  async start() {
+    if (!config.opensea.apiKey) {
+      logger.warn('OpenSea API key not configured, skipping stream listener');
+      return;
+    }
+
+    logger.info('Starting OpenSea Stream listener...');
+
+    if (!config.opensea.apiKey) {
+      logger.warn('OpenSea API key not configured, skipping WebSocket connection');
+      return;
+    }
+
+    logger.info(`Connecting to OpenSea WebSocket at: ${config.opensea.streamUrl}`);
+
+    this.isRunning = true;
+    this.connect();
+  }
+
+  async stop() {
+    logger.info('Stopping OpenSea Stream listener...');
+    this.isRunning = false;
+    this.stopHeartbeat();
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  private connect() {
+    if (!this.isRunning) return;
+
+    try {
+      // Construct WebSocket URL with API key as token parameter
+      const wsUrl = `${config.opensea.streamUrl}?token=${config.opensea.apiKey}`;
+      logger.info(`Attempting to connect to OpenSea WebSocket...`);
+
+      this.ws = new WebSocket(wsUrl);
+    } catch (error: any) {
+      logger.error(`Failed to create WebSocket connection: ${error.message}`);
+      this.handleReconnect();
+      return;
+    }
+
+    this.ws.on('open', () => {
+      logger.info('Connected to OpenSea Stream API');
+      this.reconnectAttempts = 0;
+      this.subscribe();
+      this.startHeartbeat();
+    });
+
+    this.ws.on('message', (data: Buffer) => {
+      try {
+        const message: PhoenixMessage = JSON.parse(data.toString());
+
+        // Log the message structure for debugging
+        logger.debug(`Received Phoenix message - Topic: ${message.topic}, Event: ${message.event}`);
+
+        // Handle Phoenix protocol messages
+        if (message.event === 'phx_reply') {
+          // This is a reply to our subscription
+          if (message.payload?.status === 'ok') {
+            logger.info('Successfully subscribed to topic:', message.topic);
+          } else if (message.payload?.status === 'error') {
+            logger.error('Failed to subscribe to topic:', message.topic, message.payload);
+          }
+        } else if (message.event === 'phx_error') {
+          logger.error('Phoenix error:', message.payload);
+        } else if (message.event === 'phx_close') {
+          logger.warn('Phoenix channel closed:', message.topic);
+        } else if (message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
+          // This is an actual OpenSea event
+          logger.info(`Received OpenSea event: ${message.event} for topic: ${message.topic}`);
+          this.handlePhoenixEvent(message);
+        }
+      } catch (error: any) {
+        logger.error(`Failed to parse OpenSea message: ${error.message}`);
+        logger.debug('Raw message:', data.toString());
+      }
+    });
+
+    this.ws.on('error', (error: any) => {
+      logger.error(`OpenSea WebSocket error: ${error.message || error}`);
+      if (error.code) {
+        logger.error(`Error code: ${error.code}`);
+      }
+      if (error.stack) {
+        logger.debug('Stack trace:', error.stack);
+      }
+    });
+
+    this.ws.on('close', () => {
+      logger.warn('OpenSea WebSocket connection closed');
+      this.stopHeartbeat();
+      this.handleReconnect();
+    });
+
+    this.ws.on('ping', () => {
+      this.ws?.pong();
+    });
+  }
+
+  private subscribe() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    // Subscribe to ENS collection events using Phoenix protocol
+    const subscriptionMessage = {
+      topic: 'collection:ens',
+      event: 'phx_join',
+      payload: {},
+      ref: this.ref++,
+    };
+
+    this.ws.send(JSON.stringify(subscriptionMessage));
+    logger.info('Subscribed to ENS collection events');
+  }
+
+  private startHeartbeat() {
+    // Clear existing heartbeat if any
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    // Send heartbeat every 30 seconds
+    this.heartbeatInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        const heartbeatMessage = {
+          topic: 'phoenix',
+          event: 'heartbeat',
+          payload: {},
+          ref: this.ref++,
+        };
+
+        this.ws.send(JSON.stringify(heartbeatMessage));
+        logger.debug('Sent heartbeat to OpenSea');
+      }
+    }, 30000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  private async handlePhoenixEvent(message: PhoenixMessage) {
+    try {
+      // Phoenix events come as the event name directly
+      switch (message.event) {
+        case 'item_listed':
+          await this.handleItemListed(message.payload);
+          break;
+        case 'item_sold':
+          await this.handleItemSold(message.payload);
+          break;
+        case 'item_transferred':
+          await this.handleItemTransferred(message.payload);
+          break;
+        case 'item_cancelled':
+          await this.handleItemCancelled(message.payload);
+          break;
+        case 'item_received_bid':
+          await this.handleItemReceivedBid(message.payload);
+          break;
+        case 'collection_offer':
+          await this.handleCollectionOffer(message.payload);
+          break;
+        case 'item_metadata_updated':
+          logger.debug('Metadata updated event - skipping');
+          break;
+        default:
+          logger.debug(`Unhandled event type: ${message.event}`);
+          logger.debug('Event payload:', JSON.stringify(message.payload, null, 2));
+      }
+    } catch (error: any) {
+      logger.error(`Error handling OpenSea event ${message.event}: ${error.message}`);
+      logger.debug('Event payload:', JSON.stringify(message.payload, null, 2));
+    }
+  }
+
+  private async handleItemListed(payload: any) {
+    try {
+      // Log the entire payload structure to understand what we're receiving
+      logger.debug('Full item_listed payload:', JSON.stringify(payload, null, 2));
+
+      // The payload structure might be nested - check for payload.payload
+      const eventData = payload.payload || payload;
+
+      logger.info('Processing item_listed event:', {
+        item: eventData.item?.nft_id,
+        price: eventData.base_price,
+        maker: eventData.maker?.address
+      });
+
+      const { item, base_price, payment_token, maker, listing_date, expiration_date, order_hash } = eventData;
+
+      if (!item?.nft_id || !maker?.address) {
+        logger.error('Missing required fields in item_listed payload:', {
+          hasItem: !!item,
+          hasNftId: !!item?.nft_id,
+          hasMaker: !!maker,
+          hasMakerAddress: !!maker?.address,
+          actualPayload: JSON.stringify(eventData, null, 2).substring(0, 500)
+        });
+        return;
+      }
+
+      // Extract token ID from nft_id (format might be like "ethereum/0x.../tokenId")
+      const tokenId = item.nft_id.split('/').pop();
+
+      logger.info(`Creating listing for token ID: ${tokenId}`);
+
+      // Try to get the ENS name from metadata first (e.g., "277.eth")
+      let nameToStore = item.metadata?.name || null;
+
+      // If no name in metadata or it doesn't look like an ENS name, try to resolve it
+      if (!nameToStore || !nameToStore.endsWith('.eth')) {
+        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
+        if (resolvedName) {
+          nameToStore = resolvedName;
+        } else if (nameToStore && !nameToStore.endsWith('.eth')) {
+          // If we have a name but it's not an ENS name, use placeholder
+          nameToStore = `token-${tokenId}`;
+        } else if (!nameToStore) {
+          nameToStore = `token-${tokenId}`;
+        }
+      }
+
+      logger.info(`Storing ENS name: ${nameToStore} for token ID: ${tokenId}`);
+
+      // Upsert ENS name
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, maker.address.toLowerCase());
+
+      // Create or update listing
+      // First, cancel any existing active listings for this ENS name and seller
+      const cancelExistingQuery = `
+        UPDATE listings
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE ens_name_id = $1
+        AND seller_address = $2
+        AND status = 'active'
+        AND (order_hash IS NULL OR order_hash != $3)
+      `;
+
+      await this.pool.query(cancelExistingQuery, [
+        ensNameId,
+        maker.address.toLowerCase(),
+        order_hash || 'none'
+      ]);
+
+      // Now insert the new listing (using order_hash + source as the unique constraint)
+      const listingQuery = `
+        INSERT INTO listings (
+          ens_name_id,
+          seller_address,
+          price_wei,
+          currency_address,
+          order_hash,
+          order_data,
+          status,
+          source,
+          expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'active', 'opensea', $7)
+        ON CONFLICT (order_hash, source)
+        DO UPDATE SET
+          price_wei = EXCLUDED.price_wei,
+          expires_at = EXCLUDED.expires_at,
+          status = 'active',
+          updated_at = NOW()
+      `;
+
+      // Parse expiration date - it might be a timestamp, ISO string, or already a Date
+      let expiresAt = null;
+      if (expiration_date) {
+        try {
+          if (typeof expiration_date === 'number') {
+            // Unix timestamp - multiply by 1000 if it's in seconds
+            expiresAt = new Date(expiration_date > 10000000000 ? expiration_date : expiration_date * 1000);
+          } else if (typeof expiration_date === 'string') {
+            // ISO date string
+            expiresAt = new Date(expiration_date);
+          }
+          // Validate the date
+          if (expiresAt && isNaN(expiresAt.getTime())) {
+            logger.warn(`Invalid expiration date: ${expiration_date}`);
+            expiresAt = null;
+          }
+        } catch (err) {
+          logger.warn(`Failed to parse expiration date: ${expiration_date}`);
+          expiresAt = null;
+        }
+      }
+
+      await this.pool.query(listingQuery, [
+        ensNameId,
+        maker.address.toLowerCase(),
+        base_price || '0',
+        payment_token?.address || '0x0000000000000000000000000000000000000000',
+        order_hash || null,
+        JSON.stringify(eventData),
+        expiresAt,
+      ]);
+
+      logger.info(`Listing created/updated for ENS name ID ${ensNameId} (token ${tokenId})`);
+    } catch (error: any) {
+      logger.error(`Failed to handle item_listed: ${error.message}`);
+      logger.error('Stack trace:', error.stack);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private async handleItemSold(payload: any) {
+    try {
+      logger.debug('Processing item_sold event');
+      logger.debug('Full item_sold payload:', JSON.stringify(payload, null, 2));
+
+      // The payload might be nested
+      const eventData = payload.payload || payload;
+
+      // According to OpenSea docs: maker is seller, taker is buyer
+      const { item, sale_price, maker, taker, transaction } = eventData;
+
+      if (!item?.nft_id) {
+        logger.warn('Missing item.nft_id in sold event, skipping');
+        return;
+      }
+
+      const tokenId = item.nft_id.split('/').pop();
+
+      // Extract ENS name from metadata if available
+      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+
+      logger.info(`Processing sale for: ${nameToStore} (token ${tokenId})`);
+
+      // First ensure the ENS name exists
+      const buyerAddress = taker?.address?.toLowerCase() || null;
+      const sellerAddress = maker?.address?.toLowerCase() || null;
+
+      // Create ENS name if it doesn't exist (will be updated by ENS indexer later)
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, buyerAddress || sellerAddress || '0x0000000000000000000000000000000000000000', true);
+
+      // Update listing status
+      if (sellerAddress) {
+        const updateListingQuery = `
+          UPDATE listings
+          SET status = 'sold', updated_at = NOW()
+          WHERE ens_name_id = $1
+          AND seller_address = $2
+          AND status = 'active'
+        `;
+
+        await this.pool.query(updateListingQuery, [
+          ensNameId,
+          sellerAddress,
+        ]);
+      }
+
+      // Record transaction
+      if (buyerAddress && sellerAddress) {
+        const txQuery = `
+          INSERT INTO transactions (
+            ens_name_id,
+            transaction_hash,
+            block_number,
+            from_address,
+            to_address,
+            price_wei,
+            transaction_type,
+            timestamp
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
+          ON CONFLICT (transaction_hash) DO NOTHING
+        `;
+
+        await this.pool.query(txQuery, [
+          ensNameId,
+          transaction?.transaction_hash || `opensea_${Date.now()}`,
+          transaction?.block_number || 0,
+          sellerAddress,
+          buyerAddress,
+          sale_price || '0',
+          new Date(),
+        ]);
+      }
+
+      logger.info(`Sale recorded for token ${tokenId}`);
+    } catch (error: any) {
+      logger.error(`Failed to handle item_sold: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private async handleItemTransferred(payload: any) {
+    try {
+      logger.debug('Processing item_transferred event');
+      logger.debug('Full item_transferred payload:', JSON.stringify(payload, null, 2));
+
+      // The payload might be nested
+      const eventData = payload.payload || payload;
+
+      const { item, from_account, to_account, transaction } = eventData;
+      // Check if required fields exist
+      if (!item?.nft_id) {
+        logger.warn('Missing item.nft_id in transfer event, skipping');
+        return;
+      }
+
+      if (!to_account?.address) {
+        logger.warn('Missing to_account.address in transfer event, skipping');
+        return;
+      }
+
+      const tokenId = item.nft_id.split('/').pop();
+      const newOwner = to_account.address.toLowerCase();
+
+      // Extract ENS name from metadata if available
+      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+
+      // Ensure ENS name exists and update owner
+      await this.upsertEnsName(tokenId, nameToStore, newOwner, true);
+
+      logger.info(`Transfer recorded for token ${tokenId} to ${to_account.address}`);
+    } catch (error: any) {
+      logger.error(`Failed to handle item_transferred: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private async handleItemCancelled(payload: any) {
+    try {
+      logger.debug('Processing item_cancelled event');
+      logger.debug('Full item_cancelled payload:', JSON.stringify(payload, null, 2));
+
+      // The payload might be nested
+      const eventData = payload.payload || payload;
+
+      // According to OpenSea docs: item_cancelled has order_hash, not item.nft_id
+      const { order_hash, maker, base_price, payment_token, collection } = eventData;
+
+      if (!order_hash) {
+        logger.warn('Missing order_hash in cancelled event, skipping');
+        return;
+      }
+
+      if (!maker?.address) {
+        logger.warn('Missing maker.address in cancelled event, skipping');
+        return;
+      }
+
+      const sellerAddress = maker.address.toLowerCase();
+
+      // For cancellations, we need to find the listing by order_hash
+      // OpenSea doesn't provide the token_id directly in cancel events
+      const updateQuery = `
+        UPDATE listings
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE order_hash = $1
+        AND seller_address = $2
+        AND status = 'active'
+      `;
+
+      const result = await this.pool.query(updateQuery, [
+        order_hash,
+        sellerAddress,
+      ]);
+
+      if (result && result.rowCount !== null && result.rowCount > 0) {
+        logger.info(`Listing cancelled for order_hash ${order_hash}`);
+      } else {
+        logger.debug(`No active listing found for order_hash ${order_hash}`);
+      }
+    } catch (error: any) {
+      logger.error(`Failed to handle item_cancelled: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private async handleItemReceivedBid(payload: any) {
+    try {
+      logger.debug('Processing item_received_bid event');
+      logger.debug('Full item_received_bid payload:', JSON.stringify(payload, null, 2));
+
+      // The payload might be nested
+      const eventData = payload.payload || payload;
+
+      // According to OpenSea docs: item_received_bid uses base_price for the bid amount
+      const { item, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+
+      // Check required fields - use base_price instead of bid_amount
+      if (!item) {
+        logger.warn('Missing item in bid event, skipping');
+        return;
+      }
+
+      // Extract token ID - should be in item.nft_id
+      if (!item.nft_id) {
+        logger.warn('Missing item.nft_id in bid event');
+        logger.debug(`Item metadata: ${JSON.stringify(item.metadata)}`);
+        return;
+      }
+
+      const tokenId = item.nft_id.split('/').pop();
+
+      if (!base_price) {
+        logger.warn('Missing base_price in bid event, skipping');
+        return;
+      }
+
+      // The bidder address is in maker.address according to docs
+      const bidderAddress = maker?.address;
+
+      if (!bidderAddress) {
+        logger.warn('Missing maker.address in bid event, skipping');
+        return;
+      }
+
+      // Extract ENS name from metadata if available
+      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+
+      logger.info(`Processing bid for: ${nameToStore} (token ${tokenId})`);
+
+      // First ensure the ENS name exists
+      // We'll use the current owner from the item metadata or leave it empty
+      const ownerAddress = item.owner?.address ||
+                          item.permalink?.split('/').includes('0x') ?
+                          item.permalink.split('/').find((part: string) => part.startsWith('0x')) :
+                          '0x0000000000000000000000000000000000000000';
+
+      // Upsert ENS name
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, ownerAddress.toLowerCase());
+
+      const offerQuery = `
+        INSERT INTO offers (
+          ens_name_id,
+          buyer_address,
+          offer_amount_wei,
+          currency_address,
+          order_hash,
+          order_data,
+          status,
+          source,
+          expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending', 'opensea', $7)
+        ON CONFLICT (order_hash, source)
+        DO UPDATE SET
+          offer_amount_wei = EXCLUDED.offer_amount_wei,
+          expires_at = EXCLUDED.expires_at,
+          status = 'pending'
+      `;
+
+      // Parse the currency from the payload - OpenSea provides payment_token info
+      const currencyAddress = payment_token?.address || '0x0000000000000000000000000000000000000000';  // ETH
+
+      // Parse expiration date safely
+      let expiresAt = null;
+      if (expiration_date) {
+        try {
+          if (typeof expiration_date === 'number') {
+            // Unix timestamp - multiply by 1000 if it's in seconds
+            expiresAt = new Date(expiration_date > 10000000000 ? expiration_date : expiration_date * 1000);
+          } else if (typeof expiration_date === 'string') {
+            // ISO date string
+            expiresAt = new Date(expiration_date);
+          }
+          // Validate the date
+          if (expiresAt && isNaN(expiresAt.getTime())) {
+            logger.warn(`Invalid expiration date in bid: ${expiration_date}`);
+            expiresAt = null;
+          }
+        } catch (err) {
+          logger.warn(`Failed to parse bid expiration date: ${expiration_date}`);
+          expiresAt = null;
+        }
+      }
+
+      await this.pool.query(offerQuery, [
+        ensNameId,
+        bidderAddress.toLowerCase(),
+        base_price,  // Use base_price instead of bid_amount
+        currencyAddress,
+        order_hash || null,  // Include order_hash
+        JSON.stringify(eventData),
+        expiresAt,
+      ]);
+
+      logger.info(`Offer received for token ${tokenId} from ${bidderAddress}`);
+    } catch (error: any) {
+      logger.error(`Failed to handle item_received_bid: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private async handleCollectionOffer(payload: any) {
+    try {
+      logger.info('Processing collection_offer event');
+      logger.debug('Full collection_offer payload:', JSON.stringify(payload, null, 2));
+
+      // The payload might be nested
+      const eventData = payload.payload || payload;
+
+      // Collection offers apply to the entire collection, not specific items
+      const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+
+      if (!collection?.slug || collection.slug !== 'ens') {
+        logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);
+        return;
+      }
+
+      if (!base_price || !maker?.address) {
+        logger.warn('Missing required fields in collection offer event');
+        return;
+      }
+
+      logger.info(`Collection offer received for ENS: ${base_price} from ${maker.address}`);
+
+      // Collection offers are broad offers for any item in the collection
+      // We can track these separately or just log them for now
+      // Since they don't apply to a specific ENS name, we might want a separate table
+      // For now, let's just log them
+
+    } catch (error: any) {
+      logger.error(`Failed to handle collection_offer: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  private handleReconnect() {
+    if (!this.isRunning) return;
+
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      logger.info(`Reconnecting to OpenSea Stream (attempt ${this.reconnectAttempts})...`);
+      setTimeout(() => this.connect(), this.reconnectInterval);
+    } else {
+      logger.error('Max reconnection attempts reached for OpenSea Stream');
+    }
+  }
+
+  /**
+   * Upsert ENS name - handles duplicate name and token_id constraints
+   */
+  private async upsertEnsName(tokenId: string, name: string, ownerAddress: string, includeTransferDate = false): Promise<number> {
+    // Find existing records by token_id, or by name only if it's not a placeholder
+    const isPlaceholder = name.startsWith('token-');
+    const findExistingQuery = isPlaceholder ? `
+      SELECT id, token_id, name FROM ens_names
+      WHERE token_id = $1
+    ` : `
+      SELECT id, token_id, name FROM ens_names
+      WHERE token_id = $1 OR name = $2
+    `;
+
+    const existingResult = isPlaceholder
+      ? await this.pool.query(findExistingQuery, [tokenId])
+      : await this.pool.query(findExistingQuery, [tokenId, name]);
+
+    if (existingResult.rows.length === 0) {
+      // No existing record - insert new
+      const insertQuery = includeTransferDate ? `
+        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date)
+        VALUES ($1, $2, $3, NOW())
+        RETURNING id
+      ` : `
+        INSERT INTO ens_names (token_id, name, owner_address)
+        VALUES ($1, $2, $3)
+        RETURNING id
+      `;
+      const insertResult = await this.pool.query(insertQuery, [tokenId, name, ownerAddress]);
+      return insertResult.rows[0].id;
+    }
+
+    if (existingResult.rows.length === 1) {
+      // Found one record - update it
+      const ensNameId = existingResult.rows[0].id;
+      const updateQuery = includeTransferDate ? `
+        UPDATE ens_names
+        SET
+          token_id = $1,
+          name = CASE
+            WHEN name LIKE 'token-%' THEN $2
+            ELSE name
+          END,
+          owner_address = $3,
+          last_transfer_date = NOW(),
+          updated_at = NOW()
+        WHERE id = $4
+      ` : `
+        UPDATE ens_names
+        SET
+          token_id = $1,
+          name = CASE
+            WHEN name LIKE 'token-%' THEN $2
+            ELSE name
+          END,
+          owner_address = $3,
+          updated_at = NOW()
+        WHERE id = $4
+      `;
+      await this.pool.query(updateQuery, [tokenId, name, ownerAddress, ensNameId]);
+      return ensNameId;
+    }
+
+    // Found multiple records (one by token_id, one by name) - merge them
+    // Keep the one with the real name, delete the placeholder
+    const recordByTokenId = existingResult.rows.find(r => r.token_id === tokenId);
+    const recordByName = existingResult.rows.find(r => r.name === name && !r.name.startsWith('token-'));
+
+    if (recordByTokenId && recordByName && recordByTokenId.id !== recordByName.id) {
+      // Merge: update the real name record with correct token_id, delete the placeholder
+      logger.info(`Merging ENS records: keeping real name "${recordByName.name}" (id=${recordByName.id}), removing placeholder (id=${recordByTokenId.id})`);
+
+      // Update listings/offers to point to the record we're keeping
+      await this.pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [recordByName.id, recordByTokenId.id]);
+      await this.pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [recordByName.id, recordByTokenId.id]);
+
+      // Delete the placeholder record
+      await this.pool.query('DELETE FROM ens_names WHERE id = $1', [recordByTokenId.id]);
+
+      // Update the real name record
+      const updateQuery = includeTransferDate ? `
+        UPDATE ens_names
+        SET
+          token_id = $1,
+          owner_address = $2,
+          last_transfer_date = NOW(),
+          updated_at = NOW()
+        WHERE id = $3
+      ` : `
+        UPDATE ens_names
+        SET
+          token_id = $1,
+          owner_address = $2,
+          updated_at = NOW()
+        WHERE id = $3
+      `;
+      await this.pool.query(updateQuery, [tokenId, ownerAddress, recordByName.id]);
+      return recordByName.id;
+    }
+
+    // Fallback - just return the first one
+    return existingResult.rows[0].id;
+  }
+}
