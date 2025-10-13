@@ -11,6 +11,8 @@ import { ListingInfo } from '@/components/listings/ListingInfo';
 import { OffersSection } from '@/components/offers/OffersSection';
 import { ActivityHistory } from '@/components/activity/ActivityHistory';
 import { AddToWatchlist } from '@/components/watchlist/AddToWatchlist';
+import { useEnsName } from 'wagmi';
+import { mainnet } from 'wagmi/chains';
 
 export default function NameProfile() {
   const params = useParams();
@@ -23,6 +25,12 @@ export default function NameProfile() {
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
   const [isListingModalOpen, setIsListingModalOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+
+  // Resolve owner's address to ENS name
+  const { data: ownerEnsName } = useEnsName({
+    address: nameData?.owner_address as `0x${string}` | undefined,
+    chainId: mainnet.id,
+  });
 
   // Fetch name data
   useEffect(() => {
@@ -106,18 +114,36 @@ export default function NameProfile() {
 
   const isOwner = address && nameData.owner_address && address.toLowerCase() === nameData.owner_address.toLowerCase();
 
-  // Check for listing in flat structure
-  const hasListing = nameData.listing_status === 'active' && nameData.listing_price;
-  const activeListing = hasListing ? {
+  // Check for database listing (could be Grails or OpenSea)
+  const hasDatabaseListing = !!(nameData.listing_status === 'active' && nameData.listing_price);
+  const databaseListing = hasDatabaseListing ? {
     id: nameData.id,
     price_wei: nameData.listing_price,
-    currency_address: '0x0000000000000000000000000000000000000000', // Assuming ETH for now
+    currency_address: nameData.listing_currency_address || '0x0000000000000000000000000000000000000000',
     status: nameData.listing_status,
-    source: 'grails',
+    source: nameData.listing_source || 'grails', // Use the source from database
     expires_at: nameData.listing_expires_at,
     seller_address: nameData.listing_seller,
+    order_data: nameData.listing_order_data,
     created_at: nameData.created_at,
   } : null;
+
+  // Check for OpenSea listing from API (real-time)
+  const apiOpenSeaListing = nameData.opensea_listing ? {
+    id: nameData.id,
+    price_wei: nameData.opensea_listing.price?.current?.value || '0',
+    currency_address: nameData.opensea_listing.price?.current?.currency || '0x0000000000000000000000000000000000000000',
+    status: 'active',
+    source: 'opensea' as const,
+    seller_address: nameData.opensea_listing.maker?.address,
+    order_data: nameData.opensea_listing.protocol_data, // This is the Seaport protocol data
+    order_hash: nameData.opensea_listing.order_hash,
+    created_at: nameData.created_at,
+  } : null;
+
+  // Prefer database listing (could be Grails or synced OpenSea), fallback to API OpenSea listing
+  const activeListing = databaseListing || apiOpenSeaListing;
+  const hasListing = !!activeListing;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -147,32 +173,35 @@ export default function NameProfile() {
         <div className="relative z-10">
         <h1 className="text-4xl font-bold text-white mb-4">{nameData.name}</h1>
 
+        {/* Token ID */}
+        <div className="mb-4 pb-4 border-b border-gray-700">
+          <div>
+            <span className="text-gray-400">Token ID: </span>
+            <span className="text-white font-mono text-xs break-all">
+              {nameData.token_id}
+            </span>
+          </div>
+        </div>
+
         {/* Owner Info */}
-        <div className="mb-6 pb-6 border-b border-gray-700">
-          <div className="space-y-2">
-            {ensRecords?.name && (
-              <div>
-                <span className="text-gray-400">Owned by: </span>
-                <span className="text-white font-semibold">{ensRecords.name}</span>
-                {isOwner && (
-                  <span className="ml-2 px-2 py-1 bg-green-900/30 text-green-400 text-xs rounded-full border border-green-700">
-                    You
-                  </span>
-                )}
-              </div>
+        <div className="mb-6">
+          <div>
+            <span className="text-gray-400">Owned by: </span>
+            {nameData.owner_address ? (
+              <Link
+                href={`/profile/${ownerEnsName || nameData.owner_address}`}
+                className="text-purple-400 hover:text-purple-300 font-semibold transition"
+              >
+                {ownerEnsName || `${nameData.owner_address.slice(0, 6)}...${nameData.owner_address.slice(-4)}`}
+              </Link>
+            ) : (
+              <span className="text-white font-mono text-sm">Unknown</span>
             )}
-            <div>
-              <span className="text-gray-400">Owner Address: </span>
-              <span className="text-white font-mono text-sm">
-                {nameData.owner_address || 'Unknown'}
+            {isOwner && (
+              <span className="ml-2 px-2 py-1 bg-green-900/30 text-green-400 text-xs rounded-full border border-green-700">
+                You
               </span>
-            </div>
-            <div>
-              <span className="text-gray-400">Token ID: </span>
-              <span className="text-white font-mono text-xs break-all">
-                {nameData.token_id}
-              </span>
-            </div>
+            )}
           </div>
         </div>
 

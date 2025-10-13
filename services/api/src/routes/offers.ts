@@ -45,9 +45,30 @@ export async function offersRoutes(fastify: FastifyInstance) {
         body.expiresAt ? new Date(body.expiresAt) : null,
       ]);
 
+      const offer = result.rows[0];
+
+      // Publish queue jobs for new offer
+      try {
+        const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+        const boss = await getQueueClient();
+
+        // Schedule expiry job if expires_at is set
+        if (offer.expires_at) {
+          await boss.send(
+            QUEUE_NAMES.EXPIRE_ORDERS,
+            { type: 'offer', id: offer.id },
+            { startAfter: new Date(offer.expires_at) }
+          );
+          fastify.log.info({ offerId: offer.id, expiresAt: offer.expires_at }, 'Scheduled offer expiry job');
+        }
+      } catch (queueError) {
+        // Don't fail the request if queue publishing fails
+        fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for offer');
+      }
+
       const response: APIResponse<Offer> = {
         success: true,
-        data: result.rows[0],
+        data: offer,
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',

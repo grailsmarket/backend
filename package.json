@@ -16,9 +16,11 @@
     "build:api": "cd services/api && npm run build",
     "build:indexer": "cd services/indexer && npm run build",
     "build:wal-listener": "cd services/wal-listener && npm run build",
+    "build:workers": "cd services/workers && npm run build",
     "start:api": "node services/api/dist/api/src/index.js",
     "start:indexer": "node services/indexer/dist/indexer/src/index.js",
     "start:wal-listener": "node services/wal-listener/dist/wal-listener/src/index.js",
+    "start:workers": "node services/workers/dist/workers/src/index.js",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
     "typecheck": "npm run typecheck --workspaces",
@@ -32,10 +34,14 @@
     "eslint": "^8.56.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "pg-boss": "9.0.3"
   },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
+  },
+  "overrides": {
+    "pg-boss": "9.0.3"
   }
 }

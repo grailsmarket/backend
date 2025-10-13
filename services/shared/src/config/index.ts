@@ -54,6 +54,17 @@ const ConfigSchema = z.object({
     secret: z.string().optional(),
     expiresIn: z.union([z.string(), z.number()]).default('24h'),
   }),
+  email: z.object({
+    smtpServer: z.string().optional(),
+    smtpPort: z.number().default(587),
+    smtpLogin: z.string().optional(),
+    smtpPassword: z.string().optional(),
+    fromEmail: z.string().default('noreply@grails.market'),
+    enabled: z.boolean().default(true),
+  }),
+  frontend: z.object({
+    url: z.string().default('http://localhost:3001'),
+  }),
 });
 
 const rawConfig = {
@@ -100,6 +111,17 @@ const rawConfig = {
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  },
+  email: {
+    smtpServer: process.env.SMTP_SERVER,
+    smtpPort: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587,
+    smtpLogin: process.env.SMTP_LOGIN,
+    smtpPassword: process.env.SMTP_PASSWORD,
+    fromEmail: process.env.FROM_EMAIL,
+    enabled: process.env.ENABLE_EMAIL !== 'false',
+  },
+  frontend: {
+    url: process.env.FRONTEND_URL,
   },
 };
 

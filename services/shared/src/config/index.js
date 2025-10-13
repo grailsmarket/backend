@@ -8,7 +8,11 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const zod_1 = require("zod");
 const path_1 = __importDefault(require("path"));
 // Load .env from project root
+// Try multiple possible locations to handle different execution contexts
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, '../../../../.env') });
+dotenv_1.default.config({ path: path_1.default.resolve(__dirname, '../../../../../../.env') });
+dotenv_1.default.config({ path: path_1.default.resolve(process.cwd(), '.env') });
+dotenv_1.default.config(); // Also try default location
 const ConfigSchema = zod_1.z.object({
     database: zod_1.z.object({
         url: zod_1.z.string().default('postgresql://localhost:5432/grails'),
@@ -33,7 +37,11 @@ const ConfigSchema = zod_1.z.object({
     }),
     opensea: zod_1.z.object({
         apiKey: zod_1.z.string().optional(),
-        streamUrl: zod_1.z.string().default('wss://stream.openseabeta.com/socket'),
+        streamUrl: zod_1.z.string().default('wss://stream.openseabeta.com/socket/websocket'),
+    }),
+    theGraph: zod_1.z.object({
+        ensSubgraphUrl: zod_1.z.string().default('https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'),
+        apiKey: zod_1.z.string().optional(),
     }),
     api: zod_1.z.object({
         port: zod_1.z.number().default(3000),
@@ -48,7 +56,7 @@ const ConfigSchema = zod_1.z.object({
     }),
     jwt: zod_1.z.object({
         secret: zod_1.z.string().optional(),
-        expiresIn: zod_1.z.string().default('24h'),
+        expiresIn: zod_1.z.union([zod_1.z.string(), zod_1.z.number()]).default('24h'),
     }),
 });
 const rawConfig = {
@@ -77,6 +85,10 @@ const rawConfig = {
         apiKey: process.env.OPENSEA_API_KEY,
         streamUrl: process.env.OPENSEA_STREAM_URL,
     },
+    theGraph: {
+        ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL,
+        apiKey: process.env.THE_GRAPH_API_KEY,
+    },
     api: {
         port: parseInt(process.env.API_PORT || '3000'),
         host: process.env.API_HOST,
@@ -90,7 +102,7 @@ const rawConfig = {
     },
     jwt: {
         secret: process.env.JWT_SECRET,
-        expiresIn: process.env.JWT_EXPIRES_IN,
+        expiresIn: process.env.JWT_EXPIRES_IN || '24h',
     },
 };
 exports.config = ConfigSchema.parse(rawConfig);

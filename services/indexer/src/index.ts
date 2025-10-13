@@ -3,6 +3,7 @@ import { ENSIndexer } from './indexers/ens-indexer';
 import { SeaportIndexer } from './indexers/seaport-indexer';
 import { OpenSeaStreamListener } from './services/opensea-stream';
 import { logger } from './utils/logger';
+import { getQueueClient, closeQueueClient } from './queue';
 
 async function start() {
   logger.info('Starting blockchain indexer service...');
@@ -25,6 +26,20 @@ async function start() {
   } catch (error) {
     logger.error('Failed to connect to database:', error);
     process.exit(1);
+  }
+
+  // Initialize pg-boss queue client at startup
+  try {
+    logger.info('Initializing pg-boss queue client...');
+    await getQueueClient();
+    logger.info('pg-boss queue client initialized successfully');
+  } catch (error: any) {
+    logger.error({
+      errorMessage: error?.message || String(error),
+      errorStack: error?.stack,
+      errorCode: error?.code
+    }, 'Failed to initialize pg-boss queue client');
+    logger.warn('Continuing without queue support - ownership updates will not be published');
   }
 
   const ensIndexer = new ENSIndexer();
@@ -60,6 +75,7 @@ async function start() {
     await ensIndexer.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
+    await closeQueueClient();
     await closeAllConnections();
     process.exit(0);
   });
@@ -69,6 +85,7 @@ async function start() {
     await ensIndexer.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
+    await closeQueueClient();
     await closeAllConnections();
     process.exit(0);
   });

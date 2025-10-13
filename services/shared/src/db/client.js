@@ -75,9 +75,17 @@ async function getRedisClient() {
 }
 function getElasticsearchClient() {
     if (!esClient) {
-        esClient = new elasticsearch_1.Client({
+        const esConfig = {
             node: config_1.default.elasticsearch.url,
-        });
+        };
+        // Add authentication if credentials are provided
+        if (process.env.ELASTIC_USERNAME && process.env.ELASTIC_PASSWORD) {
+            esConfig.auth = {
+                username: process.env.ELASTIC_USERNAME,
+                password: process.env.ELASTIC_PASSWORD,
+            };
+        }
+        esClient = new elasticsearch_1.Client(esConfig);
     }
     return esClient;
 }

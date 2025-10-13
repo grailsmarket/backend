@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { formatCurrencyAmount } from '@/lib/currency';
 
 interface Offer {
@@ -101,7 +102,12 @@ export function OffersSection({ ensName, isOwner = false }: OffersSectionProps) 
           {formatCurrencyAmount(highestOffer.offer_amount_wei, highestOffer.currency_address)}
         </div>
         <p className="text-sm text-gray-400 mt-1">
-          from {formatAddress(highestOffer.buyer_address)} • {getTimeAgo(highestOffer.created_at)}
+          from <Link
+            href={`/profile/${highestOffer.buyer_address}`}
+            className="text-purple-400 hover:text-purple-300 transition"
+          >
+            {formatAddress(highestOffer.buyer_address)}
+          </Link> • {getTimeAgo(highestOffer.created_at)}
         </p>
       </div>
 
@@ -110,7 +116,12 @@ export function OffersSection({ ensName, isOwner = false }: OffersSectionProps) 
           {otherOffers.map((offer) => (
             <div key={offer.id} className="flex items-center justify-between py-1.5">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-gray-500">{formatAddress(offer.buyer_address)}</span>
+                <Link
+                  href={`/profile/${offer.buyer_address}`}
+                  className="text-xs font-mono text-purple-400 hover:text-purple-300 transition"
+                >
+                  {formatAddress(offer.buyer_address)}
+                </Link>
                 <span className="text-xs text-gray-600">•</span>
                 <span className="text-xs text-gray-600">{getTimeAgo(offer.created_at)}</span>
               </div>

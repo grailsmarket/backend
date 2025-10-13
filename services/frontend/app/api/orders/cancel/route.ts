@@ -69,28 +69,35 @@ export async function POST(request: NextRequest) {
 
     const listings = await Promise.all(listingDetailsPromises);
 
-    // Build order components for on-chain cancellation
-    const ordersToCancel = listings
-      .map((listing, index) => {
-        if (!listing) {
-          console.error(`Failed to fetch listing ${listingIds[index]}`);
-          return null;
-        }
+    // Separate Grails and OpenSea listings
+    const grailsListingIds: number[] = [];
+    const openSeaOrdersToCancel: any[] = [];
 
-        const source = listing.source || 'grails';
+    listings.forEach((listing, index) => {
+      if (!listing) {
+        console.error(`Failed to fetch listing ${listingIds[index]}`);
+        return;
+      }
+
+      const source = listing.source || 'grails';
+
+      if (source === 'grails') {
+        // Grails listings can be cancelled directly in the database
+        grailsListingIds.push(listingIds[index]);
+      } else if (source === 'opensea') {
+        // OpenSea listings require on-chain cancellation
         const orderData = typeof listing.order_data === 'string'
           ? JSON.parse(listing.order_data)
           : listing.order_data;
 
-        // Extract parameters from stored order data
         const parameters = orderData.protocol_data?.parameters || orderData.parameters;
 
         if (!parameters) {
           console.error(`No order parameters found for listing ${listingIds[index]}`);
-          return null;
+          return;
         }
 
-        return {
+        openSeaOrdersToCancel.push({
           listingId: listingIds[index],
           source,
           orderComponents: {
@@ -106,21 +113,45 @@ export async function POST(request: NextRequest) {
             conduitKey: parameters.conduitKey,
             counter: parameters.counter,
           }
-        };
-      })
-      .filter(Boolean);
+        });
+      }
+    });
 
-    if (ordersToCancel.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid orders found to cancel' },
-        { status: 400 }
-      );
+    // Cancel Grails listings directly in database
+    if (grailsListingIds.length > 0) {
+      const cancelPromises = grailsListingIds.map(async (listingId: number) => {
+        const response = await fetch(`${API_BASE_URL}/listings/${listingId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          console.error(`Failed to cancel listing ${listingId}:`, await response.text());
+          return { listingId, success: false };
+        }
+
+        return { listingId, success: true };
+      });
+
+      await Promise.all(cancelPromises);
     }
 
-    // Return order data to frontend for on-chain cancellation
+    // If there are OpenSea listings, return them for on-chain cancellation
+    if (openSeaOrdersToCancel.length > 0) {
+      return NextResponse.json({
+        requiresOnChainCancellation: true,
+        orders: openSeaOrdersToCancel,
+        grailsListingsCancelled: grailsListingIds,
+      });
+    }
+
+    // All listings were Grails listings and have been cancelled
     return NextResponse.json({
-      requiresOnChainCancellation: true,
-      orders: ordersToCancel,
+      requiresOnChainCancellation: false,
+      message: 'All Grails listings cancelled successfully',
+      listingIds: grailsListingIds,
     });
   } catch (error: any) {
     console.error('Error cancelling orders:', error);

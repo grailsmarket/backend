@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { formatCurrencyAmount } from '@/lib/currency';
 
 interface Listing {
@@ -62,7 +63,12 @@ export function ListingInfo({ listing, ensName, onBuyClick }: ListingInfoProps) 
           <div className="space-y-1 text-sm text-gray-400">
             <div className="flex items-center gap-2">
               <span>Seller:</span>
-              <span className="text-gray-300 font-mono">{formatAddress(listing.seller_address)}</span>
+              <Link
+                href={`/profile/${listing.seller_address}`}
+                className="text-purple-400 hover:text-purple-300 font-mono transition"
+              >
+                {formatAddress(listing.seller_address)}
+              </Link>
             </div>
             {expirationText && (
               <div className="flex items-center gap-2">

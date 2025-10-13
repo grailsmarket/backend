@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { SiweMessage } from 'siwe';
@@ -40,6 +40,7 @@ const useAuthStore = create<AuthStore>()(
     }),
     {
       name: 'grails-auth',
+      skipHydration: false,
     }
   )
 );
@@ -48,25 +49,76 @@ export function useAuth() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const { token, user, setAuth, clearAuth, updateUser } = useAuthStore();
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [hasHydrated, setHasHydrated] = useState(false);
 
   const isAuthenticated = !!token && !!user;
 
+  // Wait for Zustand persist to rehydrate
+  useEffect(() => {
+    const unsubFinishHydration = useAuthStore.persist.onFinishHydration(() => {
+      setHasHydrated(true);
+    });
+
+    // If already hydrated
+    if (useAuthStore.persist.hasHydrated()) {
+      setHasHydrated(true);
+    }
+
+    return unsubFinishHydration;
+  }, []);
+
+  // Mark client-side hydration complete
+  useEffect(() => {
+    setIsHydrated(hasHydrated);
+  }, [hasHydrated]);
+
+  // Verify token is still valid on mount/rehydration
+  useEffect(() => {
+    if (!isHydrated || !token) return;
+
+    const verifyToken = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          // Token is invalid, clear auth
+          console.log('Token validation failed, clearing auth');
+          clearAuth();
+        }
+      } catch (error) {
+        console.error('Token validation error:', error);
+        // Don't clear auth on network errors
+      }
+    };
+
+    verifyToken();
+  }, [isHydrated, token, clearAuth]);
+
   // Monitor for account changes and clear auth if address doesn't match
   useEffect(() => {
+    if (!isHydrated) return;
+
     if (user && address && user.address.toLowerCase() !== address.toLowerCase()) {
       // Address changed - clear authentication
       console.log('Address changed, clearing auth');
       clearAuth();
     }
-  }, [address, user, clearAuth]);
+  }, [isHydrated, address, user, clearAuth]);
 
   // Clear auth when wallet disconnects
   useEffect(() => {
+    if (!isHydrated) return;
+
     if (!isConnected && isAuthenticated) {
       console.log('Wallet disconnected, clearing auth');
       clearAuth();
     }
-  }, [isConnected, isAuthenticated, clearAuth]);
+  }, [isHydrated, isConnected, isAuthenticated, clearAuth]);
 
   /**
    * Sign in with Ethereum using SIWE
@@ -235,6 +287,7 @@ export function useAuth() {
     isAuthenticated,
     isConnected,
     address,
+    isHydrated,
     signIn,
     signOut,
     updateProfile,

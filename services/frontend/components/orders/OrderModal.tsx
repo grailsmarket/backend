@@ -238,40 +238,15 @@ export function OrderModal({ listing, isOpen, onClose }: OrderModalProps) {
       const totalPayment = orderBuilder.calculateTotalPayment(order);
       const usesETH = orderBuilder.usesNativeToken(order);
 
-      // Debug: Log order payment details
-      console.log('Order payment analysis:', {
-        listingCurrencyAddress: listing.currency_address,
-        considerationItems: order.parameters.consideration.map(c => ({
-          itemType: c.itemType,
-          token: c.token,
-          amount: c.startAmount.toString()
-        })),
-        totalPayment: totalPayment.toString(),
-        usesETH,
-        basicOrderType: basicOrderParams.basicOrderType,
-        valueToSend: usesETH ? totalPayment.toString() : '0'
-      });
-
-      console.log('Full basicOrderParams:', {
-        considerationToken: basicOrderParams.considerationToken,
-        considerationAmount: basicOrderParams.considerationAmount.toString(),
-        offerer: basicOrderParams.offerer,
-        offerToken: basicOrderParams.offerToken,
-        offerIdentifier: basicOrderParams.offerIdentifier.toString(),
-        basicOrderType: basicOrderParams.basicOrderType,
-        offererConduitKey: basicOrderParams.offererConduitKey,
-        totalOriginalAdditionalRecipients: basicOrderParams.totalOriginalAdditionalRecipients.toString(),
-        additionalRecipients: basicOrderParams.additionalRecipients
-      });
-
-      // For ERC20 orders, use standard fulfillOrder instead of the efficient basic route
+      // For ERC20 orders or orders with OpenSea conduit, use standard fulfillOrder instead of the efficient basic route
       const isERC20Order = !usesETH;
-      const fulfillerConduitKey = isERC20Order ? order.parameters.conduitKey : '0x0000000000000000000000000000000000000000000000000000000000000000';
+      const hasConduit = order.parameters.conduitKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+      const useAdvancedOrder = isERC20Order || hasConduit;
+      const fulfillerConduitKey = useAdvancedOrder ? order.parameters.conduitKey : '0x0000000000000000000000000000000000000000000000000000000000000000';
 
       let tx: `0x${string}`;
 
-      if (isERC20Order) {
-        console.log('Using fulfillAdvancedOrder for ERC20 order with conduit key:', fulfillerConduitKey);
+      if (useAdvancedOrder) {
 
         // Build advanced order
         const advancedOrder = orderBuilder.buildAdvancedOrder(order);
@@ -288,9 +263,9 @@ export function OrderModal({ listing, isOpen, onClose }: OrderModalProps) {
               fulfillerConduitKey,
               address // recipient
             ],
+            value: usesETH ? totalPayment : BigInt(0),
             account: address,
           });
-          console.log('Transaction simulation successful (fulfillAdvancedOrder)');
         } catch (simulateError: any) {
           console.error('Transaction simulation failed:', simulateError);
           throw new Error(`Transaction would fail: ${simulateError.shortMessage || simulateError.message}`);
@@ -309,14 +284,12 @@ export function OrderModal({ listing, isOpen, onClose }: OrderModalProps) {
             fulfillerConduitKey,
             address // recipient
           ],
-          value: BigInt(0),
+          value: usesETH ? totalPayment : BigInt(0),
         });
 
         setTxHash(tx);
       } else {
         // ETH orders use the efficient basic route
-        console.log('Using fulfillBasicOrder_efficient_6GL6yc for ETH order');
-
         try {
           await publicClient.simulateContract({
             address: SEAPORT_ADDRESS as `0x${string}`,
@@ -326,7 +299,6 @@ export function OrderModal({ listing, isOpen, onClose }: OrderModalProps) {
             value: totalPayment,
             account: address,
           });
-          console.log('Transaction simulation successful (basic)');
         } catch (simulateError: any) {
           console.error('Transaction simulation failed:', simulateError);
           throw new Error(`Transaction would fail: ${simulateError.shortMessage || simulateError.message}`);

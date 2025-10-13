@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function SettingsPage() {
   const { user, isAuthenticated, updateProfile } = useAuth();
@@ -165,9 +166,9 @@ export default function SettingsPage() {
         <h2 className="text-xl font-semibold text-white mb-4">Notification Preferences</h2>
         <p className="text-zinc-400 text-sm mb-4">
           Notification preferences are managed per ENS name in your watchlist. Visit the{' '}
-          <a href="/watchlist" className="text-blue-500 hover:text-blue-400">
+          <Link href="/watchlist" className="text-blue-500 hover:text-blue-400">
             Watchlist page
-          </a>{' '}
+          </Link>{' '}
           to customize notifications for specific names.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

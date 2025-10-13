@@ -21,6 +21,18 @@ export function ListingCard({ listing }: ListingCardProps) {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
+  const formatName = (name: string | null, tokenId: string) => {
+    // If no name or it's a placeholder token-XXX, show formatted token ID
+    if (!name || name.startsWith('token-')) {
+      // Truncate long token IDs
+      if (tokenId.length > 20) {
+        return `#${tokenId.slice(0, 8)}...${tokenId.slice(-6)}`;
+      }
+      return `Token #${tokenId}`;
+    }
+    return name;
+  };
+
   const isListed = listing.status === 'active' && listing.price_wei;
   const hasOwner = listing.current_owner && listing.current_owner !== '0x0000000000000000000000000000000000000000';
 
@@ -33,7 +45,7 @@ export function ListingCard({ listing }: ListingCardProps) {
         <div className="mb-4">
           <div className="flex items-start justify-between mb-2">
             <h3 className="text-xl font-bold text-white">
-              {listing.ens_name || `Token #${listing.token_id}`}
+              {formatName(listing.ens_name, listing.token_id)}
             </h3>
             {listing.source && (
               <span className={`inline-block px-2 py-1 text-xs rounded font-semibold ${

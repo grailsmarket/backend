@@ -35,4 +35,9 @@ cd services/wal-listener
 npx tsc --noEmit false --skipLibCheck
 cd ../..
 
+echo "Building Workers..."
+cd services/workers
+npx tsc --noEmit false --skipLibCheck
+cd ../..
+
 echo "Build complete!"

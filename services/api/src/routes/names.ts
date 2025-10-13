@@ -1,8 +1,17 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, ENSName } from '../../../shared/src';
+import { getPostgresPool, APIResponse, ENSName, config } from '../../../shared/src';
 import { searchNames } from '../services/search';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
+import { ethers } from 'ethers';
+
+// ENS Name Wrapper contract address
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+
+// Name Wrapper ABI - just the ownerOf function we need
+const NAME_WRAPPER_ABI = [
+  'function ownerOf(uint256 id) view returns (address)'
+];
 
 const ListNamesQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
@@ -29,6 +38,29 @@ const SearchNamesQuerySchema = z.object({
 
 export async function namesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
+
+  /**
+   * Get the actual owner of a wrapped ENS name by querying the Name Wrapper contract
+   */
+  async function getWrappedNameOwner(ensName: string): Promise<string | null> {
+    try {
+      const provider = new ethers.JsonRpcProvider(config.blockchain.rpcUrl);
+      const nameWrapper = new ethers.Contract(NAME_WRAPPER_ADDRESS, NAME_WRAPPER_ABI, provider);
+
+      // Compute namehash for the ENS name
+      const namehash = ethers.namehash(ensName);
+
+      // Call ownerOf on the Name Wrapper contract
+      const owner = await nameWrapper.ownerOf(namehash);
+
+      fastify.log.info({ ensName, namehash, owner }, 'Retrieved owner from Name Wrapper contract');
+
+      return owner.toLowerCase();
+    } catch (error: any) {
+      fastify.log.error({ error, ensName }, 'Error querying Name Wrapper contract');
+      return null;
+    }
+  }
 
   fastify.get('/', async (request, reply) => {
     const query = ListNamesQuerySchema.parse(request.query);
@@ -164,6 +196,9 @@ export async function namesRoutes(fastify: FastifyInstance) {
         l.status as listing_status,
         l.expires_at as listing_expires_at,
         l.seller_address as listing_seller,
+        l.order_data as listing_order_data,
+        l.currency_address as listing_currency_address,
+        l.source as listing_source,
         (
           SELECT COUNT(*) FROM offers
           WHERE offers.ens_name_id = en.id
@@ -199,13 +234,86 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     let result = await pool.query(query, [name]);
 
+    // Check if owner is Name Wrapper contract and update if needed
+    if (result.rows.length > 0 && result.rows[0].owner_address?.toLowerCase() === NAME_WRAPPER_ADDRESS) {
+      fastify.log.info({ name }, 'Owner is Name Wrapper contract, fetching correct owner');
+
+      try {
+        // First try to get owner from The Graph (wrappedOwner)
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+
+        if (config.theGraph?.apiKey) {
+          headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+        }
+
+        const graphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            query: `
+              query GetDomain($name: String!) {
+                domains(where: { name: $name }) {
+                  wrappedOwner {
+                    id
+                  }
+                  resolver {
+                    addr {
+                      id
+                    }
+                  }
+                }
+              }
+            `,
+            variables: {
+              name: name.toLowerCase(),
+            },
+          }),
+        });
+
+        const graphData: any = await graphResponse.json();
+        const domain = graphData?.data?.domains?.[0];
+        let correctOwner = domain?.wrappedOwner?.id || domain?.resolver?.addr?.id;
+
+        // If no wrappedOwner or resolver.addr, query the Name Wrapper contract directly
+        if (!correctOwner) {
+          fastify.log.info({ name }, 'No wrappedOwner or resolver addr found, querying Name Wrapper contract');
+          correctOwner = await getWrappedNameOwner(name);
+        }
+
+        if (correctOwner && correctOwner.toLowerCase() !== NAME_WRAPPER_ADDRESS) {
+          // Update the owner address in database
+          await pool.query(
+            'UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE LOWER(name) = LOWER($2)',
+            [correctOwner.toLowerCase(), name]
+          );
+
+          fastify.log.info({ name, correctOwner }, 'Updated owner from Name Wrapper to actual owner');
+
+          // Re-query to get updated data
+          result = await pool.query(query, [name]);
+        }
+      } catch (error) {
+        fastify.log.error({ error, name }, 'Error updating Name Wrapper owner');
+      }
+    }
+
     // If name doesn't exist in database, try to fetch from The Graph
     if (result.rows.length === 0) {
       try {
         // Query The Graph for ENS name
-        const graphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+
+        if (config.theGraph?.apiKey) {
+          headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+        }
+
+        const graphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             query: `
               query GetDomain($name: String!) {
@@ -221,6 +329,12 @@ export async function namesRoutes(fastify: FastifyInstance) {
                   }
                   wrappedOwner {
                     id
+                  }
+                  resolver {
+                    id
+                    addr {
+                      id
+                    }
                   }
                   expiryDate
                   createdAt
@@ -287,8 +401,12 @@ export async function namesRoutes(fastify: FastifyInstance) {
           RETURNING *
         `;
 
-        // For wrapped names, use wrappedOwner. Otherwise use registrant or owner
-        const ownerAddress = domain.wrappedOwner?.id || domain.registrant?.id || domain.owner?.id;
+        // Priority for finding owner:
+        // 1. wrappedOwner - for wrapped names, this is the actual owner
+        // 2. resolver.addr.id - the address the name resolves to
+        // 3. registrant - the registrant address
+        // 4. owner - fallback to owner field
+        const ownerAddress = domain.wrappedOwner?.id || domain.resolver?.addr?.id || domain.registrant?.id || domain.owner?.id;
         const expiryDate = domain.expiryDate ? new Date(parseInt(domain.expiryDate) * 1000) : null;
         const registrationDate = domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null;
 

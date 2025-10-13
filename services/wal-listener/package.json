@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "pg-boss": "^9.0.3",
     "pg-logical-replication": "^2.1.0",
     "pino": "^8.17.2",
     "pino-pretty": "^10.3.1"

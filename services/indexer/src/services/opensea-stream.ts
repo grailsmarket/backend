@@ -673,104 +673,52 @@ export class OpenSeaStreamListener {
    * Upsert ENS name - handles duplicate name and token_id constraints
    */
   private async upsertEnsName(tokenId: string, name: string, ownerAddress: string, includeTransferDate = false): Promise<number> {
-    // Find existing records by token_id, or by name only if it's not a placeholder
-    const isPlaceholder = name.startsWith('token-');
-    const findExistingQuery = isPlaceholder ? `
-      SELECT id, token_id, name FROM ens_names
-      WHERE token_id = $1
-    ` : `
-      SELECT id, token_id, name FROM ens_names
-      WHERE token_id = $1 OR name = $2
-    `;
-
-    const existingResult = isPlaceholder
-      ? await this.pool.query(findExistingQuery, [tokenId])
-      : await this.pool.query(findExistingQuery, [tokenId, name]);
-
-    if (existingResult.rows.length === 0) {
-      // No existing record - insert new
-      const insertQuery = includeTransferDate ? `
-        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date)
-        VALUES ($1, $2, $3, NOW())
-        RETURNING id
-      ` : `
-        INSERT INTO ens_names (token_id, name, owner_address)
-        VALUES ($1, $2, $3)
-        RETURNING id
-      `;
-      const insertResult = await this.pool.query(insertQuery, [tokenId, name, ownerAddress]);
-      return insertResult.rows[0].id;
-    }
-
-    if (existingResult.rows.length === 1) {
-      // Found one record - update it
-      const ensNameId = existingResult.rows[0].id;
-      const updateQuery = includeTransferDate ? `
-        UPDATE ens_names
-        SET
-          token_id = $1,
+    try {
+      // Use INSERT ... ON CONFLICT to avoid race conditions
+      const upsertQuery = includeTransferDate ? `
+        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW(), NOW())
+        ON CONFLICT (token_id) DO UPDATE SET
+          owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN name LIKE 'token-%' THEN $2
-            ELSE name
+            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+            ELSE ens_names.name
           END,
-          owner_address = $3,
           last_transfer_date = NOW(),
           updated_at = NOW()
-        WHERE id = $4
+        RETURNING id
       ` : `
-        UPDATE ens_names
-        SET
-          token_id = $1,
+        INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        ON CONFLICT (token_id) DO UPDATE SET
+          owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN name LIKE 'token-%' THEN $2
-            ELSE name
+            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+            ELSE ens_names.name
           END,
-          owner_address = $3,
           updated_at = NOW()
-        WHERE id = $4
+        RETURNING id
       `;
-      await this.pool.query(updateQuery, [tokenId, name, ownerAddress, ensNameId]);
-      return ensNameId;
+
+      const result = await this.pool.query(upsertQuery, [tokenId, name, ownerAddress]);
+      return result.rows[0].id;
+    } catch (error: any) {
+      // If we get a unique constraint violation on name, it means the name already exists
+      // with a different token_id. This could be a data inconsistency issue.
+      if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
+        logger.warn(`ENS name "${name}" already exists with different token_id. Fetching existing record.`);
+
+        // Fetch the existing record by name
+        const existingQuery = 'SELECT id FROM ens_names WHERE name = $1';
+        const existingResult = await this.pool.query(existingQuery, [name]);
+
+        if (existingResult.rows.length > 0) {
+          return existingResult.rows[0].id;
+        }
+      }
+
+      // Re-throw if it's a different error
+      throw error;
     }
-
-    // Found multiple records (one by token_id, one by name) - merge them
-    // Keep the one with the real name, delete the placeholder
-    const recordByTokenId = existingResult.rows.find(r => r.token_id === tokenId);
-    const recordByName = existingResult.rows.find(r => r.name === name && !r.name.startsWith('token-'));
-
-    if (recordByTokenId && recordByName && recordByTokenId.id !== recordByName.id) {
-      // Merge: update the real name record with correct token_id, delete the placeholder
-      logger.info(`Merging ENS records: keeping real name "${recordByName.name}" (id=${recordByName.id}), removing placeholder (id=${recordByTokenId.id})`);
-
-      // Update listings/offers to point to the record we're keeping
-      await this.pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [recordByName.id, recordByTokenId.id]);
-      await this.pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [recordByName.id, recordByTokenId.id]);
-
-      // Delete the placeholder record
-      await this.pool.query('DELETE FROM ens_names WHERE id = $1', [recordByTokenId.id]);
-
-      // Update the real name record
-      const updateQuery = includeTransferDate ? `
-        UPDATE ens_names
-        SET
-          token_id = $1,
-          owner_address = $2,
-          last_transfer_date = NOW(),
-          updated_at = NOW()
-        WHERE id = $3
-      ` : `
-        UPDATE ens_names
-        SET
-          token_id = $1,
-          owner_address = $2,
-          updated_at = NOW()
-        WHERE id = $3
-      `;
-      await this.pool.query(updateQuery, [tokenId, ownerAddress, recordByName.id]);
-      return recordByName.id;
-    }
-
-    // Fallback - just return the first one
-    return existingResult.rows[0].id;
   }
 }
