@@ -230,6 +230,8 @@ export class ENSIndexer {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
 
+    let ensNameId: number | null = null;
+
     try {
       // Try to resolve the actual ENS name
       const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
@@ -247,20 +249,64 @@ export class ENSIndexer {
           END,
           last_transfer_date = NOW(),
           updated_at = NOW()
+        RETURNING id
       `;
 
-      await this.pool.query(upsertQuery, [
+      const result = await this.pool.query(upsertQuery, [
         tokenIdStr,
         nameToStore,
         to.toLowerCase() // Ensure lowercase addresses
       ]);
+
+      if (result.rows.length > 0) {
+        ensNameId = result.rows[0].id;
+      }
     } catch (error: any) {
-      logger.error('Failed to upsert ENS name:', {
-        error: error.message,
-        tokenId: tokenIdStr,
-        to
-      });
-      throw error;
+      // If we get a unique constraint violation on name, it means the name already exists
+      // with a different token_id. Fetch the existing record by name.
+      if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
+        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
+        const nameToStore = ensName || `token-${tokenIdStr}`;
+        logger.warn(`ENS name "${nameToStore}" already exists with different token_id. Fetching existing record.`);
+
+        const existingQuery = 'SELECT id FROM ens_names WHERE name = $1';
+        const existingResult = await this.pool.query(existingQuery, [nameToStore]);
+
+        if (existingResult.rows.length > 0) {
+          ensNameId = existingResult.rows[0].id;
+        }
+      } else {
+        logger.error('Failed to upsert ENS name:', {
+          error: error.message,
+          tokenId: tokenIdStr,
+          to
+        });
+        throw error;
+      }
+    }
+
+    // Publish ownership update job to queue
+    if (ensNameId) {
+      try {
+        const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+        const boss = await getQueueClient();
+
+        await boss.send(QUEUE_NAMES.UPDATE_OWNERSHIP, {
+          ensNameId,
+          newOwner: to.toLowerCase(),
+          blockNumber: Number(log.blockNumber),
+          transactionHash: log.transactionHash || '',
+        });
+
+        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: to }, 'Published ownership update job');
+      } catch (queueError: any) {
+        // Don't fail indexing if queue publishing fails
+        logger.error({
+          errorMessage: queueError?.message || String(queueError),
+          errorStack: queueError?.stack,
+          ensNameId
+        }, 'Failed to publish ownership update job');
+      }
     }
 
     try {
@@ -332,12 +378,21 @@ export class ENSIndexer {
         nameToStore,
       ]);
     } catch (error: any) {
-      logger.error('Failed to handle NameRegistered:', {
-        error: error.message,
-        tokenId: tokenIdStr,
-        owner
-      });
-      throw error;
+      // If we get a unique constraint violation on name, it means the name already exists
+      // with a different token_id. This shouldn't happen for NameRegistered events but handle it gracefully.
+      if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
+        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
+        const nameToStore = ensName || `token-${tokenIdStr}`;
+        logger.warn(`ENS name "${nameToStore}" already exists during NameRegistered event. This indicates a data inconsistency.`);
+        // Continue processing - the name already exists in the database
+      } else {
+        logger.error('Failed to handle NameRegistered:', {
+          error: error.message,
+          tokenId: tokenIdStr,
+          owner
+        });
+        throw error;
+      }
     }
 
     if (!block) return;

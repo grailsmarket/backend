@@ -23,7 +23,22 @@ export class SeaportOrderBuilder {
         : listing.order_data;
 
       // Extract protocol_data which contains the Seaport order details
-      const protocolData = orderData.protocol_data || orderData;
+      // Handle different data structures:
+      // 1. OpenSea listing object: { protocol_data: { parameters, signature }, ... }
+      // 2. Grails order: { protocol_data: { parameters, signature }, ... }
+      // 3. Direct protocol data: { parameters, signature }
+      let protocolData;
+
+      if (orderData.protocol_data) {
+        // Case 1 & 2: Has protocol_data nested
+        protocolData = orderData.protocol_data;
+      } else if (orderData.parameters) {
+        // Case 3: Direct protocol data
+        protocolData = orderData;
+      } else {
+        console.error('Unable to find protocol data in order:', orderData);
+        return null;
+      }
 
       if (!protocolData.parameters) {
         console.error('No parameters found in order data:', orderData);

@@ -159,10 +159,15 @@ export class WALListener {
         );
 
         for (const row of listingChanges.rows) {
+          // Determine if this is an INSERT or UPDATE based on created_at vs updated_at
+          const isInsert = row.created_at && row.updated_at &&
+            Math.abs(new Date(row.created_at).getTime() - new Date(row.updated_at).getTime()) < 1000; // Within 1 second
+
           await this.processChange({
             table: 'listings',
-            operation: 'UPDATE',
+            operation: isInsert ? 'INSERT' : 'UPDATE',
             data: row,
+            oldData: isInsert ? undefined : row, // For updates, we'll use current data as old data
           });
           lastProcessed.listings = row.updated_at;
         }
@@ -196,7 +201,11 @@ export class WALListener {
   }
 
   private async processChange(change: Change) {
-    logger.debug(`Processing ${change.operation} on ${change.table}`);
+    logger.info(`Processing ${change.operation} on ${change.table}`, {
+      table: change.table,
+      operation: change.operation,
+      dataId: change.data?.id
+    });
 
     try {
       switch (change.table) {
@@ -307,6 +316,9 @@ export class WALListener {
           // New listing created
           if (change.data && change.data.status === 'active') {
             await this.activityHistory.handleListingCreated(change.data);
+
+            // Publish notification jobs for watchers
+            await this.publishNotificationsForListing(change.data, 'new-listing');
           }
           break;
 
@@ -365,6 +377,9 @@ export class WALListener {
           // New offer created
           if (change.data && change.data.status === 'pending') {
             await this.activityHistory.handleOfferCreated(change.data);
+
+            // Publish notification jobs for watchers
+            await this.publishNotificationsForOffer(change.data);
           }
           break;
 
@@ -494,6 +509,113 @@ export class WALListener {
       // Fall back to polling
       logger.info('Falling back to polling-based sync...');
       await this.startPolling();
+    }
+  }
+
+  /**
+   * Publish notification jobs for users watching this listing's ENS name
+   */
+  private async publishNotificationsForListing(listingData: any, notificationType: 'new-listing' | 'price-change' | 'sale') {
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+
+      // Find all users watching this ENS name with the appropriate notification setting
+      const watchlistQuery = `
+        SELECT w.user_id, u.email, w.notify_on_listing, w.notify_on_price_change, w.notify_on_sale
+        FROM watchlist w
+        JOIN users u ON u.id = w.user_id
+        WHERE w.ens_name_id = $1
+      `;
+
+      const watchers = await this.pool.query(watchlistQuery, [listingData.ens_name_id]);
+
+      for (const watcher of watchers.rows) {
+        // Check if user wants this type of notification
+        const shouldNotify =
+          (notificationType === 'new-listing' && watcher.notify_on_listing) ||
+          (notificationType === 'price-change' && watcher.notify_on_price_change) ||
+          (notificationType === 'sale' && watcher.notify_on_sale);
+
+        if (!shouldNotify) {
+          continue;
+        }
+
+        await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
+          type: notificationType,
+          userId: watcher.user_id,
+          email: watcher.email,
+          ensNameId: listingData.ens_name_id,
+          metadata: {
+            priceWei: listingData.price_wei,
+            sellerAddress: listingData.seller_address,
+            listingId: listingData.id,
+          },
+        });
+      }
+
+      if (watchers.rows.length > 0) {
+        logger.info(
+          { ensNameId: listingData.ens_name_id, watchersCount: watchers.rows.length, notificationType },
+          'Published notification jobs for listing change'
+        );
+      } else {
+        logger.info(
+          { ensNameId: listingData.ens_name_id, notificationType },
+          'No watchers found for listing change'
+        );
+      }
+    } catch (error: any) {
+      logger.error({
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        errorCode: error?.code,
+        listingData
+      }, 'Failed to publish listing notifications');
+    }
+  }
+
+  /**
+   * Publish notification jobs for users watching this offer's ENS name
+   */
+  private async publishNotificationsForOffer(offerData: any) {
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+
+      // Find all users watching this ENS name who want offer notifications
+      const watchlistQuery = `
+        SELECT w.user_id, u.email
+        FROM watchlist w
+        JOIN users u ON u.id = w.user_id
+        WHERE w.ens_name_id = $1
+          AND w.notify_on_offer = true
+      `;
+
+      const watchers = await this.pool.query(watchlistQuery, [offerData.ens_name_id]);
+
+      for (const watcher of watchers.rows) {
+        await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
+          type: 'new-offer',
+          userId: watcher.user_id,
+          email: watcher.email,
+          ensNameId: offerData.ens_name_id,
+          metadata: {
+            offerAmountWei: offerData.offer_amount_wei,
+            buyerAddress: offerData.buyer_address,
+            offerId: offerData.id,
+          },
+        });
+      }
+
+      if (watchers.rows.length > 0) {
+        logger.debug(
+          { ensNameId: offerData.ens_name_id, watchersCount: watchers.rows.length },
+          'Published notification jobs for new offer'
+        );
+      }
+    } catch (error) {
+      logger.error({ error, offerData }, 'Failed to publish offer notifications');
     }
   }
 }

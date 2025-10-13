@@ -6,9 +6,10 @@ import { useAccount, useEnsName, useEnsAvatar, useDisconnect } from 'wagmi';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
 import { SignInModal } from '@/components/auth/SignInModal';
+import { NotificationsBell } from '@/components/notifications/NotificationsBell';
 
 export function Header() {
-  const { isAuthenticated, address: authAddress, signOut } = useAuth();
+  const { isAuthenticated, address: authAddress, signOut, user, isHydrated } = useAuth();
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const { disconnect } = useDisconnect();
@@ -16,13 +17,6 @@ export function Header() {
   const { data: ensAvatar } = useEnsAvatar({ name: ensName, chainId: 1 });
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-
-  // Auto-open sign-in modal when wallet connects but not authenticated
-  useEffect(() => {
-    if (isConnected && !isAuthenticated) {
-      setShowSignInModal(true);
-    }
-  }, [isConnected, isAuthenticated]);
 
   const handleSignInClick = () => {
     if (!isConnected) {
@@ -62,7 +56,12 @@ export function Header() {
               </nav>
             </div>
             <div className="flex items-center gap-3">
-              {!isAuthenticated ? (
+              {!isHydrated ? (
+                /* Loading skeleton during hydration */
+                <div className="px-4 py-2 bg-zinc-800 rounded-lg animate-pulse">
+                  <div className="h-5 w-40 bg-zinc-700 rounded"></div>
+                </div>
+              ) : !isAuthenticated ? (
                 /* Sign In With Ethereum Button */
                 <button
                   onClick={handleSignInClick}
@@ -74,7 +73,11 @@ export function Header() {
                   Sign In With Ethereum
                 </button>
               ) : (
-                /* Authenticated: Show Avatar + ENS/Address in dropdown button */
+                <>
+                {/* Notifications Bell */}
+                <NotificationsBell />
+
+                {/* Authenticated: Show Avatar + ENS/Address in dropdown button */}
                 <div className="relative">
                   <button
                     onClick={() => setShowUserMenu(!showUserMenu)}
@@ -139,6 +142,7 @@ export function Header() {
                     </div>
                   )}
                 </div>
+                </>
               )}
             </div>
           </div>

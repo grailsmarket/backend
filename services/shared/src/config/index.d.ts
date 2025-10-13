@@ -24,6 +24,10 @@ export declare const config: {
         streamUrl: string;
         apiKey?: string | undefined;
     };
+    theGraph: {
+        ensSubgraphUrl: string;
+        apiKey?: string | undefined;
+    };
     api: {
         port: number;
         host: string;
@@ -36,7 +40,7 @@ export declare const config: {
         sentryDsn?: string | undefined;
     };
     jwt: {
-        expiresIn: string;
+        expiresIn: string | number;
         secret?: string | undefined;
     };
 };

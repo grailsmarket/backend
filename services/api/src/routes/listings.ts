@@ -627,9 +627,45 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         body.expiresAt ? new Date(body.expiresAt) : null,
       ]);
 
+      const listing = result.rows[0];
+
+      // Publish queue jobs for new listing
+      try {
+        const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+        const boss = await getQueueClient();
+
+        // 1. Schedule expiry job if expires_at is set
+        if (listing.expires_at) {
+          await boss.send(
+            QUEUE_NAMES.EXPIRE_ORDERS,
+            { type: 'listing', id: listing.id },
+            { startAfter: new Date(listing.expires_at) }
+          );
+          fastify.log.info({ listingId: listing.id, expiresAt: listing.expires_at }, 'Scheduled expiry job');
+        }
+
+        // 2. Trigger immediate ENS metadata sync
+        const ensNameResult = await pool.query(
+          'SELECT token_id FROM ens_names WHERE id = $1',
+          [body.ensNameId]
+        );
+
+        if (ensNameResult.rows.length > 0) {
+          await boss.send(QUEUE_NAMES.SYNC_ENS_DATA, {
+            ensNameId: body.ensNameId,
+            nameHash: ensNameResult.rows[0].token_id,
+            priority: 'high',
+          });
+          fastify.log.info({ ensNameId: body.ensNameId }, 'Scheduled ENS sync job');
+        }
+      } catch (queueError) {
+        // Don't fail the request if queue publishing fails
+        fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for listing');
+      }
+
       const response: APIResponse<Listing> = {
         success: true,
-        data: result.rows[0],
+        data: listing,
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',

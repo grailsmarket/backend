@@ -1,9 +1,11 @@
 'use client';
 
 import { ListingGrid } from '@/components/listings/ListingGrid';
+import { ListingTable } from '@/components/listings/ListingTable';
+import { ViewToggle } from '@/components/listings/ViewToggle';
 import { SearchPanel, SearchFilters } from '@/components/search/SearchPanel';
 import { useListings, useSearchListings } from '@/hooks/useListings';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [page, setPage] = useState(1);
@@ -11,6 +13,21 @@ export default function Home() {
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({});
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(true);
+  const [view, setView] = useState<'grid' | 'table'>('grid');
+
+  // Load view preference from localStorage
+  useEffect(() => {
+    const savedView = localStorage.getItem('marketplace-view');
+    if (savedView === 'table' || savedView === 'grid') {
+      setView(savedView);
+    }
+  }, []);
+
+  // Save view preference to localStorage
+  const handleViewChange = (newView: 'grid' | 'table') => {
+    setView(newView);
+    localStorage.setItem('marketplace-view', newView);
+  };
 
   // Only use search endpoint if there's a text query, length filters, character filters, or showAll is enabled
   const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll);
@@ -89,7 +106,7 @@ export default function Home() {
 
         {/* Main Content */}
         <main className="flex-1 min-w-0">
-          {/* Sort Controls */}
+          {/* Sort Controls and View Toggle */}
           {!isSearchActive && (
             <section className="mb-8">
               <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -110,29 +127,37 @@ export default function Home() {
                     {order === 'asc' ? '↑' : '↓'}
                   </button>
                 </div>
+                <ViewToggle view={view} onViewChange={handleViewChange} />
               </div>
             </section>
           )}
 
-          {/* Results Header */}
+          {/* Results Header with View Toggle for Search */}
           {isSearchActive && (
-            <div className="mb-6 text-gray-400">
-              {data?.listings && data.listings.length > 0 ? (
-                <p>Found {data.pagination.total} results</p>
-              ) : !isLoading && (
-                <p>No results found</p>
-              )}
+            <div className="mb-6 flex justify-between items-center">
+              <div className="text-gray-400">
+                {data?.listings && data.listings.length > 0 ? (
+                  <p>Found {data.pagination.total} results</p>
+                ) : !isLoading && (
+                  <p>No results found</p>
+                )}
+              </div>
+              <ViewToggle view={view} onViewChange={handleViewChange} />
             </div>
           )}
 
-          {/* Listings Grid */}
+          {/* Listings View */}
           {error && (
             <div className="text-center py-12">
               <p className="text-red-400 text-lg">Error loading listings</p>
             </div>
           )}
 
-          <ListingGrid listings={data?.listings || []} loading={isLoading} />
+          {view === 'grid' ? (
+            <ListingGrid listings={data?.listings || []} loading={isLoading} />
+          ) : (
+            <ListingTable listings={data?.listings || []} loading={isLoading} />
+          )}
 
           {/* Pagination */}
           {data?.pagination && data.pagination.totalPages > 1 && (

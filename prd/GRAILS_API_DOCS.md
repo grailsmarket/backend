@@ -2,7 +2,7 @@
 
 ## Base URL
 ```
-https://grails-api.ethid.org/api/v1
+http://localhost:3000/api/v1
 ```
 
 ## Response Format
@@ -760,7 +760,7 @@ X-RateLimit-Reset: 1696680000
 ### Real-time Updates
 Connect to WebSocket for real-time marketplace updates.
 
-**Endpoint:** `wss://grails-api.ethid.org/ws`
+**Endpoint:** `ws://localhost:3000/ws`
 
 **Events:**
 - `listing_created`: New listing created

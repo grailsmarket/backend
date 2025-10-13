@@ -335,10 +335,17 @@ export function useSeaportClient() {
           throw new Error(errorData.error || 'Failed to fetch order data');
         }
 
-        const { requiresOnChainCancellation, orders } = await fetchResponse.json();
+        const { requiresOnChainCancellation, orders, message } = await fetchResponse.json();
 
-        if (!requiresOnChainCancellation || !orders || orders.length === 0) {
-          throw new Error('No orders to cancel');
+        // If no on-chain cancellation is required, Grails listings were already cancelled in the database
+        if (!requiresOnChainCancellation) {
+          console.log('Grails listings cancelled successfully:', message);
+          return { success: true, message };
+        }
+
+        // For OpenSea listings, proceed with on-chain cancellation
+        if (!orders || orders.length === 0) {
+          throw new Error('No orders to cancel on-chain');
         }
 
         // Step 2: Cancel on-chain using Seaport contract
@@ -354,7 +361,7 @@ export function useSeaportClient() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            listingIds,
+            listingIds: orders.map((o: any) => o.listingId),
             canceller: address,
             onChainCancellation: true,
           }),
