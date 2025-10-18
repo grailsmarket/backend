@@ -11,6 +11,7 @@ import { usersRoutes } from './users';
 import { watchlistRoutes } from './watchlist';
 import { notificationsRoutes } from './notifications';
 import { websocketRoutes } from './websocket';
+import { clubsRoutes } from './clubs';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -24,5 +25,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(offersRoutes, { prefix: '/api/v1/offers' });
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
+  fastify.register(clubsRoutes, { prefix: '/api/v1/clubs' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }

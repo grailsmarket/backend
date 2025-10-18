@@ -11,6 +11,9 @@ class APIClient {
       headers: {
         'Content-Type': 'application/json',
       },
+      paramsSerializer: {
+        indexes: null, // Use brackets for arrays: key[]=value1&key[]=value2
+      },
     });
 
     // Request interceptor

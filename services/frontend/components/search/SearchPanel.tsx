@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export interface SearchFilters {
   query?: string;
@@ -11,6 +11,13 @@ export interface SearchFilters {
   hasEmoji?: boolean;
   hasNumbers?: boolean;
   showAll?: boolean; // true = all names, false/undefined = active listings only
+  clubs?: string[]; // Filter by clubs
+}
+
+interface Club {
+  name: string;
+  description: string;
+  member_count: number;
 }
 
 interface SearchPanelProps {
@@ -27,7 +34,29 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
   const [maxLength, setMaxLength] = useState<number | ''>('');
   const [hasEmoji, setHasEmoji] = useState<boolean | undefined>(undefined);
   const [hasNumbers, setHasNumbers] = useState<boolean | undefined>(undefined);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
+  const [selectedClubs, setSelectedClubs] = useState<string[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [clubsLoading, setClubsLoading] = useState(true);
+  const [showClubsFilter, setShowClubsFilter] = useState(false);
+
+  // Fetch clubs on mount
+  useEffect(() => {
+    async function fetchClubs() {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1'}/clubs`);
+        const data = await response.json();
+        if (data.success) {
+          setClubs(data.data.clubs || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch clubs:', error);
+      } finally {
+        setClubsLoading(false);
+      }
+    }
+    fetchClubs();
+  }, []);
 
   const handleSearch = () => {
     const filters: SearchFilters = {
@@ -39,6 +68,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       hasEmoji,
       hasNumbers,
       showAll,
+      clubs: selectedClubs.length > 0 ? selectedClubs : undefined,
     };
     onSearch(filters);
   };
@@ -51,8 +81,17 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
     setMaxLength('');
     setHasEmoji(undefined);
     setHasNumbers(undefined);
-    setShowAll(false);
+    setShowAll(true);
+    setSelectedClubs([]);
     onSearch({});
+  };
+
+  const toggleClub = (clubName: string) => {
+    setSelectedClubs(prev =>
+      prev.includes(clubName)
+        ? prev.filter(c => c !== clubName)
+        : [...prev, clubName]
+    );
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -202,6 +241,60 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
         </div>
       </div>
 
+      {/* Club Filters */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Filter by Clubs
+          </label>
+          <button
+            onClick={() => setShowClubsFilter(!showClubsFilter)}
+            className="text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+          >
+            <span className="text-xs font-semibold">
+              {showClubsFilter ? 'Hide' : 'Show'}
+            </span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showClubsFilter ? 'rotate-45' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
+        {showClubsFilter && (
+          <>
+            {clubsLoading ? (
+              <div className="text-gray-400 text-sm">Loading clubs...</div>
+            ) : clubs.length > 0 ? (
+              <div className="max-h-48 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3 border border-gray-700">
+                {clubs.map((club) => (
+                  <label key={club.name} className="flex items-start space-x-3 cursor-pointer hover:bg-gray-800 p-2 rounded transition">
+                    <input
+                      type="checkbox"
+                      checked={selectedClubs.includes(club.name)}
+                      onChange={() => toggleClub(club.name)}
+                      className="mt-1 h-4 w-4 rounded border-gray-600 bg-gray-700 text-purple-600 focus:ring-purple-500 focus:ring-offset-gray-900"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-white font-medium">{club.name}</div>
+                      {club.description && (
+                        <div className="text-xs text-gray-400 mt-0.5">{club.description}</div>
+                      )}
+                      <div className="text-xs text-gray-500 mt-0.5">{club.member_count} members</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-400 text-sm">No clubs available</div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Action Buttons */}
       <div className="flex gap-3 pt-2">
         <button
@@ -219,7 +312,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       </div>
 
       {/* Active Filters Display */}
-      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined) && (
+      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined || selectedClubs.length > 0) && (
         <div className="pt-4 border-t border-gray-700">
           <p className="text-xs text-gray-400 mb-2">Active Filters:</p>
           <div className="flex flex-wrap gap-2">
@@ -258,6 +351,11 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
                 {hasNumbers ? 'With Numbers' : 'No Numbers'}
               </span>
             )}
+            {selectedClubs.map(club => (
+              <span key={club} className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                Club: {club}
+              </span>
+            ))}
           </div>
         </div>
       )}

@@ -171,7 +171,22 @@ export default function NameProfile() {
 
         {/* Content wrapper with relative positioning to appear above header */}
         <div className="relative z-10">
-        <h1 className="text-4xl font-bold text-white mb-4">{nameData.name}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+          <h1 className="text-4xl font-bold text-white">{nameData.name}</h1>
+          {nameData.clubs && nameData.clubs.length > 0 && (
+            <div className="flex flex-wrap gap-2 justify-end">
+              {nameData.clubs.map((club: string) => (
+                <Link
+                  key={club}
+                  href={`/clubs/${club}`}
+                  className="px-3 py-1 bg-purple-900/30 text-purple-400 text-sm font-semibold rounded-full border border-purple-700 hover:bg-purple-900/50 hover:border-purple-600 transition"
+                >
+                  {club}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Token ID */}
         <div className="mb-4 pb-4 border-b border-gray-700">

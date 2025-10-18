@@ -4,6 +4,7 @@ import { getPostgresPool, APIResponse, ENSName, config } from '../../../shared/s
 import { searchNames } from '../services/search';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
+import { buildSearchResults } from '../utils/response-builder';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -23,7 +24,7 @@ const ListNamesQuerySchema = z.object({
 });
 
 const SearchNamesQuerySchema = z.object({
-  q: z.string().min(1),
+  q: z.string().default('*'),
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
   filters: z.object({
@@ -33,6 +34,7 @@ const SearchNamesQuerySchema = z.object({
     maxLength: z.coerce.number().optional(),
     hasNumbers: z.coerce.boolean().optional(),
     hasEmoji: z.coerce.boolean().optional(),
+    clubs: z.array(z.string()).optional(),
   }).optional(),
 });
 
@@ -171,12 +173,58 @@ export async function namesRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get('/search', async (request, reply) => {
-    const query = SearchNamesQuerySchema.parse(request.query);
-    const results = await searchNames(query);
+    // Transform flat query params into nested structure
+    const rawQuery = request.query as any;
+    const transformedQuery: any = {
+      q: rawQuery.q,
+      page: rawQuery.page,
+      limit: rawQuery.limit,
+      filters: {},
+    };
+
+    // Parse filters from bracket notation
+    for (const key in rawQuery) {
+      if (key.startsWith('filters[')) {
+        // Extract the filter name: filters[clubs][] -> clubs
+        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+        if (match) {
+          const filterName = match[1];
+          const isArray = match[2] === '[]';
+
+          if (isArray) {
+            // Handle array values: filters[clubs][]
+            if (!transformedQuery.filters[filterName]) {
+              transformedQuery.filters[filterName] = [];
+            }
+            const value = rawQuery[key];
+            if (Array.isArray(value)) {
+              transformedQuery.filters[filterName].push(...value);
+            } else {
+              transformedQuery.filters[filterName].push(value);
+            }
+          } else {
+            // Handle non-array values: filters[minPrice]
+            transformedQuery.filters[filterName] = rawQuery[key];
+          }
+        }
+      }
+    }
+
+    const query = SearchNamesQuerySchema.parse(transformedQuery);
+    const esResults = await searchNames(query);
+
+    // Extract names from Elasticsearch results
+    const ensNames = esResults.results.map((hit: any) => hit.name);
+
+    // Build consistent results using shared utility
+    const results = await buildSearchResults(ensNames);
 
     const response: APIResponse = {
       success: true,
-      data: results,
+      data: {
+        results,
+        pagination: esResults.pagination,
+      },
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
