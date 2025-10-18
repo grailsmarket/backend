@@ -47,6 +47,9 @@ export function Header() {
                 <Link href="/" className="text-gray-300 hover:text-white transition">
                   Marketplace
                 </Link>
+                <Link href="/clubs" className="text-gray-300 hover:text-white transition">
+                  Clubs
+                </Link>
                 <Link href="/portfolio" className="text-gray-300 hover:text-white transition">
                   My Portfolio
                 </Link>

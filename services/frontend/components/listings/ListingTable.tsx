@@ -35,8 +35,10 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
     return name;
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return '—';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '—';
     return new Intl.DateTimeFormat('en-US', {
       month: 'short',
       day: 'numeric',

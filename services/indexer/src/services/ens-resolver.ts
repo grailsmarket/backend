@@ -11,6 +11,10 @@ interface ENSNameData {
 export class ENSResolver {
   private cache = new Map<string, string>();
 
+  clearCache(): void {
+    this.cache.clear();
+  }
+
   async resolveTokenIdToName(tokenId: string): Promise<string | null> {
     // Check cache first
     const cached = this.cache.get(tokenId);

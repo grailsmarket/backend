@@ -201,6 +201,13 @@ export class ENSIndexer {
     return obj;
   }
 
+  private calculateNameAttributes(name: string) {
+    return {
+      has_numbers: /\d/.test(name),
+      has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+    };
+  }
+
   private async processEvent(eventName: string, args: any, log: Log) {
     try {
       switch (eventName) {
@@ -233,30 +240,110 @@ export class ENSIndexer {
     let ensNameId: number | null = null;
 
     try {
-      // Try to resolve the actual ENS name
-      const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
-      const nameToStore = ensName || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+      // First, check if this token_id already exists in our database
+      const existingRecord = await this.pool.query(
+        'SELECT id, name, has_numbers, has_emoji FROM ens_names WHERE token_id = $1',
+        [tokenIdStr]
+      );
 
-      // First, ensure the ENS name exists
-      const upsertQuery = `
-        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (token_id) DO UPDATE SET
-          owner_address = EXCLUDED.owner_address,
-          name = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
-            ELSE ens_names.name
-          END,
-          last_transfer_date = NOW(),
-          updated_at = NOW()
-        RETURNING id
-      `;
+      let nameToStore: string;
+      let has_numbers: boolean;
+      let has_emoji: boolean;
 
-      const result = await this.pool.query(upsertQuery, [
-        tokenIdStr,
-        nameToStore,
-        to.toLowerCase() // Ensure lowercase addresses
-      ]);
+      if (existingRecord.rows.length > 0) {
+        // Record exists - use the existing name instead of calling The Graph
+        nameToStore = existingRecord.rows[0].name;
+        has_numbers = existingRecord.rows[0].has_numbers;
+        has_emoji = existingRecord.rows[0].has_emoji;
+      } else {
+        // Record doesn't exist - try to resolve from The Graph
+        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
+        nameToStore = ensName || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+        const attributes = this.calculateNameAttributes(nameToStore);
+        has_numbers = attributes.has_numbers;
+        has_emoji = attributes.has_emoji;
+      }
+
+      // Check if this name exists with a different token_id (edge case)
+      const duplicateName = await this.pool.query(
+        'SELECT id FROM ens_names WHERE name = $1 AND token_id != $2',
+        [nameToStore, tokenIdStr]
+      );
+
+      let result;
+
+      if (duplicateName.rows.length > 0) {
+        // Name exists with different token_id - just update the existing record
+        result = await this.pool.query(
+          `UPDATE ens_names SET
+            owner_address = $1,
+            last_transfer_date = NOW(),
+            updated_at = NOW()
+          WHERE token_id = $2
+          RETURNING id`,
+          [to.toLowerCase(), tokenIdStr]
+        );
+      } else if (existingRecord.rows.length > 0) {
+        // Name exists, just update it
+        const updateQuery = `
+          UPDATE ens_names SET
+            owner_address = $1,
+            name = CASE
+              WHEN name LIKE 'token-%' THEN $2
+              ELSE name
+            END,
+            has_numbers = CASE
+              WHEN name LIKE 'token-%' THEN $3
+              ELSE has_numbers
+            END,
+            has_emoji = CASE
+              WHEN name LIKE 'token-%' THEN $4
+              ELSE has_emoji
+            END,
+            last_transfer_date = NOW(),
+            updated_at = NOW()
+          WHERE name = $2
+          RETURNING id
+        `;
+
+        result = await this.pool.query(updateQuery, [
+          to.toLowerCase(),
+          nameToStore,
+          has_numbers,
+          has_emoji
+        ]);
+      } else {
+        // Name doesn't exist, insert it
+        const upsertQuery = `
+          INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
+          VALUES ($1, $2, $3, NOW(), $4, $5)
+          ON CONFLICT (token_id) DO UPDATE SET
+            owner_address = EXCLUDED.owner_address,
+            name = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+              ELSE ens_names.name
+            END,
+            has_numbers = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
+              ELSE ens_names.has_numbers
+            END,
+            has_emoji = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
+              ELSE ens_names.has_emoji
+            END,
+            last_transfer_date = NOW(),
+            updated_at = NOW()
+          RETURNING id
+        `;
+
+        result = await this.pool.query(upsertQuery, [
+          tokenIdStr,
+          nameToStore,
+          to.toLowerCase(),
+          has_numbers,
+          has_emoji
+        ]);
+      }
 
       if (result.rows.length > 0) {
         ensNameId = result.rows[0].id;
@@ -350,6 +437,7 @@ export class ENSIndexer {
       // Try to resolve the actual ENS name
       const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
       const nameToStore = ensName || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+      const { has_numbers, has_emoji } = this.calculateNameAttributes(nameToStore);
 
       block = await this.client.getBlock({ blockNumber: log.blockNumber! });
       const expiryDate = new Date(Number(expires) * 1000);
@@ -357,8 +445,8 @@ export class ENSIndexer {
       const upsertQuery = `
         INSERT INTO ens_names (
           token_id, owner_address, registrant,
-          expiry_date, registration_date, name
-        ) VALUES ($1, $2, $2, $3, $4, $5)
+          expiry_date, registration_date, name, has_numbers, has_emoji
+        ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           registrant = EXCLUDED.registrant,
@@ -366,6 +454,14 @@ export class ENSIndexer {
           name = CASE
             WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
             ELSE ens_names.name
+          END,
+          has_numbers = CASE
+            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
+            ELSE ens_names.has_numbers
+          END,
+          has_emoji = CASE
+            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
+            ELSE ens_names.has_emoji
           END,
           updated_at = NOW()
       `;
@@ -376,6 +472,8 @@ export class ENSIndexer {
         expiryDate,
         new Date(Number(block.timestamp) * 1000),
         nameToStore,
+        has_numbers,
+        has_emoji
       ]);
     } catch (error: any) {
       // If we get a unique constraint violation on name, it means the name already exists

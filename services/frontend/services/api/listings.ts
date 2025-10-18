@@ -23,6 +23,7 @@ export interface SearchParams {
   hasEmoji?: boolean;
   hasNumbers?: boolean;
   showAll?: boolean;
+  clubs?: string[];
 }
 
 class ListingsAPI {
@@ -51,11 +52,36 @@ class ListingsAPI {
   }
 
   async searchListings(params: SearchParams): Promise<{ listings: Listing[]; pagination: Pagination }> {
-    const response = await apiClient.get<APIResponse<{ listings: Listing[]; pagination: Pagination }>>('/listings/search', params);
+    // Transform params to match backend API structure
+    const queryParams: any = {
+      q: params.q,
+      page: params.page,
+      limit: params.limit,
+    };
+
+    // Add filters as nested params
+    if (params.minPrice !== undefined) queryParams['filters[minPrice]'] = params.minPrice;
+    if (params.maxPrice !== undefined) queryParams['filters[maxPrice]'] = params.maxPrice;
+    if (params.minLength !== undefined) queryParams['filters[minLength]'] = params.minLength;
+    if (params.maxLength !== undefined) queryParams['filters[maxLength]'] = params.maxLength;
+    if (params.hasEmoji !== undefined) queryParams['filters[hasEmoji]'] = params.hasEmoji;
+    if (params.hasNumbers !== undefined) queryParams['filters[hasNumbers]'] = params.hasNumbers;
+    if (params.showAll !== undefined) queryParams['filters[showAll]'] = params.showAll;
+
+    // Handle clubs array - needs to be sent as filters[clubs][]
+    if (params.clubs && params.clubs.length > 0) {
+      queryParams['filters[clubs][]'] = params.clubs;
+    }
+
+    const response = await apiClient.get<APIResponse<{ results: Listing[]; pagination: Pagination }>>('/listings/search', queryParams);
     if (!response.success) {
       throw new Error(response.error?.message || 'Search failed');
     }
-    return response.data!;
+    // Map 'results' to 'listings' for backwards compatibility
+    return {
+      listings: response.data!.results,
+      pagination: response.data!.pagination,
+    };
   }
 
   async createListing(data: {

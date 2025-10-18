@@ -11,6 +11,7 @@ interface SearchQuery {
     maxLength?: number;
     hasNumbers?: boolean;
     hasEmoji?: boolean;
+    clubs?: string[];  // Array of club names to filter by
   };
 }
 
@@ -18,15 +19,49 @@ export async function searchNames(query: SearchQuery) {
   const es = getElasticsearchClient();
   const from = (query.page - 1) * query.limit;
 
-  const must: any[] = [
-    {
-      multi_match: {
-        query: query.q,
-        fields: ['name^3', 'name.ngram'],
-        type: 'best_fields',
+  // Build must clause - use match_all for wildcard, multi_match otherwise
+  const must: any[] = [];
+
+  if (query.q === '*' || query.q === '') {
+    // Wildcard search - match all documents
+    must.push({ match_all: {} });
+  } else {
+    // Text search - NO ngram (causes too many false positives with 2-char matches)
+    must.push({
+      bool: {
+        should: [
+          // Exact match on keyword field (highest priority)
+          {
+            term: {
+              'name.keyword': {
+                value: query.q + '.eth',
+                boost: 10,
+              },
+            },
+          },
+          // Prefix match (e.g., "test" matches "testing.eth")
+          {
+            prefix: {
+              name: {
+                value: query.q,
+                boost: 5,
+              },
+            },
+          },
+          // Contains match using wildcard
+          {
+            wildcard: {
+              name: {
+                value: `*${query.q}*`,
+                boost: 2,
+              },
+            },
+          },
+        ],
+        minimum_should_match: 1,
       },
-    },
-  ];
+    });
+  }
 
   const filter: any[] = [];
 
@@ -51,6 +86,11 @@ export async function searchNames(query: SearchQuery) {
 
     if (query.filters.hasEmoji !== undefined) {
       filter.push({ term: { has_emoji: query.filters.hasEmoji } });
+    }
+
+    if (query.filters.clubs && query.filters.clubs.length > 0) {
+      // Filter by clubs - name must be in at least one of the specified clubs
+      filter.push({ terms: { clubs: query.filters.clubs } });
     }
   }
 
@@ -84,14 +124,18 @@ export async function searchNames(query: SearchQuery) {
       highlight: hit.highlight,
     }));
 
+    const totalCount = typeof response.hits.total === 'object' && response.hits.total ? response.hits.total.value : response.hits.total as number;
+    const totalPages = Math.ceil(totalCount / query.limit);
+
     return {
       results: hits,
       total: response.hits.total,
       pagination: {
         page: query.page,
         limit: query.limit,
-        total: typeof response.hits.total === 'object' && response.hits.total ? response.hits.total.value : response.hits.total as number,
-        hasNext: from + query.limit < (typeof response.hits.total === 'object' && response.hits.total ? response.hits.total.value : response.hits.total as number),
+        total: totalCount,
+        totalPages,
+        hasNext: query.page < totalPages,
         hasPrev: query.page > 1,
       },
     };
@@ -104,6 +148,7 @@ export async function searchNames(query: SearchQuery) {
         page: query.page,
         limit: query.limit,
         total: 0,
+        totalPages: 0,
         hasNext: false,
         hasPrev: false,
       },

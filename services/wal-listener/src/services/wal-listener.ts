@@ -560,7 +560,7 @@ export class WALListener {
           'Published notification jobs for listing change'
         );
       } else {
-        logger.info(
+        logger.debug(
           { ensNameId: listingData.ens_name_id, notificationType },
           'No watchers found for listing change'
         );

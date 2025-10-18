@@ -1,10 +1,8 @@
 import { Pool, Client } from 'pg';
-import type { RedisClientType } from 'redis';
 import { Client as ElasticsearchClient } from '@elastic/elasticsearch';
 import config from '../config';
 
 let pgPool: Pool | null = null;
-let redisClient: RedisClientType | null = null;
 let esClient: ElasticsearchClient | null = null;
 
 export function getPostgresPool(): Pool {
@@ -20,22 +18,6 @@ export function getPostgresPool(): Pool {
     });
   }
   return pgPool;
-}
-
-export async function getRedisClient(): Promise<RedisClientType> {
-  if (!redisClient) {
-    const { createClient } = await import('redis');
-    redisClient = createClient({
-      url: config.redis.url,
-    });
-
-    redisClient.on('error', (err: Error) => {
-      console.error('Redis Client Error', err);
-    });
-
-    await redisClient.connect();
-  }
-  return redisClient;
 }
 
 export function getElasticsearchClient(): ElasticsearchClient {
@@ -72,11 +54,6 @@ export async function closeAllConnections(): Promise<void> {
   if (pgPool) {
     promises.push(pgPool.end());
     pgPool = null;
-  }
-
-  if (redisClient) {
-    promises.push(redisClient.quit().then(() => undefined));
-    redisClient = null;
   }
 
   await Promise.all(promises);

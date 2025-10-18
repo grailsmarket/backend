@@ -29,10 +29,10 @@ export default function Home() {
     localStorage.setItem('marketplace-view', newView);
   };
 
-  // Only use search endpoint if there's a text query, length filters, character filters, or showAll is enabled
-  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll);
+  // Only use search endpoint if there's a text query, length filters, character filters, clubs filter, or showAll is enabled
+  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0));
 
-  // Use search if text/length/character filters are active, otherwise use regular listings with price filters
+  // Use search if text/length/character/clubs filters are active, otherwise use regular listings with price filters
   const { data: searchData, isLoading: searchLoading, error: searchError } = useSearchListings(
     searchFilters.query || '',
     {
@@ -45,6 +45,7 @@ export default function Home() {
       hasEmoji: searchFilters.hasEmoji,
       hasNumbers: searchFilters.hasNumbers,
       showAll: searchFilters.showAll,
+      clubs: searchFilters.clubs,
     },
     useSearchEndpoint
   );
@@ -66,7 +67,7 @@ export default function Home() {
   const isLoading = useSearchEndpoint ? searchLoading : listingsLoading;
   const error = useSearchEndpoint ? searchError : listingsError;
 
-  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll);
+  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0));
 
   const handleSearch = (filters: SearchFilters) => {
     setSearchFilters(filters);
@@ -127,14 +128,38 @@ export default function Home() {
                     {order === 'asc' ? '↑' : '↓'}
                   </button>
                 </div>
-                <ViewToggle view={view} onViewChange={handleViewChange} />
+                <div className="flex items-center gap-4">
+                  {/* Pagination */}
+                  {data?.pagination && data.pagination.totalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400 text-sm">
+                        Page {page} of {data.pagination.totalPages}
+                      </span>
+                      <button
+                        onClick={() => setPage(page - 1)}
+                        disabled={!data.pagination.hasPrev}
+                        className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition border border-gray-700"
+                      >
+                        ←
+                      </button>
+                      <button
+                        onClick={() => setPage(page + 1)}
+                        disabled={!data.pagination.hasNext}
+                        className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition border border-gray-700"
+                      >
+                        →
+                      </button>
+                    </div>
+                  )}
+                  <ViewToggle view={view} onViewChange={handleViewChange} />
+                </div>
               </div>
             </section>
           )}
 
-          {/* Results Header with View Toggle for Search */}
+          {/* Results Header with View Toggle and Pagination for Search */}
           {isSearchActive && (
-            <div className="mb-6 flex justify-between items-center">
+            <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="text-gray-400">
                 {data?.listings && data.listings.length > 0 ? (
                   <p>Found {data.pagination.total} results</p>
@@ -142,7 +167,31 @@ export default function Home() {
                   <p>No results found</p>
                 )}
               </div>
-              <ViewToggle view={view} onViewChange={handleViewChange} />
+              <div className="flex items-center gap-4">
+                {/* Pagination */}
+                {data?.pagination && data.pagination.totalPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">
+                      Page {page} of {data.pagination.totalPages}
+                    </span>
+                    <button
+                      onClick={() => setPage(page - 1)}
+                      disabled={!data.pagination.hasPrev}
+                      className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition border border-gray-700"
+                    >
+                      ←
+                    </button>
+                    <button
+                      onClick={() => setPage(page + 1)}
+                      disabled={!data.pagination.hasNext}
+                      className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition border border-gray-700"
+                    >
+                      →
+                    </button>
+                  </div>
+                )}
+                <ViewToggle view={view} onViewChange={handleViewChange} />
+              </div>
             </div>
           )}
 
@@ -157,29 +206,6 @@ export default function Home() {
             <ListingGrid listings={data?.listings || []} loading={isLoading} />
           ) : (
             <ListingTable listings={data?.listings || []} loading={isLoading} />
-          )}
-
-          {/* Pagination */}
-          {data?.pagination && data.pagination.totalPages > 1 && (
-            <div className="mt-12 flex justify-center gap-2">
-              <button
-                onClick={() => setPage(page - 1)}
-                disabled={!data.pagination.hasPrev}
-                className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition"
-              >
-                Previous
-              </button>
-              <span className="px-4 py-2 text-gray-400">
-                Page {page} of {data.pagination.totalPages}
-              </span>
-              <button
-                onClick={() => setPage(page + 1)}
-                disabled={!data.pagination.hasNext}
-                className="px-4 py-2 bg-gray-800 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition"
-              >
-                Next
-              </button>
-            </div>
           )}
         </main>
       </div>

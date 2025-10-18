@@ -7,7 +7,9 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "resync": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/resync-elasticsearch.js",
+    "backfill-attributes": "npx tsx src/scripts/backfill-name-attributes.ts"
   },
   "dependencies": {
     "pg-boss": "^9.0.3",

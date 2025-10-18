@@ -47,6 +47,7 @@ export class ElasticsearchSync {
                 has_emoji: { type: 'boolean' },
                 status: { type: 'keyword' },
                 tags: { type: 'keyword' },
+                clubs: { type: 'keyword' },
                 last_sale_price: {
                   type: 'scaled_float',
                   scaling_factor: 1000000000000000000,
@@ -192,67 +193,82 @@ export class ElasticsearchSync {
     logger.info('Starting bulk sync to Elasticsearch...');
 
     try {
-      const query = `
-        SELECT
-          en.*,
-          l.price_wei as listing_price,
-          l.status as listing_status,
-          l.created_at as listing_created_at,
-          COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
-          MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer
-        FROM ens_names en
-        LEFT JOIN LATERAL (
-          SELECT * FROM listings
-          WHERE listings.ens_name_id = en.id
-          AND listings.status = 'active'
-          ORDER BY created_at DESC
-          LIMIT 1
-        ) l ON true
-        LEFT JOIN offers o ON o.ens_name_id = en.id
-        GROUP BY en.id, l.price_wei, l.status, l.created_at
-      `;
+      // First, get total count
+      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM ens_names');
+      const totalRows = parseInt(countResult.rows[0].total);
+      logger.info(`Total ENS names to sync: ${totalRows}`);
 
-      const result = await this.pool.query(query);
+      // Process in database-level batches to avoid loading everything into memory
+      const dbBatchSize = 100; // Fetch 100 rows from DB at a time (reduced for memory)
+      let processed = 0;
+      let offset = 0;
 
-      const bulkBody = [];
-      for (const row of result.rows) {
-        const enrichedData = await this.enrichENSNameData(row);
-        bulkBody.push({
-          index: {
-            _index: config.elasticsearch.index,
-            _id: row.id.toString(),
-          },
-        });
-        bulkBody.push(enrichedData);
-      }
+      while (offset < totalRows) {
+        // Query one batch at a time from database
+        const query = `
+          SELECT
+            en.*,
+            l.price_wei as listing_price,
+            l.status as listing_status,
+            l.created_at as listing_created_at,
+            COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
+            MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer
+          FROM ens_names en
+          LEFT JOIN LATERAL (
+            SELECT * FROM listings
+            WHERE listings.ens_name_id = en.id
+            AND listings.status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+          ) l ON true
+          LEFT JOIN offers o ON o.ens_name_id = en.id
+          GROUP BY en.id, l.price_wei, l.status, l.created_at
+          ORDER BY en.id
+          LIMIT $1 OFFSET $2
+        `;
 
-      if (bulkBody.length > 0) {
-        logger.info(`Preparing to bulk index ${result.rows.length} ENS names...`);
+        const result = await this.pool.query(query, [dbBatchSize, offset]);
 
-        // Process in smaller batches to avoid timeouts
-        const batchSize = 1000; // Process 500 documents at a time (1000 bulk operations)
-        for (let i = 0; i < bulkBody.length; i += batchSize) {
-          const batch = bulkBody.slice(i, Math.min(i + batchSize, bulkBody.length));
-          const docCount = batch.length / 2; // Each document has 2 entries in bulk body
-
-          logger.info(`Processing batch: ${docCount} documents...`);
-
-          const response = await this.esClient.bulk({
-            body: batch,
-            timeout: '60s', // Increase timeout for large batches
-          });
-
-          if (response.errors) {
-            logger.error('Bulk indexing had errors:', JSON.stringify(response.items?.filter((item: any) => item.index?.error), null, 2));
-          } else {
-            logger.info(`Successfully indexed batch of ${docCount} documents`);
-          }
+        if (result.rows.length === 0) {
+          break; // No more rows
         }
 
-        logger.info(`Completed bulk indexing of ${result.rows.length} ENS names`);
-      } else {
-        logger.info('No ENS names to sync');
+        // Build bulk body for this batch only
+        const bulkBody = [];
+        for (const row of result.rows) {
+          const enrichedData = await this.enrichENSNameData(row);
+          bulkBody.push({
+            index: {
+              _index: config.elasticsearch.index,
+              _id: row.id.toString(),
+            },
+          });
+          bulkBody.push(enrichedData);
+        }
+
+        // Send this batch to Elasticsearch
+        logger.info(`Processing batch: ${result.rows.length} documents (${processed + 1}-${processed + result.rows.length} of ${totalRows})...`);
+
+        const response = await this.esClient.bulk({
+          body: bulkBody,
+          timeout: '60s',
+        });
+
+        if (response.errors) {
+          const errors = response.items?.filter((item: any) => item.index?.error);
+          logger.error(`Bulk indexing had ${errors?.length || 0} errors:`, JSON.stringify(errors?.slice(0, 5), null, 2));
+        } else {
+          logger.info(`Successfully indexed batch of ${result.rows.length} documents`);
+        }
+
+        processed += result.rows.length;
+        offset += dbBatchSize;
+
+        // Delay to allow garbage collection and prevent overwhelming the system
+        await new Promise(resolve => setTimeout(resolve, 250));
       }
+
+      logger.info(`Completed bulk indexing of ${processed} ENS names`);
     } catch (error: any) {
       logger.error(`Failed to perform bulk sync: ${error.message || error}`);
       if (error.meta?.body?.error) {
@@ -280,6 +296,7 @@ export class ElasticsearchSync {
       has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
       status: data.listing_status || 'unlisted',
       tags: this.generateTags(name),
+      clubs: data.clubs || [],
       last_sale_price: data.last_sale_price,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,

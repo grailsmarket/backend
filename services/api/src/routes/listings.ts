@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, getElasticsearchClient, APIResponse, Listing } from '../../../shared/src';
+import { buildSearchResults } from '../utils/response-builder';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -236,10 +237,54 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
   // Search listings using Elasticsearch (with PostgreSQL fallback)
   fastify.get('/search', async (request, reply) => {
-    const { q = '', page = 1, limit = 20, minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showAll = false } = request.query as any;
+    // Transform flat query params into nested structure (same as /names/search)
+    const rawQuery = request.query as any;
+    const transformedQuery: any = {
+      q: rawQuery.q || '',
+      page: rawQuery.page || 1,
+      limit: rawQuery.limit || 20,
+      filters: {},
+    };
+
+    // Parse filters from bracket notation
+    for (const key in rawQuery) {
+      if (key.startsWith('filters[')) {
+        // Extract the filter name: filters[clubs][] -> clubs
+        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+        if (match) {
+          const filterName = match[1];
+          const isArray = match[2] === '[]';
+
+          if (isArray) {
+            // Handle array values: filters[clubs][]
+            if (!transformedQuery.filters[filterName]) {
+              transformedQuery.filters[filterName] = [];
+            }
+            const value = rawQuery[key];
+            if (Array.isArray(value)) {
+              transformedQuery.filters[filterName].push(...value);
+            } else {
+              transformedQuery.filters[filterName].push(value);
+            }
+          } else {
+            // Handle non-array values: filters[minPrice] or filters[clubs] (convert clubs to array)
+            const value = rawQuery[key];
+            // Special handling for clubs - always convert to array
+            if (filterName === 'clubs') {
+              transformedQuery.filters[filterName] = Array.isArray(value) ? value : [value];
+            } else {
+              transformedQuery.filters[filterName] = value;
+            }
+          }
+        }
+      }
+    }
+
+    const { q, page, limit, filters } = transformedQuery;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showAll = false, clubs } = filters;
     const from = (page - 1) * limit;
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showAll=${showAll}`);
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showAll=${showAll}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}`);
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     let usePostgresql = false;
@@ -305,6 +350,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
     }
 
+    // Add clubs filter
+    if (clubs && clubs.length > 0) {
+      filter.push({ terms: { clubs: clubs } });
+    }
+
     const esQuery = {
       index: 'ens_names',
       body: {
@@ -346,7 +396,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         return reply.send({
           success: true,
           data: {
-            listings: [],
+            results: [],
             pagination: {
               page: parseInt(page),
               limit: parseInt(limit),
@@ -363,49 +413,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Fetch full listing details from PostgreSQL
-      // Preserve Elasticsearch order using CASE statement
-      const placeholders = ensNames.map((_: any, i: number) => `$${i + 1}`).join(',');
-      const orderCases = ensNames.map((name: string, i: number) => `WHEN LOWER(en.name) = $${i + 1} THEN ${i}`).join(' ');
-
-      // Build query based on showAll flag
-      const listingQuery = showAll === true || showAll === 'true' ? `
-        SELECT
-          l.id,
-          l.price_wei,
-          l.status,
-          l.created_at,
-          l.order_hash,
-          l.order_data,
-          l.seller_address,
-          en.name as ens_name,
-          en.token_id,
-          en.owner_address as current_owner,
-          en.expiry_date as name_expiry_date,
-          en.registration_date
-        FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
-        WHERE LOWER(en.name) IN (${placeholders})
-        ORDER BY CASE ${orderCases} END
-      ` : `
-        SELECT
-          l.*,
-          en.name as ens_name,
-          en.token_id,
-          en.owner_address as current_owner,
-          en.expiry_date as name_expiry_date,
-          en.registration_date
-        FROM listings l
-        JOIN ens_names en ON l.ens_name_id = en.id
-        WHERE LOWER(en.name) IN (${placeholders})
-        AND l.status = 'active'
-        ORDER BY CASE ${orderCases} END
-      `;
-
-      const listingResult = await pool.query(
-        listingQuery,
-        ensNames.map((name: string) => name.toLowerCase())
-      );
+      // Build search results using shared utility
+      const results = await buildSearchResults(ensNames);
 
       const currentPage = parseInt(page);
       const pageLimit = parseInt(limit);
@@ -415,12 +424,12 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
 
       const response: APIResponse<{
-        listings: any[];
+        results: any[];
         pagination: any;
       }> = {
         success: true,
         data: {
-          listings: listingResult.rows,
+          results,
           pagination: {
             page: currentPage,
             limit: pageLimit,
@@ -506,46 +515,28 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
       const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
-      // Build queries based on showAll
+      // Build queries based on showAll - just get the ENS names
       const countQuery = includeAllNames ? `
         SELECT COUNT(*)
         FROM ens_names en
         LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
         WHERE ${whereClause}
       ` : `
-        SELECT COUNT(*)
+        SELECT COUNT(DISTINCT en.id)
         FROM listings l
         JOIN ens_names en ON l.ens_name_id = en.id
         WHERE ${whereClause}
       `;
 
       const dataQuery = includeAllNames ? `
-        SELECT
-          l.id,
-          l.price_wei,
-          l.status,
-          l.created_at,
-          l.order_hash,
-          l.order_data,
-          l.seller_address,
-          en.name as ens_name,
-          en.token_id,
-          en.owner_address as current_owner,
-          en.expiry_date as name_expiry_date,
-          en.registration_date
+        SELECT DISTINCT en.name
         FROM ens_names en
         LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
         WHERE ${whereClause}
         ORDER BY en.name ASC
         LIMIT $${paramCount} OFFSET $${paramCount + 1}
       ` : `
-        SELECT
-          l.*,
-          en.name as ens_name,
-          en.token_id,
-          en.owner_address as current_owner,
-          en.expiry_date as name_expiry_date,
-          en.registration_date
+        SELECT DISTINCT en.name
         FROM listings l
         JOIN ens_names en ON l.ens_name_id = en.id
         WHERE ${whereClause}
@@ -565,12 +556,16 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         const totalPages = Math.ceil(total / limit);
         const currentPage = parseInt(page);
 
+        // Extract names and build results using shared utility
+        const ensNames = dataResult.rows.map((row: any) => row.name);
+        const results = await buildSearchResults(ensNames);
+
         fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
 
         return reply.send({
           success: true,
           data: {
-            listings: dataResult.rows,
+            results,
             pagination: {
               page: currentPage,
               limit: parseInt(limit),
