@@ -110,13 +110,19 @@ export function useAuth() {
     }
   }, [isHydrated, address, user, clearAuth]);
 
-  // Clear auth when wallet disconnects
+  // Clear auth when wallet disconnects (with delay to allow reconnection on refresh)
   useEffect(() => {
     if (!isHydrated) return;
 
     if (!isConnected && isAuthenticated) {
-      console.log('Wallet disconnected, clearing auth');
-      clearAuth();
+      // Wait 2 seconds to allow wallet to reconnect on page refresh
+      // If wallet reconnects, this effect will re-run and clear the timeout
+      const timeout = setTimeout(() => {
+        console.log('Wallet disconnected, clearing auth');
+        clearAuth();
+      }, 2000);
+
+      return () => clearTimeout(timeout);
     }
   }, [isHydrated, isConnected, isAuthenticated, clearAuth]);
 

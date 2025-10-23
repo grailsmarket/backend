@@ -9,22 +9,47 @@
 - [Rate Limiting](#rate-limiting)
 - [Endpoints](#endpoints)
   - [Health Check](#health-check)
+  - [Authentication (SIWE)](#authentication-siwe)
+  - [Users](#users)
   - [ENS Names](#ens-names)
   - [Search](#search)
   - [Listings](#listings)
   - [Offers](#offers)
   - [Orders](#orders)
+  - [Clubs](#clubs)
+  - [Votes](#votes)
+  - [Watchlist](#watchlist)
+  - [Notifications](#notifications)
+  - [Sales](#sales)
+  - [Profiles](#profiles)
+  - [Activity](#activity)
   - [WebSocket](#websocket)
 - [Advanced Search Features](#advanced-search-features)
 - [Examples](#examples)
 
 ## Overview
 
-The ENS Marketplace API provides a comprehensive interface for interacting with ENS (Ethereum Name Service) domain names, including listing, searching, making offers, and tracking transaction history. The API is built with performance and scalability in mind, featuring Elasticsearch-powered search, real-time WebSocket updates, and PostgreSQL-backed data persistence.
+The ENS Marketplace API provides a comprehensive interface for interacting with ENS (Ethereum Name Service) domain names, including listing, searching, making offers, and tracking transaction history. The API features:
+
+- **Authentication**: Sign-In with Ethereum (SIWE/EIP-4361) for wallet-based authentication
+- **Search**: Elasticsearch-powered search with advanced filtering
+- **Real-time Updates**: WebSocket support for live marketplace events
+- **Social Features**: Voting, watchlists, and clubs for categorizing names
+- **Analytics**: Activity feeds and comprehensive transaction history
 
 ## Authentication
 
-Currently, the API does not require authentication for read operations. Write operations will require authentication in future versions.
+The API uses **Sign-In with Ethereum (SIWE)** standard (EIP-4361) for authentication. This allows users to authenticate using their Ethereum wallet without passwords.
+
+### Authentication Flow:
+1. Request a nonce from `GET /api/v1/auth/nonce?address=0x...`
+2. Sign the SIWE message with the nonce using your wallet
+3. Submit the signed message to `POST /api/v1/auth/verify`
+4. Receive a JWT token to use in subsequent authenticated requests
+5. Include the token in the `Authorization` header: `Bearer <token>`
+
+### Protected Endpoints:
+Some endpoints require authentication and will return `401 Unauthorized` without a valid token.
 
 ## Base URL
 
@@ -71,6 +96,7 @@ Error responses:
 | 200 | Success |
 | 201 | Created |
 | 400 | Bad Request - Invalid input |
+| 401 | Unauthorized - Authentication required |
 | 404 | Not Found - Resource doesn't exist |
 | 429 | Too Many Requests - Rate limit exceeded |
 | 500 | Internal Server Error |
@@ -101,6 +127,155 @@ Check API health status and service connectivity.
   }
 }
 ```
+
+---
+
+### Authentication (SIWE)
+
+#### GET /api/v1/auth/nonce
+
+Request a cryptographic nonce for SIWE authentication.
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| address | string | Yes | Ethereum address (0x...) |
+
+**Example Request:**
+```bash
+GET /api/v1/auth/nonce?address=0x1234567890123456789012345678901234567890
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "nonce": "f4d3c2b1a09876543210",
+    "expiresAt": "2024-01-01T00:05:00.000Z"
+  },
+  "meta": {
+    "timestamp": "2024-01-01T00:00:00.000Z",
+    "version": "1.0.0"
+  }
+}
+```
+
+**Notes:**
+- Nonce expires in 5 minutes
+- Previous unused nonces for the address are automatically invalidated
+
+#### POST /api/v1/auth/verify
+
+Verify SIWE signature and create an authenticated session.
+
+**Request Body:**
+```json
+{
+  "message": "localhost:3000 wants you to sign in with your Ethereum account:\n0x123...",
+  "signature": "0xabc..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": 1,
+      "address": "0x1234567890123456789012345678901234567890",
+      "email": null,
+      "emailVerified": false,
+      "telegram": null,
+      "discord": null,
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "lastSignIn": "2024-01-01T00:00:00.000Z"
+    }
+  },
+  "meta": {
+    "timestamp": "2024-01-01T00:00:00.000Z",
+    "version": "1.0.0"
+  }
+}
+```
+
+#### GET /api/v1/auth/me
+
+Get current authenticated user information.
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "address": "0x1234567890123456789012345678901234567890",
+    "email": "user@example.com",
+    "emailVerified": true,
+    "telegram": "@username",
+    "discord": "username#1234",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z",
+    "lastSignIn": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+#### POST /api/v1/auth/logout
+
+Logout user (client should discard JWT token).
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Logged out successfully"
+  }
+}
+```
+
+---
+
+### Users
+
+#### PATCH /api/v1/users/me
+
+Update current user profile.
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "telegram": "@username",
+  "discord": "username#1234"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "address": "0x123...",
+    "email": "user@example.com",
+    "telegram": "@username",
+    "discord": "username#1234",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+---
 
 ### ENS Names
 
@@ -180,6 +355,9 @@ Get detailed information about a specific ENS name.
     "listing_status": "active",
     "listing_seller": "0x456...",
     "active_offers_count": 3,
+    "upvotes": 42,
+    "downvotes": 3,
+    "net_score": 39,
     "recent_transactions": [
       {
         "transaction_hash": "0xabc...",
@@ -240,28 +418,40 @@ Get transaction history for an ENS name.
 }
 ```
 
+---
+
 ### Search
 
 #### GET /api/v1/names/search
 
-Advanced search with Elasticsearch integration.
+Advanced search with Elasticsearch integration supporting comprehensive filtering.
 
 **Query Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| q | string | Yes | Search query |
+| q | string | No | Search query (default: "*" for all) |
 | page | number | No | Page number (default: 1) |
 | limit | number | No | Results per page (default: 20, max: 100) |
-| filters.minPrice | string | No | Minimum price in wei |
-| filters.maxPrice | string | No | Maximum price in wei |
-| filters.minLength | number | No | Minimum character length |
-| filters.maxLength | number | No | Maximum character length |
-| filters.hasNumbers | boolean | No | Filter names with numbers |
-| filters.hasEmoji | boolean | No | Filter names with emoji |
+| filters[minPrice] | string | No | Minimum price in wei |
+| filters[maxPrice] | string | No | Maximum price in wei |
+| filters[minLength] | number | No | Minimum character length |
+| filters[maxLength] | number | No | Maximum character length |
+| filters[hasNumbers] | boolean | No | Filter names with numbers |
+| filters[hasEmoji] | boolean | No | Filter names with emoji |
+| filters[clubs][] | string | No | Filter by club membership (can pass multiple) |
+| filters[isExpired] | boolean | No | Filter by expiration status |
+| filters[isGracePeriod] | boolean | No | Filter names in 90-day grace period |
+| filters[isPremiumPeriod] | boolean | No | Filter names in Dutch auction period |
+| filters[expiringWithinDays] | number | No | Filter names expiring within N days |
+| filters[hasSales] | boolean | No | Filter names with sales history |
+| filters[lastSoldAfter] | string | No | Filter by last sale date (ISO string) |
+| filters[lastSoldBefore] | string | No | Filter by last sale date (ISO string) |
+| filters[minDaysSinceLastSale] | number | No | Minimum days since last sale |
+| filters[maxDaysSinceLastSale] | number | No | Maximum days since last sale |
 
 **Example Request:**
 ```bash
-GET /api/v1/names/search?q=cool&filters[minLength]=4&filters[maxLength]=10&filters[hasNumbers]=false
+GET /api/v1/names/search?q=cool&filters[minLength]=4&filters[maxLength]=10&filters[hasNumbers]=false&filters[hasSales]=true
 ```
 
 **Response:**
@@ -297,6 +487,8 @@ GET /api/v1/names/search?q=cool&filters[minLength]=4&filters[maxLength]=10&filte
   }
 }
 ```
+
+---
 
 ### Listings
 
@@ -336,6 +528,7 @@ GET /api/v1/listings?page=1&limit=10&status=active&sort=price&order=asc
         "order_hash": "0xabc...",
         "order_data": {},
         "status": "active",
+        "source": "opensea",
         "created_at": "2024-01-01T00:00:00.000Z",
         "expires_at": "2024-12-31T23:59:59.000Z",
         "ens_name": "example.eth",
@@ -384,6 +577,7 @@ GET /api/v1/listings/name/vitalik.eth
       // Full Seaport order data
     },
     "status": "active",
+    "source": "opensea",
     "created_at": "2024-01-01T00:00:00.000Z",
     "expires_at": "2024-12-31T23:59:59.000Z",
     "ens_name": "vitalik.eth",
@@ -420,20 +614,42 @@ Get listing by ID.
 
 #### GET /api/v1/listings/search
 
-Search listings using Elasticsearch.
+Search listings using Elasticsearch with advanced filtering including expiration status and sales history.
 
 **Query Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| q | string | No | Search query for ENS names |
+| q | string | No | Search query for ENS names (default: "*") |
 | page | number | No | Page number (default: 1) |
 | limit | number | No | Results per page (default: 20) |
-| minPrice | string | No | Minimum price filter |
-| maxPrice | string | No | Maximum price filter |
+| filters[showAll] | boolean | No | Show all names or active listings only |
+| filters[minPrice] | string | No | Minimum price filter in wei |
+| filters[maxPrice] | string | No | Maximum price filter in wei |
+| filters[minLength] | number | No | Minimum name length |
+| filters[maxLength] | number | No | Maximum name length |
+| filters[hasNumbers] | boolean | No | Filter by presence of numbers |
+| filters[hasEmoji] | boolean | No | Filter by presence of emoji |
+| filters[clubs][] | string | No | Filter by club membership (can pass multiple) |
+| filters[isExpired] | boolean | No | Filter by expiration status |
+| filters[isGracePeriod] | boolean | No | Filter names in 90-day grace period |
+| filters[isPremiumPeriod] | boolean | No | Filter names in Dutch auction period |
+| filters[expiringWithinDays] | number | No | Filter names expiring within N days |
+| filters[hasSales] | boolean | No | Filter names with sales history |
+| filters[lastSoldAfter] | string | No | Filter by last sale date (ISO string) |
+| filters[lastSoldBefore] | string | No | Filter by last sale date (ISO string) |
+| filters[minDaysSinceLastSale] | number | No | Minimum days since last sale |
+| filters[maxDaysSinceLastSale] | number | No | Maximum days since last sale |
 
 **Example Request:**
 ```bash
-GET /api/v1/listings/search?q=cool&minPrice=100000000000000000&maxPrice=1000000000000000000
+# Find active names expiring within 30 days
+GET /api/v1/listings/search?q=&filters[showAll]=true&filters[isExpired]=false&filters[expiringWithinDays]=30
+
+# Find names in grace period with price range
+GET /api/v1/listings/search?q=cool&filters[isGracePeriod]=true&filters[minPrice]=100000000000000000&filters[maxPrice]=1000000000000000000
+
+# Find names in specific clubs
+GET /api/v1/listings/search?q=&filters[clubs][]=10k%20Club&filters[clubs][]=999%20Club
 ```
 
 **Response:**
@@ -441,14 +657,36 @@ GET /api/v1/listings/search?q=cool&minPrice=100000000000000000&maxPrice=10000000
 {
   "success": true,
   "data": {
-    "listings": [
+    "results": [
       {
-        "id": 1,
-        "price_wei": "500000000000000000",
-        "ens_name": "coolname.eth",
-        "seller_address": "0x123...",
-        "order_data": {},
-        "status": "active"
+        "name": "coolname.eth",
+        "token_id": "12345",
+        "owner": "0x123...",
+        "expiry_date": "2025-02-01T00:00:00.000Z",
+        "registration_date": "2024-01-01T00:00:00.000Z",
+        "metadata": {
+          "resolverAddress": "0x456..."
+        },
+        "clubs": ["10k Club"],
+        "has_numbers": false,
+        "has_emoji": false,
+        "listings": [
+          {
+            "id": 1,
+            "price": "500000000000000000",
+            "currency_address": "0x0000000000000000000000000000000000000000",
+            "status": "active",
+            "seller_address": "0x123...",
+            "order_hash": "0xabc...",
+            "order_data": {},
+            "expires_at": "2024-12-31T23:59:59.000Z",
+            "created_at": "2024-01-01T00:00:00.000Z",
+            "source": "opensea"
+          }
+        ],
+        "upvotes": 10,
+        "downvotes": 1,
+        "net_score": 9
       }
     ],
     "pagination": {
@@ -462,6 +700,12 @@ GET /api/v1/listings/search?q=cool&minPrice=100000000000000000&maxPrice=10000000
   }
 }
 ```
+
+**Notes:**
+- The search endpoint returns ENS names with nested `listings` arrays
+- Each result can have zero or more active listings
+- Expiration filters automatically exclude placeholder names without valid expiration dates
+- The `showAll` filter determines whether to return all names or only those with active listings
 
 #### POST /api/v1/listings
 
@@ -518,6 +762,8 @@ Cancel a listing.
 
 **Path Parameters:**
 - `id` - Listing ID
+
+---
 
 ### Offers
 
@@ -593,6 +839,8 @@ Update an offer.
 }
 ```
 
+---
+
 ### Orders
 
 #### POST /api/v1/orders/create
@@ -637,6 +885,838 @@ Cancel an order.
 **Path Parameters:**
 - `id` - Order ID or order hash
 
+---
+
+### Clubs
+
+Clubs are categories or collections of ENS names (e.g., "10k Club", "999 Club", "3-Digit Club").
+
+#### GET /api/v1/clubs
+
+Get all clubs with metadata.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "clubs": [
+      {
+        "name": "10k Club",
+        "description": "Premium numeric ENS names under 10,000",
+        "member_count": 1234,
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "999 Club",
+        "description": "Ultra-rare 3-digit ENS names",
+        "member_count": 567,
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "updated_at": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "total": 2
+  },
+  "meta": {
+    "timestamp": "2024-01-01T00:00:00.000Z",
+    "version": "1.0.0"
+  }
+}
+```
+
+#### GET /api/v1/clubs/{clubName}
+
+Get names in a specific club.
+
+**Path Parameters:**
+- `clubName` - Name of the club (e.g., "10k Club")
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "club": {
+      "name": "10k Club",
+      "description": "Premium numeric ENS names under 10,000",
+      "member_count": 1234,
+      "created_at": "2024-01-01T00:00:00.000Z"
+    },
+    "names": [
+      {
+        "name": "1234.eth",
+        "token_id": "12345",
+        "owner": "0x123...",
+        "expiry_date": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 1234,
+      "totalPages": 62,
+      "hasNext": true,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+---
+
+### Votes
+
+Community voting system for ENS names.
+
+#### POST /api/v1/votes
+
+Cast or update a vote for an ENS name.
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{
+  "ensName": "example.eth",
+  "vote": 1
+}
+```
+
+**Vote Values:**
+- `1` - Upvote
+- `0` - Remove vote
+- `-1` - Downvote
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "vote": {
+      "id": 1,
+      "ensNameId": 1,
+      "userId": 1,
+      "vote": 1,
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z"
+    },
+    "voteCounts": {
+      "upvotes": 42,
+      "downvotes": 3,
+      "netScore": 39
+    }
+  }
+}
+```
+
+#### GET /api/v1/votes/{ensName}
+
+Get vote statistics for an ENS name.
+
+**Path Parameters:**
+- `ensName` - ENS name (e.g., "example.eth")
+
+**Authentication:** Optional (returns user's vote if authenticated)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "ensName": "example.eth",
+    "upvotes": 42,
+    "downvotes": 3,
+    "netScore": 39,
+    "userVote": 1
+  }
+}
+```
+
+#### GET /api/v1/votes/leaderboard
+
+Get leaderboard of top-voted ENS names.
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20, max: 100)
+- `sortBy` - Sort by: `upvotes`, `downvotes`, `netScore` (default: `netScore`)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "leaderboard": [
+      {
+        "id": 1,
+        "name": "vitalik.eth",
+        "tokenId": "12345",
+        "ownerAddress": "0x123...",
+        "upvotes": 100,
+        "downvotes": 5,
+        "netScore": 95,
+        "activeListing": {
+          "id": 1,
+          "price_wei": "10000000000000000000",
+          "currency_address": "0x0000000000000000000000000000000000000000",
+          "status": "active",
+          "source": "opensea"
+        }
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 500,
+      "totalPages": 25,
+      "hasNext": true,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+---
+
+### Watchlist
+
+Authenticated users can maintain a watchlist of ENS names with customizable notification preferences.
+
+#### GET /api/v1/watchlist
+
+Get user's watchlist.
+
+**Authentication:** Required
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "watchlist": [
+      {
+        "id": 1,
+        "userId": 1,
+        "ensNameId": 1,
+        "ensName": "example.eth",
+        "notifyOnSale": true,
+        "notifyOnOffer": true,
+        "notifyOnListing": true,
+        "notifyOnPriceChange": false,
+        "addedAt": "2024-01-01T00:00:00.000Z",
+        "nameData": {
+          "name": "example.eth",
+          "tokenId": "12345",
+          "ownerAddress": "0x123...",
+          "expiryDate": "2025-01-01T00:00:00.000Z",
+          "hasActiveListing": true,
+          "activeListing": {
+            "id": 1,
+            "price_wei": "1000000000000000000",
+            "currency_address": "0x0000000000000000000000000000000000000000",
+            "source": "opensea",
+            "created_at": "2024-01-01T00:00:00.000Z"
+          }
+        }
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 10,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+#### POST /api/v1/watchlist
+
+Add ENS name to watchlist with notification preferences.
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{
+  "ensName": "example.eth",
+  "notifyOnSale": true,
+  "notifyOnOffer": true,
+  "notifyOnListing": true,
+  "notifyOnPriceChange": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "userId": 1,
+    "ensNameId": 1,
+    "ensName": "example.eth",
+    "notifyOnSale": true,
+    "notifyOnOffer": true,
+    "notifyOnListing": true,
+    "notifyOnPriceChange": false,
+    "addedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+#### PATCH /api/v1/watchlist/{id}
+
+Update watchlist notification preferences.
+
+**Authentication:** Required
+
+**Path Parameters:**
+- `id` - Watchlist entry ID
+
+**Request Body:**
+```json
+{
+  "notifyOnSale": false,
+  "notifyOnOffer": true,
+  "notifyOnListing": true,
+  "notifyOnPriceChange": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "notifyOnSale": false,
+    "notifyOnOffer": true,
+    "notifyOnListing": true,
+    "notifyOnPriceChange": true
+  }
+}
+```
+
+#### DELETE /api/v1/watchlist/{id}
+
+Remove ENS name from watchlist.
+
+**Authentication:** Required
+
+**Path Parameters:**
+- `id` - Watchlist entry ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Removed from watchlist"
+  }
+}
+```
+
+#### GET /api/v1/watchlist/search
+
+Search and filter user's watchlist using Elasticsearch with advanced filtering.
+
+**Authentication:** Required
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| q | string | No | Search query (default: "*") |
+| page | number | No | Page number (default: 1) |
+| limit | number | No | Results per page (default: 20, max: 100) |
+| filters[minPrice] | string | No | Minimum price filter in wei |
+| filters[maxPrice] | string | No | Maximum price filter in wei |
+| filters[minLength] | number | No | Minimum name length |
+| filters[maxLength] | number | No | Maximum name length |
+| filters[hasNumbers] | boolean | No | Filter by presence of numbers |
+| filters[hasEmoji] | boolean | No | Filter by presence of emoji |
+| filters[clubs][] | string | No | Filter by club membership (can pass multiple) |
+| filters[isExpired] | boolean | No | Filter by expiration status |
+| filters[isGracePeriod] | boolean | No | Filter names in 90-day grace period |
+| filters[isPremiumPeriod] | boolean | No | Filter names in Dutch auction period |
+| filters[expiringWithinDays] | number | No | Filter names expiring within N days |
+| filters[hasSales] | boolean | No | Filter names with sales history |
+| filters[lastSoldAfter] | string | No | Filter by last sale date (ISO string) |
+| filters[lastSoldBefore] | string | No | Filter by last sale date (ISO string) |
+| filters[minDaysSinceLastSale] | number | No | Minimum days since last sale |
+| filters[maxDaysSinceLastSale] | number | No | Maximum days since last sale |
+
+**Example Request:**
+```bash
+GET /api/v1/watchlist/search?q=cool&filters[minLength]=4&filters[maxLength]=8&filters[hasNumbers]=false
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "name": "coolname.eth",
+        "token_id": "12345",
+        "owner": "0x123...",
+        "expiry_date": "2025-01-01T00:00:00.000Z",
+        "has_numbers": false,
+        "has_emoji": false,
+        "clubs": ["10k Club"],
+        "listings": [
+          {
+            "id": 1,
+            "price": "1000000000000000000",
+            "status": "active",
+            "source": "opensea"
+          }
+        ],
+        "watchlist": {
+          "watchlistId": 1,
+          "notifyOnSale": true,
+          "notifyOnOffer": true,
+          "notifyOnListing": true,
+          "notifyOnPriceChange": false,
+          "addedAt": "2024-01-01T00:00:00.000Z"
+        }
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+---
+
+### Notifications
+
+User notification system for watchlist alerts and marketplace events.
+
+#### GET /api/v1/notifications
+
+Get user's notifications with optional filtering.
+
+**Authentication:** Required
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| page | number | 1 | Page number |
+| limit | number | 20 | Items per page (max 100) |
+| unreadOnly | boolean | false | Only show unread notifications |
+
+**Example Request:**
+```bash
+GET /api/v1/notifications?page=1&limit=20&unreadOnly=true
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "id": 1,
+        "type": "new-listing",
+        "ensName": "example.eth",
+        "ensTokenId": "12345",
+        "metadata": {
+          "priceWei": "1000000000000000000",
+          "sellerAddress": "0x123...",
+          "listingId": 1
+        },
+        "sentAt": "2024-01-01T00:00:00.000Z",
+        "readAt": null,
+        "isRead": false,
+        "createdAt": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+**Notification Types:**
+- `new-listing` - New listing created for watched name
+- `price-change` - Listing price changed
+- `sale` - Name was sold
+- `new-offer` - New offer received on watched name
+
+#### GET /api/v1/notifications/unread/count
+
+Get count of unread notifications.
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "unreadCount": 5
+  }
+}
+```
+
+#### PATCH /api/v1/notifications/:id/read
+
+Mark a specific notification as read.
+
+**Authentication:** Required
+
+**Path Parameters:**
+- `id` - Notification ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "readAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+#### PATCH /api/v1/notifications/read-all
+
+Mark all notifications as read.
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "markedCount": 5,
+    "message": "5 notification(s) marked as read"
+  }
+}
+```
+
+---
+
+### Sales
+
+Sales history and analytics endpoints.
+
+#### GET /api/v1/sales
+
+Get recent sales across the marketplace.
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sales": [
+      {
+        "id": 1,
+        "ensNameId": 1,
+        "ensName": "example.eth",
+        "fromAddress": "0x123...",
+        "toAddress": "0x456...",
+        "priceWei": "1000000000000000000",
+        "transactionHash": "0xabc...",
+        "blockNumber": 18000000,
+        "timestamp": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/v1/sales/name/:name
+
+Get sales history for a specific ENS name.
+
+**Path Parameters:**
+- `name` - ENS name (e.g., "vitalik.eth")
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+**Example Request:**
+```bash
+GET /api/v1/sales/name/vitalik.eth?page=1&limit=10
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sales": [
+      {
+        "id": 1,
+        "ensNameId": 1,
+        "ensName": "vitalik.eth",
+        "fromAddress": "0x123...",
+        "toAddress": "0x456...",
+        "priceWei": "5000000000000000000",
+        "transactionHash": "0xabc...",
+        "blockNumber": 18000000,
+        "timestamp": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/v1/sales/address/:address
+
+Get sales by Ethereum address (buyer or seller).
+
+**Path Parameters:**
+- `address` - Ethereum address (0x...)
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+- `type` - Filter type: `buyer`, `seller`, or `both` (default: "both")
+
+**Example Request:**
+```bash
+GET /api/v1/sales/address/0x123...?type=seller&page=1&limit=20
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sales": [
+      {
+        "id": 1,
+        "ensNameId": 1,
+        "ensName": "example.eth",
+        "fromAddress": "0x123...",
+        "toAddress": "0x456...",
+        "priceWei": "1000000000000000000",
+        "transactionHash": "0xabc...",
+        "timestamp": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### GET /api/v1/sales/:nameOrId/analytics
+
+Get sales analytics for an ENS name.
+
+**Path Parameters:**
+- `nameOrId` - ENS name or ens_name_id
+
+**Example Request:**
+```bash
+GET /api/v1/sales/vitalik.eth/analytics
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "totalSales": 5,
+    "totalVolume": "15000000000000000000",
+    "averagePrice": "3000000000000000000",
+    "highestSale": "5000000000000000000",
+    "lowestSale": "1000000000000000000",
+    "lastSaleDate": "2024-01-01T00:00:00.000Z",
+    "firstSaleDate": "2023-01-01T00:00:00.000Z"
+  }
+}
+```
+
+---
+
+### Profiles
+
+User and address profile endpoints with ENS data integration.
+
+#### GET /api/v1/profiles/:addressOrName
+
+Get comprehensive profile data for an Ethereum address or ENS name.
+
+**Path Parameters:**
+- `addressOrName` - Ethereum address (0x...) or ENS name (example.eth)
+
+**Example Requests:**
+```bash
+# By address
+GET /api/v1/profiles/0x1234567890123456789012345678901234567890
+
+# By ENS name
+GET /api/v1/profiles/vitalik.eth
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "address": "0x1234567890123456789012345678901234567890",
+    "primaryName": "vitalik.eth",
+    "ensRecords": {
+      "avatar": "https://example.com/avatar.png",
+      "name": "Vitalik Buterin",
+      "description": "Ethereum founder",
+      "email": "vitalik@ethereum.org",
+      "url": "https://vitalik.ca",
+      "location": "Singapore",
+      "twitter": "VitalikButerin",
+      "github": "vbuterin",
+      "header": "https://example.com/header.png",
+      "address": "0x123...",
+      "records": {
+        "com.twitter": "VitalikButerin",
+        "com.github": "vbuterin"
+      }
+    },
+    "ownedNames": [
+      {
+        "id": 1,
+        "token_id": "12345",
+        "name": "vitalik.eth",
+        "expiry_date": "2025-01-01T00:00:00.000Z",
+        "registration_date": "2020-01-01T00:00:00.000Z",
+        "created_at": "2024-01-01T00:00:00.000Z",
+        "is_listed": true,
+        "active_listing": {
+          "id": 1,
+          "price_wei": "10000000000000000000",
+          "currency_address": "0x0000000000000000000000000000000000000000",
+          "source": "opensea",
+          "created_at": "2024-01-01T00:00:00.000Z"
+        }
+      }
+    ],
+    "stats": {
+      "totalNames": 10,
+      "listedNames": 2,
+      "totalActivity": 50
+    }
+  }
+}
+```
+
+**Notes:**
+- If the input is an ENS name not in the database, the API will fetch it from The Graph
+- ENS records are fetched from the EFP (EthFollow Protocol) API
+- For names owned by the Name Wrapper contract, the API queries the contract to get the actual owner
+- Returns primary ENS name automatically resolved for addresses
+
+---
+
+### Activity
+
+Activity feed for ENS names and addresses.
+
+#### GET /api/v1/activity/{name}
+
+Get activity for a specific ENS name.
+
+**Path Parameters:**
+- `name` - ENS name (e.g., "example.eth")
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "activities": [
+      {
+        "id": 1,
+        "ensName": "example.eth",
+        "activityType": "sale",
+        "fromAddress": "0x123...",
+        "toAddress": "0x456...",
+        "price": "1000000000000000000",
+        "transactionHash": "0xabc...",
+        "timestamp": "2024-01-01T00:00:00.000Z"
+      },
+      {
+        "id": 2,
+        "ensName": "example.eth",
+        "activityType": "listing_created",
+        "sellerAddress": "0x123...",
+        "price": "1000000000000000000",
+        "timestamp": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 50,
+      "totalPages": 3,
+      "hasNext": true,
+      "hasPrev": false
+    }
+  }
+}
+```
+
+#### GET /api/v1/activity/address/{address}
+
+Get activity for a specific Ethereum address.
+
+**Path Parameters:**
+- `address` - Ethereum address (0x...)
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+
+#### GET /api/v1/activity
+
+Get global activity feed.
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+- `activityType` - Filter by type: `sale`, `transfer`, `listing_created`, `offer_made`, etc.
+
+---
+
 ### WebSocket
 
 #### WS /ws
@@ -677,6 +1757,8 @@ ws.send(JSON.stringify({
 }
 ```
 
+---
+
 ## Advanced Search Features
 
 The search endpoint leverages Elasticsearch to provide powerful search capabilities:
@@ -711,7 +1793,21 @@ GET /api/v1/names/search?q=*&filters[hasNumbers]=true&filters[minPrice]=10000000
 
 # Find emoji domains
 GET /api/v1/names/search?q=*&filters[hasEmoji]=true
+
+# Find names expiring soon in specific clubs
+GET /api/v1/names/search?q=&filters[expiringWithinDays]=30&filters[clubs][]=10k%20Club
 ```
+
+### Expiration Filtering
+
+The API provides granular control over ENS name expiration status:
+
+- **isExpired**: Filter by whether the name has expired
+- **isGracePeriod**: Names in the 90-day grace period after expiration
+- **isPremiumPeriod**: Names in the Dutch auction premium period
+- **expiringWithinDays**: Names expiring within a specified number of days
+
+**Important:** All expiration filters automatically exclude placeholder names (token IDs) that haven't been resolved to actual ENS names.
 
 ### Search Tags
 
@@ -730,23 +1826,54 @@ Search results are sorted by:
 2. **Listing Date** - Recently listed names appear higher
 3. **Price** - Can be configured in filters
 
+---
+
 ## Examples
 
-### Example 1: Find Available Premium Names
+### Example 1: Authenticate with SIWE
+
+```bash
+# Step 1: Request a nonce
+curl -X GET "http://localhost:3000/api/v1/auth/nonce?address=0x1234567890123456789012345678901234567890" \
+  -H "Accept: application/json"
+
+# Step 2: Sign the SIWE message with your wallet (using ethers.js or similar)
+# Step 3: Submit the signature
+curl -X POST "http://localhost:3000/api/v1/auth/verify" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "localhost:3000 wants you to sign in...",
+    "signature": "0xabc..."
+  }'
+
+# Step 4: Use the returned JWT token in subsequent requests
+curl -X GET "http://localhost:3000/api/v1/auth/me" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+### Example 2: Find Available Premium Names
 
 ```bash
 curl -X GET "http://localhost:3000/api/v1/names/search?q=*&filters[maxLength]=4&filters[hasNumbers]=false&filters[hasEmoji]=false" \
   -H "Accept: application/json"
 ```
 
-### Example 2: Get Listing History
+### Example 3: Search Names Expiring Soon
+
+```bash
+# Find active names expiring within 30 days
+curl -X GET "http://localhost:3000/api/v1/listings/search?q=&filters[showAll]=true&filters[isExpired]=false&filters[expiringWithinDays]=30" \
+  -H "Accept: application/json"
+```
+
+### Example 4: Get Listing History
 
 ```bash
 curl -X GET "http://localhost:3000/api/v1/names/vitalik.eth/history?page=1&limit=10" \
   -H "Accept: application/json"
 ```
 
-### Example 3: Create a Listing
+### Example 5: Create a Listing
 
 ```bash
 curl -X POST "http://localhost:3000/api/v1/listings" \
@@ -759,7 +1886,39 @@ curl -X POST "http://localhost:3000/api/v1/listings" \
   }'
 ```
 
-### Example 4: WebSocket Subscription
+### Example 6: Vote on an ENS Name
+
+```bash
+curl -X POST "http://localhost:3000/api/v1/votes" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "ensName": "vitalik.eth",
+    "vote": 1
+  }'
+```
+
+### Example 7: Add Name to Watchlist
+
+```bash
+curl -X POST "http://localhost:3000/api/v1/watchlist" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "ensName": "example.eth",
+    "notes": "Waiting for price to drop",
+    "targetPrice": "500000000000000000"
+  }'
+```
+
+### Example 8: Get Names in a Club
+
+```bash
+curl -X GET "http://localhost:3000/api/v1/clubs/10k%20Club?page=1&limit=20" \
+  -H "Accept: application/json"
+```
+
+### Example 9: WebSocket Subscription
 
 ```javascript
 const ws = new WebSocket('ws://localhost:3000/ws');
@@ -778,47 +1937,71 @@ ws.onmessage = (event) => {
 };
 ```
 
-### Example 5: Advanced Search with Multiple Filters
+### Example 10: Advanced Search with Multiple Filters
 
 ```bash
-# Find 4-5 letter alphabetic names under 1 ETH
-curl -X GET "http://localhost:3000/api/v1/names/search?q=*&filters[minLength]=4&filters[maxLength]=5&filters[hasNumbers]=false&filters[hasEmoji]=false&filters[maxPrice]=1000000000000000000" \
+# Find 4-5 letter alphabetic names under 1 ETH in grace period
+curl -X GET "http://localhost:3000/api/v1/listings/search?q=*&filters[minLength]=4&filters[maxLength]=5&filters[hasNumbers]=false&filters[hasEmoji]=false&filters[maxPrice]=1000000000000000000&filters[isGracePeriod]=true" \
   -H "Accept: application/json"
 ```
+
+---
+
+## Recent Updates
+
+### Version 1.2.0 (Current)
+- **Notifications System**: Complete notification endpoints for watchlist alerts
+- **Sales Analytics**: Sales history and analytics endpoints
+- **Profile System**: User/address profiles with ENS record integration
+- **Watchlist Search**: Advanced Elasticsearch-powered watchlist filtering
+- **Sales History Filters**: Filter by sales history, days since last sale
+- **Notification Preferences**: Granular control over watchlist notifications
+
+### Version 1.1.0
+- **Authentication**: Added SIWE-based authentication system
+- **Social Features**: Voting system and watchlists
+- **Clubs**: Category system for grouping ENS names
+- **Activity Feeds**: Comprehensive activity tracking
+- **Expiration Filters**: Advanced filtering by expiration status, grace period, and premium period
+- **Enhanced Search**: Added `showAll` and `clubs` filters to search endpoints
+
+### Breaking Changes
+- `/listings/search` now returns ENS name objects with nested `listings` arrays instead of flat listing objects
+- All protected endpoints now require JWT authentication via `Authorization: Bearer <token>` header
+- Watchlist schema changed to support notification preferences (notifyOnSale, notifyOnOffer, notifyOnListing, notifyOnPriceChange)
+
+---
 
 ## Future Enhancements
 
 The API is designed with extensibility in mind. Planned features include:
 
-1. **Authentication & Authorization**
-   - JWT-based authentication
-   - Role-based access control
-   - API key management
-
-2. **Advanced Analytics**
+1. **Advanced Analytics**
    - Price history charts
    - Market trends
    - Volume statistics
 
-3. **Bulk Operations**
+2. **Bulk Operations**
    - Batch listing creation
    - Bulk offer management
    - CSV import/export
 
-4. **Notification System**
-   - Email notifications
+3. **Notification System**
+   - Email notifications for watchlist price alerts
    - Push notifications
    - Webhook integrations
 
-5. **Advanced Filters**
+4. **Advanced Filters**
    - Dictionary word detection
    - Brandable name scoring
    - Similar name suggestions
 
-6. **Performance Optimizations**
+5. **Performance Optimizations**
    - GraphQL API endpoint
    - Response caching
    - Query optimization
+
+---
 
 ## Support
 

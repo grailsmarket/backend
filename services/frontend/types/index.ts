@@ -40,6 +40,11 @@ export interface ENSName {
   listing_seller?: string;
   active_offers_count?: number;
   recent_transactions?: Transaction[];
+  // Vote fields
+  upvotes?: number;
+  downvotes?: number;
+  net_score?: number;
+  user_vote?: number | null;
 }
 
 // Listing types
@@ -57,11 +62,13 @@ export interface Listing {
   updated_at: string;
   expires_at?: string;
   // Additional fields from ENS join
+  name?: string; // From search API
   ens_name?: string;
   token_id?: string;
   current_owner?: string;
   name_expiry_date?: string;
   registration_date?: string;
+  last_sale_date?: string;
 }
 
 // Offer types
@@ -122,4 +129,30 @@ export interface ConsiderationItem extends OfferItem {
 export interface SeaportOrder {
   parameters: SeaportOrderParameters;
   signature: string;
+}
+
+// Vote types
+export interface VoteStats {
+  ensName: string;
+  upvotes: number;
+  downvotes: number;
+  netScore: number;
+  userVote?: number | null;
+}
+
+export interface LeaderboardEntry {
+  id: number;
+  name: string;
+  tokenId: string;
+  ownerAddress: string;
+  upvotes: number;
+  downvotes: number;
+  netScore: number;
+  activeListing?: {
+    id: number;
+    price_wei: string;
+    currency_address: string;
+    status: string;
+    source: string;
+  };
 }

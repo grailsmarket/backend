@@ -4,6 +4,8 @@ import { getPostgresPool, APIResponse, ENSName, config } from '../../../shared/s
 import { searchNames } from '../services/search';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
+import { buildSearchResults, buildNameResult } from '../utils/response-builder';
+import { optionalAuth } from '../middleware/auth';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -23,7 +25,7 @@ const ListNamesQuerySchema = z.object({
 });
 
 const SearchNamesQuerySchema = z.object({
-  q: z.string().min(1),
+  q: z.string().default('*'),
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
   filters: z.object({
@@ -33,6 +35,11 @@ const SearchNamesQuerySchema = z.object({
     maxLength: z.coerce.number().optional(),
     hasNumbers: z.coerce.boolean().optional(),
     hasEmoji: z.coerce.boolean().optional(),
+    clubs: z.array(z.string()).optional(),
+    isExpired: z.coerce.boolean().optional(),
+    isGracePeriod: z.coerce.boolean().optional(),
+    isPremiumPeriod: z.coerce.boolean().optional(),
+    expiringWithinDays: z.coerce.number().optional(),
   }).optional(),
 });
 
@@ -170,13 +177,62 @@ export async function namesRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.get('/search', async (request, reply) => {
-    const query = SearchNamesQuerySchema.parse(request.query);
-    const results = await searchNames(query);
+  fastify.get('/search', { preHandler: optionalAuth }, async (request, reply) => {
+    // Transform flat query params into nested structure
+    const rawQuery = request.query as any;
+    const transformedQuery: any = {
+      q: rawQuery.q,
+      page: rawQuery.page,
+      limit: rawQuery.limit,
+      filters: {},
+    };
+
+    // Parse filters from bracket notation
+    for (const key in rawQuery) {
+      if (key.startsWith('filters[')) {
+        // Extract the filter name: filters[clubs][] -> clubs
+        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+        if (match) {
+          const filterName = match[1];
+          const isArray = match[2] === '[]';
+
+          if (isArray) {
+            // Handle array values: filters[clubs][]
+            if (!transformedQuery.filters[filterName]) {
+              transformedQuery.filters[filterName] = [];
+            }
+            const value = rawQuery[key];
+            if (Array.isArray(value)) {
+              transformedQuery.filters[filterName].push(...value);
+            } else {
+              transformedQuery.filters[filterName].push(value);
+            }
+          } else {
+            // Handle non-array values: filters[minPrice]
+            transformedQuery.filters[filterName] = rawQuery[key];
+          }
+        }
+      }
+    }
+
+    const query = SearchNamesQuerySchema.parse(transformedQuery);
+    const esResults = await searchNames(query);
+
+    // Extract names from Elasticsearch results
+    const ensNames = esResults.results.map((hit: any) => hit.name);
+
+    // Get user ID if authenticated
+    const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+    // Build consistent results using shared utility
+    const results = await buildSearchResults(ensNames, userId);
 
     const response: APIResponse = {
       success: true,
-      data: results,
+      data: {
+        results,
+        pagination: esResults.pagination,
+      },
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -186,7 +242,42 @@ export async function namesRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.get('/:name', async (request, reply) => {
+  fastify.get('/:name', { preHandler: optionalAuth }, async (request, reply) => {
+    const { name } = request.params as { name: string };
+
+    // Get user ID if authenticated
+    const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+    // Use buildNameResult helper to get name with vote data
+    const nameResult = await buildNameResult(name, userId);
+
+    if (!nameResult) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'NAME_NOT_FOUND',
+          message: `ENS name "${name}" not found`,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    const response: APIResponse = {
+      success: true,
+      data: nameResult,
+      meta: {
+        timestamp: new Date().toISOString(),
+        version: '1.0.0',
+      },
+    };
+
+    return reply.send(response);
+  });
+
+  // Legacy endpoint - keeping for backwards compatibility
+  fastify.get('/:name/legacy', async (request, reply) => {
     const { name } = request.params as { name: string };
 
     const query = `

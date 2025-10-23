@@ -15,10 +15,6 @@ const ConfigSchema = z.object({
     maxConnections: z.number().default(20),
     ssl: z.boolean().default(false),
   }),
-  redis: z.object({
-    url: z.string().default('redis://localhost:6379'),
-    ttl: z.number().default(3600),
-  }),
   elasticsearch: z.object({
     url: z.string().default('http://localhost:9200'),
     index: z.string().default('ens_names'),
@@ -72,10 +68,6 @@ const rawConfig = {
     url: process.env.DATABASE_URL,
     maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || '20'),
     ssl: process.env.DB_SSL === 'true',
-  },
-  redis: {
-    url: process.env.REDIS_URL,
-    ttl: parseInt(process.env.REDIS_TTL || '3600'),
   },
   elasticsearch: {
     url: process.env.ELASTICSEARCH_URL,

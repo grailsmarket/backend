@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { searchNames } from '../services/search';
+import { buildSearchResults } from '../utils/response-builder';
 
 const AddToWatchlistSchema = z.object({
   ensName: z.string().min(1),
@@ -21,6 +23,30 @@ const UpdateWatchlistSchema = z.object({
 const WatchlistQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
+});
+
+const SearchWatchlistQuerySchema = z.object({
+  q: z.string().default('*'),
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(100).default(20),
+  filters: z.object({
+    minPrice: z.string().optional(),
+    maxPrice: z.string().optional(),
+    minLength: z.coerce.number().optional(),
+    maxLength: z.coerce.number().optional(),
+    hasNumbers: z.coerce.boolean().optional(),
+    hasEmoji: z.coerce.boolean().optional(),
+    clubs: z.array(z.string()).optional(),
+    isExpired: z.coerce.boolean().optional(),
+    isGracePeriod: z.coerce.boolean().optional(),
+    isPremiumPeriod: z.coerce.boolean().optional(),
+    expiringWithinDays: z.coerce.number().optional(),
+    hasSales: z.coerce.boolean().optional(),
+    lastSoldAfter: z.string().optional(),
+    lastSoldBefore: z.string().optional(),
+    minDaysSinceLastSale: z.coerce.number().optional(),
+    maxDaysSinceLastSale: z.coerce.number().optional(),
+  }).optional(),
 });
 
 export async function watchlistRoutes(fastify: FastifyInstance) {
@@ -496,6 +522,179 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to update watchlist',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /api/v1/watchlist/search
+   * Search and filter user's watchlist using Elasticsearch
+   */
+  fastify.get('/search', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const userId = parseInt(request.user.sub);
+
+      // Transform flat query params into nested structure (same as /names/search)
+      const rawQuery = request.query as any;
+      const transformedQuery: any = {
+        q: rawQuery.q,
+        page: rawQuery.page,
+        limit: rawQuery.limit,
+        filters: {},
+      };
+
+      // Parse filters from bracket notation
+      for (const key in rawQuery) {
+        if (key.startsWith('filters[')) {
+          const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+          if (match) {
+            const filterName = match[1];
+            const isArray = match[2] === '[]';
+
+            if (isArray) {
+              if (!transformedQuery.filters[filterName]) {
+                transformedQuery.filters[filterName] = [];
+              }
+              const value = rawQuery[key];
+              if (Array.isArray(value)) {
+                transformedQuery.filters[filterName].push(...value);
+              } else {
+                transformedQuery.filters[filterName].push(value);
+              }
+            } else {
+              transformedQuery.filters[filterName] = rawQuery[key];
+            }
+          }
+        }
+      }
+
+      const query = SearchWatchlistQuerySchema.parse(transformedQuery);
+
+      // Get user's watchlist ENS names
+      const watchlistResult = await pool.query(
+        `SELECT en.name
+         FROM watchlist w
+         JOIN ens_names en ON w.ens_name_id = en.id
+         WHERE w.user_id = $1`,
+        [userId]
+      );
+
+      if (watchlistResult.rows.length === 0) {
+        // User has no watchlist items
+        return reply.send({
+          success: true,
+          data: {
+            results: [],
+            pagination: {
+              page: query.page,
+              limit: query.limit,
+              total: 0,
+              totalPages: 0,
+              hasNext: false,
+              hasPrev: false,
+            },
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+          },
+        });
+      }
+
+      const watchlistNames = watchlistResult.rows.map(row => row.name);
+
+      // Search within watchlist using Elasticsearch
+      const esResults = await searchNames({
+        q: query.q,
+        page: query.page,
+        limit: query.limit,
+        ensNames: watchlistNames, // Restrict search to watchlist items only
+        filters: query.filters,
+      });
+
+      // Extract names from Elasticsearch results
+      const resultNames = esResults.results.map((hit: any) => hit.name);
+
+      // Build results with watchlist metadata
+      const results = await buildSearchResults(resultNames, userId);
+
+      // Fetch watchlist preferences for each result
+      const watchlistPrefsResult = await pool.query(
+        `SELECT
+          w.ens_name_id,
+          w.notify_on_sale,
+          w.notify_on_offer,
+          w.notify_on_listing,
+          w.notify_on_price_change,
+          w.id as watchlist_id,
+          w.added_at,
+          en.name
+        FROM watchlist w
+        JOIN ens_names en ON w.ens_name_id = en.id
+        WHERE w.user_id = $1 AND en.name = ANY($2)`,
+        [userId, resultNames]
+      );
+
+      // Create a map of name -> watchlist data
+      const watchlistMap = new Map();
+      watchlistPrefsResult.rows.forEach(row => {
+        watchlistMap.set(row.name, {
+          watchlistId: row.watchlist_id,
+          notifyOnSale: row.notify_on_sale,
+          notifyOnOffer: row.notify_on_offer,
+          notifyOnListing: row.notify_on_listing,
+          notifyOnPriceChange: row.notify_on_price_change,
+          addedAt: row.added_at,
+        });
+      });
+
+      // Merge watchlist data with search results
+      const enrichedResults = results.map(result => {
+        const watchlistData = watchlistMap.get(result.name);
+        return {
+          ...result,
+          watchlist: watchlistData || null,
+        };
+      });
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: enrichedResults,
+          pagination: esResults.pagination,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error('Error searching watchlist:', error);
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to search watchlist',
         },
         meta: {
           timestamp: new Date().toISOString(),

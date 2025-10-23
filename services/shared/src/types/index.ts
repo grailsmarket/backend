@@ -41,6 +41,27 @@ export const OfferSchema = z.object({
   expiresAt: z.date().optional(),
 });
 
+export const SaleSchema = z.object({
+  id: z.number().optional(),
+  ensNameId: z.number(),
+  sellerAddress: z.string(),
+  buyerAddress: z.string(),
+  salePriceWei: z.string(),
+  currencyAddress: z.string().optional(),
+  listingId: z.number().optional(),
+  offerId: z.number().optional(),
+  transactionHash: z.string(),
+  blockNumber: z.bigint(),
+  orderHash: z.string().optional(),
+  orderData: z.record(z.any()).optional(),
+  source: z.enum(['opensea', 'grails', 'blur', 'looksrare', 'x2y2', 'other']),
+  platformFeeWei: z.string().optional(),
+  creatorFeeWei: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
+  saleDate: z.date(),
+  createdAt: z.date().optional(),
+});
+
 export const TransactionSchema = z.object({
   id: z.number().optional(),
   ensNameId: z.number(),
@@ -69,6 +90,7 @@ export const BlockchainEventSchema = z.object({
 export type ENSName = z.infer<typeof ENSNameSchema>;
 export type Listing = z.infer<typeof ListingSchema>;
 export type Offer = z.infer<typeof OfferSchema>;
+export type Sale = z.infer<typeof SaleSchema>;
 export type Transaction = z.infer<typeof TransactionSchema>;
 export type BlockchainEvent = z.infer<typeof BlockchainEventSchema>;
 

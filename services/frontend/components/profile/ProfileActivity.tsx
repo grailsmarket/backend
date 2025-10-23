@@ -48,7 +48,7 @@ export function ProfileActivity({ address, limit = 50 }: ProfileActivityProps) {
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.log('WebSocket error:', error);
       setWsConnected(false);
     };
 

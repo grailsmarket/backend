@@ -11,13 +11,16 @@ import { ListingInfo } from '@/components/listings/ListingInfo';
 import { OffersSection } from '@/components/offers/OffersSection';
 import { ActivityHistory } from '@/components/activity/ActivityHistory';
 import { AddToWatchlist } from '@/components/watchlist/AddToWatchlist';
+import { VoteButtons } from '@/components/votes/VoteButtons';
 import { useEnsName } from 'wagmi';
 import { mainnet } from 'wagmi/chains';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function NameProfile() {
   const params = useParams();
   const name = params.name as string;
   const { address } = useAccount();
+  const { token } = useAuth();
   const [nameData, setNameData] = useState<any>(null);
   const [ensRecords, setEnsRecords] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +31,7 @@ export default function NameProfile() {
 
   // Resolve owner's address to ENS name
   const { data: ownerEnsName } = useEnsName({
-    address: nameData?.owner_address as `0x${string}` | undefined,
+    address: nameData?.owner as `0x${string}` | undefined,
     chainId: mainnet.id,
   });
 
@@ -36,7 +39,18 @@ export default function NameProfile() {
   useEffect(() => {
     const fetchNameData = async () => {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/names/${name}`);
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+
+        // Include auth token if available to get user's vote
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/names/${name}`, {
+          headers,
+        });
         const data = await response.json();
 
         if (data.success) {
@@ -50,7 +64,7 @@ export default function NameProfile() {
     };
 
     fetchNameData();
-  }, [name]);
+  }, [name, token]);
 
   // Fetch ENS records from EFP API
   useEffect(() => {
@@ -112,20 +126,20 @@ export default function NameProfile() {
     );
   }
 
-  const isOwner = address && nameData.owner_address && address.toLowerCase() === nameData.owner_address.toLowerCase();
+  const isOwner = address && nameData.owner && address.toLowerCase() === nameData.owner.toLowerCase();
 
   // Check for database listing (could be Grails or OpenSea)
-  const hasDatabaseListing = !!(nameData.listing_status === 'active' && nameData.listing_price);
-  const databaseListing = hasDatabaseListing ? {
-    id: nameData.id,
-    price_wei: nameData.listing_price,
-    currency_address: nameData.listing_currency_address || '0x0000000000000000000000000000000000000000',
-    status: nameData.listing_status,
-    source: nameData.listing_source || 'grails', // Use the source from database
-    expires_at: nameData.listing_expires_at,
-    seller_address: nameData.listing_seller,
-    order_data: nameData.listing_order_data,
-    created_at: nameData.created_at,
+  const databaseListing = nameData.listings && nameData.listings.length > 0 && nameData.listings[0].status === 'active' ? {
+    id: nameData.listings[0].id,
+    price_wei: nameData.listings[0].price,
+    currency_address: nameData.listings[0].currency_address || '0x0000000000000000000000000000000000000000',
+    status: nameData.listings[0].status,
+    source: nameData.listings[0].source || 'grails',
+    expires_at: nameData.listings[0].expires_at,
+    seller_address: nameData.listings[0].seller_address,
+    order_data: nameData.listings[0].order_data,
+    order_hash: nameData.listings[0].order_hash,
+    created_at: nameData.listings[0].created_at,
   } : null;
 
   // Check for OpenSea listing from API (real-time)
@@ -171,7 +185,51 @@ export default function NameProfile() {
 
         {/* Content wrapper with relative positioning to appear above header */}
         <div className="relative z-10">
-        <h1 className="text-4xl font-bold text-white mb-4">{nameData.name}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+          <h1 className="text-4xl font-bold text-white">{nameData.name}</h1>
+
+          <div className="flex flex-col items-end gap-3">
+            {/* Vote Buttons and Watchers in same row */}
+            <div className="flex items-center gap-3">
+              {/* Watchers count with add to watchlist */}
+              <div className="flex items-center gap-2">
+                <AddToWatchlist ensName={nameData.name} />
+                <div className="flex items-center gap-2 px-4 py-2 bg-gray-900/50 rounded-lg border border-gray-700">
+                  <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <span className="text-gray-300 text-sm font-semibold">
+                    {nameData.watchers_count || 0} {nameData.watchers_count === 1 ? 'watcher' : 'watchers'}
+                  </span>
+                </div>
+              </div>
+
+              <VoteButtons
+                ensName={nameData.name}
+                initialUpvotes={nameData.upvotes || 0}
+                initialDownvotes={nameData.downvotes || 0}
+                initialNetScore={nameData.net_score || 0}
+                userVote={nameData.user_vote}
+              />
+            </div>
+
+            {/* Clubs below vote/watchers */}
+            {nameData.clubs && nameData.clubs.length > 0 && (
+              <div className="flex flex-wrap gap-2 justify-end">
+                {nameData.clubs.map((club: string) => (
+                  <Link
+                    key={club}
+                    href={`/clubs/${club}`}
+                    className="px-3 py-1 bg-purple-900/30 text-purple-400 text-sm font-semibold rounded-full border border-purple-700 hover:bg-purple-900/50 hover:border-purple-600 transition"
+                  >
+                    {club}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Token ID */}
         <div className="mb-4 pb-4 border-b border-gray-700">
@@ -187,12 +245,12 @@ export default function NameProfile() {
         <div className="mb-6">
           <div>
             <span className="text-gray-400">Owned by: </span>
-            {nameData.owner_address ? (
+            {nameData.owner ? (
               <Link
-                href={`/profile/${ownerEnsName || nameData.owner_address}`}
+                href={`/profile/${ownerEnsName || nameData.owner}`}
                 className="text-purple-400 hover:text-purple-300 font-semibold transition"
               >
-                {ownerEnsName || `${nameData.owner_address.slice(0, 6)}...${nameData.owner_address.slice(-4)}`}
+                {ownerEnsName || `${nameData.owner.slice(0, 6)}...${nameData.owner.slice(-4)}`}
               </Link>
             ) : (
               <span className="text-white font-mono text-sm">Unknown</span>
@@ -439,10 +497,6 @@ export default function NameProfile() {
           >
             View on ENS App
           </a>
-
-          <div className="flex-1">
-            <AddToWatchlist ensName={nameData.name} />
-          </div>
         </div>
       </div>
 
@@ -453,7 +507,7 @@ export default function NameProfile() {
           onClose={() => setIsOfferModalOpen(false)}
           ensName={nameData.name}
           tokenId={nameData.token_id}
-          currentOwner={nameData.owner_address}
+          currentOwner={nameData.owner}
         />
       )}
 

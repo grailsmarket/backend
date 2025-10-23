@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { getPostgresPool, getRedisClient, getElasticsearchClient } from '../../../shared/src';
+import { getPostgresPool, getElasticsearchClient } from '../../../shared/src';
 
 export async function healthRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request, reply) => {
@@ -13,7 +13,6 @@ export async function healthRoutes(fastify: FastifyInstance) {
   fastify.get('/ready', async (request, reply) => {
     const checks = {
       postgres: false,
-      redis: false,
       elasticsearch: false,
     };
 
@@ -23,14 +22,6 @@ export async function healthRoutes(fastify: FastifyInstance) {
       checks.postgres = true;
     } catch (error) {
       request.log.error({ error }, 'PostgreSQL health check failed');
-    }
-
-    try {
-      const redis = await getRedisClient();
-      await redis.ping();
-      checks.redis = true;
-    } catch (error) {
-      request.log.error({ error }, 'Redis health check failed');
     }
 
     try {

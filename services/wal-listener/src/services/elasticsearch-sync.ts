@@ -47,6 +47,7 @@ export class ElasticsearchSync {
                 has_emoji: { type: 'boolean' },
                 status: { type: 'keyword' },
                 tags: { type: 'keyword' },
+                clubs: { type: 'keyword' },
                 last_sale_price: {
                   type: 'scaled_float',
                   scaling_factor: 1000000000000000000,
@@ -57,6 +58,19 @@ export class ElasticsearchSync {
                   type: 'scaled_float',
                   scaling_factor: 1000000000000000000,
                 },
+                // Expiration state fields
+                is_expired: { type: 'boolean' },
+                is_grace_period: { type: 'boolean' },
+                is_premium_period: { type: 'boolean' },
+                days_until_expiry: { type: 'integer' },
+                premium_amount_eth: {
+                  type: 'scaled_float',
+                  scaling_factor: 1000000000000000000,
+                },
+                // Sale history fields
+                last_sale_date: { type: 'date' },
+                has_sales: { type: 'boolean' },
+                days_since_last_sale: { type: 'integer' },
               },
             },
             settings: {
@@ -132,7 +146,8 @@ export class ElasticsearchSync {
           en.*,
           l.price_wei as listing_price,
           l.status as listing_status,
-          l.created_at as listing_created_at
+          l.created_at as listing_created_at,
+          en.last_sale_date
         FROM ens_names en
         LEFT JOIN LATERAL (
           SELECT * FROM listings
@@ -192,67 +207,83 @@ export class ElasticsearchSync {
     logger.info('Starting bulk sync to Elasticsearch...');
 
     try {
-      const query = `
-        SELECT
-          en.*,
-          l.price_wei as listing_price,
-          l.status as listing_status,
-          l.created_at as listing_created_at,
-          COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
-          MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer
-        FROM ens_names en
-        LEFT JOIN LATERAL (
-          SELECT * FROM listings
-          WHERE listings.ens_name_id = en.id
-          AND listings.status = 'active'
-          ORDER BY created_at DESC
-          LIMIT 1
-        ) l ON true
-        LEFT JOIN offers o ON o.ens_name_id = en.id
-        GROUP BY en.id, l.price_wei, l.status, l.created_at
-      `;
+      // First, get total count
+      const countResult = await this.pool.query('SELECT COUNT(*) as total FROM ens_names');
+      const totalRows = parseInt(countResult.rows[0].total);
+      logger.info(`Total ENS names to sync: ${totalRows}`);
 
-      const result = await this.pool.query(query);
+      // Process in database-level batches to avoid loading everything into memory
+      const dbBatchSize = 100; // Fetch 100 rows from DB at a time (reduced for memory)
+      let processed = 0;
+      let offset = 0;
 
-      const bulkBody = [];
-      for (const row of result.rows) {
-        const enrichedData = await this.enrichENSNameData(row);
-        bulkBody.push({
-          index: {
-            _index: config.elasticsearch.index,
-            _id: row.id.toString(),
-          },
-        });
-        bulkBody.push(enrichedData);
-      }
+      while (offset < totalRows) {
+        // Query one batch at a time from database
+        const query = `
+          SELECT
+            en.*,
+            l.price_wei as listing_price,
+            l.status as listing_status,
+            l.created_at as listing_created_at,
+            COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
+            MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer,
+            en.last_sale_date
+          FROM ens_names en
+          LEFT JOIN LATERAL (
+            SELECT * FROM listings
+            WHERE listings.ens_name_id = en.id
+            AND listings.status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+          ) l ON true
+          LEFT JOIN offers o ON o.ens_name_id = en.id
+          GROUP BY en.id, l.price_wei, l.status, l.created_at
+          ORDER BY en.id
+          LIMIT $1 OFFSET $2
+        `;
 
-      if (bulkBody.length > 0) {
-        logger.info(`Preparing to bulk index ${result.rows.length} ENS names...`);
+        const result = await this.pool.query(query, [dbBatchSize, offset]);
 
-        // Process in smaller batches to avoid timeouts
-        const batchSize = 1000; // Process 500 documents at a time (1000 bulk operations)
-        for (let i = 0; i < bulkBody.length; i += batchSize) {
-          const batch = bulkBody.slice(i, Math.min(i + batchSize, bulkBody.length));
-          const docCount = batch.length / 2; // Each document has 2 entries in bulk body
-
-          logger.info(`Processing batch: ${docCount} documents...`);
-
-          const response = await this.esClient.bulk({
-            body: batch,
-            timeout: '60s', // Increase timeout for large batches
-          });
-
-          if (response.errors) {
-            logger.error('Bulk indexing had errors:', JSON.stringify(response.items?.filter((item: any) => item.index?.error), null, 2));
-          } else {
-            logger.info(`Successfully indexed batch of ${docCount} documents`);
-          }
+        if (result.rows.length === 0) {
+          break; // No more rows
         }
 
-        logger.info(`Completed bulk indexing of ${result.rows.length} ENS names`);
-      } else {
-        logger.info('No ENS names to sync');
+        // Build bulk body for this batch only
+        const bulkBody = [];
+        for (const row of result.rows) {
+          const enrichedData = await this.enrichENSNameData(row);
+          bulkBody.push({
+            index: {
+              _index: config.elasticsearch.index,
+              _id: row.id.toString(),
+            },
+          });
+          bulkBody.push(enrichedData);
+        }
+
+        // Send this batch to Elasticsearch
+        logger.info(`Processing batch: ${result.rows.length} documents (${processed + 1}-${processed + result.rows.length} of ${totalRows})...`);
+
+        const response = await this.esClient.bulk({
+          body: bulkBody,
+          timeout: '60s',
+        });
+
+        if (response.errors) {
+          const errors = response.items?.filter((item: any) => item.index?.error);
+          logger.error(`Bulk indexing had ${errors?.length || 0} errors:`, JSON.stringify(errors?.slice(0, 5), null, 2));
+        } else {
+          logger.info(`Successfully indexed batch of ${result.rows.length} documents`);
+        }
+
+        processed += result.rows.length;
+        offset += dbBatchSize;
+
+        // Delay to allow garbage collection and prevent overwhelming the system
+        await new Promise(resolve => setTimeout(resolve, 250));
       }
+
+      logger.info(`Completed bulk indexing of ${processed} ENS names`);
     } catch (error: any) {
       logger.error(`Failed to perform bulk sync: ${error.message || error}`);
       if (error.meta?.body?.error) {
@@ -267,6 +298,8 @@ export class ElasticsearchSync {
 
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
+    const expirationState = this.calculateExpirationState(data.expiry_date);
+    const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
     return {
       name,
@@ -280,10 +313,21 @@ export class ElasticsearchSync {
       has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
       status: data.listing_status || 'unlisted',
       tags: this.generateTags(name),
+      clubs: data.clubs || [],
       last_sale_price: data.last_sale_price,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
       highest_offer: data.highest_offer || null,
+      // Expiration state fields
+      is_expired: expirationState.isExpired,
+      is_grace_period: expirationState.isGracePeriod,
+      is_premium_period: expirationState.isPremiumPeriod,
+      days_until_expiry: expirationState.daysUntilExpiry,
+      premium_amount_eth: expirationState.premiumAmountEth,
+      // Sale history fields
+      last_sale_date: saleHistoryState.lastSaleDate,
+      has_sales: saleHistoryState.hasSales,
+      days_since_last_sale: saleHistoryState.daysSinceLastSale,
     };
   }
 
@@ -301,5 +345,117 @@ export class ElasticsearchSync {
     }
 
     return tags;
+  }
+
+  /**
+   * Calculate expiration state for an ENS name
+   * - Grace Period: 90 days after expiry where owner can renew
+   * - Premium Period: 21 days after grace period with declining Dutch auction
+   * - Premium starts at ~$100M and declines exponentially to $0
+   */
+  private calculateExpirationState(expiryDate: string | null): {
+    isExpired: boolean;
+    isGracePeriod: boolean;
+    isPremiumPeriod: boolean;
+    daysUntilExpiry: number;
+    premiumAmountEth: number | null;
+  } {
+    if (!expiryDate) {
+      return {
+        isExpired: false,
+        isGracePeriod: false,
+        isPremiumPeriod: false,
+        daysUntilExpiry: 999999,
+        premiumAmountEth: null,
+      };
+    }
+
+    const now = new Date();
+    const expiry = new Date(expiryDate);
+    const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
+    const daysUntilExpiry = -daysSinceExpiry;
+
+    // Not expired yet
+    if (daysSinceExpiry < 0) {
+      return {
+        isExpired: false,
+        isGracePeriod: false,
+        isPremiumPeriod: false,
+        daysUntilExpiry,
+        premiumAmountEth: null,
+      };
+    }
+
+    // Grace period: 0-90 days after expiry
+    if (daysSinceExpiry <= 90) {
+      return {
+        isExpired: true,
+        isGracePeriod: true,
+        isPremiumPeriod: false,
+        daysUntilExpiry,
+        premiumAmountEth: null,
+      };
+    }
+
+    // Premium period: 91-111 days after expiry (21 days)
+    const daysIntoPremium = daysSinceExpiry - 90;
+    if (daysIntoPremium <= 21) {
+      // Calculate premium using exponential decay
+      // Premium starts at $100,000,000 and decays to $0 over 21 days
+      // Using exponential decay: premium = initialPremium * e^(-k * days)
+      // Where k is chosen so that premium ≈ 0 at day 21
+      const initialPremiumUSD = 100000000; // $100M
+      const ethPriceUSD = 2000; // Approximate ETH price (could be fetched from oracle)
+      const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
+
+      // Decay constant: ln(10000) / 21 ≈ 0.438 (drops to 1/10000th by day 21)
+      const k = Math.log(10000) / 21;
+      const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
+
+      return {
+        isExpired: true,
+        isGracePeriod: false,
+        isPremiumPeriod: true,
+        daysUntilExpiry,
+        premiumAmountEth,
+      };
+    }
+
+    // After premium period: fully available for normal registration
+    return {
+      isExpired: true,
+      isGracePeriod: false,
+      isPremiumPeriod: false,
+      daysUntilExpiry,
+      premiumAmountEth: null,
+    };
+  }
+
+  /**
+   * Calculate sale history state for an ENS name
+   * Returns whether the name has been sold and how long ago
+   */
+  private calculateSaleHistoryState(lastSaleDate: string | null): {
+    lastSaleDate: string | null;
+    hasSales: boolean;
+    daysSinceLastSale: number | null;
+  } {
+    if (!lastSaleDate) {
+      return {
+        lastSaleDate: null,
+        hasSales: false,
+        daysSinceLastSale: null,
+      };
+    }
+
+    const now = new Date();
+    const saleDate = new Date(lastSaleDate);
+    const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    return {
+      lastSaleDate,
+      hasSales: true,
+      daysSinceLastSale,
+    };
   }
 }

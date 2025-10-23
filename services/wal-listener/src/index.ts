@@ -26,7 +26,7 @@ async function start() {
   try {
     await esSync.createIndex();
 
-    // Start the WAL listener (it will handle CDC setup internally)
+    // Start the WAL listener FIRST (so it can process real-time changes)
     await walListener.start();
 
     logger.info('WAL listener started successfully');
