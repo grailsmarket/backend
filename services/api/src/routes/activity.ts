@@ -7,7 +7,7 @@ interface ActivityQueryParams {
   name?: string;
   limit?: string;
   offset?: string;
-  event_type?: string;
+  event_type?: string | string[];
   platform?: string;
   actor_address?: string;
 }
@@ -45,9 +45,11 @@ export async function activityRoutes(fastify: FastifyInstance) {
       let paramCount = 1;
 
       if (event_type) {
-        paramCount++;
-        conditions.push(`event_type = $${paramCount}`);
-        params.push(event_type);
+        const eventTypes = Array.isArray(event_type) ? event_type : [event_type];
+        const placeholders = eventTypes.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+        paramCount += eventTypes.length;
+        conditions.push(`event_type IN (${placeholders})`);
+        params.push(...eventTypes);
       }
 
       if (platform) {
@@ -68,7 +70,19 @@ export async function activityRoutes(fastify: FastifyInstance) {
       // Get activity history with ENS name details
       const query = `
         SELECT
-          ah.*,
+          ah.id,
+          ah.ens_name_id,
+          ah.event_type,
+          ah.actor_address,
+          ah.counterparty_address,
+          ah.platform,
+          ah.chain_id,
+          ah.price_wei,
+          ah.currency_address,
+          ah.transaction_hash,
+          ah.block_number,
+          ah.metadata,
+          timezone('UTC', ah.created_at) as created_at,
           en.name,
           en.token_id
         FROM activity_history ah
@@ -125,9 +139,11 @@ export async function activityRoutes(fastify: FastifyInstance) {
       let paramCount = 1;
 
       if (event_type) {
-        paramCount++;
-        conditions.push(`event_type = $${paramCount}`);
-        params.push(event_type);
+        const eventTypes = Array.isArray(event_type) ? event_type : [event_type];
+        const placeholders = eventTypes.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+        paramCount += eventTypes.length;
+        conditions.push(`event_type IN (${placeholders})`);
+        params.push(...eventTypes);
       }
 
       if (platform) {
@@ -148,7 +164,19 @@ export async function activityRoutes(fastify: FastifyInstance) {
       // Get activity history with ENS name details
       const query = `
         SELECT
-          ah.*,
+          ah.id,
+          ah.ens_name_id,
+          ah.event_type,
+          ah.actor_address,
+          ah.counterparty_address,
+          ah.platform,
+          ah.chain_id,
+          ah.price_wei,
+          ah.currency_address,
+          ah.transaction_hash,
+          ah.block_number,
+          ah.metadata,
+          timezone('UTC', ah.created_at) as created_at,
           en.name,
           en.token_id
         FROM activity_history ah
@@ -204,9 +232,11 @@ export async function activityRoutes(fastify: FastifyInstance) {
       let paramCount = 0;
 
       if (event_type) {
-        paramCount++;
-        conditions.push(`event_type = $${paramCount}`);
-        params.push(event_type);
+        const eventTypes = Array.isArray(event_type) ? event_type : [event_type];
+        const placeholders = eventTypes.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+        paramCount += eventTypes.length;
+        conditions.push(`event_type IN (${placeholders})`);
+        params.push(...eventTypes);
       }
 
       if (platform) {
@@ -227,7 +257,19 @@ export async function activityRoutes(fastify: FastifyInstance) {
       // Get activity history with ENS name details
       const query = `
         SELECT
-          ah.*,
+          ah.id,
+          ah.ens_name_id,
+          ah.event_type,
+          ah.actor_address,
+          ah.counterparty_address,
+          ah.platform,
+          ah.chain_id,
+          ah.price_wei,
+          ah.currency_address,
+          ah.transaction_hash,
+          ah.block_number,
+          ah.metadata,
+          timezone('UTC', ah.created_at) as created_at,
           en.name,
           en.token_id
         FROM activity_history ah

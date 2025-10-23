@@ -21,6 +21,20 @@ export function ListingCard({ listing }: ListingCardProps) {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
+  const formatRelativeTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+    return `${Math.floor(diffDays / 365)} years ago`;
+  };
+
   const formatName = (name: string | null, tokenId: string) => {
     // If no name or it's a placeholder token-XXX, show formatted token ID
     if (!name || name.startsWith('token-')) {
@@ -36,8 +50,11 @@ export function ListingCard({ listing }: ListingCardProps) {
   const isListed = listing.status === 'active' && listing.price_wei;
   const hasOwner = listing.current_owner && listing.current_owner !== '0x0000000000000000000000000000000000000000';
 
+  // Use 'name' from search API or 'ens_name' from listings API
+  const displayName = listing.name || listing.ens_name;
+
   // Route to listing page if listed, profile page if not
-  const href = `/names/${listing.ens_name}`;
+  const href = `/names/${displayName}`;
 
   return (
     <Link href={href}>
@@ -45,7 +62,7 @@ export function ListingCard({ listing }: ListingCardProps) {
         <div className="mb-4">
           <div className="flex items-start justify-between mb-2">
             <h3 className="text-xl font-bold text-white">
-              {formatName(listing.ens_name, listing.token_id)}
+              {formatName(displayName, listing.token_id)}
             </h3>
             {listing.source && (
               <span className={`inline-block px-2 py-1 text-xs rounded font-semibold ${
@@ -65,6 +82,11 @@ export function ListingCard({ listing }: ListingCardProps) {
           {!isListed && hasOwner && (
             <p className="text-sm text-gray-400">
               Owner: {truncateAddress(listing.current_owner!)}
+            </p>
+          )}
+          {listing.last_sale_date && (
+            <p className="text-xs text-gray-500 mt-1">
+              Last sold: {formatRelativeTime(listing.last_sale_date)}
             </p>
           )}
         </div>

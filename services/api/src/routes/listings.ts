@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, getElasticsearchClient, APIResponse, Listing } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
+import { optionalAuth } from '../middleware/auth';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -95,7 +96,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.token_id,
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
-        en.registration_date
+        en.registration_date,
+        en.last_sale_date
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       ${whereClause}
@@ -156,7 +158,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.token_id,
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
-        en.registration_date
+        en.registration_date,
+        en.last_sale_date
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE LOWER(en.name) = LOWER($1)
@@ -202,7 +205,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.token_id,
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
-        en.registration_date
+        en.registration_date,
+        en.last_sale_date
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE l.id = $1
@@ -236,7 +240,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // Search listings using Elasticsearch (with PostgreSQL fallback)
-  fastify.get('/search', async (request, reply) => {
+  fastify.get('/search', { preHandler: optionalAuth }, async (request, reply) => {
     // Transform flat query params into nested structure (same as /names/search)
     const rawQuery = request.query as any;
     const transformedQuery: any = {
@@ -280,11 +284,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const { q, page, limit, filters } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showAll = false, clubs } = filters;
+    const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showAll = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale } = filters;
     const from = (page - 1) * limit;
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showAll=${showAll}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}`);
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showAll=${showAll}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, sortBy=${sortBy}`);
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     let usePostgresql = false;
@@ -355,6 +359,97 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       filter.push({ terms: { clubs: clubs } });
     }
 
+    // Expiration filters - exclude names without expiry dates (placeholders)
+    if (isExpired !== undefined) {
+      filter.push({ term: { is_expired: isExpired === 'true' || isExpired === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (isGracePeriod !== undefined) {
+      filter.push({ term: { is_grace_period: isGracePeriod === 'true' || isGracePeriod === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (isPremiumPeriod !== undefined) {
+      filter.push({ term: { is_premium_period: isPremiumPeriod === 'true' || isPremiumPeriod === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (expiringWithinDays !== undefined) {
+      // Filter for names expiring within X days (positive number, not yet expired)
+      // Only include names with valid expiry dates
+      filter.push({
+        bool: {
+          must: [
+            { exists: { field: 'expiry_date' } },
+            {
+              range: {
+                days_until_expiry: {
+                  gte: 0,
+                  lte: parseInt(expiringWithinDays),
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    // Sale history filters
+    if (hasSales !== undefined) {
+      filter.push({ term: { has_sales: hasSales === 'true' || hasSales === true } });
+    }
+
+    if (lastSoldAfter) {
+      filter.push({
+        range: {
+          last_sale_date: {
+            gte: lastSoldAfter,
+          },
+        },
+      });
+    }
+
+    if (lastSoldBefore) {
+      filter.push({
+        range: {
+          last_sale_date: {
+            lte: lastSoldBefore,
+          },
+        },
+      });
+    }
+
+    if (minDaysSinceLastSale !== undefined) {
+      filter.push({
+        range: {
+          days_since_last_sale: {
+            gte: parseInt(minDaysSinceLastSale as any),
+          },
+        },
+      });
+    }
+
+    if (maxDaysSinceLastSale !== undefined) {
+      filter.push({
+        range: {
+          days_since_last_sale: {
+            lte: parseInt(maxDaysSinceLastSale as any),
+          },
+        },
+      });
+    }
+
+    // Build sort array
+    const sort: any[] = [];
+    if (sortBy) {
+      const order = sortOrder || 'desc';
+      sort.push({ [sortBy]: { order } });
+    } else {
+      sort.push({ _score: { order: 'desc' } });
+      sort.push({ listing_created_at: { order: 'desc' } });
+    }
+
     const esQuery = {
       index: 'ens_names',
       body: {
@@ -367,12 +462,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         min_score: q ? 20.0 : undefined, // Only filter by score if there's a text query
         from,
         size: limit,
-        sort: q ? [
-          { _score: { order: 'desc' } }, // Sort by relevance first when searching
-          { listing_created_at: { order: 'desc' } },
-        ] : [
-          { listing_created_at: { order: 'desc' } }, // Sort by date when not searching
-        ],
+        sort,
       },
     };
 
@@ -413,8 +503,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // Get user ID if authenticated
+      const userId = request.user ? parseInt(request.user.sub) : undefined;
+
       // Build search results using shared utility
-      const results = await buildSearchResults(ensNames);
+      const results = await buildSearchResults(ensNames, userId);
 
       const currentPage = parseInt(page);
       const pageLimit = parseInt(limit);
@@ -556,9 +649,12 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         const totalPages = Math.ceil(total / limit);
         const currentPage = parseInt(page);
 
+        // Get user ID if authenticated
+        const userId = request.user ? parseInt(request.user.sub) : undefined;
+
         // Extract names and build results using shared utility
         const ensNames = dataResult.rows.map((row: any) => row.name);
-        const results = await buildSearchResults(ensNames);
+        const results = await buildSearchResults(ensNames, userId);
 
         fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
 

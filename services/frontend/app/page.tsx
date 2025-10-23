@@ -29,8 +29,8 @@ export default function Home() {
     localStorage.setItem('marketplace-view', newView);
   };
 
-  // Only use search endpoint if there's a text query, length filters, character filters, clubs filter, or showAll is enabled
-  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0));
+  // Only use search endpoint if there's a text query, length filters, character filters, clubs filter, sale filters, or showAll is enabled
+  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale);
 
   // Use search if text/length/character/clubs filters are active, otherwise use regular listings with price filters
   const { data: searchData, isLoading: searchLoading, error: searchError } = useSearchListings(
@@ -46,6 +46,13 @@ export default function Home() {
       hasNumbers: searchFilters.hasNumbers,
       showAll: searchFilters.showAll,
       clubs: searchFilters.clubs,
+      isExpired: searchFilters.isExpired,
+      isGracePeriod: searchFilters.isGracePeriod,
+      isPremiumPeriod: searchFilters.isPremiumPeriod,
+      expiringWithinDays: searchFilters.expiringWithinDays,
+      hasSales: searchFilters.hasSales,
+      minDaysSinceLastSale: searchFilters.minDaysSinceLastSale,
+      maxDaysSinceLastSale: searchFilters.maxDaysSinceLastSale,
     },
     useSearchEndpoint
   );
@@ -67,7 +74,7 @@ export default function Home() {
   const isLoading = useSearchEndpoint ? searchLoading : listingsLoading;
   const error = useSearchEndpoint ? searchError : listingsError;
 
-  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0));
+  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale);
 
   const handleSearch = (filters: SearchFilters) => {
     setSearchFilters(filters);

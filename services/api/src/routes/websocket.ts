@@ -12,6 +12,7 @@ interface ActivityWSClient {
   ws: WebSocket;
   addressSubscriptions: Set<string>; // Set of addresses to watch
   nameSubscriptions: Set<string>;     // Set of ENS names to watch
+  subscribeAll: boolean;              // Subscribe to all activity
 }
 
 const clients = new Map<string, WSClient>();
@@ -97,6 +98,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       ws: connection.socket as WebSocket,
       addressSubscriptions: new Set(),
       nameSubscriptions: new Set(),
+      subscribeAll: false,
     };
 
     activityClients.set(clientId, client);
@@ -196,6 +198,24 @@ export function broadcastToAll(data: any) {
 
 function handleActivityMessage(client: ActivityWSClient, data: any) {
   switch (data.type) {
+    case 'subscribe_all':
+      client.subscribeAll = true;
+      client.ws.send(JSON.stringify({
+        type: 'subscribed',
+        subscription_type: 'all',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
+    case 'unsubscribe_all':
+      client.subscribeAll = false;
+      client.ws.send(JSON.stringify({
+        type: 'unsubscribed',
+        subscription_type: 'all',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
     case 'subscribe_address':
       if (data.address) {
         const normalizedAddress = data.address.toLowerCase();
@@ -275,6 +295,11 @@ export function broadcastActivityEvent(activityData: any) {
 
   activityClients.forEach(client => {
     let shouldSend = false;
+
+    // Check if client is subscribed to all activity
+    if (client.subscribeAll) {
+      shouldSend = true;
+    }
 
     // Check if client is subscribed to the actor address
     if (actor_address && client.addressSubscriptions.has(actor_address.toLowerCase())) {

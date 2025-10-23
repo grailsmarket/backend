@@ -12,6 +12,13 @@ export interface SearchFilters {
   hasNumbers?: boolean;
   showAll?: boolean; // true = all names, false/undefined = active listings only
   clubs?: string[]; // Filter by clubs
+  isExpired?: boolean;
+  isGracePeriod?: boolean;
+  isPremiumPeriod?: boolean;
+  expiringWithinDays?: number;
+  hasSales?: boolean;
+  minDaysSinceLastSale?: number;
+  maxDaysSinceLastSale?: number;
 }
 
 interface Club {
@@ -39,6 +46,15 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
   const [clubs, setClubs] = useState<Club[]>([]);
   const [clubsLoading, setClubsLoading] = useState(true);
   const [showClubsFilter, setShowClubsFilter] = useState(false);
+  const [showExpirationFilter, setShowExpirationFilter] = useState(false);
+  const [isExpired, setIsExpired] = useState<boolean | undefined>(undefined);
+  const [isGracePeriod, setIsGracePeriod] = useState<boolean | undefined>(undefined);
+  const [isPremiumPeriod, setIsPremiumPeriod] = useState<boolean | undefined>(undefined);
+  const [expiringWithinDays, setExpiringWithinDays] = useState<number | ''>('');
+  const [showSaleHistoryFilter, setShowSaleHistoryFilter] = useState(false);
+  const [hasSales, setHasSales] = useState<boolean | undefined>(undefined);
+  const [minDaysSinceLastSale, setMinDaysSinceLastSale] = useState<number | ''>('');
+  const [maxDaysSinceLastSale, setMaxDaysSinceLastSale] = useState<number | ''>('');
 
   // Fetch clubs on mount
   useEffect(() => {
@@ -69,6 +85,13 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       hasNumbers,
       showAll,
       clubs: selectedClubs.length > 0 ? selectedClubs : undefined,
+      isExpired,
+      isGracePeriod,
+      isPremiumPeriod,
+      expiringWithinDays: expiringWithinDays || undefined,
+      hasSales,
+      minDaysSinceLastSale: minDaysSinceLastSale || undefined,
+      maxDaysSinceLastSale: maxDaysSinceLastSale || undefined,
     };
     onSearch(filters);
   };
@@ -83,6 +106,13 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
     setHasNumbers(undefined);
     setShowAll(true);
     setSelectedClubs([]);
+    setIsExpired(undefined);
+    setIsGracePeriod(undefined);
+    setIsPremiumPeriod(undefined);
+    setExpiringWithinDays('');
+    setHasSales(undefined);
+    setMinDaysSinceLastSale('');
+    setMaxDaysSinceLastSale('');
     onSearch({});
   };
 
@@ -212,32 +242,24 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
           Character Types
         </label>
         <div className="space-y-2">
-          <label className="flex items-center space-x-3 cursor-pointer">
-            <div className="relative">
-              <select
-                value={hasEmoji === undefined ? 'any' : hasEmoji ? 'true' : 'false'}
-                onChange={(e) => setHasEmoji(e.target.value === 'any' ? undefined : e.target.value === 'true')}
-                className="bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none appearance-none pr-8"
-              >
-                <option value="any">Any</option>
-                <option value="true">With Emoji 😀</option>
-                <option value="false">No Emoji</option>
-              </select>
-            </div>
-          </label>
-          <label className="flex items-center space-x-3 cursor-pointer">
-            <div className="relative">
-              <select
-                value={hasNumbers === undefined ? 'any' : hasNumbers ? 'true' : 'false'}
-                onChange={(e) => setHasNumbers(e.target.value === 'any' ? undefined : e.target.value === 'true')}
-                className="bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none appearance-none pr-8"
-              >
-                <option value="any">Any</option>
-                <option value="true">With Numbers (0-9)</option>
-                <option value="false">No Numbers</option>
-              </select>
-            </div>
-          </label>
+          <select
+            value={hasEmoji === undefined ? 'any' : hasEmoji ? 'true' : 'false'}
+            onChange={(e) => setHasEmoji(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+            className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+          >
+            <option value="any">Any</option>
+            <option value="true">With Emoji 😀</option>
+            <option value="false">No Emoji</option>
+          </select>
+          <select
+            value={hasNumbers === undefined ? 'any' : hasNumbers ? 'true' : 'false'}
+            onChange={(e) => setHasNumbers(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+            className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+          >
+            <option value="any">Any</option>
+            <option value="true">With Numbers (0-9)</option>
+            <option value="false">No Numbers</option>
+          </select>
         </div>
       </div>
 
@@ -295,6 +317,148 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
         )}
       </div>
 
+      {/* Expiration Filters */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Expiration Filters
+          </label>
+          <button
+            onClick={() => setShowExpirationFilter(!showExpirationFilter)}
+            className="text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+          >
+            <span className="text-xs font-semibold">
+              {showExpirationFilter ? 'Hide' : 'Show'}
+            </span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showExpirationFilter ? 'rotate-45' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
+        {showExpirationFilter && (
+          <>
+            <div className="space-y-2">
+              <select
+                value={isExpired === undefined ? 'any' : isExpired ? 'true' : 'false'}
+                onChange={(e) => setIsExpired(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+              >
+                <option value="any">Any Expiration Status</option>
+                <option value="true">Expired Names</option>
+                <option value="false">Active Names</option>
+              </select>
+              <select
+                value={isGracePeriod === undefined ? 'any' : isGracePeriod ? 'true' : 'false'}
+                onChange={(e) => setIsGracePeriod(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+              >
+                <option value="any">Any Grace Period Status</option>
+                <option value="true">In Grace Period (90 days)</option>
+                <option value="false">Not In Grace Period</option>
+              </select>
+              <select
+                value={isPremiumPeriod === undefined ? 'any' : isPremiumPeriod ? 'true' : 'false'}
+                onChange={(e) => setIsPremiumPeriod(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+              >
+                <option value="any">Any Premium Period Status</option>
+                <option value="true">In Premium Period (Dutch auction)</option>
+                <option value="false">Not In Premium Period</option>
+              </select>
+            </div>
+
+            {/* Expiring Within Days */}
+            <div className="mt-3">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Expiring Within (Days)
+              </label>
+              <input
+                type="number"
+                value={expiringWithinDays}
+                onChange={(e) => setExpiringWithinDays(e.target.value ? parseInt(e.target.value) : '')}
+                placeholder="e.g., 30 for names expiring within 30 days"
+                min="0"
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+              />
+              <p className="text-xs text-gray-400 mt-1">Only shows active names expiring within the specified days</p>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Sale History Filters */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Sale History Filters
+          </label>
+          <button
+            onClick={() => setShowSaleHistoryFilter(!showSaleHistoryFilter)}
+            className="text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+          >
+            <span className="text-xs font-semibold">
+              {showSaleHistoryFilter ? 'Hide' : 'Show'}
+            </span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showSaleHistoryFilter ? 'rotate-45' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
+        {showSaleHistoryFilter && (
+          <>
+            <div className="space-y-2">
+              <select
+                value={hasSales === undefined ? 'any' : hasSales ? 'true' : 'false'}
+                onChange={(e) => setHasSales(e.target.value === 'any' ? undefined : e.target.value === 'true')}
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+              >
+                <option value="any">Any Sale History</option>
+                <option value="true">Has Been Sold Before</option>
+                <option value="false">Never Been Sold</option>
+              </select>
+            </div>
+
+            {/* Days Since Last Sale Range */}
+            <div className="mt-3">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Days Since Last Sale
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="number"
+                  value={minDaysSinceLastSale}
+                  onChange={(e) => setMinDaysSinceLastSale(e.target.value ? parseInt(e.target.value) : '')}
+                  placeholder="Min"
+                  min="0"
+                  className="bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+                />
+                <input
+                  type="number"
+                  value={maxDaysSinceLastSale}
+                  onChange={(e) => setMaxDaysSinceLastSale(e.target.value ? parseInt(e.target.value) : '')}
+                  placeholder="Max"
+                  min="0"
+                  className="bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                Filter by how long ago the name was last sold (e.g., 7-30 for sold 1-4 weeks ago)
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Action Buttons */}
       <div className="flex gap-3 pt-2">
         <button
@@ -312,7 +476,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       </div>
 
       {/* Active Filters Display */}
-      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined || selectedClubs.length > 0) && (
+      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined || selectedClubs.length > 0 || isExpired !== undefined || isGracePeriod !== undefined || isPremiumPeriod !== undefined || expiringWithinDays) && (
         <div className="pt-4 border-t border-gray-700">
           <p className="text-xs text-gray-400 mb-2">Active Filters:</p>
           <div className="flex flex-wrap gap-2">
@@ -356,6 +520,26 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
                 Club: {club}
               </span>
             ))}
+            {isExpired !== undefined && (
+              <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                {isExpired ? 'Expired' : 'Active'}
+              </span>
+            )}
+            {isGracePeriod !== undefined && (
+              <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                {isGracePeriod ? 'In Grace Period' : 'Not In Grace Period'}
+              </span>
+            )}
+            {isPremiumPeriod !== undefined && (
+              <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                {isPremiumPeriod ? 'In Premium Period' : 'Not In Premium Period'}
+              </span>
+            )}
+            {expiringWithinDays && (
+              <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                Expiring within {expiringWithinDays} days
+              </span>
+            )}
           </div>
         </div>
       )}

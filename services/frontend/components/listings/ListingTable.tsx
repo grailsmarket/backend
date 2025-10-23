@@ -56,6 +56,7 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Price</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Seller</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Source</th>
+              <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Last Sale</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Listed</th>
             </tr>
           </thead>
@@ -66,6 +67,7 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-20"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-24"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-16"></div></td>
+                <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-20"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-20"></div></td>
               </tr>
             ))}
@@ -102,6 +104,9 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
                 Source
               </th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Last Sale
+              </th>
+              <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
                 Listed
               </th>
             </tr>
@@ -109,17 +114,18 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
           <tbody className="divide-y divide-gray-700">
             {listings.map((listing) => {
               const isListed = listing.status === 'active' && listing.price_wei;
-              const href = `/names/${listing.ens_name}`;
+              const displayName = listing.name || listing.ens_name;
+              const href = `/names/${displayName}`;
 
               return (
                 <tr
-                  key={listing.id || listing.ens_name || listing.token_id}
+                  key={listing.id || displayName || listing.token_id}
                   className="hover:bg-gray-750 transition-colors"
                 >
                   <td className="px-6 py-4">
                     <Link href={href} className="flex items-center gap-2 hover:text-purple-400 transition">
                       <span className="font-semibold text-white">
-                        {formatName(listing.ens_name, listing.token_id)}
+                        {formatName(displayName, listing.token_id)}
                       </span>
                     </Link>
                   </td>
@@ -155,6 +161,11 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
                         {listing.source === 'opensea' ? 'OpenSea' : 'Grails'}
                       </span>
                     )}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="text-gray-400 text-sm">
+                      {formatDate(listing.last_sale_date)}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <span className="text-gray-400 text-sm">

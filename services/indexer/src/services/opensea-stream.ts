@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -371,20 +371,69 @@ export class OpenSeaStreamListener {
       // Create ENS name if it doesn't exist (will be updated by ENS indexer later)
       const ensNameId = await this.upsertEnsName(tokenId, nameToStore, buyerAddress || sellerAddress || '0x0000000000000000000000000000000000000000', true);
 
-      // Update listing status
+      // Find the listing that's being sold
+      let listingId: number | undefined;
       if (sellerAddress) {
-        const updateListingQuery = `
-          UPDATE listings
-          SET status = 'sold', updated_at = NOW()
+        const findListingQuery = `
+          SELECT id FROM listings
           WHERE ens_name_id = $1
           AND seller_address = $2
           AND status = 'active'
+          ORDER BY created_at DESC
+          LIMIT 1
         `;
 
-        await this.pool.query(updateListingQuery, [
+        const listingResult = await this.pool.query(findListingQuery, [
           ensNameId,
           sellerAddress,
         ]);
+
+        if (listingResult.rows.length > 0) {
+          listingId = listingResult.rows[0].id;
+        }
+      }
+
+      // Record sale in sales table
+      if (buyerAddress && sellerAddress) {
+        try {
+          await createSale({
+            ensNameId,
+            sellerAddress,
+            buyerAddress,
+            salePriceWei: sale_price || '0',
+            currencyAddress: eventData.payment_token?.address,
+            listingId,
+            transactionHash: transaction?.transaction_hash || `opensea_${Date.now()}`,
+            blockNumber: transaction?.block_number || 0,
+            orderHash: eventData.order_hash,
+            orderData: eventData,
+            source: 'opensea',
+            platformFeeWei: eventData.protocol_fee?.value,
+            creatorFeeWei: eventData.creator_fee?.value,
+            metadata: {
+              collection: eventData.collection,
+              item_metadata: item.metadata
+            },
+            saleDate: new Date(),
+          });
+
+          logger.info(`Sale created in sales table for token ${tokenId}`);
+        } catch (error: any) {
+          logger.error(`Failed to create sale record: ${error.message}`);
+          // Don't fail the entire handler if sale recording fails
+        }
+      }
+
+      // Update listing status (this is done by the trigger, but we'll keep it for backwards compatibility)
+      if (sellerAddress && listingId) {
+        const updateListingQuery = `
+          UPDATE listings
+          SET status = 'sold', updated_at = NOW()
+          WHERE id = $1
+          AND status = 'active'
+        `;
+
+        await this.pool.query(updateListingQuery, [listingId]);
       }
 
       // Record transaction

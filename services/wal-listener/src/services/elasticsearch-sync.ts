@@ -58,6 +58,19 @@ export class ElasticsearchSync {
                   type: 'scaled_float',
                   scaling_factor: 1000000000000000000,
                 },
+                // Expiration state fields
+                is_expired: { type: 'boolean' },
+                is_grace_period: { type: 'boolean' },
+                is_premium_period: { type: 'boolean' },
+                days_until_expiry: { type: 'integer' },
+                premium_amount_eth: {
+                  type: 'scaled_float',
+                  scaling_factor: 1000000000000000000,
+                },
+                // Sale history fields
+                last_sale_date: { type: 'date' },
+                has_sales: { type: 'boolean' },
+                days_since_last_sale: { type: 'integer' },
               },
             },
             settings: {
@@ -133,7 +146,8 @@ export class ElasticsearchSync {
           en.*,
           l.price_wei as listing_price,
           l.status as listing_status,
-          l.created_at as listing_created_at
+          l.created_at as listing_created_at,
+          en.last_sale_date
         FROM ens_names en
         LEFT JOIN LATERAL (
           SELECT * FROM listings
@@ -212,7 +226,8 @@ export class ElasticsearchSync {
             l.status as listing_status,
             l.created_at as listing_created_at,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
-            MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer
+            MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer,
+            en.last_sale_date
           FROM ens_names en
           LEFT JOIN LATERAL (
             SELECT * FROM listings
@@ -283,6 +298,8 @@ export class ElasticsearchSync {
 
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
+    const expirationState = this.calculateExpirationState(data.expiry_date);
+    const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
     return {
       name,
@@ -301,6 +318,16 @@ export class ElasticsearchSync {
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
       highest_offer: data.highest_offer || null,
+      // Expiration state fields
+      is_expired: expirationState.isExpired,
+      is_grace_period: expirationState.isGracePeriod,
+      is_premium_period: expirationState.isPremiumPeriod,
+      days_until_expiry: expirationState.daysUntilExpiry,
+      premium_amount_eth: expirationState.premiumAmountEth,
+      // Sale history fields
+      last_sale_date: saleHistoryState.lastSaleDate,
+      has_sales: saleHistoryState.hasSales,
+      days_since_last_sale: saleHistoryState.daysSinceLastSale,
     };
   }
 
@@ -318,5 +345,117 @@ export class ElasticsearchSync {
     }
 
     return tags;
+  }
+
+  /**
+   * Calculate expiration state for an ENS name
+   * - Grace Period: 90 days after expiry where owner can renew
+   * - Premium Period: 21 days after grace period with declining Dutch auction
+   * - Premium starts at ~$100M and declines exponentially to $0
+   */
+  private calculateExpirationState(expiryDate: string | null): {
+    isExpired: boolean;
+    isGracePeriod: boolean;
+    isPremiumPeriod: boolean;
+    daysUntilExpiry: number;
+    premiumAmountEth: number | null;
+  } {
+    if (!expiryDate) {
+      return {
+        isExpired: false,
+        isGracePeriod: false,
+        isPremiumPeriod: false,
+        daysUntilExpiry: 999999,
+        premiumAmountEth: null,
+      };
+    }
+
+    const now = new Date();
+    const expiry = new Date(expiryDate);
+    const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
+    const daysUntilExpiry = -daysSinceExpiry;
+
+    // Not expired yet
+    if (daysSinceExpiry < 0) {
+      return {
+        isExpired: false,
+        isGracePeriod: false,
+        isPremiumPeriod: false,
+        daysUntilExpiry,
+        premiumAmountEth: null,
+      };
+    }
+
+    // Grace period: 0-90 days after expiry
+    if (daysSinceExpiry <= 90) {
+      return {
+        isExpired: true,
+        isGracePeriod: true,
+        isPremiumPeriod: false,
+        daysUntilExpiry,
+        premiumAmountEth: null,
+      };
+    }
+
+    // Premium period: 91-111 days after expiry (21 days)
+    const daysIntoPremium = daysSinceExpiry - 90;
+    if (daysIntoPremium <= 21) {
+      // Calculate premium using exponential decay
+      // Premium starts at $100,000,000 and decays to $0 over 21 days
+      // Using exponential decay: premium = initialPremium * e^(-k * days)
+      // Where k is chosen so that premium ≈ 0 at day 21
+      const initialPremiumUSD = 100000000; // $100M
+      const ethPriceUSD = 2000; // Approximate ETH price (could be fetched from oracle)
+      const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
+
+      // Decay constant: ln(10000) / 21 ≈ 0.438 (drops to 1/10000th by day 21)
+      const k = Math.log(10000) / 21;
+      const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
+
+      return {
+        isExpired: true,
+        isGracePeriod: false,
+        isPremiumPeriod: true,
+        daysUntilExpiry,
+        premiumAmountEth,
+      };
+    }
+
+    // After premium period: fully available for normal registration
+    return {
+      isExpired: true,
+      isGracePeriod: false,
+      isPremiumPeriod: false,
+      daysUntilExpiry,
+      premiumAmountEth: null,
+    };
+  }
+
+  /**
+   * Calculate sale history state for an ENS name
+   * Returns whether the name has been sold and how long ago
+   */
+  private calculateSaleHistoryState(lastSaleDate: string | null): {
+    lastSaleDate: string | null;
+    hasSales: boolean;
+    daysSinceLastSale: number | null;
+  } {
+    if (!lastSaleDate) {
+      return {
+        lastSaleDate: null,
+        hasSales: false,
+        daysSinceLastSale: null,
+      };
+    }
+
+    const now = new Date();
+    const saleDate = new Date(lastSaleDate);
+    const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    return {
+      lastSaleDate,
+      hasSales: true,
+      daysSinceLastSale,
+    };
   }
 }
