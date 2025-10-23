@@ -4,6 +4,7 @@ import { namesRoutes } from './names';
 import { ordersRoutes } from './orders';
 import { listingsRoutes } from './listings';
 import { offersRoutes } from './offers';
+import { salesRoutes } from './sales';
 import { activityRoutes } from './activity';
 import { profilesRoutes } from './profiles';
 import { authRoutes } from './auth';
@@ -12,6 +13,7 @@ import { watchlistRoutes } from './watchlist';
 import { notificationsRoutes } from './notifications';
 import { websocketRoutes } from './websocket';
 import { clubsRoutes } from './clubs';
+import { votesRoutes } from './votes';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -19,10 +21,12 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(usersRoutes, { prefix: '/api/v1/users' });
   fastify.register(watchlistRoutes, { prefix: '/api/v1/watchlist' });
   fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
+  fastify.register(votesRoutes, { prefix: '/api/v1/votes' });
   fastify.register(namesRoutes, { prefix: '/api/v1/names' });
   fastify.register(ordersRoutes, { prefix: '/api/v1/orders' });
   fastify.register(listingsRoutes, { prefix: '/api/v1/listings' });
   fastify.register(offersRoutes, { prefix: '/api/v1/offers' });
+  fastify.register(salesRoutes, { prefix: '/api/v1/sales' });
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
   fastify.register(clubsRoutes, { prefix: '/api/v1/clubs' });

@@ -6,7 +6,10 @@ import { requireAuth } from '../middleware/auth';
 const NotificationQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
-  unreadOnly: z.coerce.boolean().default(false),
+  unreadOnly: z.preprocess(
+    (val) => val === 'true' || val === true,
+    z.boolean().default(false)
+  ),
 });
 
 export async function notificationsRoutes(fastify: FastifyInstance) {

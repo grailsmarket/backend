@@ -29,6 +29,9 @@ export class WALListener {
 
     await this.setupReplication();
     await this.startListening();
+
+    // Perform bulk sync in background (non-blocking)
+    this.performInitialSyncInBackground();
   }
 
   async stop() {
@@ -99,14 +102,20 @@ export class WALListener {
       logger.info('Publication already exists');
     }
 
-    // Also perform initial bulk sync
-    await this.performInitialSync();
   }
 
-  private async performInitialSync() {
-    logger.info('Performing initial bulk sync to Elasticsearch...');
-    await this.esSync.bulkSync();
-    logger.info('Initial bulk sync completed');
+  private async performInitialSyncInBackground() {
+    // Run in background so it doesn't block real-time change processing
+    logger.info('Starting initial bulk sync to Elasticsearch in background...');
+
+    setImmediate(async () => {
+      try {
+        await this.esSync.bulkSync();
+        logger.info('Background bulk sync completed');
+      } catch (error) {
+        logger.error('Background bulk sync failed:', error);
+      }
+    });
   }
 
   private async startListening() {

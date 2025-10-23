@@ -8,7 +8,7 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -245,7 +245,18 @@ export class SeaportIndexer {
       transactionHash: log.transactionHash
     });
 
-    // Update listing status
+    // Find the listing that's being sold
+    const findListingQuery = `
+      SELECT id FROM listings
+      WHERE order_hash = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    const listingResult = await this.pool.query(findListingQuery, [orderHash]);
+    const listingId = listingResult.rows.length > 0 ? listingResult.rows[0].id : undefined;
+
+    // Update listing status (this is also done by the trigger, but kept for backwards compatibility)
     const updateListingQuery = `
       UPDATE listings
       SET status = 'sold', updated_at = NOW()
@@ -292,6 +303,34 @@ export class SeaportIndexer {
 
           logger.debug(`Seaport sale for ENS ${nameToStore} (token ${tokenId})`);
 
+          const saleDate = new Date(Number(block.timestamp) * 1000);
+
+          // Record sale in sales table
+          try {
+            await createSale({
+              ensNameId,
+              sellerAddress: offerer.toLowerCase(),
+              buyerAddress: recipient.toLowerCase(),
+              salePriceWei: price,
+              listingId,
+              transactionHash: log.transactionHash!,
+              blockNumber: Number(log.blockNumber),
+              orderHash,
+              orderData: {
+                offer: this.serializeBigInts(offer),
+                consideration: this.serializeBigInts(consideration),
+                zone: args.zone,
+              },
+              source: 'grails', // On-chain Seaport sales tracked by our indexer
+              saleDate,
+            });
+
+            logger.info(`Sale created in sales table for token ${tokenId}`);
+          } catch (error: any) {
+            logger.error(`Failed to create sale record: ${error.message}`);
+            // Don't fail the entire handler if sale recording fails
+          }
+
           // Insert the transaction
           const txQuery = `
             INSERT INTO transactions (
@@ -310,7 +349,7 @@ export class SeaportIndexer {
             offerer,
             recipient,
             price,
-            new Date(Number(block.timestamp) * 1000),
+            saleDate,
           ]);
 
           // Update ENS owner
