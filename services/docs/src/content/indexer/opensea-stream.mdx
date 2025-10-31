@@ -1,0 +1,638 @@
+---
+title: "OpenSea Stream"
+description: "Real-time marketplace event processing via WebSocket"
+order: 3
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# OpenSea Stream Integration
+
+The Indexer maintains a persistent WebSocket connection to OpenSea's Stream API to receive real-time marketplace events for ENS names.
+
+## Connection Setup
+
+### Phoenix Protocol
+
+OpenSea uses the Phoenix WebSocket protocol (from Elixir/Phoenix framework).
+
+<CodeBlock title="Connection flow">
+```typescript
+import WebSocket from 'ws';
+
+const OPENSEA_STREAM_URL = 'wss://stream.openseabeta.com/socket';
+const ws = new WebSocket(OPENSEA_STREAM_URL + '?token=' + API_KEY);
+
+ws.on('open', () => {
+  console.log('Connected to OpenSea Stream');
+  subscribeToCollection('ens');
+});
+```
+</CodeBlock>
+
+### Message Format
+
+Phoenix messages are arrays with 5 elements:
+
+<CodeBlock title="Phoenix message structure">
+```typescript
+[
+  join_ref,    // Join reference (null for initial)
+  message_ref, // Message reference (incremental counter)
+  topic,       // Topic/channel (e.g., "collection:ens")
+  event,       // Event type (e.g., "phx_join", "item_listed")
+  payload      // Event data (object)
+]
+```
+</CodeBlock>
+
+### Subscribe to Collection
+
+<CodeBlock title="Join ENS collection channel">
+```typescript
+let messageRef = 1;
+
+function subscribeToCollection(slug: string) {
+  const subscribeMessage = [
+    null,                   // join_ref
+    messageRef.toString(),  // message_ref
+    `collection:${slug}`,   // topic
+    'phx_join',            // event
+    { slug }               // payload
+  ];
+
+  ws.send(JSON.stringify(subscribeMessage));
+  messageRef++;
+}
+```
+</CodeBlock>
+
+**Response:**
+
+<CodeBlock title="Subscription confirmation">
+```json
+[
+  null,
+  "1",
+  "collection:ens",
+  "phx_reply",
+  {
+    "status": "ok",
+    "response": {}
+  }
+]
+```
+</CodeBlock>
+
+## Heartbeat
+
+Keep the connection alive by sending heartbeat messages every 30 seconds.
+
+<CodeBlock title="Heartbeat implementation">
+```typescript
+setInterval(() => {
+  const heartbeat = [
+    null,
+    messageRef.toString(),
+    'phoenix',
+    'heartbeat',
+    {}
+  ];
+
+  ws.send(JSON.stringify(heartbeat));
+  messageRef++;
+}, 30000); // 30 seconds
+```
+</CodeBlock>
+
+<Callout type="warning" title="Connection Timeout">
+Without heartbeat messages, the connection will timeout after 60 seconds of inactivity.
+</Callout>
+
+## Event Processing
+
+### item_listed
+
+New listing created on OpenSea.
+
+<CodeBlock title="item_listed payload">
+```json
+[
+  null,
+  null,
+  "collection:ens",
+  "item_listed",
+  {
+    "event_type": "item_listed",
+    "sent_at": "2024-01-01T00:00:00.000Z",
+    "payload": {
+      "collection": {
+        "slug": "ens"
+      },
+      "item": {
+        "nft_id": "ethereum/0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85/12345",
+        "metadata": {
+          "name": "example.eth",
+          "image_url": "https://..."
+        }
+      },
+      "base_price": "1000000000000000000",
+      "payment_token": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "decimals": 18,
+        "symbol": "ETH"
+      },
+      "maker": {
+        "address": "0x123..."
+      },
+      "listing_date": "2024-01-01T00:00:00",
+      "expiration_date": "2024-12-31T23:59:59",
+      "order_hash": "0xabc...",
+      "protocol_data": {
+        "parameters": {
+          // Full Seaport order
+        }
+      }
+    }
+  }
+]
+```
+</CodeBlock>
+
+**Processing Steps:**
+
+<CodeBlock title="Process item_listed event">
+```typescript
+async function processItemListed(payload) {
+  // 1. Extract token ID from nft_id
+  const tokenId = extractTokenId(payload.item.nft_id);
+
+  // 2. Resolve name if placeholder
+  let name = payload.item.metadata.name;
+  if (name.startsWith('token-')) {
+    name = await resolveNameFromGraph(tokenId);
+  }
+
+  // 3. Upsert ens_names (only update if placeholder)
+  const ensName = await prisma.ens_names.upsert({
+    where: { token_id: tokenId },
+    update: {
+      name: prisma.sql`
+        CASE
+          WHEN name LIKE 'token-%' THEN ${name}
+          ELSE name
+        END
+      `
+    },
+    create: {
+      token_id: tokenId,
+      name: name,
+      owner_address: payload.maker.address.toLowerCase(),
+      // ...
+    }
+  });
+
+  // 4. Create/update listing
+  await prisma.listings.upsert({
+    where: { order_hash: payload.order_hash },
+    update: {
+      price_wei: payload.base_price,
+      status: 'active',
+      expires_at: new Date(payload.expiration_date),
+      order_data: payload.protocol_data,
+    },
+    create: {
+      ens_name_id: ensName.id,
+      seller_address: payload.maker.address.toLowerCase(),
+      price_wei: payload.base_price,
+      currency_address: payload.payment_token.address.toLowerCase(),
+      order_hash: payload.order_hash,
+      order_data: payload.protocol_data,
+      status: 'active',
+      source: 'opensea',
+      created_at: new Date(payload.listing_date),
+      expires_at: new Date(payload.expiration_date),
+    }
+  });
+
+  // 5. Store raw event
+  await prisma.opensea_events.create({
+    data: {
+      event_type: 'item_listed',
+      event_data: payload,
+      processed: true,
+      created_at: new Date(),
+    }
+  });
+}
+```
+</CodeBlock>
+
+### item_sold
+
+Sale completed on OpenSea.
+
+<CodeBlock title="item_sold payload">
+```json
+{
+  "event_type": "item_sold",
+  "payload": {
+    "item": {
+      "nft_id": "ethereum/0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85/12345"
+    },
+    "sale_price": "5000000000000000000",
+    "payment_token": {
+      "symbol": "ETH"
+    },
+    "maker": {
+      "address": "0x123..." // seller
+    },
+    "taker": {
+      "address": "0x456..." // buyer
+    },
+    "transaction": {
+      "hash": "0xdef...",
+      "timestamp": "2024-01-01T00:00:00"
+    },
+    "order_hash": "0xabc..."
+  }
+}
+```
+</CodeBlock>
+
+**Processing Steps:**
+
+<CodeBlock title="Process item_sold event">
+```typescript
+async function processItemSold(payload) {
+  const tokenId = extractTokenId(payload.item.nft_id);
+
+  // 1. Update ens_names with sale data
+  await prisma.ens_names.update({
+    where: { token_id: tokenId },
+    data: {
+      last_sale_price: payload.sale_price,
+      last_sale_date: new Date(payload.transaction.timestamp),
+      owner_address: payload.taker.address.toLowerCase(),
+    }
+  });
+
+  // 2. Create sales record
+  await prisma.sales.create({
+    data: {
+      ens_name_id: ensName.id,
+      from_address: payload.maker.address.toLowerCase(),
+      to_address: payload.taker.address.toLowerCase(),
+      price_wei: payload.sale_price,
+      transaction_hash: payload.transaction.hash,
+      timestamp: new Date(payload.transaction.timestamp),
+    }
+  });
+
+  // 3. Update listing status
+  await prisma.listings.updateMany({
+    where: { order_hash: payload.order_hash },
+    data: { status: 'sold' }
+  });
+}
+```
+</CodeBlock>
+
+### order_cancelled
+
+Listing cancelled on OpenSea.
+
+<CodeBlock title="order_cancelled payload">
+```json
+{
+  "event_type": "order_cancelled",
+  "payload": {
+    "order_hash": "0xabc...",
+    "maker": {
+      "address": "0x123..."
+    }
+  }
+}
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Process order_cancelled event">
+```typescript
+async function processOrderCancelled(payload) {
+  await prisma.listings.updateMany({
+    where: { order_hash: payload.order_hash },
+    data: {
+      status: 'cancelled',
+      updated_at: new Date(),
+    }
+  });
+}
+```
+</CodeBlock>
+
+### item_received_bid
+
+New offer made on an ENS name.
+
+<CodeBlock title="item_received_bid payload">
+```json
+{
+  "event_type": "item_received_bid",
+  "payload": {
+    "item": {
+      "nft_id": "ethereum/0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85/12345"
+    },
+    "base_price": "900000000000000000",
+    "maker": {
+      "address": "0x789..." // buyer
+    },
+    "expiration_date": "2024-12-31T23:59:59",
+    "order_hash": "0xghi...",
+    "protocol_data": {
+      "parameters": {
+        // Seaport offer order
+      }
+    }
+  }
+}
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Process item_received_bid event">
+```typescript
+async function processItemReceivedBid(payload) {
+  const tokenId = extractTokenId(payload.item.nft_id);
+
+  const ensName = await prisma.ens_names.findUnique({
+    where: { token_id: tokenId }
+  });
+
+  await prisma.offers.create({
+    data: {
+      ens_name_id: ensName.id,
+      buyer_address: payload.maker.address.toLowerCase(),
+      offer_amount_wei: payload.base_price,
+      order_hash: payload.order_hash,
+      order_data: payload.protocol_data,
+      status: 'pending',
+      expires_at: new Date(payload.expiration_date),
+      created_at: new Date(),
+    }
+  });
+}
+```
+</CodeBlock>
+
+## Error Handling
+
+### Reconnection Strategy
+
+<CodeBlock title="Exponential backoff">
+```typescript
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_DELAY = 1000;
+
+function reconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    logger.error('Max reconnection attempts reached');
+    sendAlert('OpenSea WebSocket permanently disconnected');
+    return;
+  }
+
+  const delay = Math.min(
+    BASE_DELAY * Math.pow(2, reconnectAttempts),
+    30000 // Max 30 seconds
+  );
+
+  logger.info(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts + 1})`);
+
+  setTimeout(() => {
+    reconnectAttempts++;
+    connectToOpenSea();
+  }, delay);
+}
+
+ws.on('close', () => {
+  logger.warn('OpenSea WebSocket closed, reconnecting...');
+  reconnect();
+});
+
+ws.on('error', (error) => {
+  logger.error('OpenSea WebSocket error:', error);
+  ws.close();
+});
+
+ws.on('open', () => {
+  // Reset reconnect counter on successful connection
+  reconnectAttempts = 0;
+  logger.info('Successfully connected to OpenSea Stream');
+});
+```
+</CodeBlock>
+
+### Failed Event Processing
+
+<CodeBlock title="Store failed events for retry">
+```typescript
+async function handleEvent(eventData) {
+  try {
+    await processEvent(eventData);
+  } catch (error) {
+    logger.error('Failed to process event:', error);
+
+    // Store for manual retry
+    await prisma.opensea_events.create({
+      data: {
+        event_type: eventData.event_type,
+        event_data: eventData,
+        processed: false,
+        error: error.message,
+        created_at: new Date(),
+      }
+    });
+  }
+}
+```
+</CodeBlock>
+
+### Duplicate Prevention
+
+<CodeBlock title="Idempotent processing">
+```typescript
+// Use order_hash as unique key
+await prisma.listings.upsert({
+  where: { order_hash: event.order_hash },
+  update: { /* update existing */ },
+  create: { /* create new */ }
+});
+
+// Use transaction_hash for sales
+await prisma.sales.upsert({
+  where: { transaction_hash: event.transaction.hash },
+  update: { /* update existing */ },
+  create: { /* create new */ }
+});
+```
+</CodeBlock>
+
+<Callout type="success" title="Idempotency Guarantee">
+All event processing is idempotent:
+- Listings use `order_hash` as unique key
+- Sales use `transaction_hash` as unique key
+- Offers use `order_hash` as unique key
+
+Duplicate events will update existing records, not create duplicates.
+</Callout>
+
+## Monitoring
+
+### Connection Status
+
+<CodeBlock title="Log WebSocket state">
+```typescript
+let lastHeartbeatResponse = Date.now();
+
+ws.on('message', (data) => {
+  const message = JSON.parse(data);
+
+  if (message[3] === 'phx_reply' && message[2] === 'phoenix') {
+    lastHeartbeatResponse = Date.now();
+  }
+});
+
+// Check heartbeat every minute
+setInterval(() => {
+  const timeSinceHeartbeat = Date.now() - lastHeartbeatResponse;
+
+  if (timeSinceHeartbeat > 90000) { // 90 seconds
+    logger.error('No heartbeat response in 90s, connection may be dead');
+    ws.close();
+  }
+}, 60000);
+```
+</CodeBlock>
+
+### Event Metrics
+
+<CodeBlock title="Track event processing">
+```typescript
+const eventMetrics = {
+  item_listed: 0,
+  item_sold: 0,
+  order_cancelled: 0,
+  item_received_bid: 0,
+};
+
+function trackEvent(eventType: string) {
+  eventMetrics[eventType]++;
+}
+
+// Log metrics every 5 minutes
+setInterval(() => {
+  logger.info('OpenSea events processed:', eventMetrics);
+
+  // Reset counters
+  Object.keys(eventMetrics).forEach(key => {
+    eventMetrics[key] = 0;
+  });
+}, 300000);
+```
+</CodeBlock>
+
+### Database Queries
+
+<CodeBlock title="Check event processing">
+```sql
+-- Events by type in last hour
+SELECT event_type, COUNT(*) as count, processed
+FROM opensea_events
+WHERE created_at > NOW() - INTERVAL '1 hour'
+GROUP BY event_type, processed
+ORDER BY count DESC;
+
+-- Failed events needing retry
+SELECT id, event_type, error, created_at
+FROM opensea_events
+WHERE processed = false
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- Recent listings from OpenSea
+SELECT l.id, l.ens_name_id, e.name, l.price_wei, l.created_at
+FROM listings l
+JOIN ens_names e ON l.ens_name_id = e.id
+WHERE l.source = 'opensea'
+  AND l.created_at > NOW() - INTERVAL '1 hour'
+ORDER BY l.created_at DESC;
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# OpenSea
+OPENSEA_API_KEY=your_api_key_here
+OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket
+OPENSEA_COLLECTION_SLUG=ens
+
+# Reconnection
+OPENSEA_MAX_RECONNECT_ATTEMPTS=10
+OPENSEA_RECONNECT_BASE_DELAY=1000
+OPENSEA_HEARTBEAT_INTERVAL=30000
+
+# Processing
+OPENSEA_BATCH_SIZE=50
+OPENSEA_RETRY_FAILED_EVENTS=true
+```
+
+## Troubleshooting
+
+### WebSocket Won't Connect
+
+**Symptoms:**
+- Connection immediately closes
+- Authentication errors
+
+**Solutions:**
+1. Verify `OPENSEA_API_KEY` is valid
+2. Check API key hasn't expired
+3. Ensure network allows WebSocket connections (port 443)
+4. Verify Stream API access is enabled for your key
+
+### Events Not Being Received
+
+**Symptoms:**
+- Connection active but no events
+- `phx_join` succeeded but no `item_listed` events
+
+**Solutions:**
+1. Verify subscription message format is correct
+2. Check collection slug is "ens" not "ethereum-name-service"
+3. Ensure marketplace has activity (test with high-volume collection first)
+4. Check OpenSea API status page
+
+### High Event Processing Lag
+
+**Symptoms:**
+- Events arriving but processing slowly
+- Database writes taking too long
+
+**Solutions:**
+1. Batch database operations
+2. Use database transactions for multiple writes
+3. Optimize database indexes
+4. Consider async processing with queue
+
+## Next Steps
+
+- Learn about [name resolution](/indexer/name-resolution)
+- Understand [ENS event processing](/indexer/ens-events)
+- Explore [WAL Listener sync](/wal-listener/overview)

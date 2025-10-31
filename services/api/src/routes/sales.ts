@@ -12,14 +12,27 @@ export async function salesRoutes(fastify: FastifyInstance) {
   // GET /api/v1/sales - Get recent sales
   fastify.get('/', async (request, reply) => {
     const { page = '1', limit = '20' } = request.query as any;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const currentPage = parseInt(page);
+    const pageLimit = parseInt(limit);
+    const offset = (currentPage - 1) * pageLimit;
 
     try {
-      const sales = await getRecentSales(parseInt(limit), offset);
+      const { results, total } = await getRecentSales(pageLimit, offset);
+      const totalPages = Math.ceil(total / pageLimit);
 
       const response: APIResponse = {
         success: true,
-        data: { sales },
+        data: {
+          results,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
+        },
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',
@@ -31,7 +44,13 @@ export async function salesRoutes(fastify: FastifyInstance) {
       fastify.log.error(error);
       return reply.status(500).send({
         success: false,
-        error: 'Failed to fetch sales',
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch sales',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });
@@ -40,14 +59,27 @@ export async function salesRoutes(fastify: FastifyInstance) {
   fastify.get('/name/:name', async (request, reply) => {
     const { name } = request.params as { name: string };
     const { page = '1', limit = '20' } = request.query as any;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const currentPage = parseInt(page);
+    const pageLimit = parseInt(limit);
+    const offset = (currentPage - 1) * pageLimit;
 
     try {
-      const sales = await getSalesByName(name, parseInt(limit), offset);
+      const { results, total } = await getSalesByName(name, pageLimit, offset);
+      const totalPages = Math.ceil(total / pageLimit);
 
       const response: APIResponse = {
         success: true,
-        data: { sales },
+        data: {
+          results,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
+        },
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',
@@ -59,7 +91,13 @@ export async function salesRoutes(fastify: FastifyInstance) {
       fastify.log.error(error);
       return reply.status(500).send({
         success: false,
-        error: 'Failed to fetch sales',
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch sales',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });
@@ -68,19 +106,32 @@ export async function salesRoutes(fastify: FastifyInstance) {
   fastify.get('/address/:address', async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = '1', limit = '20', type = 'both' } = request.query as any;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const currentPage = parseInt(page);
+    const pageLimit = parseInt(limit);
+    const offset = (currentPage - 1) * pageLimit;
 
     try {
-      const sales = await getSalesByAddress(
+      const { results, total } = await getSalesByAddress(
         address,
         type,
-        parseInt(limit),
+        pageLimit,
         offset
       );
+      const totalPages = Math.ceil(total / pageLimit);
 
       const response: APIResponse = {
         success: true,
-        data: { sales },
+        data: {
+          results,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
+        },
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',
@@ -92,7 +143,13 @@ export async function salesRoutes(fastify: FastifyInstance) {
       fastify.log.error(error);
       return reply.status(500).send({
         success: false,
-        error: 'Failed to fetch sales',
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch sales',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });

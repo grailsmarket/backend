@@ -1,0 +1,603 @@
+---
+title: "API Endpoints"
+description: "Complete reference for all API endpoints"
+order: 4
+---
+
+import Callout from '../../components/Callout.astro';
+import APIEndpoint from '../../components/APIEndpoint.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# API Endpoints
+
+Complete reference for all available API endpoints.
+
+## Base URL
+
+```
+http://localhost:3000/api/v1
+```
+
+## Health Check
+
+<APIEndpoint method="GET" path="/health" description="Check API health and service connectivity">
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "services": {
+    "database": "connected",
+    "elasticsearch": "connected"
+  }
+}
+```
+
+</APIEndpoint>
+
+---
+
+## Authentication
+
+See [Authentication](/api/authentication) for detailed flow documentation.
+
+<APIEndpoint method="GET" path="/api/v1/auth/nonce" description="Request nonce for SIWE signing">
+
+**Query:** `address` (required)
+
+</APIEndpoint>
+
+<APIEndpoint method="POST" path="/api/v1/auth/verify" description="Verify SIWE signature and get JWT token">
+
+**Body:** `{ message, signature }`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/auth/me" auth={true} description="Get current user information" />
+
+<APIEndpoint method="POST" path="/api/v1/auth/logout" auth={true} description="Logout current user" />
+
+---
+
+## Users
+
+<APIEndpoint method="PATCH" path="/api/v1/users/me" auth={true} description="Update user profile">
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "telegram": "@username",
+  "discord": "username#1234"
+}
+```
+
+</APIEndpoint>
+
+---
+
+## ENS Names
+
+<APIEndpoint method="GET" path="/api/v1/names" description="List ENS names with filtering">
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20, max: 100)
+- `owner` - Filter by owner address
+- `status` - Filter by status: `available`, `listed`, `expiring`
+- `sort` - Sort by: `name`, `price`, `expiry`, `created`
+- `order` - Sort order: `asc`, `desc`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/names/{name}" description="Get detailed ENS name information">
+
+**Response includes:**
+- Name details (owner, expiry, registration date)
+- Active listing (if exists)
+- Active offers count
+- Vote counts (upvotes, downvotes, net score)
+- Recent transactions
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/names/{name}/history" description="Get transaction history for ENS name">
+
+**Query:** `page`, `limit`
+
+**Returns:** Transfers, sales, and other transactions
+
+</APIEndpoint>
+
+---
+
+## Search
+
+See [Search & Filters](/api/search) for detailed filter documentation.
+
+<APIEndpoint method="GET" path="/api/v1/names/search" description="Advanced Elasticsearch search">
+
+**Query Parameters:**
+- `q` - Search query (default: "*")
+- `page`, `limit` - Pagination
+- `filters[minPrice]`, `filters[maxPrice]` - Price range in wei
+- `filters[minLength]`, `filters[maxLength]` - Character length
+- `filters[hasNumbers]`, `filters[hasEmoji]` - Character type
+- `filters[clubs][]` - Club membership
+- `filters[isExpired]`, `filters[isGracePeriod]`, `filters[isPremiumPeriod]` - Expiration status
+- `filters[expiringWithinDays]` - Expiring soon
+- `filters[hasSales]`, `filters[lastSoldAfter]`, `filters[lastSoldBefore]` - Sales history
+- `filters[minDaysSinceLastSale]`, `filters[maxDaysSinceLastSale]` - Sales recency
+
+</APIEndpoint>
+
+---
+
+## Listings
+
+<APIEndpoint method="GET" path="/api/v1/listings" description="Get all listings">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `status` - Filter: `active`, `sold`, `cancelled`, `expired`
+- `seller` - Filter by seller address
+- `minPrice`, `maxPrice` - Price range in wei
+- `sort` - Sort by: `price`, `created`, `expiry`, `name`
+- `order` - Sort order: `asc`, `desc`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/listings/name/{name}" description="Get active listing for specific ENS name">
+
+**Returns:** Listing with full Seaport order data
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/listings/{id}" description="Get listing by ID" />
+
+<APIEndpoint method="GET" path="/api/v1/listings/search" description="Search listings with Elasticsearch">
+
+**Additional Filter:**
+- `filters[showAll]` - Show all names or active listings only (default: false)
+
+**Returns:** ENS names with nested `listings` arrays
+
+</APIEndpoint>
+
+<APIEndpoint method="POST" path="/api/v1/listings" description="Create new listing">
+
+**Request Body:**
+```json
+{
+  "ensNameId": 1,
+  "sellerAddress": "0x123...",
+  "priceWei": "1000000000000000000",
+  "currencyAddress": "0x0000000000000000000000000000000000000000",
+  "orderData": {},
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="PUT" path="/api/v1/listings/{id}" description="Update listing price or expiration" />
+
+<APIEndpoint method="DELETE" path="/api/v1/listings/{id}" description="Cancel listing" />
+
+---
+
+## Offers
+
+<APIEndpoint method="POST" path="/api/v1/offers" description="Create new offer">
+
+**Request Body:**
+```json
+{
+  "ensNameId": 1,
+  "buyerAddress": "0x789...",
+  "offerAmountWei": "900000000000000000",
+  "currencyAddress": "0x0000000000000000000000000000000000000000",
+  "orderData": {},
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/offers/{name}" description="Get offers for ENS name">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `status` - Filter: `pending`, `accepted`, `rejected`, `expired`
+
+</APIEndpoint>
+
+<APIEndpoint method="PUT" path="/api/v1/offers/{id}" description="Update offer amount or status" />
+
+---
+
+## Orders (Seaport)
+
+<APIEndpoint method="POST" path="/api/v1/orders/create" description="Create Seaport order">
+
+**Request Body:**
+```json
+{
+  "tokenId": "12345",
+  "price": "1000000000000000000",
+  "currency": "0x0000000000000000000000000000000000000000",
+  "duration": 7,
+  "offerer": "0x123..."
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="POST" path="/api/v1/orders/validate" description="Validate Seaport order structure" />
+
+<APIEndpoint method="GET" path="/api/v1/orders/{id}" description="Get order by ID or hash" />
+
+<APIEndpoint method="DELETE" path="/api/v1/orders/{id}" description="Cancel order" />
+
+---
+
+## Clubs
+
+<APIEndpoint method="GET" path="/api/v1/clubs" description="Get all clubs with metadata">
+
+**Response:**
+```json
+{
+  "clubs": [
+    {
+      "name": "10k Club",
+      "description": "Premium numeric ENS names under 10,000",
+      "member_count": 1234,
+      "created_at": "2024-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/clubs/{clubName}" description="Get names in specific club">
+
+**Query:** `page`, `limit`
+
+</APIEndpoint>
+
+<Callout type="info" title="Available Clubs">
+- **10k Club** - Numeric names under 10,000
+- **999 Club** - 3-digit numeric names
+- **100k Club** - Numeric names under 100,000
+- **Palindrome Club** - Palindromic names
+- **Single Emoji Club** - Single emoji character names
+</Callout>
+
+---
+
+## Votes
+
+<APIEndpoint method="POST" path="/api/v1/votes" auth={true} description="Cast or update vote for ENS name">
+
+**Request Body:**
+```json
+{
+  "ensName": "example.eth",
+  "vote": 1
+}
+```
+
+**Vote Values:**
+- `1` - Upvote
+- `0` - Remove vote
+- `-1` - Downvote
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/votes/{ensName}" description="Get vote statistics for name">
+
+**Response:**
+```json
+{
+  "ensName": "example.eth",
+  "upvotes": 42,
+  "downvotes": 3,
+  "netScore": 39,
+  "userVote": 1
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/votes/leaderboard" description="Get top-voted ENS names">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `sortBy` - Sort by: `upvotes`, `downvotes`, `netScore` (default: `netScore`)
+
+</APIEndpoint>
+
+---
+
+## Watchlist
+
+<APIEndpoint method="GET" path="/api/v1/watchlist" auth={true} description="Get user's watchlist">
+
+**Query:** `page`, `limit`
+
+**Returns:** Watchlist entries with ENS name data and notification preferences
+
+</APIEndpoint>
+
+<APIEndpoint method="POST" path="/api/v1/watchlist" auth={true} description="Add name to watchlist">
+
+**Request Body:**
+```json
+{
+  "ensName": "example.eth",
+  "notifyOnSale": true,
+  "notifyOnOffer": true,
+  "notifyOnListing": true,
+  "notifyOnPriceChange": false
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="PATCH" path="/api/v1/watchlist/{id}" auth={true} description="Update notification preferences">
+
+**Request Body:**
+```json
+{
+  "notifyOnSale": false,
+  "notifyOnOffer": true,
+  "notifyOnListing": true,
+  "notifyOnPriceChange": true
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="DELETE" path="/api/v1/watchlist/{id}" auth={true} description="Remove name from watchlist" />
+
+<APIEndpoint method="GET" path="/api/v1/watchlist/search" auth={true} description="Search watchlist with filters">
+
+**All search filters apply** - see [Search & Filters](/api/search)
+
+</APIEndpoint>
+
+---
+
+## Notifications
+
+<APIEndpoint method="GET" path="/api/v1/notifications" auth={true} description="Get user notifications">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `unreadOnly` - Show only unread (default: false)
+
+**Notification Types:**
+- `new-listing` - New listing for watched name
+- `price-change` - Listing price changed
+- `sale` - Name was sold
+- `new-offer` - New offer on watched name
+- `listing-cancelled` - Listing cancelled due to ownership change
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/notifications/unread/count" auth={true} description="Get unread notification count">
+
+**Response:**
+```json
+{
+  "unreadCount": 5
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="PATCH" path="/api/v1/notifications/:id/read" auth={true} description="Mark notification as read" />
+
+<APIEndpoint method="PATCH" path="/api/v1/notifications/read-all" auth={true} description="Mark all notifications as read" />
+
+---
+
+## Sales
+
+<APIEndpoint method="GET" path="/api/v1/sales" description="Get recent marketplace sales">
+
+**Query:** `page`, `limit`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/sales/name/:name" description="Get sales history for specific name">
+
+**Example:** `/api/v1/sales/name/vitalik.eth`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/sales/address/:address" description="Get sales by Ethereum address">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `type` - Filter: `buyer`, `seller`, `both` (default: "both")
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/sales/:nameOrId/analytics" description="Get sales analytics for name">
+
+**Response:**
+```json
+{
+  "totalSales": 5,
+  "totalVolume": "15000000000000000000",
+  "averagePrice": "3000000000000000000",
+  "highestSale": "5000000000000000000",
+  "lowestSale": "1000000000000000000",
+  "lastSaleDate": "2024-01-01T00:00:00.000Z",
+  "firstSaleDate": "2023-01-01T00:00:00.000Z"
+}
+```
+
+</APIEndpoint>
+
+---
+
+## Profiles
+
+<APIEndpoint method="GET" path="/api/v1/profiles/:addressOrName" description="Get profile for address or ENS name">
+
+**Accepts:**
+- Ethereum address: `/api/v1/profiles/0x123...`
+- ENS name: `/api/v1/profiles/vitalik.eth`
+
+**Response includes:**
+- Primary ENS name
+- ENS records (avatar, bio, social links)
+- Owned names with active listings
+- Activity statistics
+
+**Data Sources:**
+- ENS records from EFP (EthFollow Protocol) API
+- Names from database + The Graph fallback
+- Name Wrapper contract for wrapped names
+
+</APIEndpoint>
+
+<Callout type="info" title="Profile Features">
+- Automatically resolves primary ENS name for addresses
+- Fetches names from database or The Graph if not found
+- Enriches with ENS records (avatar, bio, Twitter, GitHub, etc.)
+- Shows all owned names with listing status
+</Callout>
+
+---
+
+## Activity
+
+<APIEndpoint method="GET" path="/api/v1/activity/{name}" description="Get activity for ENS name">
+
+**Query:** `page`, `limit`
+
+**Activity Types:**
+- `sale` - Name sold
+- `transfer` - Ownership transferred
+- `listing_created` - New listing
+- `listing_updated` - Listing changed
+- `listing_cancelled` - Listing cancelled
+- `offer_made` - New offer
+- `offer_accepted` - Offer accepted
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/activity/address/{address}" description="Get activity for Ethereum address">
+
+**Query:** `page`, `limit`
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/activity" description="Get global activity feed">
+
+**Query Parameters:**
+- `page`, `limit` - Pagination
+- `activityType` - Filter by type
+
+</APIEndpoint>
+
+---
+
+## WebSocket
+
+<APIEndpoint method="WS" path="/ws" description="Real-time marketplace updates">
+
+**Connection:**
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws');
+```
+
+**Subscribe:**
+```javascript
+ws.send(JSON.stringify({
+  type: 'subscribe',
+  channels: ['listings', 'offers', 'sales']
+}));
+```
+
+**Event Types:**
+- `listing_created` - New listing
+- `listing_updated` - Listing changed
+- `listing_cancelled` - Listing cancelled
+- `offer_created` - New offer
+- `offer_accepted` - Offer accepted
+- `sale_completed` - Sale finalized
+
+**Event Format:**
+```json
+{
+  "type": "listing_created",
+  "data": {
+    "ensName": "example.eth",
+    "price": "1000000000000000000",
+    "seller": "0x123...",
+    "timestamp": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+</APIEndpoint>
+
+---
+
+## Error Responses
+
+All endpoints follow consistent error format:
+
+<CodeBlock title="Error response">
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message"
+  },
+  "meta": {
+    "timestamp": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+</CodeBlock>
+
+### Common Status Codes
+
+| Status | Description |
+|--------|-------------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Bad Request - Invalid input |
+| 401 | Unauthorized - Authentication required |
+| 404 | Not Found - Resource doesn't exist |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error |
+
+## Rate Limiting
+
+Default rate limits:
+- **Public endpoints**: 100 requests/minute per IP
+- **Authenticated endpoints**: 200 requests/minute per user
+- **Search endpoints**: 50 requests/minute per IP/user
+
+<Callout type="warning" title="Rate Limit Headers">
+Rate limit information is included in response headers:
+- `X-RateLimit-Limit` - Maximum requests allowed
+- `X-RateLimit-Remaining` - Requests remaining
+- `X-RateLimit-Reset` - Time when limit resets (Unix timestamp)
+</Callout>
+
+## Next Steps
+
+- Learn about [authentication flow](/api/authentication)
+- Explore [search capabilities](/api/search)
+- Understand [OpenSea integration](/api/opensea)

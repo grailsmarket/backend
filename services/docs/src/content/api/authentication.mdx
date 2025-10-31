@@ -1,0 +1,367 @@
+---
+title: "Authentication"
+description: "SIWE (Sign-In With Ethereum) authentication flow and JWT tokens"
+order: 2
+---
+
+import Callout from '../../components/Callout.astro';
+import APIEndpoint from '../../components/APIEndpoint.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Authentication
+
+The API uses **Sign-In with Ethereum (SIWE)** standard (EIP-4361) for authentication. This allows users to authenticate using their Ethereum wallet without passwords.
+
+## Why SIWE?
+
+- **No passwords**: Users authenticate with their existing Ethereum wallet
+- **Decentralized**: No central authority controls authentication
+- **Standard**: EIP-4361 is a widely adopted Ethereum standard
+- **Secure**: Cryptographic signatures prove wallet ownership
+- **Privacy**: No personal information required
+
+## Authentication Flow
+
+<CodeBlock title="Complete authentication flow">
+```
+1. Frontend requests nonce from API
+2. API generates unique nonce, stores temporarily
+3. Frontend constructs SIWE message with nonce
+4. User signs message with wallet (MetaMask, WalletConnect, etc.)
+5. Frontend sends message + signature to API
+6. API verifies signature matches message and address
+7. API issues JWT token valid for 7 days
+8. Frontend stores JWT and uses in Authorization header
+```
+</CodeBlock>
+
+## Step-by-Step Implementation
+
+### Step 1: Request Nonce
+
+<APIEndpoint method="GET" path="/api/v1/auth/nonce" description="Get a cryptographic nonce for signing">
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| address | string | Yes | Ethereum address (0x...) |
+
+**Example:**
+```bash
+GET /api/v1/auth/nonce?address=0x1234567890123456789012345678901234567890
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "nonce": "f4d3c2b1a09876543210",
+    "expiresAt": "2024-01-01T00:05:00.000Z"
+  }
+}
+```
+
+</APIEndpoint>
+
+<Callout type="warning" title="Nonce Expiration">
+- Nonces expire after **5 minutes**
+- Previous unused nonces for the same address are automatically invalidated
+- Always request a fresh nonce before signing
+</Callout>
+
+### Step 2: Sign SIWE Message
+
+<CodeBlock title="Frontend: Construct and sign SIWE message">
+```typescript
+import { SiweMessage } from 'siwe';
+
+// Construct SIWE message
+const message = new SiweMessage({
+  domain: window.location.host,
+  address: walletAddress,
+  statement: 'Sign in to Grails',
+  uri: window.location.origin,
+  version: '1',
+  chainId: 1, // Ethereum mainnet
+  nonce: nonceFromApi,
+});
+
+// Get signature from wallet
+const messageString = message.prepareMessage();
+const signature = await signer.signMessage(messageString);
+```
+</CodeBlock>
+
+### Step 3: Verify Signature
+
+<APIEndpoint method="POST" path="/api/v1/auth/verify" description="Verify SIWE signature and create session">
+
+**Request Body:**
+```json
+{
+  "message": "localhost:3000 wants you to sign in with your Ethereum account:\n0x123...\n\nSign in to Grails\n\nURI: http://localhost:3000\nVersion: 1\nChain ID: 1\nNonce: f4d3c2b1a09876543210\nIssued At: 2024-01-01T00:00:00.000Z",
+  "signature": "0xabc123def456..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": 1,
+      "address": "0x1234567890123456789012345678901234567890",
+      "email": null,
+      "emailVerified": false,
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "lastSignIn": "2024-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+</APIEndpoint>
+
+<Callout type="info" title="JWT Token Details">
+- Tokens are valid for **7 days**
+- Stored in user table with expiration
+- No refresh tokens (re-authenticate after expiry)
+- Contains user ID and address in payload
+</Callout>
+
+### Step 4: Use JWT Token
+
+<CodeBlock title="Include token in subsequent requests">
+```bash
+curl -X GET "http://localhost:3000/api/v1/auth/me" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</CodeBlock>
+
+<CodeBlock title="Frontend: Store and use token">
+```typescript
+// Store token (localStorage, cookies, or secure storage)
+localStorage.setItem('auth_token', token);
+
+// Use in API calls
+const response = await fetch('/api/v1/watchlist', {
+  headers: {
+    'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+    'Content-Type': 'application/json',
+  },
+});
+```
+</CodeBlock>
+
+## Protected Endpoints
+
+### Get Current User
+
+<APIEndpoint method="GET" path="/api/v1/auth/me" auth={true} description="Get authenticated user information">
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "address": "0x1234567890123456789012345678901234567890",
+    "email": "user@example.com",
+    "emailVerified": true,
+    "telegram": "@username",
+    "discord": "username#1234",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "lastSignIn": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+</APIEndpoint>
+
+### Update User Profile
+
+<APIEndpoint method="PATCH" path="/api/v1/users/me" auth={true} description="Update user profile information">
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "telegram": "@username",
+  "discord": "username#1234"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "address": "0x123...",
+    "email": "user@example.com",
+    "telegram": "@username",
+    "discord": "username#1234",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+</APIEndpoint>
+
+### Logout
+
+<APIEndpoint method="POST" path="/api/v1/auth/logout" auth={true} description="Logout user (client should discard JWT)">
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Logged out successfully"
+  }
+}
+```
+
+</APIEndpoint>
+
+<Callout type="info" title="Client-side Logout">
+Logout is primarily client-side: discard the JWT token from storage. The server invalidates the token in the database, but JWTs remain valid until expiry unless explicitly blacklisted.
+</Callout>
+
+## Error Handling
+
+### Common Authentication Errors
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 401 | `UNAUTHORIZED` | No token provided or token invalid |
+| 401 | `TOKEN_EXPIRED` | JWT token has expired |
+| 401 | `INVALID_SIGNATURE` | SIWE signature verification failed |
+| 400 | `INVALID_NONCE` | Nonce not found or expired |
+| 400 | `INVALID_MESSAGE` | SIWE message format invalid |
+
+<CodeBlock title="Error response format">
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Authentication token is invalid or expired"
+  },
+  "meta": {
+    "timestamp": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+</CodeBlock>
+
+## Security Best Practices
+
+### Token Storage
+
+<Callout type="warning" title="Security Considerations">
+**Recommended:**
+- Store JWT in `httpOnly` cookies (prevents XSS)
+- Use `SameSite=Strict` cookie attribute
+- Implement CSRF protection
+
+**Acceptable:**
+- Store in `localStorage` with short expiration
+- Clear token on window close for sensitive apps
+
+**Avoid:**
+- Storing in regular cookies without `httpOnly`
+- Storing in URL parameters
+- Sharing tokens across origins
+</Callout>
+
+### Signature Verification
+
+The API verifies:
+1. **Signature validity**: Cryptographic signature matches message
+2. **Address match**: Recovered address matches claimed address
+3. **Nonce validity**: Nonce exists and hasn't expired
+4. **Message format**: SIWE message follows EIP-4361 standard
+5. **Domain match**: Message domain matches API domain
+
+### Rate Limiting
+
+- **Nonce requests**: 10 per minute per IP
+- **Verify requests**: 5 per minute per IP
+- **Me requests**: 100 per minute per user
+
+## Full Example
+
+<CodeBlock title="Complete React authentication hook">
+```typescript
+import { useState } from 'react';
+import { SiweMessage } from 'siwe';
+import { useAccount, useSignMessage } from 'wagmi';
+
+export function useAuth() {
+  const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+  const [token, setToken] = useState<string | null>(
+    localStorage.getItem('auth_token')
+  );
+
+  const signIn = async () => {
+    if (!address) throw new Error('No wallet connected');
+
+    // Step 1: Get nonce
+    const nonceRes = await fetch(
+      `/api/v1/auth/nonce?address=${address}`
+    );
+    const { data: { nonce } } = await nonceRes.json();
+
+    // Step 2: Create SIWE message
+    const message = new SiweMessage({
+      domain: window.location.host,
+      address,
+      statement: 'Sign in to Grails',
+      uri: window.location.origin,
+      version: '1',
+      chainId: 1,
+      nonce,
+    });
+
+    // Step 3: Sign message
+    const signature = await signMessageAsync({
+      message: message.prepareMessage(),
+    });
+
+    // Step 4: Verify signature
+    const verifyRes = await fetch('/api/v1/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: message.prepareMessage(),
+        signature,
+      }),
+    });
+
+    const { data: { token: newToken } } = await verifyRes.json();
+
+    // Step 5: Store token
+    localStorage.setItem('auth_token', newToken);
+    setToken(newToken);
+  };
+
+  const signOut = () => {
+    localStorage.removeItem('auth_token');
+    setToken(null);
+  };
+
+  return { token, signIn, signOut, isAuthenticated: !!token };
+}
+```
+</CodeBlock>
+
+## Next Steps
+
+- Explore [protected endpoints](/api/endpoints)
+- Learn about [search filters](/api/search)
+- Implement [watchlist](/api/endpoints#watchlist) features

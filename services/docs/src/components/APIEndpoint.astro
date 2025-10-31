@@ -1,0 +1,40 @@
+---
+interface Props {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  path: string;
+  auth?: boolean;
+  description?: string;
+}
+
+const { method, path, auth = false, description } = Astro.props;
+
+const methodColors = {
+  GET: 'bg-blue-600',
+  POST: 'bg-green-600',
+  PUT: 'bg-yellow-600',
+  DELETE: 'bg-red-600',
+  PATCH: 'bg-purple-600',
+};
+---
+
+<div class="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4 my-4">
+  <div class="flex items-center gap-3 mb-2">
+    <span class={`${methodColors[method]} text-white px-3 py-1 rounded font-semibold text-sm`}>
+      {method}
+    </span>
+    <code class="text-[var(--text-primary)] flex-1">{path}</code>
+    {auth && (
+      <span class="bg-yellow-900/30 text-yellow-500 px-3 py-1 rounded text-sm">
+        🔒 Auth Required
+      </span>
+    )}
+  </div>
+  {description && (
+    <p class="text-[var(--text-secondary)] text-sm mt-2">
+      {description}
+    </p>
+  )}
+  <div class="mt-4">
+    <slot />
+  </div>
+</div>

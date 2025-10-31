@@ -24,6 +24,11 @@ export const OPENSEA_CONDUIT_KEY = '0x0000007b02230091a7ed01230072f7006a004d60a8
 export const OPENSEA_FEE_RECIPIENT = '0x0000a26b00c1F0DF003000390027140000fAa719';
 export const OPENSEA_FEE_BASIS_POINTS = 100; // 1% = 100 basis points
 
+// Grails Marketplace Fees
+export const GRAILS_FEE_ENABLED = process.env.NEXT_PUBLIC_FEE_ENABLED === 'true';
+export const GRAILS_FEE_RECIPIENT = process.env.NEXT_PUBLIC_FEE_RECEIVER_ADDRESS || '';
+export const GRAILS_FEE_BASIS_POINTS = parseInt(process.env.NEXT_PUBLIC_FEE_BASIS_POINTS || '250'); // 2.5% = 250 basis points
+
 // Configuration flag to enable/disable conduit usage
 // Default to true since we have a deployed conduit
 export const USE_CONDUIT = process.env.NEXT_PUBLIC_USE_CONDUIT !== 'false';

@@ -15,27 +15,67 @@ The Frontend is a Next.js 14 application providing a user interface for the ENS 
 ## Key Components
 
 ### Pages (`app/`)
-- **Home Page** (`page.tsx`): Displays grid of ENS listings
-- **Listing Detail** (`listings/[name]/page.tsx`): Individual listing with purchase flow
+- **Home Page** (`page.tsx`): Marketplace with search and filters
+- **Name Detail** (`names/[name]/page.tsx`): ENS name detail with listing, offers, activity
+- **Watchlist** (`watchlist/page.tsx`): User's watchlist with search/filter
+- **Notifications** (`notifications/page.tsx`): User notification center
+- **Profile** (`profile/[address]/page.tsx`): User profile with owned names
+- **Portfolio** (`portfolio/page.tsx`): Current user's portfolio
+- **Offers** (`offers/page.tsx`): User's made offers
+- **Clubs** (`clubs/page.tsx` and `clubs/[clubName]/page.tsx`): Club browsing
+- **Activity** (`activity/page.tsx`): Global activity feed
+- **Leaderboard** (`leaderboard/page.tsx`): Top voted names
+- **Settings** (`settings/page.tsx`): User settings
 - **Layout** (`layout.tsx`): App wrapper with providers and header
 
 ### Components (`components/`)
 
+#### Authentication
+- `SignInModal`: SIWE authentication flow
+- Protected routes with auth hydration checks
+
 #### Listings
 - `ListingGrid`: Responsive grid of listing cards
 - `ListingCard`: Individual listing preview with price and name
+- `ListingTable`: Table view with sorting
 - `ListingDetails`: Detailed information panel
+- `ListingInfo`: Listing card with buy button
+- `ViewToggle`: Switch between grid/table view
 
-#### Orders
-- `OrderModal`: Transaction flow UI with states:
-  - Review: Display purchase details
-  - Confirming: Wallet confirmation
-  - Processing: Transaction pending
-  - Success/Error: Final states
+#### Orders & Offers
+- `OrderModal`: Seaport purchase flow with transaction states
+- `CreateListingModal`: Create new listing
+- `MakeOfferModal`: Make offer on ENS name
+- `OfferModal`: Legacy offer modal
+- `OffersSection`: Display offers for a name
 
-#### UI
-- `Header`: Navigation and wallet connection
-- `Providers`: Context providers wrapper
+#### Watchlist
+- `AddToWatchlist`: Button to add/remove from watchlist
+- `WatchlistManager`: Manage watchlist items
+- `WatchlistTable`: Table with notification preferences
+
+#### Notifications
+- `NotificationsBell`: Header notification icon with unread count
+- Notification list with mark as read functionality
+
+#### Search & Filters
+- `SearchPanel`: Advanced search with all filters
+  - Price, length, character types, clubs, expiration, sales history
+
+#### Profiles
+- `ProfileHeader`: User profile header with ENS data
+- `OwnedNames`: List of owned ENS names
+- `ProfileActivity`: Activity history for address
+
+#### Activity
+- `ActivityHistory`: Activity feed component
+
+#### Votes
+- `VoteButtons`: Upvote/downvote buttons for ENS names
+
+#### UI Components
+- `Header`: Navigation, wallet connection, user menu
+- `Providers`: Context providers wrapper (RainbowKit, Wagmi, React Query, Auth)
 
 ### Services (`services/`)
 
@@ -52,9 +92,14 @@ The Frontend is a Next.js 14 application providing a user interface for the ENS 
   - `calculateTotalPayment()`: Computes ETH amount needed
 
 ### Hooks (`hooks/`)
+- `useAuth`: Authentication state with SIWE and JWT
 - `useListings`: Fetch and filter listings
+- `useSearch`: Search with filters
+- `useWatchlist`: Watchlist CRUD operations
+- `useWatchlistSearch`: Search within watchlist
+- `useNotifications`: Fetch and manage notifications
 - `useSeaportOrder`: Execute Seaport transactions
-- `useWallet`: Wallet state management
+- `useVotes`: Voting functionality
 
 ## Environment Variables
 ```env

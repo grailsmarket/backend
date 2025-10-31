@@ -28,7 +28,7 @@ export function OffersSection({ ensName, isOwner = false }: OffersSectionProps) 
     const fetchOffers = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002/api/v1';
-        const response = await fetch(`${apiUrl}/offers/by-name/${ensName}?status=pending`);
+        const response = await fetch(`${apiUrl}/offers/name/${ensName}?status=pending`);
         if (!response.ok) throw new Error('Failed to fetch offers');
 
         const data = await response.json();

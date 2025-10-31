@@ -9,6 +9,7 @@ interface MakeOfferModalProps {
   onClose: () => void;
   tokenId: string;
   ensName: string;
+  ensNameId?: number;  // Database ID of the ENS name (required for offers)
   currentOwner?: string;
   floorPrice?: string;
   isCollectionOffer?: boolean;
@@ -19,6 +20,7 @@ export function MakeOfferModal({
   onClose,
   tokenId,
   ensName,
+  ensNameId,
   currentOwner,
   floorPrice,
   isCollectionOffer = false,
@@ -45,6 +47,7 @@ export function MakeOfferModal({
       } else {
         await createOffer({
           tokenId,
+          ensNameId,
           offerPriceInEth,
           durationDays: parseInt(durationDays),
           currentOwner,

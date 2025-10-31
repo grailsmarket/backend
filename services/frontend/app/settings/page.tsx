@@ -17,6 +17,8 @@ export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -62,6 +64,47 @@ export default function SettingsPage() {
     }
   };
 
+  const handleResendVerification = async () => {
+    setResendingVerification(true);
+    setVerificationSent(false);
+    setError(null);
+
+    try {
+      // Get token from Zustand store in localStorage
+      const authState = localStorage.getItem('grails-auth');
+      if (!authState) {
+        throw new Error('Not authenticated');
+      }
+
+      const parsed = JSON.parse(authState);
+      const token = parsed.state?.token;
+
+      if (!token) {
+        throw new Error('No auth token found');
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/verification/resend`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error?.message || 'Failed to resend verification email');
+      }
+
+      setVerificationSent(true);
+      setTimeout(() => setVerificationSent(false), 5000);
+    } catch (err: any) {
+      console.error('Resend verification error:', err);
+      setError(err?.message || 'Failed to resend verification email');
+    } finally {
+      setResendingVerification(false);
+    }
+  };
+
   if (!isAuthenticated) {
     return null;
   }
@@ -101,8 +144,32 @@ export default function SettingsPage() {
               className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500 transition-colors"
               placeholder="your@email.com"
             />
-            {user?.emailVerified === false && formData.email && (
-              <p className="mt-1 text-xs text-yellow-500">Email not verified</p>
+            {user?.email && !user?.emailVerified && (
+              <div className="bg-yellow-900/20 border border-yellow-500 rounded-lg p-4 mt-2">
+                <p className="text-yellow-400 text-sm mb-2">
+                  Your email address is not verified. Please check your inbox for a verification link.
+                </p>
+                {verificationSent ? (
+                  <p className="text-sm text-green-400">Verification email sent! Check your inbox.</p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResendVerification}
+                    disabled={resendingVerification}
+                    className="text-sm text-purple-400 hover:text-purple-300 underline disabled:opacity-50"
+                  >
+                    {resendingVerification ? 'Sending...' : 'Resend verification email'}
+                  </button>
+                )}
+              </div>
+            )}
+            {user?.emailVerified && user?.email && (
+              <div className="flex items-center gap-2 mt-2">
+                <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="text-xs text-green-500">Email verified</p>
+              </div>
             )}
           </div>
 

@@ -33,7 +33,7 @@ export default function OffersPage() {
       try {
         setLoading(true);
         const statusParam = filter !== 'all' ? `?status=${filter}` : '';
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/offers/by-buyer/${address}${statusParam}`);
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/offers/buyer/${address}${statusParam}`);
         const data = await response.json();
 
         if (data.success) {

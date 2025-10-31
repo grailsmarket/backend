@@ -1,0 +1,218 @@
+---
+title: "Workers Overview"
+description: "Asynchronous job processing with pg-boss"
+order: 1
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Workers Service Overview
+
+The Workers service handles asynchronous background job processing for the Grails ENS marketplace, built on pg-boss (PostgreSQL-based message queue).
+
+## What It Does
+
+1. **Expires Orders**: Automatically expires listings and offers at their expiration time
+2. **Syncs ENS Metadata**: Fetches avatars, descriptions, and social links from blockchain
+3. **Updates Ownership**: Processes ownership transfers and cancels invalid listings
+4. **Sends Notifications**: Email alerts for watchlist events
+5. **Resolves Names**: Converts placeholder names (`token-*`) to actual ENS names
+
+## Workers
+
+### Expiry Worker
+- **Purpose**: Expire listings and offers at exact time
+- **Queues**: `expire-orders` (individual), `batch-expire-orders` (cron every 5 min)
+- **Triggers**: Scheduled when listing/offer created, plus batch safety net
+
+### ENS Sync Worker
+- **Purpose**: Refresh ENS metadata (avatar, description, social links)
+- **Queues**: `sync-ens-data` (individual), `schedule-daily-ens-sync` (daily at 2 AM)
+- **Triggers**: New listing created, daily refresh for all active listings
+- **Data Sources**: ENS Resolver contracts, The Graph API, EFP API
+
+### Ownership Worker
+- **Purpose**: Process ownership transfers from blockchain
+- **Queue**: `update-ownership`
+- **Triggers**: Indexer detects Transfer event
+- **Actions**: Updates owner_address, cancels invalid listings, notifies sellers
+
+### Notification Worker
+- **Purpose**: Send email notifications for watchlist events
+- **Queue**: `send-notification`
+- **Triggers**: Database changes detected by WAL Listener
+- **Types**: new-listing, price-change, sale, new-offer, listing-cancelled
+
+### Name Resolution Worker (Optional)
+- **Purpose**: Resolve placeholder names to actual ENS names
+- **Queue**: `resolve-name`
+- **Source**: The Graph ENS subgraph
+
+## Expiration Handling
+
+### ENS Name Expiration
+- **Source**: ENS Registrar contract `expiry_date`
+- **Calculated Fields**:
+  - `is_expired`: Current date > expiry_date
+  - `is_grace_period`: 0-90 days past expiry (can still renew)
+  - `is_premium_period`: 90-2555 days past expiry (Dutch auction)
+  - `days_until_expiry`: Days remaining (negative if expired)
+- **Updates**: Indexer reads from blockchain, stores in ens_names table
+- **Search Filters**: API and WAL Listener calculate derived fields for Elasticsearch
+
+### Listing/Offer Expiration
+- **Source**: User-specified `expires_at` when creating listing/offer
+- **Default**: 30 days from creation if not specified
+- **Processing**:
+  - Individual jobs scheduled for exact expiration time
+  - Batch job runs every 5 minutes to catch missed expirations
+- **Action**: Updates status to 'expired', removes from search index
+
+<Callout type="info" title="Expiration Strategy">
+The workers use a **dual-approach** for reliability:
+1. **Precise scheduling** for exact expiration times
+2. **Batch processing** every 5 minutes as a safety net
+
+This ensures no orders slip through even if the service was temporarily down.
+</Callout>
+
+## Architecture
+
+```
+Producers                    Queue                Workers               Actions
+─────────────────────────────────────────────────────────────────────────────
+API Service      ─┐
+Indexer Service  ─┤──► pg-boss (PostgreSQL) ──► Worker Processes ──► Database
+WAL Listener     ─┘                                                   Email
+                                                                      Blockchain
+```
+
+**Benefits of pg-boss:**
+- No separate message broker (Redis/RabbitMQ) needed
+- ACID guarantees via PostgreSQL
+- Automatic retries with exponential backoff
+- Job archiving for audit trail
+- Cron-like scheduling built-in
+
+## Job Publishers
+
+### API Service
+- Publishes `expire-orders` when listing/offer created
+- Publishes `sync-ens-data` when listing created
+
+### Indexer Service
+- Publishes `update-ownership` when Transfer event detected
+
+### WAL Listener
+- Publishes `send-notification` when database changes occur
+
+## Environment Variables
+
+```env
+# Database (required)
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+
+# Blockchain (for ENS sync)
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRY_ADDRESS=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+
+# Email (optional - dry-run mode without)
+SENDGRID_API_KEY=your_sendgrid_api_key
+FROM_EMAIL=noreply@grails.market
+ENABLE_EMAIL=true
+
+# URLs
+FRONTEND_URL=http://localhost:3000
+
+# The Graph (for name resolution)
+GRAPH_ENS_SUBGRAPH_URL=https://api.thegraph.com/subgraphs/name/ensdomains/ens
+
+# Logging
+LOG_LEVEL=info  # debug, info, warn, error
+```
+
+## Monitoring
+
+### Queue Statistics
+Logged every 60 seconds:
+
+<CodeBlock title="Queue statistics format">
+```json
+{
+  "created": 150,    // Pending jobs
+  "retry": 5,        // Retrying after failure
+  "active": 23,      // Currently processing
+  "completed": 9500, // Successfully completed
+  "failed": 12       // Failed after 3 retries
+}
+```
+</CodeBlock>
+
+### Database Queries
+
+<CodeBlock title="View active jobs by queue">
+```sql
+SELECT name, COUNT(*) as count, state
+FROM pgboss.job
+WHERE state IN ('created', 'retry', 'active')
+GROUP BY name, state
+ORDER BY count DESC;
+```
+</CodeBlock>
+
+<CodeBlock title="View failed jobs">
+```sql
+SELECT id, name, data, output, completed_on
+FROM pgboss.archive
+WHERE state = 'failed'
+ORDER BY completed_on DESC
+LIMIT 20;
+```
+</CodeBlock>
+
+<CodeBlock title="View job processing times">
+```sql
+SELECT
+  name,
+  AVG(EXTRACT(EPOCH FROM (completed_on - started_on))) as avg_duration_sec
+FROM pgboss.archive
+WHERE state = 'completed'
+  AND completed_on > NOW() - INTERVAL '1 hour'
+GROUP BY name;
+```
+</CodeBlock>
+
+<Callout type="warning" title="Common Issues">
+- **Jobs Not Processing**: Check worker service is running and database connection
+- **High Queue Depth**: Scale workers or increase concurrency settings
+- **Emails Not Sending**: Verify `SENDGRID_API_KEY` and `ENABLE_EMAIL=true`
+- **ENS Sync Failures**: Check RPC provider rate limits and accessibility
+</Callout>
+
+## Testing
+
+<CodeBlock title="Manual job publishing">
+```typescript
+import { getQueueClient } from './dist/queue';
+
+const boss = await getQueueClient();
+
+// Test expiry worker
+await boss.send('expire-orders', {
+  type: 'listing',
+  id: 123
+});
+
+console.log('Job published!');
+await boss.stop();
+```
+</CodeBlock>
+
+## Next Steps
+
+- [Expiry Worker](/workers/expiry) - Detailed expiration processing
+- [ENS Sync Worker](/workers/ens-sync) - Metadata synchronization
+- [Ownership Worker](/workers/ownership) - Transfer handling
+- [Notification Worker](/workers/notifications) - Email delivery

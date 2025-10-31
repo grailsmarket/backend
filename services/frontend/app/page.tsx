@@ -9,7 +9,7 @@ import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<'price' | 'created' | 'name'>('created');
+  const [sortBy, setSortBy] = useState<'price' | 'created' | 'name' | 'last_sale_price' | 'watchers_count'>('created');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({});
   const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(true);
@@ -29,8 +29,8 @@ export default function Home() {
     localStorage.setItem('marketplace-view', newView);
   };
 
-  // Only use search endpoint if there's a text query, length filters, character filters, clubs filter, sale filters, or showAll is enabled
-  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale);
+  // Use search endpoint if there's a text query, length filters, character filters, clubs filter, sale filters, owner filter, showAll is enabled, or using new sort options (last_sale_price, watchers_count)
+  const useSearchEndpoint = !!(searchFilters.query || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.owner || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale || sortBy === 'last_sale_price' || sortBy === 'watchers_count');
 
   // Use search if text/length/character/clubs filters are active, otherwise use regular listings with price filters
   const { data: searchData, isLoading: searchLoading, error: searchError } = useSearchListings(
@@ -38,6 +38,8 @@ export default function Home() {
     {
       page,
       limit: 12,
+      sortBy: sortBy === 'created' ? undefined : sortBy,
+      sortOrder: order,
       minPrice: searchFilters.minPrice,
       maxPrice: searchFilters.maxPrice,
       minLength: searchFilters.minLength,
@@ -46,6 +48,7 @@ export default function Home() {
       hasNumbers: searchFilters.hasNumbers,
       showAll: searchFilters.showAll,
       clubs: searchFilters.clubs,
+      owner: searchFilters.owner,
       isExpired: searchFilters.isExpired,
       isGracePeriod: searchFilters.isGracePeriod,
       isPremiumPeriod: searchFilters.isPremiumPeriod,
@@ -74,7 +77,7 @@ export default function Home() {
   const isLoading = useSearchEndpoint ? searchLoading : listingsLoading;
   const error = useSearchEndpoint ? searchError : listingsError;
 
-  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale);
+  const isSearchActive = !!(searchFilters.query || searchFilters.minPrice || searchFilters.maxPrice || searchFilters.minLength || searchFilters.maxLength || searchFilters.hasEmoji !== undefined || searchFilters.hasNumbers !== undefined || searchFilters.showAll || (searchFilters.clubs && searchFilters.clubs.length > 0) || searchFilters.owner || searchFilters.hasSales !== undefined || searchFilters.minDaysSinceLastSale || searchFilters.maxDaysSinceLastSale || sortBy === 'last_sale_price' || sortBy === 'watchers_count');
 
   const handleSearch = (filters: SearchFilters) => {
     setSearchFilters(filters);
@@ -127,6 +130,8 @@ export default function Home() {
                     <option value="created">Recently Listed</option>
                     <option value="price">Price</option>
                     <option value="name">Name</option>
+                    <option value="last_sale_price">Last Sale Price</option>
+                    <option value="watchers_count">Watchers Count</option>
                   </select>
                   <button
                     onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}

@@ -1,0 +1,89 @@
+---
+title: "API Overview"
+description: "Introduction to the Grails API service"
+order: 1
+---
+
+import Callout from '../../components/Callout.astro';
+import APIEndpoint from '../../components/APIEndpoint.astro';
+
+# API Service Overview
+
+The API service is the primary backend for the Grails ENS marketplace, providing RESTful endpoints for the frontend and managing all marketplace data.
+
+## Key Features
+
+- **SIWE Authentication**: Sign-In With Ethereum (EIP-4361) with JWT tokens
+- **Elasticsearch Search**: Fast, complex filtering across ENS names
+- **OpenSea Integration**: Real-time marketplace event processing
+- **User Features**: Watchlists, notifications, voting, profiles
+- **Sales History**: Track and analyze ENS name sales
+
+## Technology Stack
+
+- **Framework**: Fastify (high-performance Node.js framework)
+- **Database**: PostgreSQL with Prisma ORM
+- **Search**: Elasticsearch 8.x
+- **Authentication**: SIWE + JWT
+- **Validation**: Zod schemas
+
+## Port Configuration
+
+- **Development**: `http://localhost:3000`
+- **Production**: Configured via `PORT` environment variable
+
+## Quick Example
+
+<APIEndpoint method="GET" path="/api/v1/names/search" description="Search ENS names with filters">
+
+**Query Parameters:**
+- `query` - Search term (optional)
+- `filters[minPrice]` - Minimum price in wei
+- `filters[maxPrice]` - Maximum price in wei
+- `filters[minLength]` - Minimum character count
+- `filters[maxLength]` - Maximum character count
+- `filters[clubs][]` - Filter by club membership
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "name": "vitalik.eth",
+      "token_id": "123456",
+      "price": "1000000000000000000",
+      "character_count": 7,
+      "clubs": ["10k", "palindrome"]
+    }
+  ],
+  "total": 1234,
+  "page": 1,
+  "limit": 20
+}
+```
+
+</APIEndpoint>
+
+<Callout type="info" title="Response Builder Pattern">
+The API uses a two-step response builder pattern:
+1. Elasticsearch returns matching ENS names (fast)
+2. PostgreSQL enriches with relations (listings, offers, sales)
+</Callout>
+
+## Environment Variables
+
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+ELASTICSEARCH_URL=http://localhost:9200
+OPENSEA_API_KEY=your_opensea_api_key
+JWT_SECRET=your_random_secret
+PORT=3000
+NODE_ENV=development
+```
+
+## Next Steps
+
+- [Authentication](/api/authentication) - Learn about SIWE auth flow
+- [Search & Filters](/api/search) - Explore search capabilities
+- [Endpoints](/api/endpoints) - Complete API reference
+- [OpenSea Integration](/api/opensea) - Marketplace event handling

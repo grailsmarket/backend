@@ -1,0 +1,459 @@
+---
+title: "PostgreSQL Setup"
+description: "Configuring logical replication for real-time change capture"
+order: 2
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# PostgreSQL Setup
+
+Configure PostgreSQL for logical replication to enable real-time database change capture.
+
+## Prerequisites
+
+- PostgreSQL 10+ (logical replication support)
+- Superuser access to PostgreSQL
+- Write access to `postgresql.conf`
+
+## Step 1: Enable Logical Replication
+
+<Callout type="warning" title="Requires Restart">
+Changing `wal_level` requires a PostgreSQL restart. Plan for brief downtime.
+</Callout>
+
+### Edit postgresql.conf
+
+<CodeBlock title="Location of postgresql.conf">
+```bash
+# Find your config file
+psql -U postgres -c "SHOW config_file;"
+
+# Common locations:
+# Ubuntu/Debian: /etc/postgresql/14/main/postgresql.conf
+# macOS (Homebrew): /usr/local/var/postgres/postgresql.conf
+# Docker: /var/lib/postgresql/data/postgresql.conf
+```
+</CodeBlock>
+
+<CodeBlock title="Enable logical replication settings">
+```conf
+# Write-Ahead Log
+wal_level = logical                    # Enable logical replication
+max_wal_senders = 4                    # Number of WAL sender processes
+max_replication_slots = 4              # Number of replication slots
+
+# Optional: tune for performance
+wal_sender_timeout = 60000             # 60 seconds (default: 60000ms)
+max_slot_wal_keep_size = 1024          # MB to retain (optional)
+```
+</CodeBlock>
+
+### Restart PostgreSQL
+
+<CodeBlock title="Restart database server">
+```bash
+# Ubuntu/Debian
+sudo systemctl restart postgresql
+
+# macOS (Homebrew)
+brew services restart postgresql
+
+# Docker
+docker restart postgres-container
+```
+</CodeBlock>
+
+### Verify Settings
+
+<CodeBlock title="Check configuration">
+```sql
+SELECT name, setting
+FROM pg_settings
+WHERE name IN (
+  'wal_level',
+  'max_wal_senders',
+  'max_replication_slots'
+);
+
+-- Expected output:
+-- wal_level             | logical
+-- max_wal_senders       | 4
+-- max_replication_slots | 4
+```
+</CodeBlock>
+
+<Callout type="success" title="Verification">
+If `wal_level` shows `logical`, you're ready to proceed!
+</Callout>
+
+## Step 2: Create Publication
+
+A publication defines which tables to replicate.
+
+<CodeBlock title="Create publication for tracked tables">
+```sql
+CREATE PUBLICATION grails_publication FOR TABLE
+  ens_names,
+  listings,
+  offers,
+  sales;
+```
+</CodeBlock>
+
+### Verify Publication
+
+<CodeBlock title="Check publication exists">
+```sql
+SELECT * FROM pg_publication WHERE pubname = 'grails_publication';
+
+-- View published tables
+SELECT schemaname, tablename
+FROM pg_publication_tables
+WHERE pubname = 'grails_publication';
+```
+</CodeBlock>
+
+### Add Tables to Existing Publication
+
+<CodeBlock title="Modify publication">
+```sql
+-- Add a table
+ALTER PUBLICATION grails_publication ADD TABLE activity_history;
+
+-- Remove a table
+ALTER PUBLICATION grails_publication DROP TABLE activity_history;
+
+-- Replace all tables
+ALTER PUBLICATION grails_publication SET TABLE
+  ens_names, listings, offers, sales, activity_history;
+```
+</CodeBlock>
+
+## Step 3: Create Replication Slot
+
+A replication slot ensures WAL segments aren't deleted before being consumed.
+
+<CodeBlock title="Create logical replication slot">
+```sql
+SELECT pg_create_logical_replication_slot(
+  'grails_wal_slot',  -- Slot name
+  'pgoutput'          -- Output plugin
+);
+
+-- Response:
+-- pg_create_logical_replication_slot
+-- ------------------------------------
+-- (grails_wal_slot,0/17D5A48)
+```
+</CodeBlock>
+
+### Verify Replication Slot
+
+<CodeBlock title="Check slot status">
+```sql
+SELECT
+  slot_name,
+  plugin,
+  slot_type,
+  database,
+  active,
+  restart_lsn,
+  confirmed_flush_lsn
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+```
+</CodeBlock>
+
+**Fields Explained:**
+| Field | Description |
+|-------|-------------|
+| `active` | Is a client connected? |
+| `restart_lsn` | Position WAL reader will restart from |
+| `confirmed_flush_lsn` | Latest position acknowledged by client |
+
+<Callout type="info" title="LSN (Log Sequence Number)">
+LSN is a position in the WAL stream (e.g., `0/17D5A48`). It represents the byte offset in the transaction log.
+</Callout>
+
+## Step 4: Grant Permissions
+
+The WAL listener needs replication privileges.
+
+<CodeBlock title="Grant replication permissions">
+```sql
+-- Grant replication privilege
+ALTER USER your_db_user WITH REPLICATION;
+
+-- Grant SELECT on all tables in publication
+GRANT SELECT ON ens_names, listings, offers, sales TO your_db_user;
+
+-- Grant USAGE on schema
+GRANT USAGE ON SCHEMA public TO your_db_user;
+```
+</CodeBlock>
+
+### Verify Permissions
+
+<CodeBlock title="Check user privileges">
+```sql
+SELECT
+  rolname,
+  rolreplication
+FROM pg_roles
+WHERE rolname = 'your_db_user';
+
+-- rolreplication should be 't' (true)
+```
+</CodeBlock>
+
+## Step 5: Configure Connection
+
+Update the WAL listener service configuration.
+
+<CodeBlock title="services/wal-listener/.env">
+```env
+# Database connection (must support replication)
+DATABASE_URL=postgresql://user:password@localhost:5432/grails?replication=database
+
+# Replication settings
+REPLICATION_SLOT=grails_wal_slot
+PUBLICATION_NAME=grails_publication
+
+# Timeouts
+WAL_SENDER_TIMEOUT=60000    # 60 seconds
+HEARTBEAT_INTERVAL=30000     # 30 seconds
+
+# Elasticsearch
+ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_INDEX=ens_names
+```
+</CodeBlock>
+
+<Callout type="warning" title="Connection String">
+The connection string **must include** `?replication=database` for logical replication to work.
+</Callout>
+
+## Management Commands
+
+### Drop Replication Slot
+
+<Callout type="error" title="Data Loss Warning">
+Dropping a replication slot **will lose the position in the WAL**. The WAL listener will need to resync from the beginning.
+</Callout>
+
+<CodeBlock title="Remove replication slot">
+```sql
+-- Drop slot (only if not active)
+SELECT pg_drop_replication_slot('grails_wal_slot');
+
+-- Force drop (even if active)
+SELECT pg_terminate_backend(active_pid)
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot'
+  AND active_pid IS NOT NULL;
+
+SELECT pg_drop_replication_slot('grails_wal_slot');
+```
+</CodeBlock>
+
+### Reset Slot Position
+
+<CodeBlock title="Advance slot to current position">
+```sql
+-- Get current WAL position
+SELECT pg_current_wal_lsn();
+-- Example: 0/1B5A4E8
+
+-- Advance slot to current position (skip all pending changes)
+SELECT pg_replication_slot_advance(
+  'grails_wal_slot',
+  '0/1B5A4E8'  -- Use output from pg_current_wal_lsn()
+);
+```
+</CodeBlock>
+
+<Callout type="warning" title="Skip Changes">
+Advancing a slot **skips all pending changes** up to that LSN. Use with caution!
+</Callout>
+
+### Monitor Slot Growth
+
+<CodeBlock title="Check WAL retention">
+```sql
+SELECT
+  slot_name,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) as retained_wal
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+
+-- Example output:
+-- slot_name      | retained_wal
+-- ---------------+--------------
+-- grails_wal_slot| 128 MB
+```
+</CodeBlock>
+
+<Callout type="error" title="Disk Space">
+If `retained_wal` grows too large (&gt;1GB), it means:
+1. WAL listener is not running or stuck
+2. Processing is too slow to keep up
+3. Network issues preventing consumption
+
+**Fix:** Restart the WAL listener or advance the slot.
+</Callout>
+
+## Troubleshooting
+
+### Error: wal_level is not logical
+
+**Symptom:**
+```
+ERROR: logical decoding requires wal_level >= logical
+```
+
+**Solution:**
+1. Edit `postgresql.conf` and set `wal_level = logical`
+2. Restart PostgreSQL
+3. Verify with: `SHOW wal_level;`
+
+### Error: Too many replication slots
+
+**Symptom:**
+```
+ERROR: all replication slots are in use
+```
+
+**Solution:**
+```sql
+-- Check current slots
+SELECT * FROM pg_replication_slots;
+
+-- Increase max_replication_slots in postgresql.conf
+max_replication_slots = 10
+
+-- Restart PostgreSQL
+```
+
+### Error: Permission denied
+
+**Symptom:**
+```
+ERROR: permission denied to create replication slot
+```
+
+**Solution:**
+```sql
+-- Grant replication privilege
+ALTER USER your_db_user WITH REPLICATION;
+
+-- Verify
+SELECT rolreplication FROM pg_roles WHERE rolname = 'your_db_user';
+```
+
+### Slot Growing Without Bound
+
+**Symptom:**
+- `retained_wal` increasing
+- Disk space running out
+
+**Solution:**
+```sql
+-- Check if WAL listener is connected
+SELECT * FROM pg_stat_replication;
+
+-- If no active connections, drop and recreate slot
+SELECT pg_drop_replication_slot('grails_wal_slot');
+SELECT pg_create_logical_replication_slot('grails_wal_slot', 'pgoutput');
+
+-- Restart WAL listener service
+```
+
+## Docker Setup
+
+<CodeBlock title="docker-compose.yml configuration">
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: grails
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: grails
+    volumes:
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    ports:
+      - "5432:5432"
+```
+</CodeBlock>
+
+<CodeBlock title="postgresql.conf for Docker">
+```conf
+# Docker postgresql.conf
+listen_addresses = '*'
+max_connections = 100
+
+# Logical replication
+wal_level = logical
+max_wal_senders = 4
+max_replication_slots = 4
+```
+</CodeBlock>
+
+## Production Considerations
+
+### High Availability
+
+<CodeBlock title="Multiple WAL listeners">
+```
+Only ONE WAL listener can be active per replication slot.
+
+For HA:
+1. Run multiple WAL listener instances
+2. Use leader election (e.g., etcd, Consul)
+3. Only leader connects to replication slot
+4. Standby takes over on leader failure
+```
+</CodeBlock>
+
+### Monitoring
+
+Set up alerts for:
+- Replication lag > 1 minute
+- Retained WAL size > 1 GB
+- Replication slot inactive > 5 minutes
+
+<CodeBlock title="Monitoring queries">
+```sql
+-- Replication lag in bytes
+SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) as lag_bytes
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+
+-- Replication lag in time (approximate)
+SELECT
+  EXTRACT(EPOCH FROM (NOW() - pg_last_committed_xact().timestamp)) as lag_seconds
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot' AND active;
+```
+</CodeBlock>
+
+### Backup Considerations
+
+<Callout type="info" title="Backups and Replication Slots">
+- Replication slots are **not backed up** by `pg_dump`
+- After restoring a backup, you must:
+  1. Recreate replication slots
+  2. Recreate publications
+  3. Run full Elasticsearch resync
+</Callout>
+
+## Next Steps
+
+- Configure [Elasticsearch sync](/wal-listener/elasticsearch)
+- Set up [monitoring](/wal-listener/monitoring)
+- Review [WAL Listener overview](/wal-listener/overview)

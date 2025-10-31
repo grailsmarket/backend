@@ -12,24 +12,33 @@ The WAL (Write-Ahead Log) Listener service monitors PostgreSQL's logical replica
 
 ## Key Components
 
-### WAL Monitoring (`src/services/`)
-- **Replication Slot**: Creates and manages PostgreSQL replication slot
-- **Change Stream**: Processes INSERT, UPDATE, DELETE operations
-- **Event Parser**: Decodes WAL entries into structured events
-- **Action Dispatcher**: Routes changes to appropriate handlers
+### WAL Monitoring (`src/services/wal-listener.ts`)
+- **Replication Slot**: Creates and manages PostgreSQL replication slot (`grails_wal_slot`)
+- **Change Stream**: Processes INSERT, UPDATE, DELETE operations via logical replication
+- **Event Parser**: Decodes WAL entries using `pgoutput` plugin
+- **Action Dispatcher**: Routes changes to Elasticsearch sync handler
+- **Publication**: Subscribes to `grails_publication` (ens_names, listings, offers, sales)
+- **Heartbeat**: Sends keepalive messages to prevent timeout
 
-### Change Handlers
-- **Listing Changes**: Updates cache, notifies clients
-- **Offer Changes**: Triggers notifications to sellers
-- **ENS Updates**: Syncs ownership changes
-- **Event Logging**: Archives all changes for audit
+### Change Handlers (`src/services/elasticsearch-sync.ts`)
+- **ens_names Changes**:
+  - INSERT/UPDATE: Syncs to Elasticsearch with derived fields
+  - Calculates: character_count, has_numbers, has_emoji, is_expired, days_until_expiry, clubs
+  - Joins with listings for price data
+- **listings Changes**:
+  - INSERT/UPDATE: Updates price and listing data in ES document
+  - DELETE: Removes price from ES document
+- **sales Changes**:
+  - INSERT: Updates last_sale_price, last_sale_date, has_sales, days_since_last_sale
+- **offers Changes**:
+  - INSERT/UPDATE: Updates offer count in ES document
 
 ### Important Files
 - `src/index.ts` - Main service entry point
-- `src/services/wal-processor.ts` - Core WAL processing logic
-- `src/services/change-handlers.ts` - Database change handlers
-- `src/utils/replication.ts` - PostgreSQL replication utilities
-- `src/config/tables.ts` - Monitored table configurations
+- `src/services/wal-listener.ts` - Core WAL processing logic using pg-logical-replication
+- `src/services/elasticsearch-sync.ts` - Elasticsearch synchronization handler
+- `src/scripts/resync-elasticsearch.ts` - Full reindex script from PostgreSQL
+- `src/config/elasticsearch-mapping.ts` - ES index mapping and settings
 
 ## Environment Variables
 ```env

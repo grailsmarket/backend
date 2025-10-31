@@ -1,0 +1,89 @@
+---
+title: "System Architecture"
+description: "Overview of the Grails backend architecture and service interactions"
+order: 2
+---
+
+import Callout from '../../components/Callout.astro';
+
+# System Architecture
+
+The Grails ENS marketplace consists of four interconnected services working together to provide a complete marketplace experience.
+
+## Architecture Diagram
+
+```
+┌─────────────────┐     ┌──────────────┐     ┌───────────────┐
+│                 │────▶│              │────▶│               │
+│    Frontend     │     │   API        │     │   Database    │
+│   (Next.js)     │◀────│   Service    │◀────│  (PostgreSQL) │
+│                 │     │              │     │               │
+└─────────────────┘     └──────────────┘     └───────────────┘
+                               ▲                      ▲
+                               │                      │
+                        ┌──────┴──────┐       ┌───────┴────────┐
+                        │             │       │                │
+                        │  OpenSea    │       │   Indexer      │
+                        │  Stream API │       │   Service      │
+                        │             │       │                │
+                        └─────────────┘       └────────────────┘
+                                                      ▲
+                                                      │
+                                              ┌───────┴────────┐
+                                              │                │
+                                              │   Ethereum     │
+                                              │   Blockchain   │
+                                              │                │
+                                              └────────────────┘
+```
+
+## Service Responsibilities
+
+### API Service
+- **Port**: 3000
+- **Purpose**: REST API backend serving the frontend
+- **Key Features**:
+  - SIWE authentication with JWT tokens
+  - Elasticsearch search with advanced filters
+  - OpenSea Stream API integration
+  - User profiles, watchlists, notifications
+
+### Indexer Service
+- **Port**: 3003
+- **Purpose**: Blockchain and marketplace event monitoring
+- **Key Features**:
+  - ENS Registry/Registrar event tracking
+  - OpenSea WebSocket stream integration
+  - Name resolution via The Graph
+  - Ownership transfer detection
+
+### WAL Listener Service
+- **Port**: 3004
+- **Purpose**: Database change monitoring and Elasticsearch sync
+- **Key Features**:
+  - PostgreSQL logical replication
+  - Real-time Elasticsearch indexing
+  - Derived field calculation
+  - Sub-second search latency
+
+### Workers Service
+- **Purpose**: Asynchronous background job processing
+- **Key Features**:
+  - pg-boss PostgreSQL-based queue
+  - Order expiration handling
+  - ENS metadata synchronization
+  - Email notifications via SendGrid
+
+<Callout type="info" title="Data Flow">
+Blockchain events flow through Indexer → PostgreSQL → WAL Listener → Elasticsearch → API → Frontend
+</Callout>
+
+## Technology Stack
+
+- **Runtime**: Node.js with TypeScript
+- **Database**: PostgreSQL 14+ with logical replication
+- **Search**: Elasticsearch 8.x
+- **Queue**: pg-boss (PostgreSQL-based)
+- **Blockchain**: Ethers.js v6
+- **API Framework**: Fastify
+- **Frontend**: Next.js 14 with RainbowKit

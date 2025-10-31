@@ -52,6 +52,11 @@ export class ElasticsearchSync {
                   type: 'scaled_float',
                   scaling_factor: 1000000000000000000,
                 },
+                last_sale_currency: { type: 'keyword' },
+                last_sale_price_usd: {
+                  type: 'scaled_float',
+                  scaling_factor: 100, // 2 decimal precision for dollars (e.g., 16319.19)
+                },
                 listing_created_at: { type: 'date' },
                 active_offers_count: { type: 'integer' },
                 highest_offer: {
@@ -147,7 +152,10 @@ export class ElasticsearchSync {
           l.price_wei as listing_price,
           l.status as listing_status,
           l.created_at as listing_created_at,
-          en.last_sale_date
+          en.last_sale_date,
+          en.last_sale_price,
+          en.last_sale_currency,
+          en.last_sale_price_usd
         FROM ens_names en
         LEFT JOIN LATERAL (
           SELECT * FROM listings
@@ -227,7 +235,10 @@ export class ElasticsearchSync {
             l.created_at as listing_created_at,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
             MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer,
-            en.last_sale_date
+            en.last_sale_date,
+            en.last_sale_price,
+            en.last_sale_currency,
+            en.last_sale_price_usd
           FROM ens_names en
           LEFT JOIN LATERAL (
             SELECT * FROM listings
@@ -315,6 +326,8 @@ export class ElasticsearchSync {
       tags: this.generateTags(name),
       clubs: data.clubs || [],
       last_sale_price: data.last_sale_price,
+      last_sale_currency: data.last_sale_currency,
+      last_sale_price_usd: data.last_sale_price_usd,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
       highest_offer: data.highest_offer || null,

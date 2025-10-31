@@ -1,10 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, APIResponse, ENSName, config } from '../../../shared/src';
-import { searchNames } from '../services/search';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
-import { buildSearchResults, buildNameResult } from '../utils/response-builder';
+import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 
 // ENS Name Wrapper contract address
@@ -22,25 +21,6 @@ const ListNamesQuerySchema = z.object({
   status: z.enum(['available', 'listed', 'expiring']).optional(),
   sort: z.enum(['name', 'price', 'expiry', 'created']).default('created'),
   order: z.enum(['asc', 'desc']).default('desc'),
-});
-
-const SearchNamesQuerySchema = z.object({
-  q: z.string().default('*'),
-  page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(100).default(20),
-  filters: z.object({
-    minPrice: z.string().optional(),
-    maxPrice: z.string().optional(),
-    minLength: z.coerce.number().optional(),
-    maxLength: z.coerce.number().optional(),
-    hasNumbers: z.coerce.boolean().optional(),
-    hasEmoji: z.coerce.boolean().optional(),
-    clubs: z.array(z.string()).optional(),
-    isExpired: z.coerce.boolean().optional(),
-    isGracePeriod: z.coerce.boolean().optional(),
-    isPremiumPeriod: z.coerce.boolean().optional(),
-    expiringWithinDays: z.coerce.number().optional(),
-  }).optional(),
 });
 
 export async function namesRoutes(fastify: FastifyInstance) {
@@ -167,71 +147,6 @@ export async function namesRoutes(fastify: FastifyInstance) {
           hasNext: query.page < totalPages,
           hasPrev: query.page > 1,
         },
-      },
-      meta: {
-        timestamp: new Date().toISOString(),
-        version: '1.0.0',
-      },
-    };
-
-    return reply.send(response);
-  });
-
-  fastify.get('/search', { preHandler: optionalAuth }, async (request, reply) => {
-    // Transform flat query params into nested structure
-    const rawQuery = request.query as any;
-    const transformedQuery: any = {
-      q: rawQuery.q,
-      page: rawQuery.page,
-      limit: rawQuery.limit,
-      filters: {},
-    };
-
-    // Parse filters from bracket notation
-    for (const key in rawQuery) {
-      if (key.startsWith('filters[')) {
-        // Extract the filter name: filters[clubs][] -> clubs
-        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
-        if (match) {
-          const filterName = match[1];
-          const isArray = match[2] === '[]';
-
-          if (isArray) {
-            // Handle array values: filters[clubs][]
-            if (!transformedQuery.filters[filterName]) {
-              transformedQuery.filters[filterName] = [];
-            }
-            const value = rawQuery[key];
-            if (Array.isArray(value)) {
-              transformedQuery.filters[filterName].push(...value);
-            } else {
-              transformedQuery.filters[filterName].push(value);
-            }
-          } else {
-            // Handle non-array values: filters[minPrice]
-            transformedQuery.filters[filterName] = rawQuery[key];
-          }
-        }
-      }
-    }
-
-    const query = SearchNamesQuerySchema.parse(transformedQuery);
-    const esResults = await searchNames(query);
-
-    // Extract names from Elasticsearch results
-    const ensNames = esResults.results.map((hit: any) => hit.name);
-
-    // Get user ID if authenticated
-    const userId = request.user ? parseInt(request.user.sub) : undefined;
-
-    // Build consistent results using shared utility
-    const results = await buildSearchResults(ensNames, userId);
-
-    const response: APIResponse = {
-      success: true,
-      data: {
-        results,
-        pagination: esResults.pagination,
       },
       meta: {
         timestamp: new Date().toISOString(),

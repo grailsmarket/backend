@@ -23,7 +23,7 @@ interface SearchQuery {
     minDaysSinceLastSale?: number;
     maxDaysSinceLastSale?: number;
   };
-  sortBy?: 'price' | 'expiry_date' | 'registration_date' | 'last_sale_date' | 'character_count';
+  sortBy?: 'price' | 'expiry_date' | 'registration_date' | 'last_sale_date' | 'last_sale_price' | 'character_count' | 'watchers_count';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -107,7 +107,8 @@ export async function searchNames(query: SearchQuery) {
 
     if (query.filters.clubs && query.filters.clubs.length > 0) {
       // Filter by clubs - name must be in at least one of the specified clubs
-      filter.push({ terms: { clubs: query.filters.clubs } });
+      // Use clubs.keyword for exact matching (clubs is a text field with keyword subfield)
+      filter.push({ terms: { 'clubs.keyword': query.filters.clubs } });
     }
 
     // Expiration filters - exclude names without expiry dates (placeholders)

@@ -1,0 +1,165 @@
+---
+title: "Quick Start"
+description: "Get the Grails backend services running locally"
+order: 3
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Quick Start Guide
+
+Get the entire Grails backend system running locally in under 10 minutes.
+
+## Prerequisites
+
+<Callout type="warning" title="Required Software">
+- **Node.js** 18+ and npm 9.6+
+- **PostgreSQL** 14+ with logical replication support
+- **Elasticsearch** 8.x (optional, for search)
+- **Ethereum RPC** endpoint (Alchemy, Infura, or local node)
+- **OpenSea API** key (for marketplace events)
+</Callout>
+
+## Database Setup
+
+<CodeBlock title="Create PostgreSQL database">
+```bash
+# Create database
+createdb grails
+
+# Enable logical replication in postgresql.conf
+wal_level = logical
+max_replication_slots = 4
+max_wal_senders = 4
+
+# Restart PostgreSQL
+sudo systemctl restart postgresql
+```
+</CodeBlock>
+
+## Install Dependencies
+
+<CodeBlock title="Install all service dependencies">
+```bash
+cd services/api && npm install
+cd ../indexer && npm install
+cd ../wal-listener && npm install
+cd ../workers && npm install
+```
+</CodeBlock>
+
+## Configure Environment
+
+Create `.env` files in each service directory:
+
+<CodeBlock title="services/api/.env">
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+ELASTICSEARCH_URL=http://localhost:9200
+OPENSEA_API_KEY=your_opensea_key
+JWT_SECRET=your_jwt_secret
+PORT=3000
+```
+</CodeBlock>
+
+<CodeBlock title="services/indexer/.env">
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+OPENSEA_API_KEY=your_opensea_key
+```
+</CodeBlock>
+
+<CodeBlock title="services/wal-listener/.env">
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+ELASTICSEARCH_URL=http://localhost:9200
+REPLICATION_SLOT=grails_wal_slot
+PUBLICATION_NAME=grails_publication
+```
+</CodeBlock>
+
+<CodeBlock title="services/workers/.env">
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+SENDGRID_API_KEY=your_sendgrid_key
+FRONTEND_URL=http://localhost:3001
+```
+</CodeBlock>
+
+## Run Database Migrations
+
+<CodeBlock title="Apply database schema">
+```bash
+cd services/api
+npm run db:migrate
+```
+</CodeBlock>
+
+## Set Up WAL Replication
+
+<CodeBlock title="Configure PostgreSQL logical replication">
+```bash
+cd services/wal-listener
+npm run wal:setup
+```
+</CodeBlock>
+
+## Start Services
+
+Open four terminal windows and start each service:
+
+<CodeBlock title="Terminal 1 - API Service">
+```bash
+cd services/api
+npm run dev
+# Running on http://localhost:3000
+```
+</CodeBlock>
+
+<CodeBlock title="Terminal 2 - Indexer Service">
+```bash
+cd services/indexer
+npm run dev
+# Monitoring blockchain events...
+```
+</CodeBlock>
+
+<CodeBlock title="Terminal 3 - WAL Listener">
+```bash
+cd services/wal-listener
+npm run dev
+# Syncing to Elasticsearch...
+```
+</CodeBlock>
+
+<CodeBlock title="Terminal 4 - Workers Service">
+```bash
+cd services/workers
+npm run dev
+# Processing background jobs...
+```
+</CodeBlock>
+
+## Verify Installation
+
+<CodeBlock title="Check API health">
+```bash
+curl http://localhost:3000/health
+# {"status":"ok","uptime":123}
+```
+</CodeBlock>
+
+<Callout type="success" title="Success!">
+All services are now running. Visit the [API documentation](/api/overview) to start making requests.
+</Callout>
+
+## Next Steps
+
+- Explore the [API endpoints](/api/endpoints)
+- Learn about [search filters](/api/search)
+- Understand [authentication](/api/authentication)
+- Monitor [indexer events](/indexer/ens-events)

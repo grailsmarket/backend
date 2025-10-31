@@ -37,7 +37,7 @@ export async function registerBatchNameResolutionWorker(boss: PgBoss): Promise<v
         const result = await pool.query(
           `SELECT id, token_id, name
            FROM ens_names
-           WHERE name LIKE 'token-%'
+           WHERE name LIKE 'token-%' OR name LIKE '#%'
            ORDER BY created_at DESC
            LIMIT $1`,
           [BATCH_SIZE]

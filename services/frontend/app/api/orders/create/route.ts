@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Validate required fields based on order type
-    const { type, order_data, tokenId, price, currency } = body;
+    const { type, order_data, tokenId, ensNameId, price, currency } = body;
 
     if (!type || !order_data) {
       return NextResponse.json(
@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         type,
         token_id: tokenId,
+        ensNameId: ensNameId,
         price_wei: priceInSmallestUnit,
         currency_address: currencyAddress.toLowerCase(),
         order_data: JSON.stringify(order_data),

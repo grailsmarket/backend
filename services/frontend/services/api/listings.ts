@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { searchAPI, SearchParams as BaseSearchParams, SearchResult } from './search';
 import { APIResponse, Listing, Pagination } from '@/types';
 
 export interface ListingsParams {
@@ -12,25 +13,9 @@ export interface ListingsParams {
   order?: 'asc' | 'desc';
 }
 
-export interface SearchParams {
-  q?: string;
-  page?: number;
-  limit?: number;
-  minPrice?: string;
-  maxPrice?: string;
-  minLength?: number;
-  maxLength?: number;
-  hasEmoji?: boolean;
-  hasNumbers?: boolean;
-  showAll?: boolean;
-  clubs?: string[];
-  isExpired?: boolean;
-  isGracePeriod?: boolean;
-  isPremiumPeriod?: boolean;
-  expiringWithinDays?: number;
-  hasSales?: boolean;
-  minDaysSinceLastSale?: number;
-  maxDaysSinceLastSale?: number;
+// Re-export SearchParams with showAll for backwards compatibility
+export interface SearchParams extends Omit<BaseSearchParams, 'showListings'> {
+  showAll?: boolean; // Kept for backwards compatibility (inverted to showListings internally)
 }
 
 class ListingsAPI {
@@ -59,66 +44,22 @@ class ListingsAPI {
   }
 
   async searchListings(params: SearchParams): Promise<{ listings: Listing[]; pagination: Pagination }> {
-    // Transform params to match backend API structure
-    const queryParams: any = {
-      q: params.q,
-      page: params.page,
-      limit: params.limit,
+    // Convert showAll (old) to showListings (new) - INVERTED LOGIC
+    // Old: showAll=false (default) → only listings, showAll=true → all names
+    // New: showListings=true → only listings, showListings=false (default) → all names
+    const showListings = params.showAll !== undefined ? !params.showAll : true;
+
+    // Use the new unified search API
+    const searchParams: BaseSearchParams = {
+      ...params,
+      showListings,
     };
 
-    // Add filters as nested params
-    if (params.minPrice !== undefined) queryParams['filters[minPrice]'] = params.minPrice;
-    if (params.maxPrice !== undefined) queryParams['filters[maxPrice]'] = params.maxPrice;
-    if (params.minLength !== undefined) queryParams['filters[minLength]'] = params.minLength;
-    if (params.maxLength !== undefined) queryParams['filters[maxLength]'] = params.maxLength;
-    if (params.hasEmoji !== undefined) queryParams['filters[hasEmoji]'] = params.hasEmoji;
-    if (params.hasNumbers !== undefined) queryParams['filters[hasNumbers]'] = params.hasNumbers;
-    if (params.showAll !== undefined) queryParams['filters[showAll]'] = params.showAll;
-
-    // Handle clubs array - needs to be sent as filters[clubs][]
-    if (params.clubs && params.clubs.length > 0) {
-      queryParams['filters[clubs][]'] = params.clubs;
-    }
-
-    // Expiration filters
-    if (params.isExpired !== undefined) queryParams['filters[isExpired]'] = params.isExpired;
-    if (params.isGracePeriod !== undefined) queryParams['filters[isGracePeriod]'] = params.isGracePeriod;
-    if (params.isPremiumPeriod !== undefined) queryParams['filters[isPremiumPeriod]'] = params.isPremiumPeriod;
-    if (params.expiringWithinDays !== undefined) queryParams['filters[expiringWithinDays]'] = params.expiringWithinDays;
-
-    // Sale history filters
-    if (params.hasSales !== undefined) queryParams['filters[hasSales]'] = params.hasSales;
-    if (params.minDaysSinceLastSale !== undefined) queryParams['filters[minDaysSinceLastSale]'] = params.minDaysSinceLastSale;
-    if (params.maxDaysSinceLastSale !== undefined) queryParams['filters[maxDaysSinceLastSale]'] = params.maxDaysSinceLastSale;
-
-    interface SearchResult {
-      name: string;
-      token_id: string;
-      owner: string;
-      expiry_date: string | null;
-      last_sale_date: string | null;
-      listings: Array<{
-        id: number;
-        price: string;
-        currency_address: string;
-        status: string;
-        seller_address: string;
-        order_hash: string;
-        order_data: any;
-        expires_at: string;
-        created_at: string;
-        source: string;
-      }>;
-    }
-
-    const response = await apiClient.get<APIResponse<{ results: SearchResult[]; pagination: Pagination }>>('/listings/search', queryParams);
-    if (!response.success) {
-      throw new Error(response.error?.message || 'Search failed');
-    }
+    const response = await searchAPI.search(searchParams);
 
     // Flatten search results: each ENS name with its listings becomes separate listing entries
     const flattenedListings: Listing[] = [];
-    for (const result of response.data!.results) {
+    for (const result of response.results) {
       if (result.listings && result.listings.length > 0) {
         // Map each nested listing to a flat Listing object
         for (const listing of result.listings) {
@@ -143,7 +84,7 @@ class ListingsAPI {
           });
         }
       } else {
-        // Name has no listings, but include it anyway (for showAll mode)
+        // Name has no listings, but include it anyway (when showing all names)
         flattenedListings.push({
           id: 0,
           ens_name_id: 0,
@@ -168,7 +109,7 @@ class ListingsAPI {
 
     return {
       listings: flattenedListings,
-      pagination: response.data!.pagination,
+      pagination: response.pagination,
     };
   }
 
@@ -207,3 +148,6 @@ class ListingsAPI {
 }
 
 export const listingsAPI = new ListingsAPI();
+
+// Re-export searchAPI for convenience
+export { searchAPI } from './search';

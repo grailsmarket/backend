@@ -1,12 +1,12 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, APIResponse } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
 interface ActivityQueryParams {
   name?: string;
+  page?: string;
   limit?: string;
-  offset?: string;
   event_type?: string | string[];
   platform?: string;
   actor_address?: string;
@@ -20,8 +20,8 @@ export async function activityRoutes(fastify: FastifyInstance) {
   fastify.get('/:name', async (request: FastifyRequest, reply: FastifyReply) => {
     const { name } = request.params as { name: string };
     const {
+      page = '1',
       limit = '50',
-      offset = '0',
       event_type,
       platform,
     } = request.query as ActivityQueryParams;
@@ -34,10 +34,24 @@ export async function activityRoutes(fastify: FastifyInstance) {
       );
 
       if (ensResult.rows.length === 0) {
-        return reply.status(404).send({ error: 'ENS name not found' });
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'ENS_NAME_NOT_FOUND',
+            message: 'ENS name not found',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
       }
 
       const ensNameId = ensResult.rows[0].id;
+
+      // Parse pagination params
+      const currentPage = parseInt(page);
+      const pageLimit = parseInt(limit);
+      const offset = (currentPage - 1) * pageLimit;
 
       // Build the WHERE clause dynamically
       const conditions = ['ens_name_id = $1'];
@@ -65,7 +79,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
       const limitParam = `$${paramCount}`;
       paramCount++;
       const offsetParam = `$${paramCount}`;
-      params.push(parseInt(limit), parseInt(offset));
+      params.push(pageLimit, offset);
 
       // Get activity history with ENS name details
       const query = `
@@ -102,19 +116,40 @@ export async function activityRoutes(fastify: FastifyInstance) {
       `;
       const countResult = await pool.query(countQuery, params.slice(0, -2)); // Remove limit/offset params
 
-      return reply.send({
-        data: result.rows,
-        pagination: {
-          total: parseInt(countResult.rows[0].total),
-          limit: parseInt(limit),
-          offset: parseInt(offset),
+      const total = parseInt(countResult.rows[0].total);
+      const totalPages = Math.ceil(total / pageLimit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: result.rows,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
         },
-      });
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
     } catch (error: any) {
       fastify.log.error('Error fetching activity history:', error);
       return reply.status(500).send({
-        error: 'Failed to fetch activity history',
-        message: error.message,
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: error.message || 'Failed to fetch activity history',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });
@@ -126,13 +161,18 @@ export async function activityRoutes(fastify: FastifyInstance) {
   fastify.get('/address/:address', async (request: FastifyRequest, reply: FastifyReply) => {
     const { address } = request.params as { address: string };
     const {
+      page = '1',
       limit = '50',
-      offset = '0',
       event_type,
       platform,
     } = request.query as ActivityQueryParams;
 
     try {
+      // Parse pagination params
+      const currentPage = parseInt(page);
+      const pageLimit = parseInt(limit);
+      const offset = (currentPage - 1) * pageLimit;
+
       // Build the WHERE clause dynamically
       const conditions = ['(actor_address = $1 OR counterparty_address = $1)'];
       const params: any[] = [address.toLowerCase()];
@@ -159,7 +199,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
       const limitParam = `$${paramCount}`;
       paramCount++;
       const offsetParam = `$${paramCount}`;
-      params.push(parseInt(limit), parseInt(offset));
+      params.push(pageLimit, offset);
 
       // Get activity history with ENS name details
       const query = `
@@ -196,19 +236,40 @@ export async function activityRoutes(fastify: FastifyInstance) {
       `;
       const countResult = await pool.query(countQuery, params.slice(0, -2)); // Remove limit/offset params
 
-      return reply.send({
-        data: result.rows,
-        pagination: {
-          total: parseInt(countResult.rows[0].total),
-          limit: parseInt(limit),
-          offset: parseInt(offset),
+      const total = parseInt(countResult.rows[0].total);
+      const totalPages = Math.ceil(total / pageLimit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: result.rows,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
         },
-      });
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
     } catch (error: any) {
       fastify.log.error('Error fetching activity history for address:', error);
       return reply.status(500).send({
-        error: 'Failed to fetch activity history',
-        message: error.message,
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: error.message || 'Failed to fetch activity history',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });
@@ -219,13 +280,18 @@ export async function activityRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
     const {
+      page = '1',
       limit = '50',
-      offset = '0',
       event_type,
       platform,
     } = request.query as ActivityQueryParams;
 
     try {
+      // Parse pagination params
+      const currentPage = parseInt(page);
+      const pageLimit = parseInt(limit);
+      const offset = (currentPage - 1) * pageLimit;
+
       // Build the WHERE clause dynamically
       const conditions: string[] = [];
       const params: any[] = [];
@@ -252,7 +318,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
       const limitParam = `$${paramCount}`;
       paramCount++;
       const offsetParam = `$${paramCount}`;
-      params.push(parseInt(limit), parseInt(offset));
+      params.push(pageLimit, offset);
 
       // Get activity history with ENS name details
       const query = `
@@ -289,19 +355,40 @@ export async function activityRoutes(fastify: FastifyInstance) {
       `;
       const countResult = await pool.query(countQuery, params.slice(0, -2)); // Remove limit/offset params
 
-      return reply.send({
-        data: result.rows,
-        pagination: {
-          total: parseInt(countResult.rows[0].total),
-          limit: parseInt(limit),
-          offset: parseInt(offset),
+      const total = parseInt(countResult.rows[0].total);
+      const totalPages = Math.ceil(total / pageLimit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: result.rows,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
         },
-      });
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
     } catch (error: any) {
       fastify.log.error('Error fetching global activity history:', error);
       return reply.status(500).send({
-        error: 'Failed to fetch activity history',
-        message: error.message,
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: error.message || 'Failed to fetch activity history',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
       });
     }
   });

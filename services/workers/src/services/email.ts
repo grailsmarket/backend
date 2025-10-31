@@ -287,3 +287,47 @@ Manage notification preferences: ${unsubscribeUrl}
     `.trim(),
   };
 }
+
+/**
+ * Build email template for email verification
+ */
+export function buildEmailVerificationEmail(params: {
+  verificationUrl: string;
+}): EmailTemplate {
+  const { verificationUrl } = params;
+
+  return {
+    subject: 'Verify your email address - Grails',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Verify Your Email Address</h2>
+        <p>Thank you for adding your email address to Grails!</p>
+        <p>To receive notifications about your watched ENS names, please verify your email address by clicking the button below:</p>
+        <p>
+          <a href="${verificationUrl}"
+             style="background-color: #7C3AED; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0; font-weight: bold;">
+            Verify Email Address
+          </a>
+        </p>
+        <p style="color: #666; font-size: 14px;">
+          Or copy and paste this link into your browser:<br>
+          <a href="${verificationUrl}" style="color: #7C3AED;">${verificationUrl}</a>
+        </p>
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">
+          This link will expire in 24 hours. If you didn't add this email address to Grails, you can safely ignore this email.
+        </p>
+      </div>
+    `,
+    text: `
+Verify Your Email Address
+
+Thank you for adding your email address to Grails!
+
+To receive notifications about your watched ENS names, please verify your email address by visiting this link:
+
+${verificationUrl}
+
+This link will expire in 24 hours. If you didn't add this email address to Grails, you can safely ignore this email.
+    `.trim(),
+  };
+}

@@ -4,6 +4,9 @@ import { registerEnsSyncWorker, registerDailyEnsSyncScheduler } from './workers/
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
 import { registerNotificationWorker } from './workers/notifications';
+import { registerPriceSyncWorker } from './workers/price-sync';
+import { registerVerificationWorker } from './workers/verification';
+import { registerClubStatsWorker } from './workers/club-stats';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -24,6 +27,9 @@ async function start() {
     await registerBatchNameResolutionWorker(boss);
     await registerOwnershipWorker(boss);
     await registerNotificationWorker(boss);
+    await registerPriceSyncWorker(boss);
+    await registerVerificationWorker(boss);
+    await registerClubStatsWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

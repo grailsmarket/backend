@@ -36,7 +36,10 @@ import {
   OPENSEA_CONDUIT_ADDRESS,
   OPENSEA_CONDUIT_KEY,
   OPENSEA_FEE_RECIPIENT,
-  OPENSEA_FEE_BASIS_POINTS
+  OPENSEA_FEE_BASIS_POINTS,
+  GRAILS_FEE_ENABLED,
+  GRAILS_FEE_RECIPIENT,
+  GRAILS_FEE_BASIS_POINTS
 } from '@/lib/constants';
 
 // Type definitions for ethers compatibility
@@ -675,6 +678,20 @@ console.log(`Approval status for ${operatorToApprove}:`, isApproved);
       });
     }
 
+    // Calculate Grails fee if listing on Grails
+    if (params.marketplace === 'grails' && GRAILS_FEE_ENABLED) {
+      const grailsFee = (priceInSmallestUnit * BigInt(GRAILS_FEE_BASIS_POINTS)) / BigInt(10000);
+      sellerAmount = sellerAmount - grailsFee;
+
+      // Add Grails fee consideration
+      consideration.push({
+        token: currencyToken,
+        amount: grailsFee.toString(),
+        endAmount: grailsFee.toString(),
+        recipient: GRAILS_FEE_RECIPIENT,
+      });
+    }
+
     // Calculate royalty if specified
     if (params.royaltyBps && params.royaltyRecipient) {
       const royaltyAmount = (priceInSmallestUnit * BigInt(params.royaltyBps)) / BigInt(10000);
@@ -823,99 +840,6 @@ console.log(`Approval status for ${operatorToApprove}:`, isApproved);
     (order as any).marketplace = params.marketplace;
     // Store conduit key for reference but don't include in order parameters
     (order as any).conduitKey = conduitKey || '0x0000000000000000000000000000000000000000000000000000000000000000';
-
-    return order;
-  }
-
-  /**
-   * Create an offer order for an ENS name
-   */
-  async createOfferOrder(params: {
-    tokenId: string;
-    offerPriceInEth: string;
-    durationDays: number;
-    offererAddress: string;
-    currentOwner?: string;
-    isWrapped?: boolean; // Add parameter to know if name is wrapped
-    currency?: 'WETH' | 'USDC'; // Payment currency for offers
-  }): Promise<OrderWithCounter> {
-    if (!this.seaport) {
-      throw new Error('Seaport client not initialized');
-    }
-
-    const startTime = Math.floor(Date.now() / 1000).toString();
-    const endTime = (
-      Math.floor(Date.now() / 1000) +
-      params.durationDays * 24 * 60 * 60
-    ).toString();
-
-    // Determine currency settings (offers must use ERC20, not native ETH)
-    const currency = params.currency || 'WETH';
-    const isUSDC = currency === 'USDC';
-    const decimals = isUSDC ? TOKEN_DECIMALS.USDC : TOKEN_DECIMALS.WETH;
-    const currencyToken = isUSDC ? USDC_ADDRESS : WETH_ADDRESS;
-
-    // Convert price to smallest unit
-    const offerAmount = parseAmount(params.offerPriceInEth, decimals);
-
-    // Build offer items (what the offerer is giving)
-    // NOTE: Seaport does NOT allow native ETH in offers, must use ERC20 (WETH or USDC)
-    const offer: CreateInputItem[] = [
-      {
-        itemType: ItemType.ERC20,
-        token: currencyToken,
-        amount: offerAmount.toString(),
-        endAmount: offerAmount.toString(),
-      },
-    ];
-
-    // Determine contract and item type based on whether name is wrapped
-    const tokenContract = params.isWrapped ? ENS_NAME_WRAPPER_ADDRESS : ENS_REGISTRAR_ADDRESS;
-    const itemType = params.isWrapped ? ItemType.ERC1155 : ItemType.ERC721;
-
-    // For wrapped names, use namehash; for unwrapped, use labelhash
-    const tokenIdentifier = params.isWrapped ? this.labelhashToNamehash(params.tokenId) : params.tokenId;
-
-    const consideration: ConsiderationInputItem[] = [
-      params.isWrapped
-        ? {
-            itemType: ItemType.ERC1155,
-            token: tokenContract,
-            identifier: tokenIdentifier,
-            amount: '1',
-            recipient: params.offererAddress,
-          }
-        : {
-            itemType: ItemType.ERC721,
-            token: tokenContract,
-            identifier: tokenIdentifier,
-            recipient: params.offererAddress,
-          },
-    ];
-
-    const orderInput: CreateOrderInput = {
-      offer,
-      consideration,
-      startTime,
-      endTime,
-      allowPartialFills: false,
-      // Include conduit key if using conduits
-      ...(USE_CONDUIT && { conduitKey: MARKETPLACE_CONDUIT_KEY }),
-      // If we know the current owner, we can restrict the order
-      ...(params.currentOwner && {
-        zone: ZERO_ADDRESS,
-        zoneHash: ZERO_HASH,
-      }),
-    };
-
-    // Create the order
-    const { executeAllActions } = await this.seaport.createOrder(
-      orderInput,
-      params.offererAddress
-    );
-
-    // Execute all actions (including getting signature)
-    const order = await executeAllActions();
 
     return order;
   }
@@ -1362,6 +1286,18 @@ console.log(`Approval status for ${operatorToApprove}:`, isApproved);
         amount: openseaFee.toString(),
         endAmount: openseaFee.toString(),
         recipient: OPENSEA_FEE_RECIPIENT as `0x${string}`,
+      });
+    }
+
+    // Add Grails fee if using Grails marketplace
+    if (marketplace === 'grails' && GRAILS_FEE_ENABLED) {
+      const grailsFee = (priceInSmallestUnit * BigInt(GRAILS_FEE_BASIS_POINTS)) / BigInt(10000);
+      additionalRecipients.push({
+        itemType: ItemType.ERC20, // Fee also paid in same currency
+        token: currencyToken as `0x${string}`,
+        amount: grailsFee.toString(),
+        endAmount: grailsFee.toString(),
+        recipient: GRAILS_FEE_RECIPIENT as `0x${string}`,
       });
     }
 

@@ -83,7 +83,7 @@ export function useProfileActivity(address: string, limit: number = 50) {
     queryKey: ['profileActivity', address, limit],
     queryFn: async () => {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/activity/address/${address}?limit=${limit}`
+        `${process.env.NEXT_PUBLIC_API_URL}/activity/address/${address}?page=1&limit=${limit}`
       );
 
       if (!response.ok) {
@@ -91,7 +91,10 @@ export function useProfileActivity(address: string, limit: number = 50) {
       }
 
       const data = await response.json();
-      return data as { data: ActivityEvent[]; pagination: any };
+      return {
+        data: data.data?.results || [],
+        pagination: data.data?.pagination,
+      };
     },
     enabled: !!address,
     staleTime: 10000, // 10 seconds

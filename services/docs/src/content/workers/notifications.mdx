@@ -1,0 +1,666 @@
+---
+title: "Notification Worker"
+description: "Send email notifications for watchlist events"
+order: 5
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Notification Worker
+
+Sends email notifications to users based on watchlist events and marketplace activity.
+
+## Purpose
+
+Keep users informed about changes to ENS names they're watching:
+- New listings created
+- Price changes on active listings
+- Sales completed
+- New offers received
+- Listings cancelled due to ownership transfer
+
+## Queue
+
+**Queue**: `send-notification`
+**Triggered by**: WAL Listener when database changes occur
+**Concurrency**: Low (teamSize: 2, teamConcurrency: 1)
+
+<CodeBlock title="Job structure">
+```json
+{
+  "userId": 123,
+  "type": "new-listing",
+  "ensNameId": 456,
+  "metadata": {
+    "priceWei": "1000000000000000000",
+    "sellerAddress": "0x123...",
+    "listingId": 789
+  }
+}
+```
+</CodeBlock>
+
+## Notification Types
+
+| Type | Trigger | Required Fields |
+|------|---------|-----------------|
+| `new-listing` | New listing created for watched name | `priceWei`, `sellerAddress` |
+| `price-change` | Listing price updated | `oldPriceWei`, `newPriceWei` |
+| `sale` | Name sold | `priceWei`, `buyerAddress` |
+| `new-offer` | New offer on watched name | `offerAmountWei`, `buyerAddress` |
+| `listing-cancelled` | Listing cancelled (ownership change) | `listingId`, `transactionHash` |
+
+## Worker Implementation
+
+<CodeBlock title="Notification worker">
+```typescript
+// services/workers/src/workers/notifications.ts
+
+export async function registerNotificationWorker(boss: PgBoss) {
+  await boss.work(
+    'send-notification',
+    { teamSize: 2, teamConcurrency: 1 },
+    async (job) => {
+      const { userId, type, ensNameId, metadata } = job.data;
+      await sendNotification(userId, type, ensNameId, metadata);
+    }
+  );
+
+  console.log('Notification worker registered');
+}
+
+async function sendNotification(
+  userId: number,
+  type: string,
+  ensNameId: number,
+  metadata: any
+) {
+  console.log(`Sending ${type} notification to user ${userId}`);
+
+  // Get user details
+  const user = await prisma.users.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user?.email || !user.email_verified) {
+    console.log(`User ${userId} has no verified email, skipping`);
+    return;
+  }
+
+  // Get ENS name
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: ensNameId },
+  });
+
+  if (!ensName) {
+    console.warn(`ENS name ${ensNameId} not found`);
+    return;
+  }
+
+  // Check if user wants this notification type
+  const watchlistEntry = await prisma.watchlist.findFirst({
+    where: {
+      user_id: userId,
+      ens_name_id: ensNameId,
+    },
+  });
+
+  if (!watchlistEntry) {
+    console.log(`Name ${ensName.name} not in user ${userId} watchlist`);
+    return;
+  }
+
+  // Check notification preferences
+  const shouldNotify = checkNotificationPreference(watchlistEntry, type);
+
+  if (!shouldNotify) {
+    console.log(`User ${userId} disabled ${type} notifications`);
+    return;
+  }
+
+  // Send email
+  await sendEmail(user, ensName, type, metadata);
+
+  // Record notification
+  await prisma.notifications.create({
+    data: {
+      user_id: userId,
+      type,
+      ens_name_id: ensNameId,
+      metadata: metadata as any,
+      sent_at: new Date(),
+    },
+  });
+
+  console.log(`✓ Sent ${type} notification to ${user.email}`);
+}
+```
+</CodeBlock>
+
+## Notification Preferences
+
+Users can control which notification types they receive per watched name.
+
+<CodeBlock title="Check user preferences">
+```typescript
+function checkNotificationPreference(
+  watchlistEntry: any,
+  notificationType: string
+): boolean {
+  const typeMap = {
+    'new-listing': watchlistEntry.notify_on_listing,
+    'price-change': watchlistEntry.notify_on_price_change,
+    'sale': watchlistEntry.notify_on_sale,
+    'new-offer': watchlistEntry.notify_on_offer,
+    'listing-cancelled': true, // Always notify for cancellations
+  };
+
+  return typeMap[notificationType] ?? false;
+}
+```
+</CodeBlock>
+
+**Watchlist Schema:**
+```typescript
+{
+  id: number;
+  user_id: number;
+  ens_name_id: number;
+  notify_on_sale: boolean;      // Default: true
+  notify_on_offer: boolean;     // Default: true
+  notify_on_listing: boolean;   // Default: true
+  notify_on_price_change: boolean; // Default: false
+  added_at: Date;
+}
+```
+
+## Email Service
+
+<CodeBlock title="Send email via SendGrid">
+```typescript
+// services/workers/src/services/email.ts
+
+import sgMail from '@sendgrid/mail';
+
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+export async function sendEmail(
+  user: any,
+  ensName: any,
+  type: string,
+  metadata: any
+) {
+  // Check if email is enabled
+  if (!process.env.ENABLE_EMAIL || process.env.ENABLE_EMAIL === 'false') {
+    console.log('[DRY RUN] Would send email:', {
+      to: user.email,
+      type,
+      name: ensName.name,
+    });
+    return;
+  }
+
+  const emailContent = buildEmail(user, ensName, type, metadata);
+
+  try {
+    await sgMail.send({
+      to: user.email,
+      from: process.env.FROM_EMAIL,
+      subject: emailContent.subject,
+      text: emailContent.text,
+      html: emailContent.html,
+    });
+
+    console.log(`✓ Email sent to ${user.email}`);
+  } catch (error) {
+    console.error(`Failed to send email to ${user.email}:`, error.message);
+    throw error; // Retry on failure
+  }
+}
+```
+</CodeBlock>
+
+<Callout type="info" title="Dry Run Mode">
+Without `SENDGRID_API_KEY` or with `ENABLE_EMAIL=false`, emails are logged instead of sent. Useful for development and testing.
+</Callout>
+
+## Email Templates
+
+<CodeBlock title="Build email content">
+```typescript
+function buildEmail(user: any, ensName: any, type: string, metadata: any) {
+  const frontendUrl = process.env.FRONTEND_URL;
+  const nameUrl = `${frontendUrl}/names/${ensName.name}`;
+  const unsubscribeUrl = `${frontendUrl}/settings?tab=notifications`;
+
+  const templates = {
+    'new-listing': {
+      subject: `New listing: ${ensName.name}`,
+      text: `
+${ensName.name} has been listed for sale!
+
+Price: ${formatEth(metadata.priceWei)} ETH
+Seller: ${metadata.sellerAddress}
+
+View listing: ${nameUrl}
+
+Unsubscribe: ${unsubscribeUrl}
+      `,
+      html: `
+<h2>New Listing on ${ensName.name}</h2>
+<p><strong>${ensName.name}</strong> has been listed for sale!</p>
+<p><strong>Price:</strong> ${formatEth(metadata.priceWei)} ETH</p>
+<p><strong>Seller:</strong> ${metadata.sellerAddress}</p>
+<p><a href="${nameUrl}">View Listing</a></p>
+<hr>
+<p style="color: #666; font-size: 12px;">
+  <a href="${unsubscribeUrl}">Unsubscribe</a> from notifications
+</p>
+      `,
+    },
+
+    'price-change': {
+      subject: `Price changed: ${ensName.name}`,
+      text: `
+The price for ${ensName.name} has changed!
+
+Old Price: ${formatEth(metadata.oldPriceWei)} ETH
+New Price: ${formatEth(metadata.newPriceWei)} ETH
+${getPriceChangeIndicator(metadata.oldPriceWei, metadata.newPriceWei)}
+
+View listing: ${nameUrl}
+
+Unsubscribe: ${unsubscribeUrl}
+      `,
+      html: `
+<h2>Price Changed on ${ensName.name}</h2>
+<p>The price for <strong>${ensName.name}</strong> has been updated:</p>
+<p>
+  <strong>Old Price:</strong> ${formatEth(metadata.oldPriceWei)} ETH<br>
+  <strong>New Price:</strong> ${formatEth(metadata.newPriceWei)} ETH
+  ${getPriceChangeIndicator(metadata.oldPriceWei, metadata.newPriceWei)}
+</p>
+<p><a href="${nameUrl}">View Listing</a></p>
+<hr>
+<p style="color: #666; font-size: 12px;">
+  <a href="${unsubscribeUrl}">Unsubscribe</a> from notifications
+</p>
+      `,
+    },
+
+    'sale': {
+      subject: `Sold: ${ensName.name}`,
+      text: `
+${ensName.name} has been sold!
+
+Price: ${formatEth(metadata.priceWei)} ETH
+Buyer: ${metadata.buyerAddress}
+
+View transaction: ${nameUrl}
+
+Unsubscribe: ${unsubscribeUrl}
+      `,
+      html: `
+<h2>${ensName.name} Sold!</h2>
+<p><strong>${ensName.name}</strong> has been sold.</p>
+<p><strong>Price:</strong> ${formatEth(metadata.priceWei)} ETH</p>
+<p><strong>Buyer:</strong> ${metadata.buyerAddress}</p>
+<p><a href="${nameUrl}">View Details</a></p>
+<hr>
+<p style="color: #666; font-size: 12px;">
+  <a href="${unsubscribeUrl}">Unsubscribe</a> from notifications
+</p>
+      `,
+    },
+
+    'new-offer': {
+      subject: `New offer: ${ensName.name}`,
+      text: `
+New offer received on ${ensName.name}!
+
+Offer Amount: ${formatEth(metadata.offerAmountWei)} ETH
+Buyer: ${metadata.buyerAddress}
+
+View offer: ${nameUrl}
+
+Unsubscribe: ${unsubscribeUrl}
+      `,
+      html: `
+<h2>New Offer on ${ensName.name}</h2>
+<p>A new offer has been made on <strong>${ensName.name}</strong>!</p>
+<p><strong>Offer:</strong> ${formatEth(metadata.offerAmountWei)} ETH</p>
+<p><strong>Buyer:</strong> ${metadata.buyerAddress}</p>
+<p><a href="${nameUrl}">View Offer</a></p>
+<hr>
+<p style="color: #666; font-size: 12px;">
+  <a href="${unsubscribeUrl}">Unsubscribe</a> from notifications
+</p>
+      `,
+    },
+
+    'listing-cancelled': {
+      subject: `Listing cancelled: ${ensName.name}`,
+      text: `
+Your listing for ${ensName.name} has been cancelled.
+
+Reason: Ownership transferred to new address
+Transaction: ${metadata.transactionHash}
+
+The name was transferred to a new owner, so your listing is no longer valid.
+
+View name: ${nameUrl}
+      `,
+      html: `
+<h2>Listing Cancelled: ${ensName.name}</h2>
+<p>Your listing for <strong>${ensName.name}</strong> has been automatically cancelled.</p>
+<p><strong>Reason:</strong> The name was transferred to a new owner</p>
+<p><strong>Transaction:</strong> ${metadata.transactionHash}</p>
+<p>Since you no longer own this name, your listing cannot be fulfilled.</p>
+<p><a href="${nameUrl}">View Name</a></p>
+      `,
+    },
+  };
+
+  return templates[type] || {
+    subject: `Notification: ${ensName.name}`,
+    text: `You have a notification for ${ensName.name}`,
+    html: `<p>You have a notification for <strong>${ensName.name}</strong></p>`,
+  };
+}
+
+function formatEth(wei: string): string {
+  return (BigInt(wei) / BigInt(10 ** 18)).toString();
+}
+
+function getPriceChangeIndicator(oldPrice: string, newPrice: string): string {
+  const diff = BigInt(newPrice) - BigInt(oldPrice);
+  if (diff > 0) {
+    return `📈 Price increased`;
+  } else {
+    return `📉 Price decreased`;
+  }
+}
+```
+</CodeBlock>
+
+## WAL Listener Integration
+
+The WAL Listener publishes notification jobs when relevant changes occur.
+
+<CodeBlock title="Publish notification job">
+```typescript
+// services/wal-listener/src/services/elasticsearch-sync.ts
+
+async function handleListingChange(change: WalChange) {
+  const { operation, new: newData, old: oldData } = change;
+
+  if (operation === 'INSERT' && newData.status === 'active') {
+    // New listing created - notify watchers
+    const watchers = await prisma.watchlist.findMany({
+      where: {
+        ens_name_id: newData.ens_name_id,
+        notify_on_listing: true,
+      },
+    });
+
+    for (const watcher of watchers) {
+      await boss.send('send-notification', {
+        userId: watcher.user_id,
+        type: 'new-listing',
+        ensNameId: newData.ens_name_id,
+        metadata: {
+          priceWei: newData.price_wei,
+          sellerAddress: newData.seller_address,
+          listingId: newData.id,
+        },
+      });
+    }
+  }
+
+  if (operation === 'UPDATE' && oldData.price_wei !== newData.price_wei) {
+    // Price changed - notify watchers
+    const watchers = await prisma.watchlist.findMany({
+      where: {
+        ens_name_id: newData.ens_name_id,
+        notify_on_price_change: true,
+      },
+    });
+
+    for (const watcher of watchers) {
+      await boss.send('send-notification', {
+        userId: watcher.user_id,
+        type: 'price-change',
+        ensNameId: newData.ens_name_id,
+        metadata: {
+          oldPriceWei: oldData.price_wei,
+          newPriceWei: newData.price_wei,
+          listingId: newData.id,
+        },
+      });
+    }
+  }
+}
+```
+</CodeBlock>
+
+## Monitoring
+
+### Check Notification Queue
+
+<CodeBlock title="View pending notifications">
+```sql
+SELECT
+  data->>'userId' as user_id,
+  data->>'type' as type,
+  state,
+  createdon
+FROM pgboss.job
+WHERE name = 'send-notification'
+  AND state IN ('created', 'retry')
+ORDER BY createdon DESC
+LIMIT 20;
+```
+</CodeBlock>
+
+### Failed Notifications
+
+<CodeBlock title="Check for failed sends">
+```sql
+SELECT
+  id,
+  data,
+  output,
+  completedon
+FROM pgboss.archive
+WHERE name = 'send-notification'
+  AND state = 'failed'
+ORDER BY completedon DESC
+LIMIT 10;
+```
+</CodeBlock>
+
+### Notification Statistics
+
+<CodeBlock title="Track notification volume">
+```sql
+SELECT
+  type,
+  COUNT(*) as sent,
+  DATE_TRUNC('hour', sent_at) as hour
+FROM notifications
+WHERE sent_at > NOW() - INTERVAL '24 hours'
+GROUP BY type, hour
+ORDER BY hour DESC, sent DESC;
+```
+</CodeBlock>
+
+## Rate Limiting
+
+SendGrid has rate limits. Implement delays to avoid throttling.
+
+<CodeBlock title="Batch email sending">
+```typescript
+class EmailRateLimiter {
+  private queue: Array<() => Promise<void>> = [];
+  private processing = false;
+  private delay = 100; // ms between emails
+
+  async send(emailFn: () => Promise<void>) {
+    this.queue.push(emailFn);
+
+    if (!this.processing) {
+      this.processQueue();
+    }
+  }
+
+  private async processQueue() {
+    this.processing = true;
+
+    while (this.queue.length > 0) {
+      const emailFn = this.queue.shift();
+      await emailFn();
+      await new Promise(resolve => setTimeout(resolve, this.delay));
+    }
+
+    this.processing = false;
+  }
+}
+
+const emailLimiter = new EmailRateLimiter();
+
+// Usage
+await emailLimiter.send(() => sendEmail(user, ensName, type, metadata));
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# Email
+SENDGRID_API_KEY=your_sendgrid_api_key
+FROM_EMAIL=noreply@grails.market
+ENABLE_EMAIL=true  # Set to false for dry-run mode
+
+# Frontend URL (for email links)
+FRONTEND_URL=http://localhost:3001
+
+# Rate Limiting
+EMAIL_SEND_DELAY=100  # milliseconds between emails
+MAX_EMAILS_PER_MINUTE=60
+```
+
+### Worker Concurrency
+
+<CodeBlock title="Low concurrency for email">
+```typescript
+await boss.work(
+  'send-notification',
+  {
+    teamSize: 2,         // 2 worker processes
+    teamConcurrency: 1   // 1 job per worker (sequential)
+  },
+  handler
+);
+```
+</CodeBlock>
+
+<Callout type="warning" title="Why Low Concurrency?">
+Email sending should be throttled to:
+- Respect SendGrid rate limits
+- Avoid being flagged as spam
+- Maintain email deliverability score
+</Callout>
+
+## Troubleshooting
+
+### Emails Not Being Sent
+
+**Symptoms:**
+- Jobs completing but no emails received
+- Users complaining about missing notifications
+
+**Solutions:**
+1. Check `SENDGRID_API_KEY` is set and valid
+2. Verify `ENABLE_EMAIL=true`
+3. Check SendGrid dashboard for bounces/blocks
+4. Verify user has `email_verified: true`
+5. Check spam folder
+
+### High Bounce Rate
+
+**Symptoms:**
+- SendGrid showing many bounced emails
+- Email deliverability score decreasing
+
+**Solutions:**
+1. Validate email addresses before sending
+2. Implement email verification flow
+3. Remove addresses with hard bounces
+4. Add unsubscribe link to all emails
+5. Use SendGrid's suppression list
+
+### Slow Notification Delivery
+
+**Symptoms:**
+- Long delay between event and email received
+- Queue depth growing
+
+**Solutions:**
+1. Increase worker `teamSize`
+2. Reduce `EMAIL_SEND_DELAY`
+3. Check SendGrid API response times
+4. Verify network connectivity to SendGrid
+
+## Testing
+
+<CodeBlock title="Manual notification send">
+```typescript
+import { getQueueClient } from './dist/queue';
+
+const boss = await getQueueClient();
+
+await boss.send('send-notification', {
+  userId: 1,
+  type: 'new-listing',
+  ensNameId: 123,
+  metadata: {
+    priceWei: '1000000000000000000',
+    sellerAddress: '0x123...',
+    listingId: 456,
+  },
+});
+
+await boss.stop();
+```
+</CodeBlock>
+
+<CodeBlock title="Test email template">
+```typescript
+import { sendEmail } from './src/services/email';
+
+const testUser = {
+  id: 1,
+  email: 'test@example.com',
+  email_verified: true,
+};
+
+const testName = {
+  id: 1,
+  name: 'vitalik.eth',
+};
+
+await sendEmail(testUser, testName, 'new-listing', {
+  priceWei: '1000000000000000000',
+  sellerAddress: '0x123...',
+});
+```
+</CodeBlock>
+
+## Next Steps
+
+- Review [Workers overview](/workers/overview)
+- Learn about [Expiry Worker](/workers/expiry)
+- Understand [Ownership Worker](/workers/ownership)

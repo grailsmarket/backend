@@ -52,7 +52,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         let recipientEmail = email;
         if (!recipientEmail && userId) {
           const userResult = await pool.query(
-            'SELECT email FROM users WHERE id = $1',
+            'SELECT email, email_verified FROM users WHERE id = $1',
             [userId]
           );
 
@@ -61,7 +61,15 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             return;
           }
 
-          recipientEmail = userResult.rows[0].email;
+          const user = userResult.rows[0];
+
+          // Check if email is verified
+          if (!user.email_verified) {
+            logger.info({ userId }, 'User email not verified, skipping notification');
+            return;
+          }
+
+          recipientEmail = user.email;
         }
 
         if (!recipientEmail && recipientAddress) {

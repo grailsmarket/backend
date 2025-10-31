@@ -13,6 +13,12 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           name,
           description,
           member_count,
+          floor_price_wei,
+          floor_price_currency,
+          total_sales_count,
+          total_sales_volume_wei,
+          last_floor_update,
+          last_sales_update,
           created_at,
           updated_at
         FROM clubs
@@ -51,7 +57,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
     try {
       // Get club info
       const clubQuery = `
-        SELECT name, description, member_count, created_at
+        SELECT
+          name,
+          description,
+          member_count,
+          floor_price_wei,
+          floor_price_currency,
+          total_sales_count,
+          total_sales_volume_wei,
+          last_floor_update,
+          last_sales_update,
+          created_at
         FROM clubs
         WHERE name = $1
       `;

@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #1a1a1a;
+    --bg-tertiary: #2a2a2a;
+    --text-primary: #ffffff;
+    --text-secondary: #a0a0a0;
+    --accent: #8b5cf6;
+    --accent-hover: #7c3aed;
+    --border: #333333;
+  }
+
+  body {
+    @apply bg-[var(--bg-primary)] text-[var(--text-primary)];
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold mb-4 text-[var(--text-primary)];
+  }
+
+  h1 { @apply text-4xl; }
+  h2 { @apply text-3xl mt-8; }
+  h3 { @apply text-2xl mt-6; }
+  h4 { @apply text-xl mt-4; }
+
+  p {
+    @apply mb-4 text-[var(--text-secondary)] leading-relaxed;
+  }
+
+  a {
+    @apply text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors;
+  }
+
+  code {
+    @apply bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded text-sm;
+  }
+
+  pre {
+    @apply bg-[var(--bg-secondary)] p-4 rounded-lg overflow-x-auto mb-4;
+  }
+
+  pre code {
+    @apply bg-transparent p-0;
+  }
+
+  table {
+    @apply w-full mb-4 border-collapse;
+  }
+
+  th, td {
+    @apply border border-[var(--border)] px-4 py-2 text-left;
+  }
+
+  th {
+    @apply bg-[var(--bg-secondary)] font-semibold;
+  }
+
+  ul, ol {
+    @apply mb-4 ml-6 text-[var(--text-secondary)];
+  }
+
+  li {
+    @apply mb-2;
+  }
+}

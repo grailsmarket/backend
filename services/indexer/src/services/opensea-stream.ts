@@ -359,8 +359,21 @@ export class OpenSeaStreamListener {
 
       const tokenId = item.nft_id.split('/').pop();
 
-      // Extract ENS name from metadata if available
-      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+      // Extract ENS name from metadata and normalize placeholders
+      let nameToStore = item.metadata?.name || null;
+
+      // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
+      if (!nameToStore || !nameToStore.endsWith('.eth')) {
+        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
+        if (resolvedName) {
+          nameToStore = resolvedName;
+        } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
+          // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
+          nameToStore = `token-${tokenId}`;
+        } else if (!nameToStore) {
+          nameToStore = `token-${tokenId}`;
+        }
+      }
 
       logger.info(`Processing sale for: ${nameToStore} (token ${tokenId})`);
 
@@ -396,7 +409,7 @@ export class OpenSeaStreamListener {
       // Record sale in sales table
       if (buyerAddress && sellerAddress) {
         try {
-          await createSale({
+          const sale = await createSale({
             ensNameId,
             sellerAddress,
             buyerAddress,
@@ -418,6 +431,26 @@ export class OpenSeaStreamListener {
           });
 
           logger.info(`Sale created in sales table for token ${tokenId}`);
+
+          // Publish club sales stats job if sale has clubs
+          if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
+            const currencyAddress = eventData.payment_token?.address || '0x0000000000000000000000000000000000000000';
+            if (currencyAddress === '0x0000000000000000000000000000000000000000') {
+              try {
+                const PgBoss = require('pg-boss');
+                const boss = new PgBoss({ connectionString: config.database.url });
+                await boss.start();
+                await boss.send('update-club-sales-stats', {
+                  clubNames: sale.clubs,
+                  salePriceWei: sale_price || '0',
+                });
+                await boss.stop();
+                logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
+              } catch (queueError: any) {
+                logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
+              }
+            }
+          }
         } catch (error: any) {
           logger.error(`Failed to create sale record: ${error.message}`);
           // Don't fail the entire handler if sale recording fails
@@ -494,8 +527,21 @@ export class OpenSeaStreamListener {
       const tokenId = item.nft_id.split('/').pop();
       const newOwner = to_account.address.toLowerCase();
 
-      // Extract ENS name from metadata if available
-      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+      // Extract ENS name from metadata and normalize placeholders
+      let nameToStore = item.metadata?.name || null;
+
+      // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
+      if (!nameToStore || !nameToStore.endsWith('.eth')) {
+        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
+        if (resolvedName) {
+          nameToStore = resolvedName;
+        } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
+          // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
+          nameToStore = `token-${tokenId}`;
+        } else if (!nameToStore) {
+          nameToStore = `token-${tokenId}`;
+        }
+      }
 
       // Ensure ENS name exists and update owner
       await this.upsertEnsName(tokenId, nameToStore, newOwner, true);
@@ -595,8 +641,21 @@ export class OpenSeaStreamListener {
         return;
       }
 
-      // Extract ENS name from metadata if available
-      let nameToStore = item.metadata?.name || `token-${tokenId}`;
+      // Extract ENS name from metadata and normalize placeholders
+      let nameToStore = item.metadata?.name || null;
+
+      // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
+      if (!nameToStore || !nameToStore.endsWith('.eth')) {
+        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
+        if (resolvedName) {
+          nameToStore = resolvedName;
+        } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
+          // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
+          nameToStore = `token-${tokenId}`;
+        } else if (!nameToStore) {
+          nameToStore = `token-${tokenId}`;
+        }
+      }
 
       logger.info(`Processing bid for: ${nameToStore} (token ${tokenId})`);
 
@@ -730,7 +789,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           last_transfer_date = NOW(),
@@ -742,7 +801,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           updated_at = NOW()

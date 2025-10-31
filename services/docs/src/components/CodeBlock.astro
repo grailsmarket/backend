@@ -1,0 +1,19 @@
+---
+interface Props {
+  title?: string;
+  language?: string;
+}
+
+const { title, language = 'typescript' } = Astro.props;
+---
+
+<div class="my-4">
+  {title && (
+    <div class="bg-[var(--bg-tertiary)] px-4 py-2 rounded-t-lg border-b border-[var(--border)] text-sm text-[var(--text-secondary)]">
+      {title}
+    </div>
+  )}
+  <div class={title ? 'rounded-b-lg' : 'rounded-lg'}>
+    <slot />
+  </div>
+</div>

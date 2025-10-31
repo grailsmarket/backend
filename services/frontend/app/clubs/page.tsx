@@ -7,6 +7,12 @@ interface Club {
   name: string;
   description: string;
   member_count: number;
+  floor_price_wei: string | null;
+  floor_price_currency: string | null;
+  total_sales_count: number;
+  total_sales_volume_wei: string;
+  last_floor_update: string | null;
+  last_sales_update: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,6 +85,41 @@ export default function ClubsPage() {
                   {club.description}
                 </p>
               )}
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {/* Floor Price */}
+                <div className="bg-gray-900/50 rounded p-3">
+                  <p className="text-gray-500 text-xs mb-1">Floor</p>
+                  {club.floor_price_wei ? (
+                    <p className="text-white font-semibold text-sm">
+                      {(parseFloat(club.floor_price_wei) / 1e18).toFixed(3)} ETH
+                    </p>
+                  ) : (
+                    <p className="text-gray-600 text-sm">—</p>
+                  )}
+                </div>
+
+                {/* Sales Count */}
+                <div className="bg-gray-900/50 rounded p-3">
+                  <p className="text-gray-500 text-xs mb-1">Sales</p>
+                  <p className="text-white font-semibold text-sm">
+                    {club.total_sales_count}
+                  </p>
+                </div>
+
+                {/* Volume */}
+                <div className="bg-gray-900/50 rounded p-3">
+                  <p className="text-gray-500 text-xs mb-1">Volume</p>
+                  {club.total_sales_volume_wei && parseFloat(club.total_sales_volume_wei) > 0 ? (
+                    <p className="text-white font-semibold text-sm">
+                      {(parseFloat(club.total_sales_volume_wei) / 1e18).toFixed(1)} ETH
+                    </p>
+                  ) : (
+                    <p className="text-gray-600 text-sm">—</p>
+                  )}
+                </div>
+              </div>
 
               <div className="flex items-center text-sm text-gray-500">
                 <svg className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">

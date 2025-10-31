@@ -1,0 +1,593 @@
+import { FastifyInstance } from 'fastify';
+import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../shared/src';
+import { buildSearchResults } from '../utils/response-builder';
+import { optionalAuth } from '../middleware/auth';
+
+export async function searchRoutes(fastify: FastifyInstance) {
+  const pool = getPostgresPool();
+  const es = getElasticsearchClient();
+
+  // Global search endpoint - searches all ENS names by default
+  // Set showListings=true to limit results to only names with active listings
+  fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
+    // Transform flat query params into nested structure (same as /names/search and /listings/search)
+    const rawQuery = request.query as any;
+    const transformedQuery: any = {
+      q: rawQuery.q || '',
+      page: rawQuery.page || 1,
+      limit: rawQuery.limit || 20,
+      sortBy: rawQuery.sortBy,
+      sortOrder: rawQuery.sortOrder,
+      filters: {},
+    };
+
+    // Parse filters from bracket notation
+    for (const key in rawQuery) {
+      if (key.startsWith('filters[')) {
+        // Extract the filter name: filters[clubs][] -> clubs
+        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+        if (match) {
+          const filterName = match[1];
+          const isArray = match[2] === '[]';
+
+          if (isArray) {
+            // Handle array values: filters[clubs][]
+            if (!transformedQuery.filters[filterName]) {
+              transformedQuery.filters[filterName] = [];
+            }
+            const value = rawQuery[key];
+            if (Array.isArray(value)) {
+              transformedQuery.filters[filterName].push(...value);
+            } else {
+              transformedQuery.filters[filterName].push(value);
+            }
+          } else {
+            // Handle non-array values: filters[minPrice] or filters[clubs] (convert clubs to array)
+            const value = rawQuery[key];
+            // Special handling for clubs - always convert to array
+            if (filterName === 'clubs') {
+              transformedQuery.filters[filterName] = Array.isArray(value) ? value : [value];
+            } else {
+              transformedQuery.filters[filterName] = value;
+            }
+          }
+        }
+      }
+    }
+
+    const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner } = filters;
+    const from = (page - 1) * limit;
+
+    // Resolve owner filter - can be either address or ENS name
+    let resolvedOwnerAddress: string | null = null;
+    if (owner) {
+      // Check if input is an Ethereum address (0x followed by 40 hex chars)
+      const isAddress = /^0x[a-fA-F0-9]{40}$/.test(owner);
+
+      if (isAddress) {
+        // It's an address, use it directly (normalize to lowercase)
+        resolvedOwnerAddress = owner.toLowerCase();
+        fastify.log.info(`Owner filter: address="${resolvedOwnerAddress}"`);
+      } else {
+        // It's an ENS name, resolve it to an address
+        try {
+          const resolveQuery = `
+            SELECT owner_address
+            FROM ens_names
+            WHERE LOWER(name) = LOWER($1)
+          `;
+          const resolveResult = await pool.query(resolveQuery, [owner]);
+
+          if (resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address) {
+            resolvedOwnerAddress = resolveResult.rows[0].owner_address.toLowerCase();
+            fastify.log.info(`Owner filter: ENS name="${owner}" resolved to address="${resolvedOwnerAddress}"`);
+          } else {
+            fastify.log.warn(`Owner filter: ENS name="${owner}" not found in database, will return no results`);
+            // Set to a non-existent address so query returns empty results
+            resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
+          }
+        } catch (error: any) {
+          fastify.log.error(`Error resolving ENS name "${owner}":`, error.message);
+          // Set to a non-existent address so query returns empty results
+          resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
+        }
+      }
+    }
+
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
+
+    // Try Elasticsearch first, but fall back to PostgreSQL if it fails
+    // Also force PostgreSQL for sorts that don't exist in Elasticsearch
+    let usePostgresql = sortBy === 'watchers_count';
+
+    if (usePostgresql) {
+      fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
+    }
+
+    // Build Elasticsearch query
+    const must: any[] = [];
+    const filter: any[] = [];
+
+    // Only filter by status if showListings is true (opposite of listings/search)
+    if (showListings === true || showListings === 'true') {
+      filter.push({ term: { status: 'active' } });
+    }
+
+    if (q) {
+      must.push({
+        bool: {
+          should: [
+            // Exact match gets highest boost
+            { match: { name: { query: q, boost: 10 } } },
+            // Prefix match gets high boost
+            { prefix: { name: { value: q, boost: 5 } } },
+            // Ngram match for fuzzy matching (lower boost)
+            { match: { 'name.ngram': { query: q, boost: 1 } } },
+          ],
+          minimum_should_match: 1,
+        },
+      });
+    }
+
+    if (minPrice || maxPrice) {
+      const range: any = {};
+      if (minPrice) range.gte = minPrice;
+      if (maxPrice) range.lte = maxPrice;
+      filter.push({ range: { price: range } });
+    }
+
+    // Add length filters using script query
+    if (minLength || maxLength) {
+      const scriptConditions: string[] = [];
+      if (minLength) {
+        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(minLength)}`);
+      }
+      if (maxLength) {
+        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(maxLength)}`);
+      }
+      filter.push({
+        script: {
+          script: {
+            source: scriptConditions.join(' && '),
+            lang: 'painless',
+          },
+        },
+      });
+    }
+
+    // Add emoji filter
+    if (hasEmoji !== undefined) {
+      filter.push({ term: { has_emoji: hasEmoji === 'true' || hasEmoji === true } });
+    }
+
+    // Add numbers filter
+    if (hasNumbers !== undefined) {
+      filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
+    }
+
+    // Add clubs filter
+    if (clubs && clubs.length > 0) {
+      filter.push({ terms: { clubs: clubs } });
+    }
+
+    // Add owner filter
+    if (resolvedOwnerAddress) {
+      filter.push({ term: { owner: resolvedOwnerAddress } });
+    }
+
+    // Expiration filters - exclude names without expiry dates (placeholders)
+    if (isExpired !== undefined) {
+      filter.push({ term: { is_expired: isExpired === 'true' || isExpired === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (isGracePeriod !== undefined) {
+      filter.push({ term: { is_grace_period: isGracePeriod === 'true' || isGracePeriod === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (isPremiumPeriod !== undefined) {
+      filter.push({ term: { is_premium_period: isPremiumPeriod === 'true' || isPremiumPeriod === true } });
+      filter.push({ exists: { field: 'expiry_date' } });
+    }
+
+    if (expiringWithinDays !== undefined) {
+      // Filter for names expiring within X days (positive number, not yet expired)
+      // Only include names with valid expiry dates
+      filter.push({
+        bool: {
+          must: [
+            { exists: { field: 'expiry_date' } },
+            {
+              range: {
+                days_until_expiry: {
+                  gte: 0,
+                  lte: parseInt(expiringWithinDays),
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    // Sale history filters
+    if (hasSales !== undefined) {
+      filter.push({ term: { has_sales: hasSales === 'true' || hasSales === true } });
+    }
+
+    if (lastSoldAfter) {
+      filter.push({
+        range: {
+          last_sale_date: {
+            gte: lastSoldAfter,
+          },
+        },
+      });
+    }
+
+    if (lastSoldBefore) {
+      filter.push({
+        range: {
+          last_sale_date: {
+            lte: lastSoldBefore,
+          },
+        },
+      });
+    }
+
+    if (minDaysSinceLastSale !== undefined) {
+      filter.push({
+        range: {
+          days_since_last_sale: {
+            gte: parseInt(minDaysSinceLastSale as any),
+          },
+        },
+      });
+    }
+
+    if (maxDaysSinceLastSale !== undefined) {
+      filter.push({
+        range: {
+          days_since_last_sale: {
+            lte: parseInt(maxDaysSinceLastSale as any),
+          },
+        },
+      });
+    }
+
+    // Build sort array
+    const sort: any[] = [];
+    if (sortBy) {
+      const order = sortOrder || 'desc';
+
+      // Special handling for fields that may have null values
+      if (sortBy === 'last_sale_price') {
+        // Sort by USD value, not raw wei/token amount
+        sort.push({
+          'last_sale_price_usd': {
+            order,
+            missing: '_last'  // Put documents without this field at the end
+          }
+        });
+      } else if (sortBy === 'watchers_count') {
+        // watchers_count doesn't exist in ES, will fall back to PostgreSQL
+        // But prepare sort config in case it's added later
+        sort.push({
+          [sortBy]: {
+            order,
+            missing: '_last'
+          }
+        });
+      } else {
+        sort.push({ [sortBy]: { order } });
+      }
+    } else {
+      sort.push({ _score: { order: 'desc' } });
+      sort.push({ listing_created_at: { order: 'desc' } });
+    }
+
+    const esQuery = {
+      index: 'ens_names',
+      body: {
+        query: {
+          bool: {
+            must: must.length > 0 ? must : [{ match_all: {} }],
+            filter,
+          },
+        },
+        min_score: q ? 20.0 : undefined, // Only filter by score if there's a text query
+        from,
+        size: limit,
+        sort,
+      },
+    };
+
+    if (!usePostgresql) {
+      try {
+        const esResult = await es.search(esQuery);
+
+      fastify.log.info('Elasticsearch returned results');
+
+      // Log scores for debugging
+      if (q && esResult.hits.hits.length > 0) {
+        const scores = esResult.hits.hits.map((hit: any) => ({ name: hit._source.name, score: hit._score }));
+        fastify.log.info(`ES scores sample (first 5): ${JSON.stringify(scores.slice(0, 5))}`);
+        fastify.log.info(`ES scores sample (last 5): ${JSON.stringify(scores.slice(-5))}`);
+      }
+
+      // Extract ENS names from Elasticsearch results
+      const ensNames = esResult.hits.hits.map((hit: any) => hit._source.name);
+
+      if (ensNames.length === 0) {
+        fastify.log.info('No ES results found');
+        return reply.send({
+          success: true,
+          data: {
+            results: [],
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              total: 0,
+              totalPages: 0,
+              hasNext: false,
+              hasPrev: false,
+            },
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+          },
+        });
+      }
+
+      // Get user ID if authenticated
+      const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+      // Build search results using shared utility
+      const results = await buildSearchResults(ensNames, userId);
+
+      const currentPage = parseInt(page);
+      const pageLimit = parseInt(limit);
+      const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
+      const totalPages = Math.ceil(total / pageLimit);
+
+      fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
+
+      const response: APIResponse<{
+        results: any[];
+        pagination: any;
+      }> = {
+        success: true,
+        data: {
+          results,
+          pagination: {
+            page: currentPage,
+            limit: pageLimit,
+            total,
+            totalPages,
+            hasNext: currentPage < totalPages,
+            hasPrev: currentPage > 1,
+          },
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+      } catch (error: any) {
+        fastify.log.warn('Elasticsearch search failed, falling back to PostgreSQL:', error.message);
+        usePostgresql = true;
+      }
+    }
+
+    if (usePostgresql) {
+
+      // Fallback to PostgreSQL-based search
+      // showListings=true means only show names with active listings (opposite of old showAll)
+      const listingsOnly = showListings === true || showListings === 'true';
+      let whereConditions: string[] = [];
+      let params: any[] = [];
+      let paramCount = 1;
+
+      // Only filter by status if showing listings only
+      if (listingsOnly) {
+        whereConditions.push(`l.status = $${paramCount}`);
+        params.push('active');
+        paramCount++;
+      }
+
+      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}`);
+
+      // Add name search condition
+      if (q && q.trim()) {
+        const searchPattern = `%${q.toLowerCase()}%`;
+        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        params.push(searchPattern);
+        paramCount++;
+        fastify.log.info(`Added name search condition: ${searchPattern}`);
+      }
+
+      // Add price filters (only for listings)
+      if (minPrice && listingsOnly) {
+        whereConditions.push(`CAST(l.price_wei AS NUMERIC) >= $${paramCount}`);
+        params.push(minPrice);
+        paramCount++;
+      }
+
+      if (maxPrice && listingsOnly) {
+        whereConditions.push(`CAST(l.price_wei AS NUMERIC) <= $${paramCount}`);
+        params.push(maxPrice);
+        paramCount++;
+      }
+
+      // Add length filters
+      if (minLength) {
+        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) >= $${paramCount}`);
+        params.push(parseInt(minLength));
+        paramCount++;
+      }
+
+      if (maxLength) {
+        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
+        params.push(parseInt(maxLength));
+        paramCount++;
+      }
+
+      // Add emoji filter
+      if (hasEmoji !== undefined) {
+        whereConditions.push(`en.has_emoji = $${paramCount}`);
+        params.push(hasEmoji === 'true' || hasEmoji === true);
+        paramCount++;
+      }
+
+      // Add numbers filter
+      if (hasNumbers !== undefined) {
+        whereConditions.push(`en.has_numbers = $${paramCount}`);
+        params.push(hasNumbers === 'true' || hasNumbers === true);
+        paramCount++;
+      }
+
+      // Add owner filter
+      if (resolvedOwnerAddress) {
+        whereConditions.push(`LOWER(en.owner_address) = $${paramCount}`);
+        params.push(resolvedOwnerAddress);
+        paramCount++;
+      }
+
+      const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
+
+      // Build ORDER BY clause based on sortBy parameter
+      let orderByClause = '';
+      const order = sortOrder || 'desc';
+      const sqlOrder = order.toUpperCase();
+
+      if (sortBy === 'last_sale_price') {
+        // Sort by USD value for proper cross-currency comparison
+        orderByClause = `ORDER BY en.last_sale_price_usd ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'watchers_count') {
+        // Sort by watchers count - use alias from SELECT clause to avoid DISTINCT conflict
+        orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+      } else if (sortBy === 'price' && listingsOnly) {
+        // Sort by listing price when filtering by listings
+        orderByClause = `ORDER BY CAST(l.price_wei AS NUMERIC) ${sqlOrder}`;
+      } else if (sortBy === 'expiry_date') {
+        orderByClause = `ORDER BY en.expiry_date ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'registration_date') {
+        orderByClause = `ORDER BY en.registration_date ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'last_sale_date') {
+        orderByClause = `ORDER BY en.last_sale_date ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'character_count') {
+        // Use alias from SELECT clause to avoid DISTINCT conflict
+        orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+      } else {
+        // Default sorting
+        orderByClause = listingsOnly ? 'ORDER BY l.created_at DESC' : 'ORDER BY en.name ASC';
+      }
+
+      // Build queries based on showListings - get the ENS names
+      const countQuery = listingsOnly ? `
+        SELECT COUNT(DISTINCT en.id)
+        FROM listings l
+        JOIN ens_names en ON l.ens_name_id = en.id
+        WHERE ${whereClause}
+      ` : `
+        SELECT COUNT(*)
+        FROM ens_names en
+        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+        WHERE ${whereClause}
+      `;
+
+      // Build SELECT clause - need to include sort column when using DISTINCT
+      // PostgreSQL requires ORDER BY columns to be in SELECT list when using DISTINCT
+      let selectClause = 'DISTINCT en.name';
+      if (sortBy === 'watchers_count') {
+        selectClause = 'en.name, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value';
+      } else if (sortBy === 'last_sale_price') {
+        selectClause = 'DISTINCT en.name, en.last_sale_price_usd';
+      } else if (sortBy === 'expiry_date') {
+        selectClause = 'DISTINCT en.name, en.expiry_date';
+      } else if (sortBy === 'registration_date') {
+        selectClause = 'DISTINCT en.name, en.registration_date';
+      } else if (sortBy === 'last_sale_date') {
+        selectClause = 'DISTINCT en.name, en.last_sale_date';
+      } else if (sortBy === 'character_count') {
+        selectClause = 'DISTINCT en.name, LENGTH(REPLACE(en.name, \'.eth\', \'\')) as sort_value';
+      } else if (sortBy === 'price' && listingsOnly) {
+        selectClause = 'DISTINCT en.name, l.price_wei';
+      }
+
+      const dataQuery = listingsOnly ? `
+        SELECT ${selectClause}
+        FROM listings l
+        JOIN ens_names en ON l.ens_name_id = en.id
+        WHERE ${whereClause}
+        ${orderByClause}
+        LIMIT $${paramCount} OFFSET $${paramCount + 1}
+      ` : `
+        SELECT ${selectClause}
+        FROM ens_names en
+        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+        WHERE ${whereClause}
+        ${orderByClause}
+        LIMIT $${paramCount} OFFSET $${paramCount + 1}
+      `;
+
+      params.push(limit, from);
+
+      try {
+        const [countResult, dataResult] = await Promise.all([
+          pool.query(countQuery, params.slice(0, -2)),
+          pool.query(dataQuery, params),
+        ]);
+
+        const total = parseInt(countResult.rows[0].count);
+        const totalPages = Math.ceil(total / limit);
+        const currentPage = parseInt(page);
+
+        // Get user ID if authenticated
+        const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+        // Extract names and build results using shared utility
+        const ensNames = dataResult.rows.map((row: any) => row.name);
+        const results = await buildSearchResults(ensNames, userId);
+
+        fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
+
+        return reply.send({
+          success: true,
+          data: {
+            results,
+            pagination: {
+              page: currentPage,
+              limit: parseInt(limit),
+              total,
+              totalPages,
+              hasNext: currentPage < totalPages,
+              hasPrev: currentPage > 1,
+            },
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+          },
+        });
+      } catch (pgError: any) {
+        fastify.log.error({ error: pgError, query: dataQuery, params }, 'PostgreSQL fallback search also failed');
+        return reply.status(500).send({
+          success: false,
+          error: {
+            code: 'SEARCH_ERROR',
+            message: 'Search service temporarily unavailable',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  });
+}

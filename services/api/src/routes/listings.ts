@@ -1,8 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, getElasticsearchClient, APIResponse, Listing } from '../../../shared/src';
-import { buildSearchResults } from '../utils/response-builder';
-import { optionalAuth } from '../middleware/auth';
+import { getPostgresPool, APIResponse, Listing } from '../../../shared/src';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -29,9 +27,19 @@ const ListListingsQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).default('desc'),
 });
 
+/**
+ * Helper function to get clubs for an ENS name
+ */
+async function getClubsForEnsName(pool: any, ensNameId: number): Promise<string[]> {
+  const result = await pool.query(
+    'SELECT clubs FROM ens_names WHERE id = $1',
+    [ensNameId]
+  );
+  return result.rows[0]?.clubs || [];
+}
+
 export async function listingsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
-  const es = getElasticsearchClient();
 
   // GET all listings with filtering and pagination
   fastify.get('/', async (request, reply) => {
@@ -239,459 +247,6 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  // Search listings using Elasticsearch (with PostgreSQL fallback)
-  fastify.get('/search', { preHandler: optionalAuth }, async (request, reply) => {
-    // Transform flat query params into nested structure (same as /names/search)
-    const rawQuery = request.query as any;
-    const transformedQuery: any = {
-      q: rawQuery.q || '',
-      page: rawQuery.page || 1,
-      limit: rawQuery.limit || 20,
-      filters: {},
-    };
-
-    // Parse filters from bracket notation
-    for (const key in rawQuery) {
-      if (key.startsWith('filters[')) {
-        // Extract the filter name: filters[clubs][] -> clubs
-        const match = key.match(/filters\[([^\]]+)\](\[\])?/);
-        if (match) {
-          const filterName = match[1];
-          const isArray = match[2] === '[]';
-
-          if (isArray) {
-            // Handle array values: filters[clubs][]
-            if (!transformedQuery.filters[filterName]) {
-              transformedQuery.filters[filterName] = [];
-            }
-            const value = rawQuery[key];
-            if (Array.isArray(value)) {
-              transformedQuery.filters[filterName].push(...value);
-            } else {
-              transformedQuery.filters[filterName].push(value);
-            }
-          } else {
-            // Handle non-array values: filters[minPrice] or filters[clubs] (convert clubs to array)
-            const value = rawQuery[key];
-            // Special handling for clubs - always convert to array
-            if (filterName === 'clubs') {
-              transformedQuery.filters[filterName] = Array.isArray(value) ? value : [value];
-            } else {
-              transformedQuery.filters[filterName] = value;
-            }
-          }
-        }
-      }
-    }
-
-    const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showAll = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale } = filters;
-    const from = (page - 1) * limit;
-
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showAll=${showAll}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, sortBy=${sortBy}`);
-
-    // Try Elasticsearch first, but fall back to PostgreSQL if it fails
-    let usePostgresql = false;
-
-    // Build Elasticsearch query
-    const must: any[] = [];
-    const filter: any[] = [];
-
-    // Only filter by status if showAll is false
-    if (!showAll || showAll === 'false') {
-      filter.push({ term: { status: 'active' } });
-    }
-
-    if (q) {
-      must.push({
-        bool: {
-          should: [
-            // Exact match gets highest boost
-            { match: { name: { query: q, boost: 10 } } },
-            // Prefix match gets high boost
-            { prefix: { name: { value: q, boost: 5 } } },
-            // Ngram match for fuzzy matching (lower boost)
-            { match: { 'name.ngram': { query: q, boost: 1 } } },
-          ],
-          minimum_should_match: 1,
-        },
-      });
-    }
-
-    if (minPrice || maxPrice) {
-      const range: any = {};
-      if (minPrice) range.gte = minPrice;
-      if (maxPrice) range.lte = maxPrice;
-      filter.push({ range: { price: range } });
-    }
-
-    // Add length filters using script query
-    if (minLength || maxLength) {
-      const scriptConditions: string[] = [];
-      if (minLength) {
-        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(minLength)}`);
-      }
-      if (maxLength) {
-        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(maxLength)}`);
-      }
-      filter.push({
-        script: {
-          script: {
-            source: scriptConditions.join(' && '),
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Add emoji filter
-    if (hasEmoji !== undefined) {
-      filter.push({ term: { has_emoji: hasEmoji === 'true' || hasEmoji === true } });
-    }
-
-    // Add numbers filter
-    if (hasNumbers !== undefined) {
-      filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
-    }
-
-    // Add clubs filter
-    if (clubs && clubs.length > 0) {
-      filter.push({ terms: { clubs: clubs } });
-    }
-
-    // Expiration filters - exclude names without expiry dates (placeholders)
-    if (isExpired !== undefined) {
-      filter.push({ term: { is_expired: isExpired === 'true' || isExpired === true } });
-      filter.push({ exists: { field: 'expiry_date' } });
-    }
-
-    if (isGracePeriod !== undefined) {
-      filter.push({ term: { is_grace_period: isGracePeriod === 'true' || isGracePeriod === true } });
-      filter.push({ exists: { field: 'expiry_date' } });
-    }
-
-    if (isPremiumPeriod !== undefined) {
-      filter.push({ term: { is_premium_period: isPremiumPeriod === 'true' || isPremiumPeriod === true } });
-      filter.push({ exists: { field: 'expiry_date' } });
-    }
-
-    if (expiringWithinDays !== undefined) {
-      // Filter for names expiring within X days (positive number, not yet expired)
-      // Only include names with valid expiry dates
-      filter.push({
-        bool: {
-          must: [
-            { exists: { field: 'expiry_date' } },
-            {
-              range: {
-                days_until_expiry: {
-                  gte: 0,
-                  lte: parseInt(expiringWithinDays),
-                },
-              },
-            },
-          ],
-        },
-      });
-    }
-
-    // Sale history filters
-    if (hasSales !== undefined) {
-      filter.push({ term: { has_sales: hasSales === 'true' || hasSales === true } });
-    }
-
-    if (lastSoldAfter) {
-      filter.push({
-        range: {
-          last_sale_date: {
-            gte: lastSoldAfter,
-          },
-        },
-      });
-    }
-
-    if (lastSoldBefore) {
-      filter.push({
-        range: {
-          last_sale_date: {
-            lte: lastSoldBefore,
-          },
-        },
-      });
-    }
-
-    if (minDaysSinceLastSale !== undefined) {
-      filter.push({
-        range: {
-          days_since_last_sale: {
-            gte: parseInt(minDaysSinceLastSale as any),
-          },
-        },
-      });
-    }
-
-    if (maxDaysSinceLastSale !== undefined) {
-      filter.push({
-        range: {
-          days_since_last_sale: {
-            lte: parseInt(maxDaysSinceLastSale as any),
-          },
-        },
-      });
-    }
-
-    // Build sort array
-    const sort: any[] = [];
-    if (sortBy) {
-      const order = sortOrder || 'desc';
-      sort.push({ [sortBy]: { order } });
-    } else {
-      sort.push({ _score: { order: 'desc' } });
-      sort.push({ listing_created_at: { order: 'desc' } });
-    }
-
-    const esQuery = {
-      index: 'ens_names',
-      body: {
-        query: {
-          bool: {
-            must: must.length > 0 ? must : [{ match_all: {} }],
-            filter,
-          },
-        },
-        min_score: q ? 20.0 : undefined, // Only filter by score if there's a text query
-        from,
-        size: limit,
-        sort,
-      },
-    };
-
-    try {
-      const esResult = await es.search(esQuery);
-
-      fastify.log.info('Elasticsearch returned results');
-
-      // Log scores for debugging
-      if (q && esResult.hits.hits.length > 0) {
-        const scores = esResult.hits.hits.map((hit: any) => ({ name: hit._source.name, score: hit._score }));
-        fastify.log.info(`ES scores sample (first 5): ${JSON.stringify(scores.slice(0, 5))}`);
-        fastify.log.info(`ES scores sample (last 5): ${JSON.stringify(scores.slice(-5))}`);
-      }
-
-      // Extract ENS names from Elasticsearch results
-      const ensNames = esResult.hits.hits.map((hit: any) => hit._source.name);
-
-      if (ensNames.length === 0) {
-        fastify.log.info('No ES results found');
-        return reply.send({
-          success: true,
-          data: {
-            results: [],
-            pagination: {
-              page: parseInt(page),
-              limit: parseInt(limit),
-              total: 0,
-              totalPages: 0,
-              hasNext: false,
-              hasPrev: false,
-            },
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-            version: '1.0.0',
-          },
-        });
-      }
-
-      // Get user ID if authenticated
-      const userId = request.user ? parseInt(request.user.sub) : undefined;
-
-      // Build search results using shared utility
-      const results = await buildSearchResults(ensNames, userId);
-
-      const currentPage = parseInt(page);
-      const pageLimit = parseInt(limit);
-      const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
-      const totalPages = Math.ceil(total / pageLimit);
-
-      fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
-
-      const response: APIResponse<{
-        results: any[];
-        pagination: any;
-      }> = {
-        success: true,
-        data: {
-          results,
-          pagination: {
-            page: currentPage,
-            limit: pageLimit,
-            total,
-            totalPages,
-            hasNext: currentPage < totalPages,
-            hasPrev: currentPage > 1,
-          },
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-          version: '1.0.0',
-        },
-      };
-
-      return reply.send(response);
-    } catch (error: any) {
-      fastify.log.warn('Elasticsearch search failed, falling back to PostgreSQL:', error.message);
-
-      // Fallback to PostgreSQL-based search
-      const includeAllNames = showAll === true || showAll === 'true';
-      let whereConditions: string[] = [];
-      let params: any[] = [];
-      let paramCount = 1;
-
-      // Only filter by status if not showing all names
-      if (!includeAllNames) {
-        whereConditions.push(`l.status = $${paramCount}`);
-        params.push('active');
-        paramCount++;
-      }
-
-      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showAll=${includeAllNames}`);
-
-      // Add name search condition
-      if (q && q.trim()) {
-        const searchPattern = `%${q.toLowerCase()}%`;
-        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
-        params.push(searchPattern);
-        paramCount++;
-        fastify.log.info(`Added name search condition: ${searchPattern}`);
-      }
-
-      // Add price filters (only for listings)
-      if (minPrice && !includeAllNames) {
-        whereConditions.push(`CAST(l.price_wei AS NUMERIC) >= $${paramCount}`);
-        params.push(minPrice);
-        paramCount++;
-      }
-
-      if (maxPrice && !includeAllNames) {
-        whereConditions.push(`CAST(l.price_wei AS NUMERIC) <= $${paramCount}`);
-        params.push(maxPrice);
-        paramCount++;
-      }
-
-      // Add length filters
-      if (minLength) {
-        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) >= $${paramCount}`);
-        params.push(parseInt(minLength));
-        paramCount++;
-      }
-
-      if (maxLength) {
-        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
-        params.push(parseInt(maxLength));
-        paramCount++;
-      }
-
-      // Add emoji filter
-      if (hasEmoji !== undefined) {
-        whereConditions.push(`en.has_emoji = $${paramCount}`);
-        params.push(hasEmoji === 'true' || hasEmoji === true);
-        paramCount++;
-      }
-
-      // Add numbers filter
-      if (hasNumbers !== undefined) {
-        whereConditions.push(`en.has_numbers = $${paramCount}`);
-        params.push(hasNumbers === 'true' || hasNumbers === true);
-        paramCount++;
-      }
-
-      const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
-
-      // Build queries based on showAll - just get the ENS names
-      const countQuery = includeAllNames ? `
-        SELECT COUNT(*)
-        FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
-        WHERE ${whereClause}
-      ` : `
-        SELECT COUNT(DISTINCT en.id)
-        FROM listings l
-        JOIN ens_names en ON l.ens_name_id = en.id
-        WHERE ${whereClause}
-      `;
-
-      const dataQuery = includeAllNames ? `
-        SELECT DISTINCT en.name
-        FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
-        WHERE ${whereClause}
-        ORDER BY en.name ASC
-        LIMIT $${paramCount} OFFSET $${paramCount + 1}
-      ` : `
-        SELECT DISTINCT en.name
-        FROM listings l
-        JOIN ens_names en ON l.ens_name_id = en.id
-        WHERE ${whereClause}
-        ORDER BY l.created_at DESC
-        LIMIT $${paramCount} OFFSET $${paramCount + 1}
-      `;
-
-      params.push(limit, from);
-
-      try {
-        const [countResult, dataResult] = await Promise.all([
-          pool.query(countQuery, params.slice(0, -2)),
-          pool.query(dataQuery, params),
-        ]);
-
-        const total = parseInt(countResult.rows[0].count);
-        const totalPages = Math.ceil(total / limit);
-        const currentPage = parseInt(page);
-
-        // Get user ID if authenticated
-        const userId = request.user ? parseInt(request.user.sub) : undefined;
-
-        // Extract names and build results using shared utility
-        const ensNames = dataResult.rows.map((row: any) => row.name);
-        const results = await buildSearchResults(ensNames, userId);
-
-        fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
-
-        return reply.send({
-          success: true,
-          data: {
-            results,
-            pagination: {
-              page: currentPage,
-              limit: parseInt(limit),
-              total,
-              totalPages,
-              hasNext: currentPage < totalPages,
-              hasPrev: currentPage > 1,
-            },
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-            version: '1.0.0',
-          },
-        });
-      } catch (pgError: any) {
-        fastify.log.error('PostgreSQL fallback search also failed:', pgError);
-        return reply.status(500).send({
-          success: false,
-          error: {
-            code: 'SEARCH_ERROR',
-            message: 'Search service temporarily unavailable',
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-          },
-        });
-      }
-    }
-  });
-
   fastify.post('/', async (request, reply) => {
     const body = CreateListingSchema.parse(request.body);
 
@@ -748,6 +303,17 @@ export async function listingsRoutes(fastify: FastifyInstance) {
             priority: 'high',
           });
           fastify.log.info({ ensNameId: body.ensNameId }, 'Scheduled ENS sync job');
+        }
+
+        // 3. Update club floor price if this ENS name is in any clubs
+        const clubs = await getClubsForEnsName(pool, body.ensNameId);
+        if (clubs.length > 0) {
+          await boss.send('update-club-floor-price', {
+            clubNames: clubs,
+            eventType: 'create',
+            listingPrice: body.priceWei,
+          });
+          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update');
         }
       } catch (queueError) {
         // Don't fail the request if queue publishing fails
@@ -840,9 +406,31 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       });
     }
 
+    const updatedListing = result.rows[0];
+
+    // Update club floor price if price was changed
+    if (body.priceWei !== undefined) {
+      try {
+        const { getQueueClient } = await import('../queue');
+        const boss = await getQueueClient();
+        const clubs = await getClubsForEnsName(pool, updatedListing.ens_name_id);
+
+        if (clubs.length > 0) {
+          await boss.send('update-club-floor-price', {
+            clubNames: clubs,
+            eventType: 'update',
+            listingPrice: body.priceWei,
+          });
+          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update after price change');
+        }
+      } catch (queueError) {
+        fastify.log.error({ error: queueError }, 'Failed to publish club stats job for listing update');
+      }
+    }
+
     const response: APIResponse<Listing> = {
       success: true,
-      data: result.rows[0],
+      data: updatedListing,
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -878,11 +466,31 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       });
     }
 
+    const cancelledListing = result.rows[0];
+
+    // Recalculate club floor price since a listing was removed
+    try {
+      const { getQueueClient } = await import('../queue');
+      const boss = await getQueueClient();
+      const clubs = await getClubsForEnsName(pool, cancelledListing.ens_name_id);
+
+      if (clubs.length > 0) {
+        await boss.send('update-club-floor-price', {
+          clubNames: clubs,
+          eventType: 'delete',
+          listingPrice: cancelledListing.price_wei,
+        });
+        fastify.log.info({ clubs }, 'Scheduled club floor price recalculation after listing cancellation');
+      }
+    } catch (queueError) {
+      fastify.log.error({ error: queueError }, 'Failed to publish club stats job for listing cancellation');
+    }
+
     const response: APIResponse = {
       success: true,
       data: {
         message: 'Listing cancelled successfully',
-        listing: result.rows[0],
+        listing: cancelledListing,
       },
       meta: {
         timestamp: new Date().toISOString(),

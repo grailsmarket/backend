@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, SeaportOrder } from '../../../shared/src';
+import { getPostgresPool, APIResponse, SeaportOrder, validateFeeInOrder } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 
 const CreateOrderSchema = z.object({
@@ -143,6 +143,19 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
         if (cancelledResult.rows.length > 0) {
           fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash} and source ${body.source}`);
+        }
+
+        // Validate fee for Grails marketplace orders
+        const feeValidation = validateFeeInOrder(body.order_data, body.source);
+        if (!feeValidation.valid) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'INVALID_FEE',
+              message: feeValidation.error || 'Invalid marketplace fee',
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
         }
 
         // Insert listing

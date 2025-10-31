@@ -72,6 +72,8 @@ export function ActivityHistory({ name, address, limit = 20, showFilters = false
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [eventTypeFilter, setEventTypeFilter] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<any>(null);
 
   useEffect(() => {
     const fetchActivity = async () => {
@@ -83,6 +85,7 @@ export function ActivityHistory({ name, address, limit = 20, showFilters = false
 
         // Build query params
         const params = new URLSearchParams();
+        params.append('page', page.toString());
         params.append('limit', limit.toString());
 
         // Add event type filters if any
@@ -105,7 +108,8 @@ export function ActivityHistory({ name, address, limit = 20, showFilters = false
         }
 
         const data = await response.json();
-        setActivities(data.data || []);
+        setActivities(data.data?.results || []);
+        setPagination(data.data?.pagination);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -114,7 +118,7 @@ export function ActivityHistory({ name, address, limit = 20, showFilters = false
     };
 
     fetchActivity();
-  }, [name, address, limit, eventTypeFilter]);
+  }, [name, address, limit, eventTypeFilter, page]);
 
   const formatAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -263,6 +267,31 @@ export function ActivityHistory({ name, address, limit = 20, showFilters = false
           </div>
         ))}
       </div>
+
+      {/* Pagination Controls */}
+      {pagination && pagination.totalPages > 1 && (
+        <div className="p-4 border-t border-gray-700 flex items-center justify-between">
+          <div className="text-sm text-gray-400">
+            Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(page - 1)}
+              disabled={!pagination.hasPrev}
+              className="px-4 py-2 bg-gray-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600 transition"
+            >
+              ← Previous
+            </button>
+            <button
+              onClick={() => setPage(page + 1)}
+              disabled={!pagination.hasNext}
+              className="px-4 py-2 bg-gray-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600 transition"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

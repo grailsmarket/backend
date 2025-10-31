@@ -12,7 +12,9 @@ import {
   MARKETPLACE_CONDUIT_ADDRESS,
   MARKETPLACE_CONDUIT_KEY,
   OPENSEA_CONDUIT_ADDRESS,
-  OPENSEA_CONDUIT_KEY
+  OPENSEA_CONDUIT_KEY,
+  WETH_ADDRESS,
+  GRAILS_FEE_ENABLED
 } from '@/lib/constants';
 import { parseEther } from 'viem';
 import { seaportClient } from '@/services/seaport/seaportClient';
@@ -88,7 +90,7 @@ export default function PortfolioPage() {
 
         // Fetch offers received
         const offersResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/offers/received/${address}?status=pending`
+          `${process.env.NEXT_PUBLIC_API_URL}/offers/owner/${address}?status=pending`
         );
         const offersData = await offersResponse.json();
         if (offersData.success) {
@@ -419,7 +421,7 @@ export default function PortfolioPage() {
 
       // If not approved, request approval
       if (!isApproved) {
-        console.log('Requesting approval...');
+        console.log('Requesting NFT approval...');
 
         const approvalHash = await walletClient.writeContract({
           address: nftContract as `0x${string}`,
@@ -440,11 +442,92 @@ export default function PortfolioPage() {
           account: address
         });
 
-        console.log('Approval transaction sent:', approvalHash);
+        console.log('NFT approval transaction sent:', approvalHash);
 
         // Wait for approval to be confirmed
         await publicClient.waitForTransactionReceipt({ hash: approvalHash });
-        console.log('Approval confirmed');
+        console.log('NFT approval confirmed');
+      }
+
+      // Check if there are any WETH fees that need to be paid by the seller (fulfiller)
+      // When accepting an offer with Grails fees enabled, the seller needs to approve
+      // the conduit to transfer WETH on their behalf for the fee payment
+      if (GRAILS_FEE_ENABLED) {
+        const wethConsiderations = parameters.consideration.filter((item: any) =>
+          item.itemType === 1 && // ERC20
+          item.token?.toLowerCase() === WETH_ADDRESS.toLowerCase() &&
+          item.recipient?.toLowerCase() !== parameters.offerer?.toLowerCase() // Not the main payment to buyer
+        );
+
+        if (wethConsiderations.length > 0) {
+          console.log('Found WETH fee considerations:', wethConsiderations);
+
+          // Calculate total WETH fees the seller needs to pay
+          const totalWethFees = wethConsiderations.reduce(
+            (sum: bigint, item: any) => sum + BigInt(item.startAmount || 0),
+            0n
+          );
+
+          console.log('Total WETH fees to approve:', totalWethFees.toString());
+
+          // Check current WETH allowance for the conduit/seaport
+          const currentAllowance = await publicClient.readContract({
+            address: WETH_ADDRESS as `0x${string}`,
+            abi: [
+              {
+                name: 'allowance',
+                type: 'function',
+                inputs: [
+                  { name: 'owner', type: 'address' },
+                  { name: 'spender', type: 'address' }
+                ],
+                outputs: [{ name: '', type: 'uint256' }],
+                stateMutability: 'view'
+              }
+            ],
+            functionName: 'allowance',
+            args: [address as `0x${string}`, operatorToApprove as `0x${string}`]
+          }) as bigint;
+
+          console.log('Current WETH allowance:', {
+            allowance: currentAllowance.toString(),
+            required: totalWethFees.toString(),
+            sufficient: currentAllowance >= totalWethFees
+          });
+
+          // If allowance is insufficient, request approval
+          if (currentAllowance < totalWethFees) {
+            console.log('WETH allowance insufficient, requesting approval...');
+
+            // Approve a larger amount to cover future fees (approve 10x the current fee)
+            const approvalAmount = totalWethFees * 10n;
+
+            const wethApprovalHash = await walletClient.writeContract({
+              address: WETH_ADDRESS as `0x${string}`,
+              abi: [
+                {
+                  name: 'approve',
+                  type: 'function',
+                  inputs: [
+                    { name: 'spender', type: 'address' },
+                    { name: 'amount', type: 'uint256' }
+                  ],
+                  outputs: [{ name: '', type: 'bool' }],
+                  stateMutability: 'nonpayable'
+                }
+              ],
+              functionName: 'approve',
+              args: [operatorToApprove as `0x${string}`, approvalAmount],
+              account: address
+            });
+
+            console.log('WETH approval transaction sent:', wethApprovalHash);
+
+            // Wait for WETH approval to be confirmed
+            await publicClient.waitForTransactionReceipt({ hash: wethApprovalHash });
+            console.log('WETH approval confirmed');
+          }
+        }
       }
 
       // Now fulfill the order
