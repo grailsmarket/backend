@@ -14,14 +14,18 @@ import { notificationsRoutes } from './notifications';
 import { websocketRoutes } from './websocket';
 import { clubsRoutes } from './clubs';
 import { votesRoutes } from './votes';
+import { searchRoutes } from './search';
+import { verificationRoutes } from './verification';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
   fastify.register(authRoutes, { prefix: '/api/v1/auth' });
   fastify.register(usersRoutes, { prefix: '/api/v1/users' });
+  fastify.register(verificationRoutes, { prefix: '/api/v1/verification' });
   fastify.register(watchlistRoutes, { prefix: '/api/v1/watchlist' });
   fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   fastify.register(votesRoutes, { prefix: '/api/v1/votes' });
+  fastify.register(searchRoutes, { prefix: '/api/v1/search' });
   fastify.register(namesRoutes, { prefix: '/api/v1/names' });
   fastify.register(ordersRoutes, { prefix: '/api/v1/orders' });
   fastify.register(listingsRoutes, { prefix: '/api/v1/listings' });

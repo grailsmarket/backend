@@ -1,0 +1,540 @@
+---
+title: "Ownership Worker"
+description: "Process ownership transfers and cancel invalid listings"
+order: 4
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Ownership Worker
+
+Processes ENS name ownership transfers detected by the Indexer, updating the database and cancelling invalid listings.
+
+## Purpose
+
+When an ENS name is transferred to a new owner:
+1. Update the `owner_address` in database
+2. Cancel all active listings (previous owner can't fulfill them)
+3. Notify sellers their listings were cancelled
+4. Create activity history record
+
+<Callout type="warning" title="Why Cancel Listings?">
+When ownership changes, the previous owner can no longer fulfill Seaport orders because they don't own the name anymore. All their active listings must be cancelled to prevent failed transactions.
+</Callout>
+
+## Queue
+
+**Queue**: `update-ownership`
+**Triggered by**: Indexer service when Transfer event detected
+**Concurrency**: Medium (teamSize: 3, teamConcurrency: 2)
+
+<CodeBlock title="Job structure">
+```json
+{
+  "ensNameId": 123,
+  "newOwner": "0x456...",
+  "oldOwner": "0x123...",
+  "transactionHash": "0xabc..."
+}
+```
+</CodeBlock>
+
+## Worker Implementation
+
+<CodeBlock title="Ownership worker">
+```typescript
+// services/workers/src/workers/ownership.ts
+
+export async function registerOwnershipWorker(boss: PgBoss) {
+  await boss.work(
+    'update-ownership',
+    { teamSize: 3, teamConcurrency: 2 },
+    async (job) => {
+      const { ensNameId, newOwner, oldOwner, transactionHash } = job.data;
+      await processOwnershipChange(ensNameId, newOwner, oldOwner, transactionHash);
+    }
+  );
+
+  console.log('Ownership worker registered');
+}
+
+async function processOwnershipChange(
+  ensNameId: number,
+  newOwner: string,
+  oldOwner: string,
+  transactionHash: string
+) {
+  console.log(`Processing ownership change for ENS name ${ensNameId}`);
+
+  // Get ENS name
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: ensNameId },
+    include: {
+      listings: {
+        where: { status: 'active' },
+      },
+    },
+  });
+
+  if (!ensName) {
+    console.warn(`ENS name ${ensNameId} not found`);
+    return;
+  }
+
+  // 1. Update owner in database
+  await prisma.ens_names.update({
+    where: { id: ensNameId },
+    data: {
+      owner_address: newOwner.toLowerCase(),
+      last_transfer_date: new Date(),
+    },
+  });
+
+  console.log(`✓ Updated owner for ${ensName.name}: ${oldOwner} -> ${newOwner}`);
+
+  // 2. Cancel active listings
+  if (ensName.listings.length > 0) {
+    const listingIds = ensName.listings.map(l => l.id);
+
+    await prisma.listings.updateMany({
+      where: {
+        id: { in: listingIds },
+      },
+      data: {
+        status: 'cancelled',
+        cancellation_reason: 'ownership_transfer',
+        updated_at: new Date(),
+      },
+    });
+
+    console.log(`✓ Cancelled ${listingIds.length} listings for ${ensName.name}`);
+
+    // 3. Notify sellers
+    for (const listing of ensName.listings) {
+      await notifySellerOfCancellation(listing, ensName, transactionHash);
+    }
+  }
+
+  // 4. Create activity record
+  await prisma.activity_history.create({
+    data: {
+      ens_name_id: ensNameId,
+      activity_type: 'transfer',
+      from_address: oldOwner.toLowerCase(),
+      to_address: newOwner.toLowerCase(),
+      transaction_hash: transactionHash,
+      timestamp: new Date(),
+    },
+  });
+
+  console.log(`✓ Completed ownership change processing for ${ensName.name}`);
+}
+```
+</CodeBlock>
+
+## Seller Notifications
+
+<CodeBlock title="Notify sellers of cancelled listings">
+```typescript
+async function notifySellerOfCancellation(
+  listing: any,
+  ensName: any,
+  transactionHash: string
+) {
+  // Check if seller has notifications enabled
+  const user = await prisma.users.findUnique({
+    where: { address: listing.seller_address.toLowerCase() },
+  });
+
+  if (!user?.email || !user.email_verified) {
+    console.log(`Seller ${listing.seller_address} has no verified email`);
+    return;
+  }
+
+  // Publish notification job
+  await boss.send('send-notification', {
+    userId: user.id,
+    type: 'listing-cancelled-ownership-change',
+    ensNameId: ensName.id,
+    metadata: {
+      ensName: ensName.name,
+      listingId: listing.id,
+      priceWei: listing.price_wei,
+      transactionHash,
+    },
+  });
+
+  console.log(`✓ Queued notification for seller ${user.email}`);
+}
+```
+</CodeBlock>
+
+## Indexer Integration
+
+The Indexer publishes ownership jobs when it detects Transfer events.
+
+<CodeBlock title="Indexer publishes ownership job">
+```typescript
+// services/indexer/src/indexers/ens-indexer.ts
+
+contract.on('Transfer', async (from, to, tokenId, event) => {
+  console.log(`Transfer detected: ${tokenId} from ${from} to ${to}`);
+
+  // Update database
+  const ensName = await prisma.ens_names.update({
+    where: { token_id: tokenId.toString() },
+    data: {
+      owner_address: to.toLowerCase(),
+      last_transfer_date: new Date(),
+    },
+  });
+
+  // Publish job to workers
+  await boss.send('update-ownership', {
+    ensNameId: ensName.id,
+    newOwner: to,
+    oldOwner: from,
+    transactionHash: event.transactionHash,
+  });
+
+  console.log(`✓ Published ownership update job for ${ensName.name}`);
+});
+```
+</CodeBlock>
+
+## Transaction Verification
+
+Optionally verify the transfer on-chain before processing.
+
+<CodeBlock title="Verify transfer transaction">
+```typescript
+async function verifyTransferTransaction(
+  transactionHash: string,
+  expectedTokenId: string
+): Promise<boolean> {
+  const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
+
+  try {
+    const receipt = await provider.getTransactionReceipt(transactionHash);
+
+    if (!receipt) {
+      console.warn(`Transaction ${transactionHash} not found`);
+      return false;
+    }
+
+    // Check transaction succeeded
+    if (receipt.status !== 1) {
+      console.warn(`Transaction ${transactionHash} failed`);
+      return false;
+    }
+
+    // Parse Transfer event from logs
+    const transferTopic = ethers.id('Transfer(address,address,uint256)');
+    const transferLog = receipt.logs.find(log => log.topics[0] === transferTopic);
+
+    if (!transferLog) {
+      console.warn(`No Transfer event in ${transactionHash}`);
+      return false;
+    }
+
+    // Verify token ID matches
+    const tokenId = BigInt(transferLog.topics[3]).toString();
+    if (tokenId !== expectedTokenId) {
+      console.warn(`Token ID mismatch: expected ${expectedTokenId}, got ${tokenId}`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Error verifying transaction:`, error);
+    return false;
+  }
+}
+```
+</CodeBlock>
+
+<Callout type="info" title="Trust Level">
+Since the job comes from our own Indexer (not external source), transaction verification is optional. The Indexer already verified the event when indexing.
+</Callout>
+
+## Monitoring
+
+### Check Ownership Queue
+
+<CodeBlock title="View pending ownership jobs">
+```sql
+SELECT
+  data->>'ensNameId' as ens_name_id,
+  data->>'newOwner' as new_owner,
+  state,
+  createdon
+FROM pgboss.job
+WHERE name = 'update-ownership'
+  AND state IN ('created', 'retry')
+ORDER BY createdon DESC
+LIMIT 20;
+```
+</CodeBlock>
+
+### Failed Ownership Updates
+
+<CodeBlock title="Check for failed jobs">
+```sql
+SELECT
+  id,
+  data,
+  output,
+  completedon
+FROM pgboss.archive
+WHERE name = 'update-ownership'
+  AND state = 'failed'
+ORDER BY completedon DESC
+LIMIT 10;
+```
+</CodeBlock>
+
+### Recent Transfers
+
+<CodeBlock title="Track recent ownership changes">
+```sql
+SELECT
+  e.name,
+  e.owner_address,
+  e.last_transfer_date,
+  COUNT(l.id) as cancelled_listings
+FROM ens_names e
+LEFT JOIN listings l ON l.ens_name_id = e.id
+  AND l.status = 'cancelled'
+  AND l.cancellation_reason = 'ownership_transfer'
+WHERE e.last_transfer_date > NOW() - INTERVAL '24 hours'
+GROUP BY e.id, e.name, e.owner_address, e.last_transfer_date
+ORDER BY e.last_transfer_date DESC;
+```
+</CodeBlock>
+
+## Edge Cases
+
+### Wrapped Names
+
+Some ENS names are wrapped in the Name Wrapper contract.
+
+<CodeBlock title="Handle wrapped name transfers">
+```typescript
+const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+
+async function getActualOwner(tokenId: string): Promise<string> {
+  const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
+
+  // Check if owned by Name Wrapper
+  const registrar = new ethers.Contract(
+    process.env.ENS_REGISTRAR_ADDRESS,
+    ['function ownerOf(uint256) view returns (address)'],
+    provider
+  );
+
+  const owner = await registrar.ownerOf(tokenId);
+
+  if (owner.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+    // Name is wrapped, query Name Wrapper contract
+    const nameWrapper = new ethers.Contract(
+      NAME_WRAPPER_ADDRESS,
+      ['function ownerOf(uint256) view returns (address)'],
+      provider
+    );
+
+    return await nameWrapper.ownerOf(tokenId);
+  }
+
+  return owner;
+}
+```
+</CodeBlock>
+
+### Multiple Simultaneous Transfers
+
+If a name is transferred multiple times quickly, jobs may arrive out of order.
+
+<CodeBlock title="Handle race conditions">
+```typescript
+async function processOwnershipChange(
+  ensNameId: number,
+  newOwner: string,
+  oldOwner: string,
+  transactionHash: string
+) {
+  // Get current owner from database
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: ensNameId },
+  });
+
+  // Verify oldOwner matches current database owner
+  if (ensName.owner_address.toLowerCase() !== oldOwner.toLowerCase()) {
+    console.warn(
+      `Owner mismatch for ${ensName.name}: expected ${oldOwner}, got ${ensName.owner_address}`
+    );
+
+    // Query blockchain for current owner
+    const actualOwner = await getActualOwner(ensName.token_id);
+
+    if (actualOwner.toLowerCase() !== newOwner.toLowerCase()) {
+      console.warn(`Skipping outdated ownership update`);
+      return;
+    }
+  }
+
+  // Continue with update...
+}
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+
+# Blockchain (optional, for verification)
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+NAME_WRAPPER_ADDRESS=0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401
+
+# Email notifications
+FRONTEND_URL=http://localhost:3001
+```
+
+### Worker Concurrency
+
+<CodeBlock title="Tune concurrency">
+```typescript
+await boss.work(
+  'update-ownership',
+  {
+    teamSize: 3,         // 3 worker processes
+    teamConcurrency: 2   // 2 jobs per worker
+  },
+  handler
+);
+```
+</CodeBlock>
+
+**Considerations:**
+- Low frequency (few transfers per day)
+- Database writes are fast
+- Can use moderate concurrency
+
+## Troubleshooting
+
+### Listings Not Being Cancelled
+
+**Symptoms:**
+- Active listings exist for names with different owners
+- Sellers complaining orders can't be fulfilled
+
+**Solutions:**
+1. Check ownership worker is running
+2. Verify Indexer is publishing jobs
+3. Check database constraints allow updates
+4. Run manual ownership sync:
+   ```sql
+   -- Find mismatched owners
+   SELECT l.id, e.name, e.owner_address, l.seller_address
+   FROM listings l
+   JOIN ens_names e ON l.ens_name_id = e.id
+   WHERE l.status = 'active'
+     AND e.owner_address != l.seller_address;
+   ```
+
+### Duplicate Ownership Jobs
+
+**Symptoms:**
+- Same transfer processed multiple times
+- Multiple notifications sent to sellers
+
+**Solutions:**
+1. Use `singletonKey` when publishing jobs
+2. Check for idempotency in worker
+3. Verify Indexer isn't indexing same event twice
+
+### Missing Notifications
+
+**Symptoms:**
+- Listings cancelled but sellers not notified
+
+**Solutions:**
+1. Check notification worker is running
+2. Verify sellers have verified email addresses
+3. Check notification queue for failed jobs
+4. Review email service logs
+
+## Testing
+
+<CodeBlock title="Manual ownership update">
+```typescript
+import { getQueueClient } from './dist/queue';
+
+const boss = await getQueueClient();
+
+await boss.send('update-ownership', {
+  ensNameId: 123,
+  newOwner: '0x456...',
+  oldOwner: '0x123...',
+  transactionHash: '0xabc...',
+});
+
+await boss.stop();
+```
+</CodeBlock>
+
+<CodeBlock title="Integration test">
+```typescript
+describe('Ownership Worker', () => {
+  it('should cancel listings on ownership transfer', async () => {
+    // Create ENS name with listing
+    const ensName = await prisma.ens_names.create({
+      data: {
+        token_id: '12345',
+        name: 'test.eth',
+        owner_address: '0x123...',
+      },
+    });
+
+    const listing = await prisma.listings.create({
+      data: {
+        ens_name_id: ensName.id,
+        seller_address: '0x123...',
+        status: 'active',
+        // ...
+      },
+    });
+
+    // Process ownership change
+    await boss.send('update-ownership', {
+      ensNameId: ensName.id,
+      newOwner: '0x456...',
+      oldOwner: '0x123...',
+      transactionHash: '0xabc...',
+    });
+
+    // Wait for processing
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Verify listing cancelled
+    const updated = await prisma.listings.findUnique({
+      where: { id: listing.id },
+    });
+
+    expect(updated.status).toBe('cancelled');
+    expect(updated.cancellation_reason).toBe('ownership_transfer');
+  });
+});
+```
+</CodeBlock>
+
+## Next Steps
+
+- Learn about [Notification Worker](/workers/notifications)
+- Understand [Expiry Worker](/workers/expiry)
+- Review [ENS Sync Worker](/workers/ens-sync)

@@ -307,7 +307,7 @@ export class SeaportIndexer {
 
           // Record sale in sales table
           try {
-            await createSale({
+            const sale = await createSale({
               ensNameId,
               sellerAddress: offerer.toLowerCase(),
               buyerAddress: recipient.toLowerCase(),
@@ -326,6 +326,23 @@ export class SeaportIndexer {
             });
 
             logger.info(`Sale created in sales table for token ${tokenId}`);
+
+            // Publish club sales stats job if sale has clubs (ETH only)
+            if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
+              try {
+                const PgBoss = require('pg-boss');
+                const boss = new PgBoss({ connectionString: config.database.url });
+                await boss.start();
+                await boss.send('update-club-sales-stats', {
+                  clubNames: sale.clubs,
+                  salePriceWei: price,
+                });
+                await boss.stop();
+                logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
+              } catch (queueError: any) {
+                logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
+              }
+            }
           } catch (error: any) {
             logger.error(`Failed to create sale record: ${error.message}`);
             // Don't fail the entire handler if sale recording fails

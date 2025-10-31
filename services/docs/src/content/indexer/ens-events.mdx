@@ -1,0 +1,464 @@
+---
+title: "ENS Events"
+description: "Blockchain event monitoring for ENS Registry and Registrar"
+order: 2
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# ENS Events
+
+The Indexer monitors ENS Registry and Registrar contracts to track registrations, transfers, renewals, and name changes.
+
+## Monitored Contracts
+
+### ENS Registrar
+**Contract**: `0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85`
+**Network**: Ethereum Mainnet
+**Purpose**: .eth 2LD registrations and renewals
+
+### ENS Registry
+**Contract**: `0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`
+**Network**: Ethereum Mainnet
+**Purpose**: ENS name resolution and records
+
+## Events Tracked
+
+### NameRegistered
+
+Emitted when a new .eth name is registered.
+
+<CodeBlock title="NameRegistered event">
+```solidity
+event NameRegistered(
+  string name,
+  bytes32 indexed label,
+  address indexed owner,
+  uint256 cost,
+  uint256 expires
+);
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Database updates">
+```typescript
+await prisma.ens_names.create({
+  data: {
+    token_id: BigInt(labelHash).toString(),
+    name: `${name}.eth`,
+    label_name: name,
+    owner_address: owner.toLowerCase(),
+    expiry_date: new Date(expires * 1000),
+    registration_date: new Date(blockTimestamp * 1000),
+    created_at: new Date(),
+  }
+});
+```
+</CodeBlock>
+
+**Fields Stored:**
+| Field | Source | Description |
+|-------|--------|-------------|
+| `token_id` | `label` (hashed) | Unique identifier for the name |
+| `name` | `name + .eth` | Full ENS name |
+| `label_name` | `name` | Name without .eth suffix |
+| `owner_address` | `owner` | Current owner wallet address |
+| `expiry_date` | `expires` | When registration expires |
+| `registration_date` | `block.timestamp` | When name was registered |
+
+<Callout type="info" title="Token ID Calculation">
+Token ID is the `keccak256` hash of the label name. For example:
+- Name: `vitalik`
+- Label hash: `keccak256("vitalik")`
+- Token ID: `0xaf2caa1c2ca1d027f1ac823b529d0a67cd144264b2789fa2ea4d63a67c7103cc`
+</Callout>
+
+### Transfer
+
+Emitted when a name is transferred to a new owner.
+
+<CodeBlock title="Transfer event">
+```solidity
+event Transfer(
+  address indexed from,
+  address indexed to,
+  uint256 indexed tokenId
+);
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Ownership update and cleanup">
+```typescript
+// Update owner in database
+await prisma.ens_names.update({
+  where: { token_id: tokenId.toString() },
+  data: {
+    owner_address: to.toLowerCase(),
+    last_transfer_date: new Date(blockTimestamp * 1000),
+  }
+});
+
+// Publish job to workers service
+await boss.send('update-ownership', {
+  ensNameId: ensName.id,
+  newOwner: to.toLowerCase(),
+  oldOwner: from.toLowerCase(),
+  transactionHash: tx.hash,
+});
+```
+</CodeBlock>
+
+**Worker Actions:**
+1. Updates `owner_address` in `ens_names` table
+2. Cancels active listings (old owner can't fulfill)
+3. Publishes notification jobs to sellers
+4. Creates activity history record
+
+<Callout type="warning" title="Listing Cancellation">
+When ownership changes, **all active listings are automatically cancelled** because the previous owner can no longer fulfill the order. Sellers are notified via email if they have notifications enabled.
+</Callout>
+
+### NameRenewed
+
+Emitted when a name registration is renewed.
+
+<CodeBlock title="NameRenewed event">
+```solidity
+event NameRenewed(
+  string name,
+  bytes32 indexed label,
+  uint256 cost,
+  uint256 expires
+);
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Update expiration date">
+```typescript
+await prisma.ens_names.update({
+  where: { token_id: BigInt(label).toString() },
+  data: {
+    expiry_date: new Date(expires * 1000),
+    updated_at: new Date(),
+  }
+});
+```
+</CodeBlock>
+
+**Derived Fields Updated:**
+- `is_expired` - Recalculated based on new expiry
+- `is_grace_period` - 0-90 days past expiry
+- `is_premium_period` - 90-2555 days past expiry
+- `days_until_expiry` - Days remaining until expiry
+
+### NameChanged (Registry)
+
+Emitted when the resolver address for a name changes.
+
+<CodeBlock title="NameChanged event">
+```solidity
+event NewResolver(
+  bytes32 indexed node,
+  address resolver
+);
+```
+</CodeBlock>
+
+**Processing:**
+
+<CodeBlock title="Update resolver address">
+```typescript
+await prisma.ens_names.update({
+  where: { token_id: nodeToTokenId(node) },
+  data: {
+    resolver_address: resolver.toLowerCase(),
+  }
+});
+```
+</CodeBlock>
+
+## Indexing Strategy
+
+### Initial Sync
+
+<CodeBlock title="Historical block scanning">
+```
+1. Determine starting block (env var or database checkpoint)
+2. Query current block number
+3. Divide range into batches (default: 1000 blocks)
+4. For each batch:
+   - Query contract events using getLogs
+   - Parse and decode events
+   - Update database
+   - Mark blocks as processed
+5. Continue until caught up to current block
+```
+</CodeBlock>
+
+### Real-Time Monitoring
+
+<CodeBlock title="New block processing">
+```typescript
+provider.on('block', async (blockNumber) => {
+  // Process blocks we haven't seen yet
+  const lastProcessed = await getLastProcessedBlock();
+
+  if (blockNumber > lastProcessed) {
+    await processBlockRange(lastProcessed + 1, blockNumber);
+  }
+});
+```
+</CodeBlock>
+
+### Gap Filling
+
+<CodeBlock title="Detect and fill missing blocks">
+```typescript
+// Check for gaps in processed blocks
+const gaps = await prisma.$queryRaw`
+  SELECT
+    (SELECT MAX(block_number) FROM indexed_blocks WHERE block_number < ib.block_number) + 1 AS gap_start,
+    ib.block_number - 1 AS gap_end
+  FROM indexed_blocks ib
+  WHERE ib.block_number > (
+    SELECT MIN(block_number) FROM indexed_blocks
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM indexed_blocks ib2
+    WHERE ib2.block_number = ib.block_number - 1
+  )
+`;
+
+// Fill gaps
+for (const gap of gaps) {
+  await processBlockRange(gap.gap_start, gap.gap_end);
+}
+```
+</CodeBlock>
+
+## Blockchain Reorganizations
+
+<Callout type="warning" title="Handling Chain Reorgs">
+Blockchain reorganizations can invalidate recently indexed blocks. The indexer handles this by:
+1. Storing block hashes with indexed data
+2. Periodically verifying recent blocks (last 20)
+3. Rolling back and reprocessing if block hash doesn't match
+</Callout>
+
+<CodeBlock title="Reorg detection">
+```typescript
+async function detectReorg() {
+  const recentBlocks = await prisma.indexed_blocks.findMany({
+    where: { block_number: { gte: currentBlock - 20 } },
+    orderBy: { block_number: 'desc' }
+  });
+
+  for (const block of recentBlocks) {
+    const onChainBlock = await provider.getBlock(block.block_number);
+
+    if (onChainBlock.hash !== block.block_hash) {
+      // Reorg detected! Roll back to this block
+      await rollbackToBlock(block.block_number);
+      await reprocessFromBlock(block.block_number);
+      break;
+    }
+  }
+}
+```
+</CodeBlock>
+
+## Performance Optimizations
+
+### Batch Processing
+
+<CodeBlock title="Process events in batches">
+```typescript
+const BATCH_SIZE = 100;
+
+for (let i = 0; i < events.length; i += BATCH_SIZE) {
+  const batch = events.slice(i, i + BATCH_SIZE);
+
+  await prisma.$transaction(
+    batch.map(event =>
+      prisma.ens_names.upsert({
+        where: { token_id: event.tokenId },
+        update: { /* ... */ },
+        create: { /* ... */ }
+      })
+    )
+  );
+}
+```
+</CodeBlock>
+
+### Connection Pooling
+
+<CodeBlock title="RPC connection management">
+```typescript
+// Use multiple RPC endpoints for redundancy
+const providers = [
+  new ethers.JsonRpcProvider(process.env.RPC_URL_1),
+  new ethers.JsonRpcProvider(process.env.RPC_URL_2),
+  new ethers.JsonRpcProvider(process.env.RPC_URL_3),
+];
+
+let currentProvider = 0;
+
+function getProvider() {
+  // Round-robin between providers
+  const provider = providers[currentProvider];
+  currentProvider = (currentProvider + 1) % providers.length;
+  return provider;
+}
+```
+</CodeBlock>
+
+### Event Filtering
+
+<CodeBlock title="Optimized event queries">
+```typescript
+// Query specific events only
+const filter = contract.filters.NameRegistered();
+
+const events = await contract.queryFilter(
+  filter,
+  startBlock,
+  endBlock
+);
+
+// Process in parallel when possible
+await Promise.all(
+  events.map(event => processNameRegistered(event))
+);
+```
+</CodeBlock>
+
+## Monitoring
+
+### Indexing Status
+
+<CodeBlock title="Check indexing progress">
+```sql
+-- Latest indexed block
+SELECT MAX(block_number) as latest_block
+FROM indexed_blocks;
+
+-- Blocks indexed in last hour
+SELECT COUNT(*) as blocks_indexed
+FROM indexed_blocks
+WHERE created_at > NOW() - INTERVAL '1 hour';
+
+-- Indexing lag (compare to current chain height)
+SELECT
+  (SELECT MAX(number) FROM blocks_live) - MAX(block_number) as blocks_behind
+FROM indexed_blocks;
+```
+</CodeBlock>
+
+### Event Statistics
+
+<CodeBlock title="Events processed">
+```sql
+-- Recent name registrations
+SELECT COUNT(*) as registrations
+FROM ens_names
+WHERE registration_date > NOW() - INTERVAL '24 hours';
+
+-- Recent transfers
+SELECT COUNT(*) as transfers
+FROM ens_names
+WHERE last_transfer_date > NOW() - INTERVAL '24 hours';
+
+-- Names by expiration status
+SELECT
+  CASE
+    WHEN expiry_date > NOW() THEN 'active'
+    WHEN expiry_date > NOW() - INTERVAL '90 days' THEN 'grace_period'
+    WHEN expiry_date > NOW() - INTERVAL '2555 days' THEN 'premium_period'
+    ELSE 'available'
+  END as status,
+  COUNT(*) as count
+FROM ens_names
+GROUP BY status;
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# Blockchain
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRY_ADDRESS=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+
+# Indexing
+START_BLOCK=19000000  # Block to start indexing from
+BLOCK_BATCH_SIZE=1000 # Blocks to process per batch
+REORG_SAFETY_BLOCKS=20 # Blocks to check for reorgs
+
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+```
+
+## Troubleshooting
+
+### Indexer Falling Behind
+
+**Symptoms:**
+- Indexing lag increasing
+- Recent events not appearing in database
+
+**Solutions:**
+1. Increase `BLOCK_BATCH_SIZE` for faster historical sync
+2. Use faster RPC endpoint (Alchemy/Infura premium)
+3. Scale horizontally (multiple indexers with block ranges)
+4. Optimize database indexes
+
+### RPC Rate Limiting
+
+**Symptoms:**
+- Frequent `429` errors in logs
+- Slow indexing progress
+
+**Solutions:**
+1. Add delays between requests
+2. Use multiple RPC endpoints with round-robin
+3. Upgrade to premium RPC plan
+4. Implement exponential backoff
+
+### Missing Events
+
+**Symptoms:**
+- Known events not in database
+- Gaps in block coverage
+
+**Solutions:**
+1. Check for gaps: `SELECT * FROM indexed_blocks ORDER BY block_number`
+2. Run gap-filling script
+3. Verify contract addresses are correct
+4. Check RPC endpoint returns full event logs
+
+<CodeBlock title="Manual backfill">
+```bash
+# Backfill specific block range
+npm run backfill -- --from 19000000 --to 19100000
+
+# Backfill last N blocks
+npm run backfill -- --last 10000
+```
+</CodeBlock>
+
+## Next Steps
+
+- Learn about [OpenSea Stream integration](/indexer/opensea-stream)
+- Understand [name resolution strategy](/indexer/name-resolution)
+- Explore [WAL Listener sync](/wal-listener/overview)

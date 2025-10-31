@@ -1,0 +1,486 @@
+---
+title: "ENS Sync Worker"
+description: "Synchronize ENS metadata from blockchain and external APIs"
+order: 3
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# ENS Sync Worker
+
+Fetches and updates ENS metadata including avatars, descriptions, and social links from blockchain resolvers and external APIs.
+
+## Purpose
+
+ENS names can have associated metadata (text records) like:
+- Avatar images
+- Bio/description
+- Social links (Twitter, GitHub, Discord)
+- Email, website, location
+- Custom records
+
+This worker keeps the database synchronized with the latest metadata.
+
+## Data Sources
+
+### ENS Resolver Contracts
+
+ENS resolvers store text records on-chain.
+
+<CodeBlock title="Query resolver for text records">
+```typescript
+import { ethers } from 'ethers';
+
+async function fetchENSMetadata(nameHash: string) {
+  const provider = new ethers.JsonRpcProvider(process.env.ETHEREUM_RPC_URL);
+
+  // Get resolver address from registry
+  const registryAddress = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
+  const registry = new ethers.Contract(
+    registryAddress,
+    ['function resolver(bytes32) view returns (address)'],
+    provider
+  );
+
+  const resolverAddress = await registry.resolver(nameHash);
+
+  if (resolverAddress === ethers.ZeroAddress) {
+    return null; // No resolver set
+  }
+
+  // Query resolver for text records
+  const resolver = new ethers.Contract(
+    resolverAddress,
+    [
+      'function text(bytes32, string) view returns (string)'
+    ],
+    provider
+  );
+
+  const records = {
+    avatar: await resolver.text(nameHash, 'avatar'),
+    description: await resolver.text(nameHash, 'description'),
+    email: await resolver.text(nameHash, 'email'),
+    url: await resolver.text(nameHash, 'url'),
+    twitter: await resolver.text(nameHash, 'com.twitter'),
+    github: await resolver.text(nameHash, 'com.github'),
+    discord: await resolver.text(nameHash, 'com.discord'),
+  };
+
+  return records;
+}
+```
+</CodeBlock>
+
+### The Graph API
+
+Alternative source for ENS data via The Graph subgraph.
+
+<CodeBlock title="Query The Graph for ENS metadata">
+```typescript
+async function fetchENSFromGraph(name: string) {
+  const query = `
+    query {
+      domain(id: "${namehash(name)}") {
+        resolver {
+          texts
+          addr {
+            id
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await fetch(process.env.GRAPH_ENS_SUBGRAPH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+
+  return response.json();
+}
+```
+</CodeBlock>
+
+### EFP API
+
+EthFollow Protocol (EFP) provides social metadata.
+
+<CodeBlock title="Fetch from EFP API">
+```typescript
+async function fetchEFPMetadata(address: string) {
+  const response = await fetch(
+    `https://api.ethfollow.xyz/api/v1/users/${address}/profile`
+  );
+
+  if (!response.ok) return null;
+
+  const data = await response.json();
+
+  return {
+    avatar: data.avatar,
+    header: data.header,
+    bio: data.bio,
+    location: data.location,
+    website: data.website,
+    twitter: data.twitter,
+  };
+}
+```
+</CodeBlock>
+
+## Queues
+
+### Individual Sync Queue
+
+**Queue**: `sync-ens-data`
+**Triggered**: When new listing created (by API service)
+**Purpose**: Immediate metadata fetch for newly listed names
+
+<CodeBlock title="Job structure">
+```json
+{
+  "ensNameId": 123,
+  "name": "vitalik.eth"
+}
+```
+</CodeBlock>
+
+### Daily Sync Scheduler
+
+**Queue**: `schedule-daily-ens-sync`
+**Schedule**: Cron job daily at 2 AM (`0 2 * * *`)
+**Purpose**: Refresh metadata for all active listings
+
+<Callout type="info" title="Why Daily Refresh?">
+ENS metadata can change at any time (user updates avatar, bio, etc.). Daily refresh ensures our data stays current.
+</Callout>
+
+## Worker Implementation
+
+<CodeBlock title="ENS sync worker">
+```typescript
+// services/workers/src/workers/ens-sync.ts
+
+export async function registerEnsSyncWorker(boss: PgBoss) {
+  // Individual name sync
+  await boss.work(
+    'sync-ens-data',
+    { teamSize: 3, teamConcurrency: 2 },
+    async (job) => {
+      const { ensNameId, name } = job.data;
+      await syncENSMetadata(ensNameId, name);
+    }
+  );
+
+  console.log('ENS sync worker registered');
+}
+
+export async function registerDailyEnsSyncScheduler(boss: PgBoss) {
+  // Daily sync scheduler
+  await boss.work(
+    'schedule-daily-ens-sync',
+    { teamSize: 1 },
+    async () => {
+      await scheduleAllEnsSyncs();
+    }
+  );
+
+  console.log('Daily ENS sync scheduler registered');
+}
+
+async function syncENSMetadata(ensNameId: number, name: string) {
+  console.log(`Syncing metadata for ${name}...`);
+
+  try {
+    // Calculate namehash
+    const nodeHash = namehash(name);
+
+    // Fetch from multiple sources
+    const [resolverData, efpData] = await Promise.allSettled([
+      fetchENSMetadata(nodeHash),
+      fetchEFPMetadata(name),
+    ]);
+
+    // Merge data (resolver takes precedence)
+    const metadata = {
+      avatar: resolverData.status === 'fulfilled' ? resolverData.value?.avatar : null,
+      description: resolverData.status === 'fulfilled' ? resolverData.value?.description : null,
+      email: resolverData.status === 'fulfilled' ? resolverData.value?.email : null,
+      url: resolverData.status === 'fulfilled' ? resolverData.value?.url : null,
+      twitter: resolverData.status === 'fulfilled' ? resolverData.value?.twitter : null,
+      github: resolverData.status === 'fulfilled' ? resolverData.value?.github : null,
+      discord: resolverData.status === 'fulfilled' ? resolverData.value?.discord : null,
+    };
+
+    // Fallback to EFP if resolver didn't have data
+    if (efpData.status === 'fulfilled' && efpData.value) {
+      metadata.avatar = metadata.avatar || efpData.value.avatar;
+      metadata.description = metadata.description || efpData.value.bio;
+      metadata.url = metadata.url || efpData.value.website;
+      metadata.twitter = metadata.twitter || efpData.value.twitter;
+    }
+
+    // Update database
+    await prisma.ens_names.update({
+      where: { id: ensNameId },
+      data: {
+        metadata: metadata as any, // JSON column
+        metadata_updated_at: new Date(),
+      },
+    });
+
+    console.log(`✓ Synced metadata for ${name}`);
+  } catch (error) {
+    console.error(`Failed to sync ${name}:`, error.message);
+    throw error; // Retry on failure
+  }
+}
+```
+</CodeBlock>
+
+## Daily Sync Scheduling
+
+<CodeBlock title="Schedule syncs for all active listings">
+```typescript
+async function scheduleAllEnsSyncs() {
+  console.log('Scheduling daily ENS metadata sync...');
+
+  // Get all names with active listings
+  const names = await prisma.ens_names.findMany({
+    where: {
+      listings: {
+        some: {
+          status: 'active',
+        },
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  console.log(`Found ${names.length} names to sync`);
+
+  // Publish sync jobs (pg-boss handles queuing)
+  const jobs = names.map(name => ({
+    name: 'sync-ens-data',
+    data: {
+      ensNameId: name.id,
+      name: name.name,
+    },
+  }));
+
+  await boss.insert(jobs);
+
+  console.log(`Scheduled ${jobs.length} ENS sync jobs`);
+}
+```
+</CodeBlock>
+
+<Callout type="success" title="Efficient Batching">
+Publishing 1000+ jobs to pg-boss is fast (~1 second). pg-boss handles rate limiting and worker distribution automatically.
+</Callout>
+
+## Rate Limiting
+
+Blockchain RPC providers have rate limits. Implement delays to avoid throttling.
+
+<CodeBlock title="Rate-limited fetching">
+```typescript
+class RateLimitedFetcher {
+  private lastRequestTime = 0;
+  private minDelay = 100; // milliseconds between requests
+
+  async fetch<T>(fn: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+
+    if (timeSinceLastRequest < this.minDelay) {
+      const delay = this.minDelay - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    this.lastRequestTime = Date.now();
+    return fn();
+  }
+}
+
+const fetcher = new RateLimitedFetcher();
+
+// Usage
+const metadata = await fetcher.fetch(() => fetchENSMetadata(nodeHash));
+```
+</CodeBlock>
+
+## Monitoring
+
+### Check Sync Queue
+
+<CodeBlock title="View pending sync jobs">
+```sql
+SELECT
+  data->>'name' as name,
+  state,
+  createdon,
+  startafter
+FROM pgboss.job
+WHERE name = 'sync-ens-data'
+  AND state IN ('created', 'retry')
+ORDER BY createdon DESC
+LIMIT 20;
+```
+</CodeBlock>
+
+### Sync Statistics
+
+<CodeBlock title="Track sync success rate">
+```sql
+SELECT
+  CASE
+    WHEN state = 'completed' THEN 'success'
+    WHEN state = 'failed' THEN 'failed'
+  END as result,
+  COUNT(*) as count
+FROM pgboss.archive
+WHERE name = 'sync-ens-data'
+  AND completedon > NOW() - INTERVAL '24 hours'
+GROUP BY result;
+```
+</CodeBlock>
+
+### Stale Metadata
+
+<CodeBlock title="Find names with outdated metadata">
+```sql
+SELECT
+  id,
+  name,
+  metadata_updated_at,
+  EXTRACT(DAY FROM NOW() - metadata_updated_at) as days_since_sync
+FROM ens_names
+WHERE listings.some(status = 'active')
+  AND (
+    metadata_updated_at IS NULL
+    OR metadata_updated_at < NOW() - INTERVAL '7 days'
+  )
+ORDER BY days_since_sync DESC NULLS FIRST
+LIMIT 50;
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# Blockchain
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRY_ADDRESS=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
+
+# External APIs
+GRAPH_ENS_SUBGRAPH_URL=https://api.thegraph.com/subgraphs/name/ensdomains/ens
+EFP_API_URL=https://api.ethfollow.xyz/api/v1
+
+# Rate Limiting
+RPC_REQUEST_DELAY=100  # milliseconds between RPC calls
+MAX_CONCURRENT_SYNCS=5 # parallel sync operations
+```
+
+### Worker Concurrency
+
+<CodeBlock title="Tune for RPC limits">
+```typescript
+await boss.work(
+  'sync-ens-data',
+  {
+    teamSize: 3,         // 3 worker processes
+    teamConcurrency: 2   // 2 jobs per worker = 6 total
+  },
+  handler
+);
+```
+</CodeBlock>
+
+**Balance between:**
+- **Speed**: Higher concurrency = faster sync
+- **Rate limits**: Too high = RPC provider throttling
+
+## Troubleshooting
+
+### RPC Rate Limiting
+
+**Symptoms:**
+- `429 Too Many Requests` errors
+- Jobs failing with "rate limit exceeded"
+
+**Solutions:**
+1. Increase `RPC_REQUEST_DELAY`
+2. Reduce worker `teamConcurrency`
+3. Upgrade to premium RPC plan (Alchemy Pro, Infura Growth)
+4. Use multiple RPC endpoints with round-robin
+
+### Missing Metadata
+
+**Symptoms:**
+- Avatar/bio showing as null
+- Metadata not updating
+
+**Solutions:**
+1. Check if ENS name has resolver set
+2. Verify resolver contract is correct
+3. Check RPC endpoint is accessible
+4. Try alternative data source (The Graph, EFP)
+
+### Slow Sync Performance
+
+**Symptoms:**
+- Daily sync taking &gt;1 hour
+- Queue depth growing
+
+**Solutions:**
+1. Increase worker concurrency (if under rate limit)
+2. Use batch RPC calls where possible
+3. Cache resolver addresses
+4. Skip names with no recent activity
+
+## Testing
+
+<CodeBlock title="Manual metadata sync">
+```typescript
+import { getQueueClient } from './dist/queue';
+
+const boss = await getQueueClient();
+
+// Sync specific name
+await boss.send('sync-ens-data', {
+  ensNameId: 123,
+  name: 'vitalik.eth',
+});
+
+// Trigger daily sync
+await boss.send('schedule-daily-ens-sync', {});
+
+await boss.stop();
+```
+</CodeBlock>
+
+<CodeBlock title="Test metadata fetching">
+```typescript
+import { fetchENSMetadata } from './src/services/blockchain';
+import { namehash } from 'ethers';
+
+// Test resolver query
+const metadata = await fetchENSMetadata(namehash('vitalik.eth'));
+console.log('Metadata:', metadata);
+```
+</CodeBlock>
+
+## Next Steps
+
+- Learn about [Ownership Worker](/workers/ownership)
+- Understand [Notification Worker](/workers/notifications)
+- Review [Expiry Worker](/workers/expiry)

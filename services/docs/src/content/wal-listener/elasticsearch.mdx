@@ -1,0 +1,667 @@
+---
+title: "Elasticsearch Sync"
+description: "Index mapping, derived fields, and real-time synchronization"
+order: 3
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Elasticsearch Sync
+
+The WAL Listener synchronizes PostgreSQL changes to Elasticsearch for fast search and complex filtering.
+
+## Index Mapping
+
+### Core Fields
+
+<CodeBlock title="Elasticsearch index mapping">
+```json
+{
+  "mappings": {
+    "properties": {
+      "name": {
+        "type": "text",
+        "fields": {
+          "keyword": { "type": "keyword" }
+        }
+      },
+      "token_id": { "type": "keyword" },
+      "owner": { "type": "keyword" },
+      "expiry_date": { "type": "date" },
+      "registration_date": { "type": "date" },
+
+      "price": { "type": "long" },
+      "character_count": { "type": "integer" },
+      "has_numbers": { "type": "boolean" },
+      "has_emoji": { "type": "boolean" },
+
+      "clubs": { "type": "keyword" },
+
+      "is_expired": { "type": "boolean" },
+      "is_grace_period": { "type": "boolean" },
+      "is_premium_period": { "type": "boolean" },
+      "days_until_expiry": { "type": "integer" },
+
+      "has_sales": { "type": "boolean" },
+      "last_sale_price": { "type": "long" },
+      "last_sale_date": { "type": "date" },
+      "days_since_last_sale": { "type": "integer" }
+    }
+  }
+}
+```
+</CodeBlock>
+
+### Field Types
+
+| Type | Use Case | Example |
+|------|----------|---------|
+| `text` | Full-text search | Name search with fuzzy matching |
+| `keyword` | Exact matching, aggregations | Owner address, token ID, clubs |
+| `long` | Large numbers | Price in wei |
+| `integer` | Small numbers | Character count, days |
+| `boolean` | Yes/no flags | has_numbers, is_expired |
+| `date` | Timestamps | Expiry date, sale date |
+
+## Derived Fields
+
+Fields calculated by the WAL Listener, not stored in PostgreSQL.
+
+### Expiration Status
+
+<CodeBlock title="Calculate expiration fields">
+```typescript
+function calculateExpirationFields(expiryDate: Date) {
+  const now = new Date();
+  const expiryTime = expiryDate.getTime();
+  const nowTime = now.getTime();
+
+  const daysUntilExpiry = Math.floor(
+    (expiryTime - nowTime) / (1000 * 60 * 60 * 24)
+  );
+
+  const isExpired = expiryTime < nowTime;
+
+  // Grace period: 0-90 days after expiry
+  const isGracePeriod = isExpired && daysUntilExpiry > -90;
+
+  // Premium period: 90-2555 days after expiry
+  const isPremiumPeriod = isExpired && daysUntilExpiry <= -90 && daysUntilExpiry > -2555;
+
+  return {
+    is_expired: isExpired,
+    is_grace_period: isGracePeriod,
+    is_premium_period: isPremiumPeriod,
+    days_until_expiry: daysUntilExpiry,
+  };
+}
+```
+</CodeBlock>
+
+<Callout type="info" title="ENS Expiration Lifecycle">
+- **Active**: Not expired (`is_expired: false`)
+- **Grace Period**: 0-90 days past expiry (can renew at normal price)
+- **Premium Period**: 90-2555 days past expiry (Dutch auction pricing)
+- **Available**: After 2555 days (anyone can register)
+</Callout>
+
+### Sales History
+
+<CodeBlock title="Calculate sales fields">
+```typescript
+function calculateSalesFields(lastSaleDate: Date | null) {
+  if (!lastSaleDate) {
+    return {
+      has_sales: false,
+      days_since_last_sale: null,
+    };
+  }
+
+  const now = new Date();
+  const daysSinceLastSale = Math.floor(
+    (now.getTime() - lastSaleDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  return {
+    has_sales: true,
+    days_since_last_sale: daysSinceLastSale,
+  };
+}
+```
+</CodeBlock>
+
+### Character Analysis
+
+<CodeBlock title="Analyze name characters">
+```typescript
+function analyzeNameCharacters(name: string) {
+  const labelName = name.replace('.eth', '');
+
+  const hasNumbers = /\d/.test(labelName);
+  const hasEmoji = /\p{Emoji}/u.test(labelName);
+  const characterCount = Array.from(labelName).length; // Unicode-aware
+
+  return {
+    character_count: characterCount,
+    has_numbers: hasNumbers,
+    has_emoji: hasEmoji,
+  };
+}
+```
+</CodeBlock>
+
+### Club Membership
+
+<CodeBlock title="Determine club membership">
+```typescript
+function determineClubs(name: string): string[] {
+  const labelName = name.replace('.eth', '');
+  const clubs: string[] = [];
+
+  // Numeric clubs
+  if (/^\d+$/.test(labelName)) {
+    const num = parseInt(labelName);
+    if (num < 1000) clubs.push('999 Club');
+    if (num < 10000) clubs.push('10k Club');
+    if (num < 100000) clubs.push('100k Club');
+  }
+
+  // Palindrome
+  if (labelName === labelName.split('').reverse().join('')) {
+    clubs.push('Palindrome Club');
+  }
+
+  // Single emoji
+  const chars = Array.from(labelName);
+  if (chars.length === 1 && /\p{Emoji}/u.test(chars[0])) {
+    clubs.push('Single Emoji Club');
+  }
+
+  return clubs;
+}
+```
+</CodeBlock>
+
+## Change Handlers
+
+### ens_names Changes
+
+<CodeBlock title="Handle ens_names INSERT/UPDATE">
+```typescript
+async function handleEnsNameChange(change: WalChange) {
+  const { new: newData } = change;
+
+  // Calculate derived fields
+  const expirationFields = calculateExpirationFields(newData.expiry_date);
+  const characterFields = analyzeNameCharacters(newData.name);
+  const salesFields = calculateSalesFields(newData.last_sale_date);
+  const clubs = determineClubs(newData.name);
+
+  // Get active listing (join from PostgreSQL)
+  const listing = await prisma.listings.findFirst({
+    where: {
+      ens_name_id: newData.id,
+      status: 'active',
+    },
+    orderBy: { created_at: 'desc' },
+  });
+
+  // Build Elasticsearch document
+  const esDoc = {
+    name: newData.name,
+    token_id: newData.token_id,
+    owner: newData.owner_address,
+    expiry_date: newData.expiry_date,
+    registration_date: newData.registration_date,
+
+    // Derived fields
+    ...expirationFields,
+    ...characterFields,
+    ...salesFields,
+    clubs,
+
+    // Listing data
+    price: listing?.price_wei || null,
+    listing_id: listing?.id || null,
+    listing_status: listing?.status || null,
+  };
+
+  // Update Elasticsearch
+  await esClient.index({
+    index: 'ens_names',
+    id: newData.token_id,
+    body: esDoc,
+  });
+}
+```
+</CodeBlock>
+
+### listings Changes
+
+<CodeBlock title="Handle listings INSERT/UPDATE/DELETE">
+```typescript
+async function handleListingChange(change: WalChange) {
+  const { operation, new: newData, old: oldData } = change;
+
+  // Get ENS name
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: newData?.ens_name_id || oldData?.ens_name_id },
+  });
+
+  if (!ensName) return;
+
+  if (operation === 'DELETE' || newData?.status !== 'active') {
+    // Remove listing from Elasticsearch
+    await esClient.update({
+      index: 'ens_names',
+      id: ensName.token_id,
+      body: {
+        doc: {
+          price: null,
+          listing_id: null,
+          listing_status: null,
+        }
+      }
+    });
+  } else {
+    // Add/update listing in Elasticsearch
+    await esClient.update({
+      index: 'ens_names',
+      id: ensName.token_id,
+      body: {
+        doc: {
+          price: newData.price_wei,
+          listing_id: newData.id,
+          listing_status: newData.status,
+        }
+      }
+    });
+  }
+}
+```
+</CodeBlock>
+
+### sales Changes
+
+<CodeBlock title="Handle sales INSERT">
+```typescript
+async function handleSaleChange(change: WalChange) {
+  const { new: newData } = change;
+
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: newData.ens_name_id },
+  });
+
+  if (!ensName) return;
+
+  const salesFields = calculateSalesFields(newData.timestamp);
+
+  await esClient.update({
+    index: 'ens_names',
+    id: ensName.token_id,
+    body: {
+      doc: {
+        has_sales: true,
+        last_sale_price: newData.price_wei,
+        last_sale_date: newData.timestamp,
+        days_since_last_sale: salesFields.days_since_last_sale,
+      }
+    }
+  });
+}
+```
+</CodeBlock>
+
+### offers Changes
+
+<CodeBlock title="Handle offers INSERT/UPDATE">
+```typescript
+async function handleOfferChange(change: WalChange) {
+  const { new: newData } = change;
+
+  const ensName = await prisma.ens_names.findUnique({
+    where: { id: newData.ens_name_id },
+  });
+
+  if (!ensName) return;
+
+  // Count active offers
+  const activeOfferCount = await prisma.offers.count({
+    where: {
+      ens_name_id: newData.ens_name_id,
+      status: 'pending',
+    }
+  });
+
+  await esClient.update({
+    index: 'ens_names',
+    id: ensName.token_id,
+    body: {
+      doc: {
+        active_offer_count: activeOfferCount,
+      }
+    }
+  });
+}
+```
+</CodeBlock>
+
+## Batch Processing
+
+For performance, batch updates together.
+
+<CodeBlock title="Batch update strategy">
+```typescript
+class ElasticsearchSyncService {
+  private batchQueue: Array<{ id: string; doc: any }> = [];
+  private batchTimer: NodeJS.Timeout | null = null;
+
+  async queueUpdate(tokenId: string, doc: any) {
+    this.batchQueue.push({ id: tokenId, doc });
+
+    // Flush batch after 500ms or 100 updates
+    if (this.batchQueue.length >= 100) {
+      await this.flushBatch();
+    } else if (!this.batchTimer) {
+      this.batchTimer = setTimeout(() => this.flushBatch(), 500);
+    }
+  }
+
+  async flushBatch() {
+    if (this.batchQueue.length === 0) return;
+
+    const batch = this.batchQueue.splice(0);
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+
+    // Build bulk request
+    const body = batch.flatMap(({ id, doc }) => [
+      { update: { _index: 'ens_names', _id: id } },
+      { doc, doc_as_upsert: true }
+    ]);
+
+    await esClient.bulk({ body });
+
+    console.log(`Flushed ${batch.length} updates to Elasticsearch`);
+  }
+}
+```
+</CodeBlock>
+
+<Callout type="success" title="Performance Benefit">
+Batching reduces Elasticsearch requests by **10-100x**, dramatically improving sync speed and reducing network overhead.
+</Callout>
+
+## Resync Process
+
+Full reindex from PostgreSQL to Elasticsearch.
+
+<CodeBlock title="Complete resync script">
+```typescript
+// services/wal-listener/src/scripts/resync-elasticsearch.ts
+
+async function resyncElasticsearch() {
+  const esClient = new Client({ node: process.env.ELASTICSEARCH_URL });
+
+  console.log('Starting Elasticsearch resync...');
+
+  // 1. Delete existing index
+  try {
+    await esClient.indices.delete({ index: 'ens_names' });
+    console.log('Deleted existing index');
+  } catch (error) {
+    // Index might not exist
+  }
+
+  // 2. Create index with mapping
+  await esClient.indices.create({
+    index: 'ens_names',
+    body: {
+      settings: {
+        number_of_shards: 1,
+        number_of_replicas: 0,
+      },
+      mappings: {
+        properties: {
+          name: {
+            type: 'text',
+            fields: { keyword: { type: 'keyword' } }
+          },
+          token_id: { type: 'keyword' },
+          // ... full mapping
+        }
+      }
+    }
+  });
+  console.log('Created index with mapping');
+
+  // 3. Read all ens_names from PostgreSQL
+  const BATCH_SIZE = 100;
+  let offset = 0;
+  let totalProcessed = 0;
+
+  while (true) {
+    const names = await prisma.ens_names.findMany({
+      take: BATCH_SIZE,
+      skip: offset,
+      include: {
+        listings: {
+          where: { status: 'active' },
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (names.length === 0) break;
+
+    // 4. Build bulk request
+    const body = names.flatMap(name => {
+      const expirationFields = calculateExpirationFields(name.expiry_date);
+      const characterFields = analyzeNameCharacters(name.name);
+      const salesFields = calculateSalesFields(name.last_sale_date);
+      const clubs = determineClubs(name.name);
+      const listing = name.listings[0];
+
+      return [
+        { index: { _index: 'ens_names', _id: name.token_id } },
+        {
+          name: name.name,
+          token_id: name.token_id,
+          owner: name.owner_address,
+          expiry_date: name.expiry_date,
+          registration_date: name.registration_date,
+          ...expirationFields,
+          ...characterFields,
+          ...salesFields,
+          clubs,
+          price: listing?.price_wei || null,
+          listing_id: listing?.id || null,
+          listing_status: listing?.status || null,
+        }
+      ];
+    });
+
+    // 5. Bulk index to Elasticsearch
+    await esClient.bulk({ body });
+
+    totalProcessed += names.length;
+    console.log(`Processed ${totalProcessed} names...`);
+
+    offset += BATCH_SIZE;
+  }
+
+  // 6. Verify counts
+  const pgCount = await prisma.ens_names.count();
+  const esCount = await esClient.count({ index: 'ens_names' });
+
+  console.log(`PostgreSQL count: ${pgCount}`);
+  console.log(`Elasticsearch count: ${esCount.count}`);
+
+  if (pgCount === esCount.count) {
+    console.log('✅ Resync successful! Counts match.');
+  } else {
+    console.log('⚠️  Warning: Counts do not match.');
+  }
+}
+
+resyncElasticsearch();
+```
+</CodeBlock>
+
+### Running Resync
+
+<CodeBlock title="Execute resync">
+```bash
+cd services/wal-listener
+
+# Run resync script
+npm run resync
+
+# Or manually:
+node --loader tsx src/scripts/resync-elasticsearch.ts
+```
+</CodeBlock>
+
+<Callout type="warning" title="Resync Downtime">
+During resync:
+- Search may return incomplete results
+- Takes 1-10 minutes depending on data size
+- Run during low-traffic periods if possible
+</Callout>
+
+## Index Settings
+
+### Performance Tuning
+
+<CodeBlock title="Optimized index settings">
+```json
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "refresh_interval": "1s",
+
+    "analysis": {
+      "analyzer": {
+        "ens_analyzer": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding", "ens_ngram"]
+        }
+      },
+      "filter": {
+        "ens_ngram": {
+          "type": "ngram",
+          "min_gram": 2,
+          "max_gram": 10
+        }
+      }
+    }
+  }
+}
+```
+</CodeBlock>
+
+**Settings Explained:**
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `number_of_shards` | 1 | Single shard for &lt;1M documents |
+| `number_of_replicas` | 1 | One replica for HA |
+| `refresh_interval` | 1s | How often index refreshes (makes changes visible) |
+| `ens_ngram` | 2-10 | N-gram length for partial matching |
+
+### Custom Analyzer
+
+<CodeBlock title="ENS name analyzer">
+```json
+{
+  "mappings": {
+    "properties": {
+      "name": {
+        "type": "text",
+        "analyzer": "ens_analyzer",
+        "fields": {
+          "keyword": { "type": "keyword" },
+          "autocomplete": {
+            "type": "text",
+            "analyzer": "ens_ngram_analyzer"
+          }
+        }
+      }
+    }
+  }
+}
+```
+</CodeBlock>
+
+## Error Handling
+
+### Elasticsearch Connection Failures
+
+<CodeBlock title="Retry with exponential backoff">
+```typescript
+async function indexWithRetry(doc: any, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await esClient.index({
+        index: 'ens_names',
+        id: doc.token_id,
+        body: doc,
+      });
+      return; // Success
+    } catch (error) {
+      if (attempt === maxRetries) {
+        console.error('Max retries reached, logging failed update');
+        await logFailedUpdate(doc, error);
+        throw error;
+      }
+
+      const delay = Math.pow(2, attempt) * 1000;
+      console.warn(`Elasticsearch error, retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+```
+</CodeBlock>
+
+### Failed Update Queue
+
+<CodeBlock title="Store failed updates for retry">
+```typescript
+const failedUpdates = new Map<string, any>();
+
+async function logFailedUpdate(doc: any, error: Error) {
+  failedUpdates.set(doc.token_id, {
+    doc,
+    error: error.message,
+    timestamp: new Date(),
+  });
+}
+
+// Retry failed updates every 5 minutes
+setInterval(async () => {
+  if (failedUpdates.size === 0) return;
+
+  console.log(`Retrying ${failedUpdates.size} failed updates...`);
+
+  for (const [tokenId, { doc }] of failedUpdates) {
+    try {
+      await indexWithRetry(doc, 1); // Single retry
+      failedUpdates.delete(tokenId);
+    } catch (error) {
+      // Keep in queue for next retry
+    }
+  }
+}, 300000); // 5 minutes
+```
+</CodeBlock>
+
+## Next Steps
+
+- Set up [monitoring](/wal-listener/monitoring)
+- Review [PostgreSQL setup](/wal-listener/setup)
+- Understand [WAL Listener overview](/wal-listener/overview)

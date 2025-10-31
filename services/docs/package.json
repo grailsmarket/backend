@@ -1,0 +1,24 @@
+{
+  "name": "@grails/docs",
+  "version": "1.0.0",
+  "description": "Grails Backend Services Documentation",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "start": "serve dist -l ${PORT:-3000}"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^3.1.7",
+    "@astrojs/tailwind": "^5.1.2",
+    "astro": "^4.16.7",
+    "serve": "^14.2.5",
+    "tailwindcss": "^3.4.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.6",
+    "pagefind": "^1.1.1"
+  }
+}

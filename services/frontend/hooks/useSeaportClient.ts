@@ -171,9 +171,11 @@ export function useSeaportClient() {
   const createOffer = useCallback(
     async (params: {
       tokenId: string;
+      ensNameId?: number;  // Database ID of the ENS name (required by backend)
       offerPriceInEth: string;
       durationDays: number;
       currentOwner?: string;
+      marketplace?: 'opensea' | 'grails' | 'both';
     }) => {
       if (!isInitialized || !address) {
         throw new Error('Wallet not connected or Seaport not initialized');
@@ -183,13 +185,17 @@ export function useSeaportClient() {
       setError(null);
 
       try {
-        const order = await seaportClient.createOfferOrder({
-          ...params,
+        // Use createOffer which handles marketplace selection properly
+        const order = await seaportClient.createOffer({
+          tokenId: params.tokenId,
+          priceInEth: params.offerPriceInEth,
+          durationDays: params.durationDays,
           offererAddress: address,
+          marketplace: params.marketplace || 'grails', // Default to grails
         });
 
         // Format order for API storage
-        const formattedOrder = seaportClient.formatOrderForStorage(order);
+        const formattedOrder = seaportClient.formatOrderForStorage(order as any);
 
         // Send to API
         const response = await fetch('/api/orders/create', {
@@ -200,6 +206,7 @@ export function useSeaportClient() {
           body: JSON.stringify({
             type: 'offer',
             tokenId: params.tokenId,
+            ensNameId: params.ensNameId,
             price: params.offerPriceInEth,
             order_data: formattedOrder,
             buyer_address: address,

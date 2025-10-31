@@ -12,11 +12,23 @@ The Indexer service monitors the Ethereum blockchain for ENS-related events and 
 
 ## Key Components
 
-### Event Monitoring (`src/services/`)
-- **ENS Registry Events**: NameRegistered, Transfer, NameRenewed, NameChanged
-- **Block Scanning**: Processes historical and new blocks
-- **Event Parsing**: Decodes and stores blockchain events
+### Event Monitoring
+
+#### ENS Blockchain Events (`src/indexers/ens-indexer.ts`)
+- **NameRegistered**: Creates new ens_names records with token_id, name, owner, expiry
+- **Transfer**: Updates owner_address, publishes ownership job to workers
+- **NameRenewed**: Updates expiry_date for ENS names
+- **Block Scanning**: Processes historical and new blocks in batches
+- **Event Parsing**: Decodes events using contract ABIs
 - **State Sync**: Updates ENS name ownership and metadata
+
+#### OpenSea Stream Events (`src/services/opensea-stream.ts`)
+- **item_listed**: Creates/updates listings with Seaport order data
+- **item_sold**: Records sales, updates ownership if needed
+- **order_cancelled**: Marks listings as cancelled
+- **item_received_bid**: Creates offers records
+- **collection_offer**: Handles collection-wide offers
+- **WebSocket Management**: Phoenix protocol with heartbeat, auto-reconnect
 
 ### Database Operations
 - Updates `ens_names` table with latest blockchain state
@@ -25,11 +37,13 @@ The Indexer service monitors the Ethereum blockchain for ENS-related events and 
 - Stores resolver and controller information
 
 ### Important Files
-- `src/index.ts` - Main indexer entry point
-- `src/services/ens-indexer.ts` - Core indexing logic
-- `src/services/event-processor.ts` - Event handling
+- `src/index.ts` - Main indexer entry point, starts all services
+- `src/indexers/ens-indexer.ts` - ENS blockchain event indexing
+- `src/services/opensea-stream.ts` - OpenSea WebSocket stream handler
+- `src/services/name-resolver.ts` - Resolves placeholder names via The Graph
 - `src/contracts/` - ENS contract ABIs and interfaces
-- `src/utils/block-tracker.ts` - Block processing state
+- `src/scripts/backfill-ens-names.ts` - Backfill script for placeholder resolution
+- `src/scripts/backfill-simple.ts` - Lightweight backfill with minimal deps
 
 ## Environment Variables
 ```env
@@ -64,22 +78,43 @@ npm run check       # Verify data integrity
 ## Event Types Processed
 
 ### NameRegistered
-- Creates new ENS name record
-- Sets initial owner and expiry
-- Records registration timestamp
+- Creates new ENS name record in ens_names table
+- Records: token_id, name, owner_address, expiry_date, registration_date
+- Triggers ENS sync job in workers for metadata fetch
 
 ### Transfer
-- Updates current owner
-- Maintains ownership history
-- Triggers listing status updates
+- Updates owner_address in ens_names table
+- Publishes update-ownership job to workers queue
+- Workers cancel invalid listings (old owner can't fulfill)
+- Maintains ownership history via activity_history table
 
 ### NameRenewed
-- Updates expiry date
-- Records renewal transaction
+- Updates expiry_date in ens_names table
+- Records renewal transaction hash and timestamp
+- Updates derived expiration fields (is_expired, is_grace_period, etc.)
 
 ### NameChanged
-- Updates ENS name resolution
+- Updates ENS name resolution data
 - Tracks reverse records
+- Updates resolver_address if changed
+
+### item_listed (OpenSea)
+- Creates/updates listing in listings table
+- Stores Seaport order data in order_data (JSON column)
+- Resolves placeholder name via The Graph if needed
+- Upserts ens_names record with resolved name
+- Only updates name if current value is placeholder (token-*)
+
+### item_sold (OpenSea)
+- Creates sale record in sales table
+- Updates last_sale_price and last_sale_date in ens_names
+- Updates ownership if Transfer event detected
+- Marks listing as sold
+
+### order_cancelled (OpenSea)
+- Updates listing status to 'cancelled'
+- Records cancellation timestamp
+- Removes from active listings
 
 ## Performance Optimizations
 - Batch processing of events

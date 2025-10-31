@@ -245,11 +245,11 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
 
   try {
-    // Get total count of placeholder names
+    // Get total count of placeholder names (both standard token-% and nonstandard #%)
     const countResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM ens_names
-      WHERE name LIKE 'token-%'
+      WHERE name LIKE 'token-%' OR name LIKE '#%'
     `);
 
     stats.total = parseInt(countResult.rows[0].count);
@@ -279,14 +279,14 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
         ? await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
-            WHERE name LIKE 'token-%'
+            WHERE name LIKE 'token-%' OR name LIKE '#%'
             ORDER BY id DESC
             LIMIT ${currentBatchSize}
           `)
         : await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
-            WHERE name LIKE 'token-%' AND id < ${lastProcessedId}
+            WHERE (name LIKE 'token-%' OR name LIKE '#%') AND id < ${lastProcessedId}
             ORDER BY id DESC
             LIMIT ${currentBatchSize}
           `);

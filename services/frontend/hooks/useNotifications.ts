@@ -36,14 +36,14 @@ export interface UnreadCountResponse {
 }
 
 export function useNotifications(unreadOnly = false, limit = 10) {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, isHydrated } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(async () => {
-    if (!isAuthenticated || !token) {
+    if (!isAuthenticated || !token || !isHydrated) {
       setNotifications([]);
       return;
     }
@@ -73,10 +73,10 @@ export function useNotifications(unreadOnly = false, limit = 10) {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, token, unreadOnly, limit]);
+  }, [isAuthenticated, token, isHydrated, unreadOnly, limit]);
 
   const fetchUnreadCount = useCallback(async () => {
-    if (!isAuthenticated || !token) {
+    if (!isAuthenticated || !token || !isHydrated) {
       setUnreadCount(0);
       return;
     }
@@ -100,10 +100,10 @@ export function useNotifications(unreadOnly = false, limit = 10) {
     } catch (err: any) {
       console.error('Error fetching unread count:', err);
     }
-  }, [isAuthenticated, token]);
+  }, [isAuthenticated, token, isHydrated]);
 
   const markAsRead = useCallback(async (notificationId: number) => {
-    if (!isAuthenticated || !token) return;
+    if (!isAuthenticated || !token || !isHydrated) return;
 
     try {
       const response = await fetch(
@@ -134,10 +134,10 @@ export function useNotifications(unreadOnly = false, limit = 10) {
     } catch (err: any) {
       console.error('Error marking notification as read:', err);
     }
-  }, [isAuthenticated, token, fetchUnreadCount]);
+  }, [isAuthenticated, token, isHydrated, fetchUnreadCount]);
 
   const markAllAsRead = useCallback(async () => {
-    if (!isAuthenticated || !token) return;
+    if (!isAuthenticated || !token || !isHydrated) return;
 
     try {
       const response = await fetch(
@@ -164,10 +164,10 @@ export function useNotifications(unreadOnly = false, limit = 10) {
     } catch (err: any) {
       console.error('Error marking all notifications as read:', err);
     }
-  }, [isAuthenticated, token]);
+  }, [isAuthenticated, token, isHydrated]);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && isHydrated) {
       fetchNotifications();
       fetchUnreadCount();
 
@@ -178,7 +178,7 @@ export function useNotifications(unreadOnly = false, limit = 10) {
 
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, fetchNotifications, fetchUnreadCount]);
+  }, [isAuthenticated, isHydrated, fetchNotifications, fetchUnreadCount]);
 
   return {
     notifications,

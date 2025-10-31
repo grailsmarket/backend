@@ -1,0 +1,97 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'Grails Backend Services Documentation' } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <title>{title} | Grails Docs</title>
+  </head>
+  <body>
+    <div class="flex min-h-screen">
+      <!-- Sidebar Navigation -->
+      <aside class="w-64 bg-[var(--bg-secondary)] border-r border-[var(--border)] fixed h-full overflow-y-auto">
+        <div class="p-6">
+          <h1 class="text-2xl font-bold mb-8">
+            <a href="/" class="text-white hover:text-[var(--accent)]">Grails Docs</a>
+          </h1>
+
+          <nav>
+            <!-- Overview Section -->
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold text-[var(--text-secondary)] uppercase mb-2">Overview</h3>
+              <ul class="space-y-1">
+                <li><a href="/" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Introduction</a></li>
+                <li><a href="/overview/architecture" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Architecture</a></li>
+                <li><a href="/overview/quick-start" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Quick Start</a></li>
+              </ul>
+            </div>
+
+            <!-- API Service Section -->
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold text-[var(--text-secondary)] uppercase mb-2">API Service</h3>
+              <ul class="space-y-1">
+                <li><a href="/api/overview" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Overview</a></li>
+                <li><a href="/api/authentication" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Authentication</a></li>
+                <li><a href="/api/search" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Search & Filters</a></li>
+                <li><a href="/api/endpoints" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Endpoints</a></li>
+                <li><a href="/api/opensea" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">OpenSea Integration</a></li>
+              </ul>
+            </div>
+
+            <!-- Indexer Service Section -->
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold text-[var(--text-secondary)] uppercase mb-2">Indexer Service</h3>
+              <ul class="space-y-1">
+                <li><a href="/indexer/overview" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Overview</a></li>
+                <li><a href="/indexer/ens-events" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">ENS Events</a></li>
+                <li><a href="/indexer/opensea-stream" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">OpenSea Stream</a></li>
+                <li><a href="/indexer/name-resolution" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Name Resolution</a></li>
+              </ul>
+            </div>
+
+            <!-- WAL Listener Service Section -->
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold text-[var(--text-secondary)] uppercase mb-2">WAL Listener</h3>
+              <ul class="space-y-1">
+                <li><a href="/wal-listener/overview" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Overview</a></li>
+                <li><a href="/wal-listener/setup" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">PostgreSQL Setup</a></li>
+                <li><a href="/wal-listener/elasticsearch" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Elasticsearch Sync</a></li>
+                <li><a href="/wal-listener/monitoring" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Monitoring</a></li>
+              </ul>
+            </div>
+
+            <!-- Workers Service Section -->
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold text-[var(--text-secondary)] uppercase mb-2">Workers Service</h3>
+              <ul class="space-y-1">
+                <li><a href="/workers/overview" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Overview</a></li>
+                <li><a href="/workers/expiry" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Expiry Worker</a></li>
+                <li><a href="/workers/ens-sync" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">ENS Sync Worker</a></li>
+                <li><a href="/workers/ownership" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Ownership Worker</a></li>
+                <li><a href="/workers/notifications" class="block px-3 py-2 rounded hover:bg-[var(--bg-tertiary)]">Notification Worker</a></li>
+              </ul>
+            </div>
+          </nav>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="ml-64 flex-1 p-8">
+        <div class="max-w-4xl mx-auto">
+          <slot />
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

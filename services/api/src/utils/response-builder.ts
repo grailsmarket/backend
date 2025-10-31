@@ -6,6 +6,7 @@ import { getPostgresPool } from '../../../shared/src';
  */
 export interface SearchResult {
   // ENS Name fields
+  id: number;  // ens_names.id - essential for creating offers and fulfilling them
   name: string;
   token_id: string;
   owner: string;
@@ -16,6 +17,11 @@ export interface SearchResult {
   clubs: string[] | null;
   has_numbers: boolean;
   has_emoji: boolean;
+
+  // Sale fields
+  last_sale_price: string | null;
+  last_sale_currency: string | null;
+  last_sale_price_usd: number | null;
 
   // Listing fields (if exists)
   listings: Listing[];
@@ -69,6 +75,7 @@ export async function buildSearchResults(
   const query = `
     SELECT
       -- ENS name fields
+      en.id,
       en.name,
       en.token_id,
       en.owner_address,
@@ -79,6 +86,11 @@ export async function buildSearchResults(
       en.clubs,
       en.has_numbers,
       en.has_emoji,
+
+      -- Sale fields
+      en.last_sale_price,
+      en.last_sale_currency,
+      en.last_sale_price_usd,
 
       -- Vote fields
       COALESCE(en.upvotes, 0) as upvotes,
@@ -125,12 +137,16 @@ export async function buildSearchResults(
   // Transform database results to SearchResult format
   return result.rows.map((row) => {
     const result: SearchResult = {
+      id: row.id,
       name: row.name,
       token_id: row.token_id,
       owner: row.owner_address,
       expiry_date: row.expiry_date,
       registration_date: row.registration_date,
       last_sale_date: row.last_sale_date,
+      last_sale_price: row.last_sale_price,
+      last_sale_currency: row.last_sale_currency,
+      last_sale_price_usd: row.last_sale_price_usd ? parseFloat(row.last_sale_price_usd) : null,
       metadata: row.metadata,
       clubs: row.clubs,
       has_numbers: row.has_numbers,

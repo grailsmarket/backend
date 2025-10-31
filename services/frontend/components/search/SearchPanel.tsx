@@ -12,6 +12,7 @@ export interface SearchFilters {
   hasNumbers?: boolean;
   showAll?: boolean; // true = all names, false/undefined = active listings only
   clubs?: string[]; // Filter by clubs
+  owner?: string; // Filter by owner address or ENS name
   isExpired?: boolean;
   isGracePeriod?: boolean;
   isPremiumPeriod?: boolean;
@@ -55,6 +56,8 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
   const [hasSales, setHasSales] = useState<boolean | undefined>(undefined);
   const [minDaysSinceLastSale, setMinDaysSinceLastSale] = useState<number | ''>('');
   const [maxDaysSinceLastSale, setMaxDaysSinceLastSale] = useState<number | ''>('');
+  const [showOwnerFilter, setShowOwnerFilter] = useState(false);
+  const [owner, setOwner] = useState('');
 
   // Fetch clubs on mount
   useEffect(() => {
@@ -85,6 +88,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       hasNumbers,
       showAll,
       clubs: selectedClubs.length > 0 ? selectedClubs : undefined,
+      owner: owner.trim() || undefined,
       isExpired,
       isGracePeriod,
       isPremiumPeriod,
@@ -106,6 +110,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
     setHasNumbers(undefined);
     setShowAll(true);
     setSelectedClubs([]);
+    setOwner('');
     setIsExpired(undefined);
     setIsGracePeriod(undefined);
     setIsPremiumPeriod(undefined);
@@ -459,6 +464,45 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
         )}
       </div>
 
+      {/* Owner Filter */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-300">
+            Owner Filter
+          </label>
+          <button
+            onClick={() => setShowOwnerFilter(!showOwnerFilter)}
+            className="text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+          >
+            <span className="text-xs font-semibold">
+              {showOwnerFilter ? 'Hide' : 'Show'}
+            </span>
+            <svg
+              className={`h-4 w-4 transition-transform ${showOwnerFilter ? 'rotate-45' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        </div>
+        {showOwnerFilter && (
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={owner}
+              onChange={(e) => setOwner(e.target.value)}
+              placeholder="ENS name or address (e.g., vitalik.eth or 0x...)"
+              className="w-full bg-gray-900 text-white px-3 py-2 rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+            />
+            <p className="text-xs text-gray-400">
+              Filter by owner address or ENS name
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Action Buttons */}
       <div className="flex gap-3 pt-2">
         <button
@@ -476,7 +520,7 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
       </div>
 
       {/* Active Filters Display */}
-      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined || selectedClubs.length > 0 || isExpired !== undefined || isGracePeriod !== undefined || isPremiumPeriod !== undefined || expiringWithinDays) && (
+      {(query || minPrice || maxPrice || minLength || maxLength || hasEmoji !== undefined || hasNumbers !== undefined || selectedClubs.length > 0 || owner || isExpired !== undefined || isGracePeriod !== undefined || isPremiumPeriod !== undefined || expiringWithinDays) && (
         <div className="pt-4 border-t border-gray-700">
           <p className="text-xs text-gray-400 mb-2">Active Filters:</p>
           <div className="flex flex-wrap gap-2">
@@ -520,6 +564,11 @@ export function SearchPanel({ onSearch, isOpen = true, onClose }: SearchPanelPro
                 Club: {club}
               </span>
             ))}
+            {owner && (
+              <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
+                Owner: {owner}
+              </span>
+            )}
             {isExpired !== undefined && (
               <span className="text-xs bg-purple-900/50 text-purple-300 px-2 py-1 rounded">
                 {isExpired ? 'Expired' : 'Active'}

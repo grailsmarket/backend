@@ -1,0 +1,474 @@
+---
+title: "OpenSea Integration"
+description: "Real-time OpenSea marketplace event processing"
+order: 5
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# OpenSea Integration
+
+The API integrates with OpenSea Stream API to process real-time marketplace events for ENS names.
+
+## Overview
+
+The API maintains a persistent WebSocket connection to OpenSea's Stream API using the Phoenix protocol to receive live marketplace events.
+
+### Why OpenSea Integration?
+
+- **Real-time listings**: Detect new ENS listings on OpenSea immediately
+- **Sales tracking**: Record sales as they happen
+- **Order cancellations**: Update listing status when orders are cancelled
+- **Seaport orders**: Store and validate Seaport 1.6 order data
+
+## Event Types
+
+### item_listed
+
+Fired when a new ENS name is listed on OpenSea.
+
+<CodeBlock title="item_listed event processing">
+```typescript
+{
+  "event_type": "item_listed",
+  "payload": {
+    "item": {
+      "nft_id": "ethereum/0x57f1887a.../12345",
+      "metadata": {
+        "name": "example.eth"
+      }
+    },
+    "base_price": "1000000000000000000",
+    "maker": {
+      "address": "0x123..."
+    },
+    "protocol_data": {
+      "parameters": {
+        // Full Seaport order parameters
+      }
+    },
+    "order_hash": "0xabc...",
+    "expiration_date": "2024-12-31T23:59:59"
+  }
+}
+```
+</CodeBlock>
+
+**Processing Steps:**
+1. Extract token ID from `nft_id`
+2. Resolve name via The Graph if placeholder (`token-{id}`)
+3. Upsert to `ens_names` table (only update if placeholder)
+4. Create/update `listings` table with Seaport order data
+5. Store raw event in `opensea_events` table
+6. Trigger Elasticsearch sync via WAL Listener
+
+<Callout type="info" title="Name Resolution">
+Names often arrive as placeholders (`token-12345`). The API queries The Graph ENS subgraph to resolve the actual ENS name, then updates the database only if the current value is still a placeholder.
+</Callout>
+
+### item_sold
+
+Fired when an ENS name sale is completed on OpenSea.
+
+<CodeBlock title="item_sold event processing">
+```typescript
+{
+  "event_type": "item_sold",
+  "payload": {
+    "item": {
+      "nft_id": "ethereum/0x57f1887a.../12345"
+    },
+    "sale_price": "5000000000000000000",
+    "maker": {
+      "address": "0x123..." // seller
+    },
+    "taker": {
+      "address": "0x456..." // buyer
+    },
+    "transaction": {
+      "hash": "0xdef...",
+      "timestamp": "2024-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+</CodeBlock>
+
+**Processing Steps:**
+1. Find or create `ens_names` record
+2. Update `last_sale_price`, `last_sale_date` in `ens_names`
+3. Create `sales` record with transaction details
+4. Update related listing status to `sold`
+5. Trigger Elasticsearch sync for updated fields
+
+### order_cancelled
+
+Fired when a listing order is cancelled on OpenSea.
+
+<CodeBlock title="order_cancelled event processing">
+```typescript
+{
+  "event_type": "order_cancelled",
+  "payload": {
+    "order_hash": "0xabc...",
+    "maker": {
+      "address": "0x123..."
+    }
+  }
+}
+```
+</CodeBlock>
+
+**Processing Steps:**
+1. Find listing by `order_hash`
+2. Update listing `status` to `cancelled`
+3. Remove from Elasticsearch active listings
+
+### item_received_bid
+
+Fired when an offer is made on an ENS name.
+
+<CodeBlock title="item_received_bid event processing">
+```typescript
+{
+  "event_type": "item_received_bid",
+  "payload": {
+    "item": {
+      "nft_id": "ethereum/0x57f1887a.../12345"
+    },
+    "base_price": "900000000000000000",
+    "maker": {
+      "address": "0x789..." // buyer
+    },
+    "expiration_date": "2024-12-31T23:59:59"
+  }
+}
+```
+</CodeBlock>
+
+**Processing Steps:**
+1. Find or create `ens_names` record
+2. Create `offers` record
+3. Store Seaport order data in `order_data` JSON column
+4. Publish notification job if name is in user watchlists
+
+## Phoenix Protocol
+
+OpenSea Stream API uses the Phoenix WebSocket protocol, which requires specific message handling.
+
+### Connection Lifecycle
+
+<CodeBlock title="Phoenix WebSocket flow">
+```
+1. Connect to wss://stream.openseabeta.com/socket
+2. Send "phx_join" message to subscribe to collection
+3. Send heartbeat "phoenix" messages every 30 seconds
+4. Process incoming events
+5. Handle reconnection on disconnect
+```
+</CodeBlock>
+
+### Message Format
+
+<CodeBlock title="Phoenix message structure">
+```typescript
+[
+  "join_ref",    // Unique join reference
+  "message_ref", // Message reference (incremental)
+  "topic",       // e.g., "collection:ens"
+  "event",       // e.g., "phx_join", "item_listed"
+  {
+    // Payload
+  }
+]
+```
+</CodeBlock>
+
+### Subscription
+
+<CodeBlock title="Subscribe to ENS collection">
+```typescript
+const subscribeMessage = [
+  null,                   // join_ref (null for initial)
+  "1",                    // message_ref
+  "collection:ens",       // topic
+  "phx_join",             // event
+  {
+    "slug": "ens"         // OpenSea collection slug
+  }
+];
+
+ws.send(JSON.stringify(subscribeMessage));
+```
+</CodeBlock>
+
+### Heartbeat
+
+<CodeBlock title="Keep connection alive with heartbeat">
+```typescript
+// Send every 30 seconds
+const heartbeat = [
+  null,
+  messageRef.toString(),
+  "phoenix",
+  "heartbeat",
+  {}
+];
+
+setInterval(() => {
+  ws.send(JSON.stringify(heartbeat));
+  messageRef++;
+}, 30000);
+```
+</CodeBlock>
+
+## Seaport Order Data
+
+The API stores full Seaport 1.6 order data in the `order_data` JSON column for listings and offers.
+
+### Order Structure
+
+<CodeBlock title="Seaport order parameters">
+```typescript
+{
+  "parameters": {
+    "offerer": "0x123...",
+    "zone": "0x0000000000000000000000000000000000000000",
+    "offer": [
+      {
+        "itemType": 2, // ERC721
+        "token": "0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85",
+        "identifierOrCriteria": "12345",
+        "startAmount": "1",
+        "endAmount": "1"
+      }
+    ],
+    "consideration": [
+      {
+        "itemType": 0, // ETH
+        "token": "0x0000000000000000000000000000000000000000",
+        "identifierOrCriteria": "0",
+        "startAmount": "1000000000000000000",
+        "endAmount": "1000000000000000000",
+        "recipient": "0x123..."
+      }
+    ],
+    "orderType": 0,
+    "startTime": "1704067200",
+    "endTime": "1735689600",
+    "zoneHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "salt": "0x...",
+    "conduitKey": "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000",
+    "totalOriginalConsiderationItems": "1",
+    "counter": "0"
+  },
+  "signature": "0x..."
+}
+```
+</CodeBlock>
+
+<Callout type="info" title="Order Validation">
+The API validates Seaport orders to ensure:
+- Correct ENS Registrar contract address
+- Valid token ID
+- Reasonable price (not zero)
+- Valid expiration date
+- Proper signature format
+</Callout>
+
+## Data Flow
+
+<CodeBlock title="Complete OpenSea event flow">
+```
+OpenSea Stream API → API Service → Database → WAL Listener → Elasticsearch → Frontend
+                          ↓
+                    Workers Service (notifications)
+```
+</CodeBlock>
+
+### Step-by-Step
+
+1. **OpenSea Stream API** sends event via WebSocket
+2. **API Service** receives and parses Phoenix message
+3. **API Service** resolves name via The Graph if needed
+4. **API Service** writes to database (ens_names, listings, offers, sales)
+5. **WAL Listener** detects database change via logical replication
+6. **WAL Listener** updates Elasticsearch index
+7. **Frontend** sees updated data in search within 500ms
+8. **Workers Service** sends notifications to users with name in watchlist
+
+## Error Handling
+
+### Reconnection Strategy
+
+<CodeBlock title="Exponential backoff reconnection">
+```typescript
+let reconnectAttempts = 0;
+const maxAttempts = 10;
+const baseDelay = 1000; // 1 second
+
+function reconnect() {
+  if (reconnectAttempts >= maxAttempts) {
+    logger.error('Max reconnection attempts reached');
+    return;
+  }
+
+  const delay = Math.min(
+    baseDelay * Math.pow(2, reconnectAttempts),
+    30000 // Max 30 seconds
+  );
+
+  setTimeout(() => {
+    reconnectAttempts++;
+    connectToOpenSea();
+  }, delay);
+}
+```
+</CodeBlock>
+
+### Duplicate Event Handling
+
+<CodeBlock title="Idempotent processing with order_hash">
+```typescript
+// Upsert listing by order_hash
+await prisma.listing.upsert({
+  where: { order_hash: event.order_hash },
+  update: { /* ... */ },
+  create: { /* ... */ }
+});
+```
+</CodeBlock>
+
+<Callout type="success" title="Idempotency">
+All event processing is idempotent using unique keys:
+- Listings: `order_hash`
+- Sales: `transaction_hash`
+- Offers: `order_hash`
+
+This ensures duplicate events don't create duplicate records.
+</Callout>
+
+### Failed Event Processing
+
+Events that fail to process are:
+1. Logged with full error details
+2. Stored in `opensea_events` with `processed: false`
+3. Retried manually or via admin script
+
+## Monitoring
+
+### Event Statistics
+
+<CodeBlock title="Check OpenSea event processing">
+```sql
+-- Events by type in last hour
+SELECT event_type, COUNT(*) as count, processed
+FROM opensea_events
+WHERE created_at > NOW() - INTERVAL '1 hour'
+GROUP BY event_type, processed
+ORDER BY count DESC;
+
+-- Failed events
+SELECT id, event_type, event_data, error, created_at
+FROM opensea_events
+WHERE processed = false
+ORDER BY created_at DESC
+LIMIT 20;
+```
+</CodeBlock>
+
+### WebSocket Health
+
+The API logs connection status:
+- **Connected**: Active WebSocket connection
+- **Disconnected**: Attempting reconnection
+- **Subscribed**: Successfully joined collection
+- **Events/min**: Rate of incoming events
+
+<CodeBlock title="Check WebSocket status">
+```bash
+# API logs
+tail -f logs/api.log | grep "opensea"
+
+# Look for:
+# - "OpenSea WebSocket connected"
+# - "Subscribed to collection: ens"
+# - "Received item_listed event"
+# - "Processed 50 events in last minute"
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# OpenSea
+OPENSEA_API_KEY=your_opensea_api_key
+OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket
+OPENSEA_COLLECTION_SLUG=ens
+
+# The Graph (for name resolution)
+GRAPH_ENS_SUBGRAPH_URL=https://api.thegraph.com/subgraphs/name/ensdomains/ens
+
+# Reconnection
+OPENSEA_MAX_RECONNECT_ATTEMPTS=10
+OPENSEA_RECONNECT_BASE_DELAY=1000
+```
+
+### Rate Limits
+
+OpenSea Stream API limits:
+- **Connections**: 1 active connection per API key
+- **Events**: Unlimited (all collection events are sent)
+- **Subscriptions**: Up to 10 collections per connection
+
+<Callout type="warning" title="API Key Required">
+OpenSea Stream API requires an API key. Apply for access at [OpenSea Developer Portal](https://docs.opensea.io/reference/stream-api-overview).
+</Callout>
+
+## Troubleshooting
+
+### Connection Issues
+
+**Symptom**: WebSocket won't connect or disconnects immediately
+
+**Solutions**:
+1. Verify `OPENSEA_API_KEY` is valid
+2. Check `OPENSEA_STREAM_URL` is correct
+3. Ensure network allows WebSocket connections
+4. Review OpenSea API status page
+
+### Missing Events
+
+**Symptom**: Listings on OpenSea not appearing in API
+
+**Solutions**:
+1. Check WebSocket connection is active
+2. Verify collection subscription succeeded
+3. Review `opensea_events` table for failed processing
+4. Check database logs for errors
+
+### Name Resolution Failures
+
+**Symptom**: Names stuck as `token-{id}` placeholders
+
+**Solutions**:
+1. Verify `GRAPH_ENS_SUBGRAPH_URL` is accessible
+2. Check The Graph API rate limits
+3. Run manual name resolution script
+4. Check token ID is valid ENS name
+
+<CodeBlock title="Manual name resolution">
+```bash
+cd services/indexer
+node --loader tsx src/scripts/backfill-ens-names.ts --limit 1000
+```
+</CodeBlock>
+
+## Next Steps
+
+- Understand [ENS event processing](/indexer/ens-events)
+- Learn about [name resolution](/indexer/name-resolution)
+- Explore [complete endpoint reference](/api/endpoints)

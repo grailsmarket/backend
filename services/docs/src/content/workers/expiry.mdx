@@ -1,0 +1,457 @@
+---
+title: "Expiry Worker"
+description: "Automatic expiration of listings and offers"
+order: 2
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Expiry Worker
+
+Automatically expires listings and offers when they reach their `expires_at` timestamp.
+
+## Purpose
+
+Marketplace listings and offers have expiration dates. The expiry worker ensures they're marked as expired at the correct time, keeping the marketplace data accurate.
+
+<Callout type="info" title="Different from ENS Expiration">
+This handles **listing/offer expiration** (user-specified), not **ENS name expiration** (from blockchain). See [overview](/workers/overview) for details on both types.
+</Callout>
+
+## Queues
+
+### Individual Expiry Queue
+
+**Queue**: `expire-orders`
+**Triggered**: When listing/offer is created (by API service)
+**Schedule**: Runs at exact `expires_at` time
+
+<CodeBlock title="Job structure">
+```json
+{
+  "type": "listing",
+  "id": 123
+}
+```
+</CodeBlock>
+
+### Batch Expiry Queue
+
+**Queue**: `batch-expire-orders`
+**Schedule**: Cron job every 5 minutes (`*/5 * * * *`)
+**Purpose**: Safety net to catch missed expirations
+
+<Callout type="success" title="Dual Approach">
+The combination of individual scheduling + batch processing ensures:
+- **Precise timing**: Individual jobs expire at exact time
+- **Reliability**: Batch job catches any missed expirations (service downtime, bugs)
+</Callout>
+
+## Worker Implementation
+
+<CodeBlock title="Expiry worker handler">
+```typescript
+// services/workers/src/workers/expiry.ts
+
+export async function registerExpiryWorker(boss: PgBoss) {
+  // Individual order expiry
+  await boss.work(
+    'expire-orders',
+    { teamSize: 5, teamConcurrency: 2 },
+    async (job) => {
+      const { type, id } = job.data;
+
+      if (type === 'listing') {
+        await expireListing(id);
+      } else if (type === 'offer') {
+        await expireOffer(id);
+      }
+    }
+  );
+
+  // Batch expiry (runs every 5 minutes)
+  await boss.work(
+    'batch-expire-orders',
+    { teamSize: 1 },
+    async () => {
+      await batchExpireListings();
+      await batchExpireOffers();
+    }
+  );
+
+  console.log('Expiry worker registered');
+}
+
+async function expireListing(id: number) {
+  const listing = await prisma.listings.findUnique({
+    where: { id },
+    include: { ens_name: true },
+  });
+
+  if (!listing) {
+    console.warn(`Listing ${id} not found`);
+    return;
+  }
+
+  // Check if already expired
+  if (listing.status === 'expired') {
+    console.log(`Listing ${id} already expired`);
+    return;
+  }
+
+  // Check if expiration time has passed
+  if (new Date() < listing.expires_at) {
+    console.log(`Listing ${id} not yet expired`);
+    return;
+  }
+
+  // Mark as expired
+  await prisma.listings.update({
+    where: { id },
+    data: {
+      status: 'expired',
+      updated_at: new Date(),
+    },
+  });
+
+  console.log(`Expired listing ${id} for ${listing.ens_name.name}`);
+}
+
+async function expireOffer(id: number) {
+  const offer = await prisma.offers.findUnique({
+    where: { id },
+    include: { ens_name: true },
+  });
+
+  if (!offer) {
+    console.warn(`Offer ${id} not found`);
+    return;
+  }
+
+  if (offer.status === 'expired') {
+    console.log(`Offer ${id} already expired`);
+    return;
+  }
+
+  if (new Date() < offer.expires_at) {
+    console.log(`Offer ${id} not yet expired`);
+    return;
+  }
+
+  await prisma.offers.update({
+    where: { id },
+    data: {
+      status: 'expired',
+      updated_at: new Date(),
+    },
+  });
+
+  console.log(`Expired offer ${id} on ${offer.ens_name.name}`);
+}
+```
+</CodeBlock>
+
+## Batch Processing
+
+<CodeBlock title="Batch expire all overdue listings">
+```typescript
+async function batchExpireListings() {
+  const now = new Date();
+
+  // Find all active listings past expiration
+  const expiredListings = await prisma.listings.findMany({
+    where: {
+      status: 'active',
+      expires_at: {
+        lt: now, // Less than current time
+      },
+    },
+    select: { id: true },
+  });
+
+  if (expiredListings.length === 0) {
+    console.log('No expired listings found');
+    return;
+  }
+
+  // Update in batch
+  const ids = expiredListings.map(l => l.id);
+
+  await prisma.listings.updateMany({
+    where: {
+      id: { in: ids },
+    },
+    data: {
+      status: 'expired',
+      updated_at: now,
+    },
+  });
+
+  console.log(`Batch expired ${ids.length} listings`);
+}
+
+async function batchExpireOffers() {
+  const now = new Date();
+
+  const expiredOffers = await prisma.offers.findMany({
+    where: {
+      status: 'pending',
+      expires_at: {
+        lt: now,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (expiredOffers.length === 0) {
+    console.log('No expired offers found');
+    return;
+  }
+
+  const ids = expiredOffers.map(o => o.id);
+
+  await prisma.offers.updateMany({
+    where: {
+      id: { in: ids },
+    },
+    data: {
+      status: 'expired',
+      updated_at: now,
+    },
+  });
+
+  console.log(`Batch expired ${ids.length} offers`);
+}
+```
+</CodeBlock>
+
+## Job Scheduling
+
+Jobs are scheduled by the API service when listings/offers are created.
+
+<CodeBlock title="API schedules expiry job">
+```typescript
+// services/api/src/routes/listings.ts
+
+async function createListing(req, res) {
+  // Create listing in database
+  const listing = await prisma.listings.create({
+    data: {
+      ens_name_id: data.ensNameId,
+      seller_address: data.sellerAddress,
+      price_wei: data.priceWei,
+      expires_at: data.expiresAt,
+      status: 'active',
+      // ...
+    },
+  });
+
+  // Schedule expiry job
+  await boss.send(
+    'expire-orders',
+    {
+      type: 'listing',
+      id: listing.id,
+    },
+    {
+      startAfter: listing.expires_at, // Run at expiration time
+      singletonKey: `listing-expiry-${listing.id}`, // Prevent duplicates
+    }
+  );
+
+  res.json({ success: true, data: listing });
+}
+```
+</CodeBlock>
+
+<Callout type="info" title="startAfter Option">
+pg-boss supports scheduling jobs to run at a specific time using the `startAfter` option. The job won't execute until that time arrives.
+</Callout>
+
+## Monitoring
+
+### Check Expiry Queue
+
+<CodeBlock title="View pending expiry jobs">
+```sql
+SELECT
+  name,
+  data,
+  state,
+  startafter,
+  createdon
+FROM pgboss.job
+WHERE name = 'expire-orders'
+  AND state IN ('created', 'retry')
+ORDER BY startafter
+LIMIT 20;
+```
+</CodeBlock>
+
+### Failed Expiries
+
+<CodeBlock title="Check for failed expiry jobs">
+```sql
+SELECT
+  id,
+  data,
+  output,
+  completedon
+FROM pgboss.archive
+WHERE name IN ('expire-orders', 'batch-expire-orders')
+  AND state = 'failed'
+ORDER BY completedon DESC
+LIMIT 10;
+```
+</CodeBlock>
+
+### Batch Job History
+
+<CodeBlock title="Batch expiry statistics">
+```sql
+SELECT
+  completedon,
+  output,
+  EXTRACT(EPOCH FROM (completedon - startedon)) as duration_seconds
+FROM pgboss.archive
+WHERE name = 'batch-expire-orders'
+  AND state = 'completed'
+ORDER BY completedon DESC
+LIMIT 10;
+```
+</CodeBlock>
+
+## Configuration
+
+### Environment Variables
+
+```env
+# No specific config needed - uses shared DATABASE_URL
+
+# Optionally tune pg-boss settings
+PGBOSS_ARCHIVE_INTERVAL_HOURS=24
+PGBOSS_DELETE_AFTER_DAYS=7
+```
+
+### Worker Concurrency
+
+<CodeBlock title="Adjust concurrency">
+```typescript
+await boss.work(
+  'expire-orders',
+  {
+    teamSize: 10,        // Number of worker instances
+    teamConcurrency: 3   // Jobs per worker (total = 10 * 3 = 30)
+  },
+  handler
+);
+```
+</CodeBlock>
+
+**Tuning:**
+- **Low volume** (&lt;100/day): teamSize=1, teamConcurrency=1
+- **Medium volume** (100-1000/day): teamSize=5, teamConcurrency=2
+- **High volume** (&gt;1000/day): teamSize=10, teamConcurrency=5
+
+## Troubleshooting
+
+### Jobs Not Expiring
+
+**Symptoms:**
+- Listings showing as "active" past expiration date
+- No expiry jobs in queue
+
+**Solutions:**
+1. Check workers service is running
+2. Verify batch job is executing: `SELECT * FROM pgboss.job WHERE name = 'batch-expire-orders'`
+3. Run manual batch expiry:
+   ```typescript
+   await boss.send('batch-expire-orders', {});
+   ```
+
+### Premature Expiration
+
+**Symptoms:**
+- Listings expired before `expires_at` time
+
+**Solutions:**
+1. Check server timezone matches database timezone
+2. Verify `expires_at` is set correctly in API
+3. Check for clock skew between servers
+
+### High Queue Depth
+
+**Symptoms:**
+- Many `expire-orders` jobs in `created` state
+- Jobs not being processed
+
+**Solutions:**
+1. Increase worker concurrency
+2. Check for errors in worker logs
+3. Verify database connectivity
+4. Run batch expiry to clear backlog
+
+## Testing
+
+<CodeBlock title="Manual testing">
+```typescript
+import { getQueueClient } from './dist/queue';
+
+const boss = await getQueueClient();
+
+// Test individual expiry
+await boss.send('expire-orders', {
+  type: 'listing',
+  id: 123,
+});
+
+// Test batch expiry
+await boss.send('batch-expire-orders', {});
+
+// Check job status
+const jobs = await boss.fetch('expire-orders');
+console.log('Pending jobs:', jobs);
+
+await boss.stop();
+```
+</CodeBlock>
+
+<CodeBlock title="Integration test">
+```typescript
+describe('Expiry Worker', () => {
+  it('should expire listing after expiration time', async () => {
+    // Create listing expiring in 1 second
+    const listing = await prisma.listings.create({
+      data: {
+        expires_at: new Date(Date.now() + 1000),
+        status: 'active',
+        // ...
+      }
+    });
+
+    // Schedule expiry
+    await boss.send('expire-orders', {
+      type: 'listing',
+      id: listing.id,
+    });
+
+    // Wait for expiry
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Verify expired
+    const updated = await prisma.listings.findUnique({
+      where: { id: listing.id }
+    });
+
+    expect(updated.status).toBe('expired');
+  });
+});
+```
+</CodeBlock>
+
+## Next Steps
+
+- Learn about [ENS Sync Worker](/workers/ens-sync)
+- Understand [Ownership Worker](/workers/ownership)
+- Review [Workers overview](/workers/overview)

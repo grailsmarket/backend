@@ -1,0 +1,140 @@
+---
+title: "Indexer Overview"
+description: "Blockchain event monitoring for ENS and OpenSea"
+order: 1
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Indexer Service Overview
+
+The Indexer service monitors the Ethereum blockchain for ENS-related events and synchronizes blockchain state with the database. It also integrates with OpenSea Stream API for real-time marketplace events.
+
+## What It Does
+
+- **Blockchain Monitoring**: Tracks ENS Registry and Registrar contract events
+- **ENS Events**: NameRegistered, Transfer, NameRenewed, NameChanged
+- **OpenSea Integration**: Real-time marketplace events via WebSocket
+- **Data Sync**: Updates database with latest blockchain state
+- **Name Resolution**: Resolves placeholder names (`token-*`) to actual ENS names
+
+## Events Tracked
+
+### ENS Registrar Contract
+**Contract**: `0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85`
+
+| Event | Database Updates |
+|-------|------------------|
+| **NameRegistered** | Creates new `ens_names` record with token_id, name, owner, expiry |
+| **Transfer** | Updates `owner_address`, publishes ownership job to workers |
+| **NameRenewed** | Updates `expiry_date` in ens_names table |
+
+### OpenSea Stream Events
+**Protocol**: Phoenix WebSocket
+
+| Event | Database Updates |
+|-------|------------------|
+| **item_listed** | Creates/updates `listings` table with Seaport order data |
+| **item_sold** | Creates `sales` record, updates ownership if needed |
+| **order_cancelled** | Updates listing status to 'cancelled' |
+| **item_received_bid** | Creates `offers` record |
+
+## Architecture
+
+```
+Ethereum Blockchain → RPC Provider → Indexer → PostgreSQL
+                                                    ↓
+OpenSea Stream API → WebSocket → Indexer → (listings, offers, sales)
+                                                    ↓
+The Graph API → Name Resolution → Indexer → (resolved names)
+```
+
+<Callout type="info" title="Name Resolution Strategy">
+Names come in as `token-{tokenId}` placeholders. The indexer resolves them to actual names via The Graph ENS subgraph, preserving actual names once resolved.
+</Callout>
+
+## Data Flow Example
+
+### New ENS Registration
+
+<CodeBlock title="Blockchain Event Flow">
+```
+1. NameRegistered event emitted on-chain
+2. Indexer detects event via RPC
+3. Creates ens_names record:
+   - token_id: 123456789
+   - name: newname.eth
+   - owner_address: 0x...
+   - expiry_date: 2025-01-01
+   - registration_date: 2024-01-01
+4. WAL Listener syncs to Elasticsearch
+5. Name becomes searchable in frontend
+```
+</CodeBlock>
+
+### OpenSea Listing
+
+<CodeBlock title="Marketplace Event Flow">
+```
+1. User lists on OpenSea
+2. item_listed event sent via WebSocket
+3. Indexer receives event:
+   - order_hash: 0xabc...
+   - price: 1.5 ETH
+   - protocol_data: {Seaport order}
+4. Stores in listings table
+5. WAL Listener syncs to Elasticsearch
+6. Listing appears in frontend search
+```
+</CodeBlock>
+
+## Environment Variables
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+
+# Blockchain
+ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+ENS_REGISTRY_ADDRESS=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+
+# OpenSea
+OPENSEA_API_KEY=your_opensea_api_key
+OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket
+
+# The Graph
+GRAPH_ENS_SUBGRAPH_URL=https://api.thegraph.com/subgraphs/name/ensdomains/ens
+
+# Indexing Config
+START_BLOCK=19000000
+BLOCK_BATCH_SIZE=1000
+```
+
+## Monitoring
+
+<CodeBlock title="Check indexing status">
+```bash
+# Check latest indexed block
+psql $DATABASE_URL -c "SELECT MAX(block_number) FROM indexed_blocks;"
+
+# Check recent ENS events
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM ens_names WHERE created_at > NOW() - INTERVAL '1 hour';"
+
+# Check OpenSea events
+psql $DATABASE_URL -c "SELECT event_type, COUNT(*) FROM opensea_events WHERE created_at > NOW() - INTERVAL '1 hour' GROUP BY event_type;"
+```
+</CodeBlock>
+
+<Callout type="warning" title="Common Issues">
+- **RPC Connection Failures**: Check API key and rate limits
+- **OpenSea WebSocket Disconnections**: Service auto-reconnects with exponential backoff
+- **Missing Events**: Verify contract addresses and run backfill for specific block range
+</Callout>
+
+## Next Steps
+
+- [ENS Events](/indexer/ens-events) - Detailed event processing
+- [OpenSea Stream](/indexer/opensea-stream) - WebSocket integration details
+- [Name Resolution](/indexer/name-resolution) - How placeholders are resolved

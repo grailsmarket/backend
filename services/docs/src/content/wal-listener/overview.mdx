@@ -1,0 +1,180 @@
+---
+title: "WAL Listener Overview"
+description: "Real-time database change monitoring and Elasticsearch synchronization"
+order: 1
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# WAL Listener Service Overview
+
+The WAL (Write-Ahead Log) Listener monitors PostgreSQL's logical replication stream for database changes and synchronizes data to Elasticsearch in real-time.
+
+## What It Does
+
+- **Real-Time Sync**: Monitors PostgreSQL changes via logical replication
+- **Elasticsearch Indexing**: Keeps search index up-to-date with database
+- **Zero Polling**: Push-based updates (sub-second latency)
+- **Selective Sync**: Only syncs relevant tables (ens_names, listings, offers, sales)
+
+## How It Improves Search
+
+### The Problem
+
+PostgreSQL is great for relational queries but slow for:
+- Full-text search across large datasets
+- Complex filtering (price + length + character type + expiration)
+- Aggregations (club membership counts, sales statistics)
+
+### The Solution
+
+- **PostgreSQL**: Source of truth for all data
+- **Elasticsearch**: Optimized search index with denormalized data
+- **WAL Listener**: Keeps them in perfect sync
+
+### Performance Benefits
+
+| Query Type | PostgreSQL | Elasticsearch | Improvement |
+|------------|------------|---------------|-------------|
+| Complex filter query | 2-5 seconds | 50-200ms | **10-40x faster** |
+| Full-text search | 500ms-2s | 10-50ms | **10-40x faster** |
+| Relevance scoring | Not available | Built-in | **New capability** |
+
+## Tables Monitored
+
+| Table | Changes Synced | What Gets Indexed |
+|-------|---------------|-------------------|
+| **ens_names** | INSERT, UPDATE | name, token_id, owner, expiry, clubs, character_count, has_numbers, has_emoji, is_expired, days_until_expiry |
+| **listings** | INSERT, UPDATE, DELETE | All listing data joined with ens_names |
+| **sales** | INSERT | Updates last_sale_price, last_sale_date, has_sales fields |
+| **offers** | INSERT, UPDATE | Offer count per name |
+
+## Data Flow
+
+```
+PostgreSQL Write → WAL → WAL Listener → Process Change → Update Elasticsearch
+                                              ↓
+                                        Batch Updates (500ms)
+                                              ↓
+                                        Bulk Index to ES
+```
+
+<Callout type="info" title="Change Processing Example">
+1. User creates listing in API
+2. API inserts into listings table
+3. PostgreSQL writes to WAL
+4. WAL Listener captures INSERT event
+5. Listener fetches related ens_names data
+6. Calculates derived fields (is_expired, days_until_expiry, etc.)
+7. Updates Elasticsearch document
+8. Change visible in search within 500ms
+</Callout>
+
+## PostgreSQL Setup
+
+### Enable Logical Replication
+
+<CodeBlock title="Edit postgresql.conf">
+```conf
+wal_level = logical
+max_replication_slots = 4
+max_wal_senders = 4
+```
+</CodeBlock>
+
+<CodeBlock title="Restart PostgreSQL">
+```bash
+sudo systemctl restart postgresql
+```
+</CodeBlock>
+
+### Create Publication
+
+<CodeBlock title="Create publication for tracked tables">
+```sql
+CREATE PUBLICATION grails_publication FOR TABLE
+  ens_names, listings, offers, sales;
+```
+</CodeBlock>
+
+### Create Replication Slot
+
+<CodeBlock title="Create logical replication slot">
+```sql
+SELECT pg_create_logical_replication_slot('grails_wal_slot', 'pgoutput');
+```
+</CodeBlock>
+
+## Environment Variables
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/grails
+REPLICATION_SLOT=grails_wal_slot
+PUBLICATION_NAME=grails_publication
+
+# Elasticsearch
+ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_INDEX=ens_names
+
+# WAL Config
+WAL_SENDER_TIMEOUT=60000  # 60 seconds
+HEARTBEAT_INTERVAL=30000   # 30 seconds
+```
+
+## Monitoring
+
+<CodeBlock title="Check replication status">
+```sql
+SELECT * FROM pg_replication_slots WHERE slot_name = 'grails_wal_slot';
+```
+</CodeBlock>
+
+<CodeBlock title="Check replication lag">
+```sql
+SELECT
+  pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS lag_bytes
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+```
+</CodeBlock>
+
+<CodeBlock title="Compare counts">
+```bash
+# PostgreSQL count
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM ens_names;"
+
+# Elasticsearch count
+curl http://localhost:9200/ens_names/_count
+```
+</CodeBlock>
+
+<Callout type="warning" title="Common Issues">
+- **Replication Slot Full**: Restart listener to consume backlog or recreate slot
+- **Elasticsearch Connection Failures**: Check Elasticsearch is running and accessible
+- **Sync Lag**: Verify WAL Listener is running and check logs for errors
+</Callout>
+
+## Resync Process
+
+If Elasticsearch gets out of sync (rare), run full resync:
+
+<CodeBlock title="Full reindex from PostgreSQL">
+```bash
+npm run resync
+
+# This will:
+# 1. Drop existing Elasticsearch index
+# 2. Create new index with mapping
+# 3. Read all ens_names from PostgreSQL
+# 4. Batch index to Elasticsearch (100 at a time)
+# 5. Verify counts match
+```
+</CodeBlock>
+
+## Next Steps
+
+- [PostgreSQL Setup](/wal-listener/setup) - Detailed replication configuration
+- [Elasticsearch Sync](/wal-listener/elasticsearch) - Index mapping and sync logic
+- [Monitoring](/wal-listener/monitoring) - Health checks and performance tuning

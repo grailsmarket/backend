@@ -84,11 +84,31 @@ export async function createSale(params: CreateSaleParams) {
   ];
 
   const result = await pool.query(query, values);
-  return result.rows[0];
+  const sale = result.rows[0];
+
+  // Return sale with clubs information for caller to handle queue publishing
+  if (sale) {
+    try {
+      // Get clubs for this ENS name to return with sale
+      const clubsResult = await pool.query(
+        'SELECT clubs FROM ens_names WHERE id = $1',
+        [ensNameId]
+      );
+      const clubs = clubsResult.rows[0]?.clubs || [];
+
+      // Attach clubs to sale object for caller
+      return { ...sale, clubs };
+    } catch (error) {
+      console.error('Failed to fetch clubs for sale:', error);
+      return sale;
+    }
+  }
+
+  return sale;
 }
 
 export async function getSalesByName(ensName: string, limit = 20, offset = 0) {
-  const query = `
+  const dataQuery = `
     SELECT s.*, en.name, en.token_id
     FROM sales s
     JOIN ens_names en ON s.ens_name_id = en.id
@@ -97,8 +117,22 @@ export async function getSalesByName(ensName: string, limit = 20, offset = 0) {
     LIMIT $2 OFFSET $3
   `;
 
-  const result = await pool.query(query, [ensName, limit, offset]);
-  return result.rows;
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM sales s
+    JOIN ens_names en ON s.ens_name_id = en.id
+    WHERE en.name = $1
+  `;
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(dataQuery, [ensName, limit, offset]),
+    pool.query(countQuery, [ensName])
+  ]);
+
+  return {
+    results: dataResult.rows,
+    total: parseInt(countResult.rows[0].count)
+  };
 }
 
 export async function getSalesByAddress(
@@ -116,7 +150,7 @@ export async function getSalesByAddress(
     whereClause = '(s.buyer_address = $1 OR s.seller_address = $1)';
   }
 
-  const query = `
+  const dataQuery = `
     SELECT s.*, en.name, en.token_id
     FROM sales s
     JOIN ens_names en ON s.ens_name_id = en.id
@@ -125,12 +159,26 @@ export async function getSalesByAddress(
     LIMIT $2 OFFSET $3
   `;
 
-  const result = await pool.query(query, [address.toLowerCase(), limit, offset]);
-  return result.rows;
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM sales s
+    JOIN ens_names en ON s.ens_name_id = en.id
+    WHERE ${whereClause}
+  `;
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(dataQuery, [address.toLowerCase(), limit, offset]),
+    pool.query(countQuery, [address.toLowerCase()])
+  ]);
+
+  return {
+    results: dataResult.rows,
+    total: parseInt(countResult.rows[0].count)
+  };
 }
 
 export async function getRecentSales(limit = 20, offset = 0) {
-  const query = `
+  const dataQuery = `
     SELECT s.*, en.name, en.token_id
     FROM sales s
     JOIN ens_names en ON s.ens_name_id = en.id
@@ -138,8 +186,20 @@ export async function getRecentSales(limit = 20, offset = 0) {
     LIMIT $1 OFFSET $2
   `;
 
-  const result = await pool.query(query, [limit, offset]);
-  return result.rows;
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM sales s
+  `;
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(dataQuery, [limit, offset]),
+    pool.query(countQuery)
+  ]);
+
+  return {
+    results: dataResult.rows,
+    total: parseInt(countResult.rows[0].count)
+  };
 }
 
 export async function getSalesAnalytics(ensNameId: number) {

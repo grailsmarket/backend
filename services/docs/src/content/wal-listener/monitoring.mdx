@@ -1,0 +1,591 @@
+---
+title: "Monitoring"
+description: "Health checks, metrics, and performance tuning"
+order: 4
+---
+
+import Callout from '../../components/Callout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Monitoring
+
+Monitor replication health, sync performance, and troubleshoot issues.
+
+## Replication Status
+
+### Check Replication Slot
+
+<CodeBlock title="View slot status">
+```sql
+SELECT
+  slot_name,
+  plugin,
+  database,
+  active,
+  active_pid,
+  restart_lsn,
+  confirmed_flush_lsn,
+  pg_size_pretty(
+    pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)
+  ) as replication_lag
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+```
+</CodeBlock>
+
+**Key Metrics:**
+| Field | Good | Warning | Critical |
+|-------|------|---------|----------|
+| `active` | `t` | `f` (not connected) | `f` for &gt;5 min |
+| `replication_lag` | &lt;10 MB | 10-100 MB | &gt;100 MB |
+
+<Callout type="error" title="Critical Alert">
+If `active = false` and `replication_lag &gt; 100 MB`:
+1. WAL listener is not running
+2. Disk space is running out
+3. Network connectivity issues
+
+**Action**: Restart WAL listener or advance slot to prevent disk full.
+</Callout>
+
+### Replication Lag
+
+<CodeBlock title="Measure lag in bytes and time">
+```sql
+SELECT
+  slot_name,
+  pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) as lag_bytes,
+  CASE
+    WHEN active THEN
+      EXTRACT(EPOCH FROM (NOW() - state_change))
+    ELSE NULL
+  END as seconds_since_last_activity
+FROM pg_replication_slots
+WHERE slot_name = 'grails_wal_slot';
+```
+</CodeBlock>
+
+**Lag Thresholds:**
+- **Normal**: 0-1 MB, &lt;5 seconds
+- **Warning**: 1-10 MB, 5-30 seconds
+- **Critical**: &gt;10 MB, &gt;30 seconds
+
+## Elasticsearch Sync Status
+
+### Compare Counts
+
+<CodeBlock title="Verify PostgreSQL and Elasticsearch match">
+```bash
+#!/bin/bash
+
+# PostgreSQL count
+PG_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM ens_names;")
+
+# Elasticsearch count
+ES_COUNT=$(curl -s "http://localhost:9200/ens_names/_count" | jq '.count')
+
+echo "PostgreSQL: $PG_COUNT"
+echo "Elasticsearch: $ES_COUNT"
+
+DIFF=$((PG_COUNT - ES_COUNT))
+
+if [ $DIFF -eq 0 ]; then
+  echo "✅ Counts match"
+else
+  echo "⚠️  Difference: $DIFF names"
+fi
+```
+</CodeBlock>
+
+### Check Index Health
+
+<CodeBlock title="Elasticsearch index status">
+```bash
+# Index overview
+curl "http://localhost:9200/_cat/indices/ens_names?v"
+
+# Detailed health
+curl "http://localhost:9200/ens_names/_stats?pretty"
+
+# Check for unassigned shards
+curl "http://localhost:9200/_cat/shards/ens_names?v" | grep UNASSIGNED
+```
+</CodeBlock>
+
+**Health Status:**
+- **green**: All shards assigned
+- **yellow**: Replicas not assigned (single-node cluster, acceptable)
+- **red**: Primary shards missing (data loss!)
+
+## Performance Metrics
+
+### Processing Rate
+
+<CodeBlock title="Track changes processed">
+```typescript
+class MetricsCollector {
+  private changesProcessed = 0;
+  private startTime = Date.now();
+
+  recordChange() {
+    this.changesProcessed++;
+  }
+
+  getStats() {
+    const elapsed = (Date.now() - this.startTime) / 1000;
+    const rate = this.changesProcessed / elapsed;
+
+    return {
+      total_changes: this.changesProcessed,
+      elapsed_seconds: elapsed,
+      changes_per_second: rate.toFixed(2),
+    };
+  }
+
+  logStats() {
+    const stats = this.getStats();
+    console.log('WAL Listener Stats:', stats);
+  }
+}
+
+const metrics = new MetricsCollector();
+
+// Log every 60 seconds
+setInterval(() => metrics.logStats(), 60000);
+```
+</CodeBlock>
+
+### Batch Efficiency
+
+<CodeBlock title="Monitor batch sizes">
+```typescript
+class BatchMetrics {
+  private batchSizes: number[] = [];
+
+  recordBatch(size: number) {
+    this.batchSizes.push(size);
+
+    // Keep last 100 batches
+    if (this.batchSizes.length > 100) {
+      this.batchSizes.shift();
+    }
+  }
+
+  getStats() {
+    const avg = this.batchSizes.reduce((a, b) => a + b, 0) / this.batchSizes.length;
+    const max = Math.max(...this.batchSizes);
+    const min = Math.min(...this.batchSizes);
+
+    return { avg, max, min, count: this.batchSizes.length };
+  }
+}
+
+const batchMetrics = new BatchMetrics();
+```
+</CodeBlock>
+
+**Optimal Batch Size:**
+- **Target**: 50-100 changes per batch
+- **Too small** (&lt;10): Overhead of network requests
+- **Too large** (&gt;500): Risk of timeout, memory issues
+
+### Query Performance
+
+<CodeBlock title="Track database query times">
+```sql
+-- View slow queries
+SELECT
+  query,
+  calls,
+  total_exec_time,
+  mean_exec_time,
+  max_exec_time
+FROM pg_stat_statements
+WHERE query LIKE '%ens_names%'
+ORDER BY mean_exec_time DESC
+LIMIT 10;
+
+-- Reset statistics
+SELECT pg_stat_statements_reset();
+```
+</CodeBlock>
+
+<Callout type="info" title="Enable pg_stat_statements">
+Add to `postgresql.conf`:
+```conf
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track = all
+```
+Then restart PostgreSQL and run:
+```sql
+CREATE EXTENSION pg_stat_statements;
+```
+</Callout>
+
+## Alerting
+
+### Critical Alerts
+
+<CodeBlock title="Alert conditions">
+```typescript
+interface AlertCondition {
+  name: string;
+  check: () => Promise<boolean>;
+  severity: 'warning' | 'critical';
+}
+
+const alerts: AlertCondition[] = [
+  {
+    name: 'Replication slot inactive',
+    check: async () => {
+      const result = await pool.query(`
+        SELECT active FROM pg_replication_slots
+        WHERE slot_name = 'grails_wal_slot'
+      `);
+      return !result.rows[0]?.active;
+    },
+    severity: 'critical',
+  },
+  {
+    name: 'High replication lag',
+    check: async () => {
+      const result = await pool.query(`
+        SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) as lag
+        FROM pg_replication_slots
+        WHERE slot_name = 'grails_wal_slot'
+      `);
+      return result.rows[0]?.lag > 100 * 1024 * 1024; // 100 MB
+    },
+    severity: 'critical',
+  },
+  {
+    name: 'Elasticsearch count mismatch',
+    check: async () => {
+      const pgCount = await prisma.ens_names.count();
+      const esCount = await esClient.count({ index: 'ens_names' });
+      const diff = Math.abs(pgCount - esCount.count);
+      return diff > 100; // More than 100 difference
+    },
+    severity: 'warning',
+  },
+];
+
+// Check alerts every 5 minutes
+setInterval(async () => {
+  for (const alert of alerts) {
+    const triggered = await alert.check();
+    if (triggered) {
+      console.error(`[${alert.severity.toUpperCase()}] ${alert.name}`);
+      await sendAlert(alert);
+    }
+  }
+}, 300000);
+```
+</CodeBlock>
+
+### Notification Channels
+
+<CodeBlock title="Send alerts via email/Slack">
+```typescript
+async function sendAlert(alert: AlertCondition) {
+  const message = `🚨 ${alert.name}\nSeverity: ${alert.severity}`;
+
+  // Email
+  if (process.env.ALERT_EMAIL) {
+    await sendEmail({
+      to: process.env.ALERT_EMAIL,
+      subject: `WAL Listener Alert: ${alert.name}`,
+      body: message,
+    });
+  }
+
+  // Slack
+  if (process.env.SLACK_WEBHOOK_URL) {
+    await fetch(process.env.SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message }),
+    });
+  }
+
+  // PagerDuty (for critical alerts)
+  if (alert.severity === 'critical' && process.env.PAGERDUTY_KEY) {
+    await triggerPagerDuty(alert);
+  }
+}
+```
+</CodeBlock>
+
+## Logging
+
+### Structured Logging
+
+<CodeBlock title="Log with context">
+```typescript
+import winston from 'winston';
+
+const logger = winston.createLogger({
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'wal-listener.log' }),
+    new winston.transports.Console({
+      format: winston.format.simple(),
+    }),
+  ],
+});
+
+// Log with context
+logger.info('Processing WAL change', {
+  table: 'ens_names',
+  operation: 'UPDATE',
+  token_id: '12345',
+  changes: ['price', 'status'],
+});
+
+logger.error('Elasticsearch sync failed', {
+  token_id: '12345',
+  error: error.message,
+  retry_count: 3,
+});
+```
+</CodeBlock>
+
+### Log Levels
+
+| Level | Use Case | Example |
+|-------|----------|---------|
+| `debug` | Detailed change info | "Processing UPDATE for token 12345" |
+| `info` | Normal operations | "Synced 100 changes to Elasticsearch" |
+| `warn` | Non-critical issues | "Elasticsearch slow response (2.5s)" |
+| `error` | Recoverable errors | "Failed to sync, will retry" |
+| `fatal` | Unrecoverable errors | "Cannot connect to PostgreSQL" |
+
+### Log Rotation
+
+<CodeBlock title="Rotate logs daily">
+```typescript
+import { createLogger, transports } from 'winston';
+import 'winston-daily-rotate-file';
+
+const logger = createLogger({
+  transports: [
+    new transports.DailyRotateFile({
+      filename: 'wal-listener-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxFiles: '14d', // Keep 14 days
+      maxSize: '100m',  // Max 100 MB per file
+    }),
+  ],
+});
+```
+</CodeBlock>
+
+## Troubleshooting
+
+### High CPU Usage
+
+**Symptoms:**
+- WAL listener process using &gt;50% CPU
+- System slow or unresponsive
+
+**Diagnosis:**
+
+<CodeBlock title="Check processing rate">
+```sql
+-- Check how many changes are being processed
+SELECT
+  schemaname,
+  relname,
+  n_tup_ins + n_tup_upd + n_tup_del as changes
+FROM pg_stat_user_tables
+WHERE schemaname = 'public'
+ORDER BY changes DESC;
+```
+</CodeBlock>
+
+**Solutions:**
+1. Increase batch size to reduce overhead
+2. Add delay between batches: `await sleep(100)`
+3. Optimize Elasticsearch bulk requests
+4. Scale horizontally (multiple instances with different tables)
+
+### High Memory Usage
+
+**Symptoms:**
+- WAL listener OOM (Out of Memory) killed
+- Memory usage growing over time
+
+**Diagnosis:**
+
+<CodeBlock title="Check batch queue size">
+```typescript
+console.log('Batch queue size:', batchQueue.length);
+console.log('Memory usage:', process.memoryUsage());
+```
+</CodeBlock>
+
+**Solutions:**
+1. Reduce batch size
+2. Flush batches more frequently
+3. Implement backpressure (pause reading if queue full)
+4. Increase Node.js heap size: `node --max-old-space-size=4096`
+
+### Sync Drift
+
+**Symptoms:**
+- Elasticsearch count != PostgreSQL count
+- Search results missing recent changes
+
+**Diagnosis:**
+
+<CodeBlock title="Find missing documents">
+```bash
+# Get all token IDs from PostgreSQL
+psql $DATABASE_URL -t -c "SELECT token_id FROM ens_names" > pg_tokens.txt
+
+# Get all IDs from Elasticsearch
+curl -s "http://localhost:9200/ens_names/_search?size=10000" | \
+  jq -r '.hits.hits[]._id' > es_tokens.txt
+
+# Find differences
+diff pg_tokens.txt es_tokens.txt
+```
+</CodeBlock>
+
+**Solutions:**
+1. Run full resync: `npm run resync`
+2. Check WAL listener logs for errors
+3. Verify Elasticsearch is accessible
+4. Check for failed updates in logs
+
+## Dashboards
+
+### Grafana Dashboard
+
+<CodeBlock title="Prometheus metrics">
+```typescript
+import client from 'prom-client';
+
+// Register default metrics
+client.collectDefaultMetrics();
+
+// Custom metrics
+const walChangesProcessed = new client.Counter({
+  name: 'wal_changes_processed_total',
+  help: 'Total WAL changes processed',
+  labelNames: ['table', 'operation'],
+});
+
+const walProcessingDuration = new client.Histogram({
+  name: 'wal_processing_duration_seconds',
+  help: 'Time to process WAL change',
+  buckets: [0.001, 0.01, 0.1, 1, 5],
+});
+
+const esIndexDuration = new client.Histogram({
+  name: 'elasticsearch_index_duration_seconds',
+  help: 'Time to index to Elasticsearch',
+  buckets: [0.01, 0.1, 0.5, 1, 5],
+});
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
+```
+</CodeBlock>
+
+### Sample Queries
+
+<CodeBlock title="Grafana panel queries">
+```promql
+# Changes per second
+rate(wal_changes_processed_total[1m])
+
+# Processing latency (95th percentile)
+histogram_quantile(0.95, rate(wal_processing_duration_seconds_bucket[5m]))
+
+# Elasticsearch indexing rate
+rate(elasticsearch_index_duration_seconds_count[1m])
+
+# Replication lag
+pg_replication_lag_bytes{slot="grails_wal_slot"}
+```
+</CodeBlock>
+
+## Health Check Endpoint
+
+<CodeBlock title="HTTP health check">
+```typescript
+app.get('/health', async (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    checks: {},
+  };
+
+  // Check replication slot
+  try {
+    const result = await pool.query(`
+      SELECT active FROM pg_replication_slots
+      WHERE slot_name = 'grails_wal_slot'
+    `);
+    health.checks.replication = result.rows[0]?.active ? 'connected' : 'disconnected';
+  } catch (error) {
+    health.checks.replication = 'error';
+    health.status = 'degraded';
+  }
+
+  // Check Elasticsearch
+  try {
+    await esClient.ping();
+    health.checks.elasticsearch = 'connected';
+  } catch (error) {
+    health.checks.elasticsearch = 'disconnected';
+    health.status = 'degraded';
+  }
+
+  // Return appropriate status code
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+```
+</CodeBlock>
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "checks": {
+    "replication": "connected",
+    "elasticsearch": "connected"
+  }
+}
+```
+
+## Production Checklist
+
+<Callout type="success" title="Pre-Deployment Checklist">
+- [ ] Logical replication enabled (`wal_level = logical`)
+- [ ] Publication created with all necessary tables
+- [ ] Replication slot created and active
+- [ ] Elasticsearch index created with correct mapping
+- [ ] Initial resync completed successfully
+- [ ] Counts match (PostgreSQL == Elasticsearch)
+- [ ] Health check endpoint responding
+- [ ] Alerts configured for critical conditions
+- [ ] Logs aggregated and rotated
+- [ ] Monitoring dashboard set up
+- [ ] Backup strategy includes replication slot recreation
+</Callout>
+
+## Next Steps
+
+- Review [PostgreSQL setup](/wal-listener/setup)
+- Understand [Elasticsearch sync](/wal-listener/elasticsearch)
+- Explore [WAL Listener overview](/wal-listener/overview)

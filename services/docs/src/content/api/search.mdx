@@ -1,0 +1,442 @@
+---
+title: "Search & Filters"
+description: "Elasticsearch-powered search with advanced filtering capabilities"
+order: 3
+---
+
+import Callout from '../../components/Callout.astro';
+import APIEndpoint from '../../components/APIEndpoint.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+
+# Search & Filters
+
+The API provides powerful Elasticsearch-powered search with comprehensive filtering across ENS names, listings, and watchlists.
+
+## Search Endpoint
+
+<APIEndpoint method="GET" path="/api/v1/names/search" description="Search ENS names with advanced filters">
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| q | string | "*" | Search query (supports wildcards, fuzzy matching) |
+| page | number | 1 | Page number for pagination |
+| limit | number | 20 | Results per page (max: 100) |
+
+</APIEndpoint>
+
+## Filter Parameters
+
+All filters use **bracket notation** in query parameters:
+
+<CodeBlock title="Bracket notation examples">
+```bash
+# Single value filters
+filters[minPrice]=1000000000000000000
+filters[maxLength]=10
+filters[isExpired]=false
+
+# Array filters (multiple values)
+filters[clubs][]=10k%20Club&filters[clubs][]=999%20Club
+```
+</CodeBlock>
+
+### Price Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[minPrice]` | string (wei) | `1000000000000000000` | Minimum price (1 ETH in wei) |
+| `filters[maxPrice]` | string (wei) | `10000000000000000000` | Maximum price (10 ETH in wei) |
+
+<Callout type="info" title="Price Format">
+Prices are in **wei** (smallest ETH unit). 1 ETH = 1,000,000,000,000,000,000 wei.
+To convert: `1.5 ETH = "1500000000000000000"`
+</Callout>
+
+### Length Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[minLength]` | number | `3` | Minimum character count |
+| `filters[maxLength]` | number | `5` | Maximum character count |
+
+<CodeBlock title="Find short premium names">
+```bash
+GET /api/v1/names/search?q=*&filters[minLength]=3&filters[maxLength]=4
+```
+</CodeBlock>
+
+### Character Type Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[hasNumbers]` | boolean | `true` | Filter names containing numbers |
+| `filters[hasEmoji]` | boolean | `true` | Filter names containing emoji |
+
+<CodeBlock title="Find emoji-only names">
+```bash
+GET /api/v1/names/search?q=*&filters[hasEmoji]=true&filters[hasNumbers]=false
+```
+</CodeBlock>
+
+### Club Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[clubs][]` | string[] | `10k Club` | Filter by club membership (can pass multiple) |
+
+<Callout type="info" title="Available Clubs">
+- **10k Club**: Numeric names under 10,000
+- **999 Club**: 3-digit numeric names
+- **100k Club**: Numeric names under 100,000
+- **Palindrome Club**: Names that read the same forwards/backwards
+- **Single Emoji Club**: Names with a single emoji character
+</Callout>
+
+<CodeBlock title="Find names in multiple clubs">
+```bash
+GET /api/v1/names/search?q=&filters[clubs][]=10k%20Club&filters[clubs][]=Palindrome%20Club
+```
+</CodeBlock>
+
+### Expiration Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[isExpired]` | boolean | `false` | Filter by expiration status |
+| `filters[isGracePeriod]` | boolean | `true` | Names in 90-day grace period |
+| `filters[isPremiumPeriod]` | boolean | `true` | Names in Dutch auction period |
+| `filters[expiringWithinDays]` | number | `30` | Expiring within N days |
+
+<Callout type="warning" title="ENS Expiration Periods">
+- **Active**: Not expired
+- **Grace Period**: 0-90 days after expiry (can still renew at normal price)
+- **Premium Period**: 90-2555 days after expiry (Dutch auction, price decreases over time)
+- **Available**: After premium period ends
+</Callout>
+
+<CodeBlock title="Find names expiring soon">
+```bash
+# Active names expiring within 30 days
+GET /api/v1/names/search?q=&filters[isExpired]=false&filters[expiringWithinDays]=30
+
+# Names in grace period
+GET /api/v1/names/search?q=&filters[isGracePeriod]=true
+```
+</CodeBlock>
+
+### Sales History Filters
+
+| Filter | Type | Example | Description |
+|--------|------|---------|-------------|
+| `filters[hasSales]` | boolean | `true` | Filter names with sales history |
+| `filters[lastSoldAfter]` | string (ISO) | `2024-01-01T00:00:00.000Z` | Last sold after date |
+| `filters[lastSoldBefore]` | string (ISO) | `2024-12-31T23:59:59.000Z` | Last sold before date |
+| `filters[minDaysSinceLastSale]` | number | `30` | Minimum days since last sale |
+| `filters[maxDaysSinceLastSale]` | number | `365` | Maximum days since last sale |
+
+<CodeBlock title="Find recently sold names">
+```bash
+# Names sold in last 30 days
+GET /api/v1/names/search?q=&filters[hasSales]=true&filters[maxDaysSinceLastSale]=30
+
+# Names sold after specific date
+GET /api/v1/names/search?q=&filters[lastSoldAfter]=2024-01-01T00:00:00.000Z
+```
+</CodeBlock>
+
+## Search Strategies
+
+### Exact Match
+
+<CodeBlock title="Find exact ENS name">
+```bash
+GET /api/v1/names/search?q=vitalik.eth
+```
+</CodeBlock>
+
+### Partial Match
+
+Uses n-gram analysis for substring matching:
+
+<CodeBlock title="Find names containing 'cool'">
+```bash
+GET /api/v1/names/search?q=cool
+# Returns: coolname.eth, mycoolname.eth, coolest.eth, etc.
+```
+</CodeBlock>
+
+### Fuzzy Search
+
+Automatically handles typos and similar names:
+
+<CodeBlock title="Find similar names (typo-tolerant)">
+```bash
+GET /api/v1/names/search?q=vitalick
+# Returns: vitalik.eth (tolerates one character difference)
+```
+</CodeBlock>
+
+### Wildcard Search
+
+<CodeBlock title="Get all names (use with filters)">
+```bash
+GET /api/v1/names/search?q=*&filters[maxLength]=3
+# Returns all 3-character names
+```
+</CodeBlock>
+
+## Complex Filter Examples
+
+### Premium Short Names
+
+<CodeBlock title="Find short, alphabetic, non-expired names under 5 ETH">
+```bash
+GET /api/v1/names/search?q=*
+  &filters[minLength]=3
+  &filters[maxLength]=4
+  &filters[hasNumbers]=false
+  &filters[hasEmoji]=false
+  &filters[isExpired]=false
+  &filters[maxPrice]=5000000000000000000
+```
+</CodeBlock>
+
+### Investment Opportunities
+
+<CodeBlock title="Find names in grace period with sales history">
+```bash
+GET /api/v1/names/search?q=*
+  &filters[isGracePeriod]=true
+  &filters[hasSales]=true
+  &filters[minPrice]=100000000000000000
+  &filters[maxPrice]=1000000000000000000
+```
+</CodeBlock>
+
+### Club-Specific Search
+
+<CodeBlock title="Find numeric names in 10k Club expiring soon">
+```bash
+GET /api/v1/names/search?q=*
+  &filters[clubs][]=10k%20Club
+  &filters[expiringWithinDays]=30
+  &filters[isExpired]=false
+```
+</CodeBlock>
+
+### Recently Active Names
+
+<CodeBlock title="Find names with recent sales activity">
+```bash
+GET /api/v1/names/search?q=cool
+  &filters[hasSales]=true
+  &filters[maxDaysSinceLastSale]=90
+  &filters[minPrice]=500000000000000000
+```
+</CodeBlock>
+
+## Response Format
+
+<CodeBlock title="Search response structure">
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "name": "coolname.eth",
+        "token_id": "12345",
+        "owner": "0x123...",
+        "price": "1000000000000000000",
+        "character_count": 8,
+        "has_numbers": false,
+        "has_emoji": false,
+        "is_expired": false,
+        "days_until_expiry": 365,
+        "clubs": ["10k Club"],
+        "has_sales": true,
+        "last_sale_price": "800000000000000000",
+        "last_sale_date": "2024-01-01T00:00:00.000Z",
+        "days_since_last_sale": 45,
+        "status": "listed",
+        "tags": ["alphabetic", "8-letter"],
+        "score": 9.5,
+        "highlight": {
+          "name": ["<em>cool</em>name.eth"]
+        }
+      }
+    ],
+    "total": 25,
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 25,
+      "hasNext": true,
+      "hasPrev": false
+    }
+  }
+}
+```
+</CodeBlock>
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | ENS name (e.g., "vitalik.eth") |
+| `token_id` | string | ENS token ID |
+| `owner` | string | Current owner address |
+| `price` | string | Listing price in wei (null if not listed) |
+| `character_count` | number | Number of characters (excluding .eth) |
+| `has_numbers` | boolean | Contains numeric characters |
+| `has_emoji` | boolean | Contains emoji characters |
+| `is_expired` | boolean | Name has expired |
+| `days_until_expiry` | number | Days until expiry (negative if expired) |
+| `clubs` | string[] | Club memberships |
+| `has_sales` | boolean | Has sales history |
+| `last_sale_price` | string | Price of last sale in wei |
+| `last_sale_date` | string | Date of last sale (ISO format) |
+| `days_since_last_sale` | number | Days since last sale |
+| `score` | number | Relevance score (0-10) |
+| `highlight` | object | Highlighted search matches |
+
+## Watchlist Search
+
+<APIEndpoint method="GET" path="/api/v1/watchlist/search" auth={true} description="Search user's watchlist with same filters">
+
+**All the same filters as `/names/search` apply**, plus results include watchlist-specific data:
+
+**Response includes:**
+```json
+{
+  "watchlist": {
+    "watchlistId": 1,
+    "notifyOnSale": true,
+    "notifyOnOffer": true,
+    "notifyOnListing": true,
+    "notifyOnPriceChange": false,
+    "addedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+</APIEndpoint>
+
+<Callout type="info" title="Watchlist Filtering">
+Only returns names in the authenticated user's watchlist. All other filters work the same way.
+</Callout>
+
+## Listings Search
+
+<APIEndpoint method="GET" path="/api/v1/listings/search" description="Search listings with ENS data">
+
+**Additional Filter:**
+| Filter | Type | Default | Description |
+|--------|------|---------|-------------|
+| `filters[showAll]` | boolean | `false` | Show all names or active listings only |
+
+**Response Format:**
+- Returns ENS names with nested `listings` arrays
+- Each name can have zero or more active listings
+- Includes listing details (price, seller, order data, expiration)
+
+</APIEndpoint>
+
+<CodeBlock title="Find names with active listings">
+```bash
+GET /api/v1/listings/search?q=cool&filters[showAll]=false
+# Only returns names with at least one active listing
+```
+</CodeBlock>
+
+## Performance Considerations
+
+### Indexing Speed
+- **Initial index**: Built from PostgreSQL data
+- **Real-time updates**: WAL Listener syncs changes in &lt;500ms
+- **Derived fields**: Calculated by WAL Listener on update
+
+### Query Performance
+| Query Type | PostgreSQL | Elasticsearch | Speedup |
+|------------|------------|---------------|---------|
+| Simple filter | 200-500ms | 20-50ms | **10x faster** |
+| Complex filter | 2-5 seconds | 50-200ms | **10-40x faster** |
+| Full-text search | 500ms-2s | 10-50ms | **10-40x faster** |
+
+<Callout type="success" title="Response Builder Pattern">
+The API uses a two-step pattern for optimal performance:
+1. **Elasticsearch** returns matching ENS names (fast search/filter)
+2. **PostgreSQL** enriches with relations (listings, offers, sales)
+
+This combines Elasticsearch's speed with PostgreSQL's relational data.
+</Callout>
+
+## Tags
+
+Names are automatically tagged for easy filtering:
+
+| Tag | Criteria |
+|-----|----------|
+| `short` | ≤3 characters |
+| `4-letter` | Exactly 4 characters |
+| `5-letter` | Exactly 5 characters |
+| `6-letter` | Exactly 6 characters |
+| `numeric` | Only numbers (0-9) |
+| `alphabetic` | Only letters (a-z) |
+| `alphanumeric` | Letters and numbers |
+| `emoji` | Contains emoji |
+
+## Best Practices
+
+### Use Specific Filters
+
+<CodeBlock title="Good: Specific filters">
+```bash
+GET /api/v1/names/search?q=*
+  &filters[minLength]=3
+  &filters[maxLength]=5
+  &filters[hasNumbers]=false
+  &filters[maxPrice]=1000000000000000000
+```
+</CodeBlock>
+
+<CodeBlock title="Avoid: Overly broad queries">
+```bash
+# Returns too many results, slow to process
+GET /api/v1/names/search?q=*
+```
+</CodeBlock>
+
+### Paginate Large Result Sets
+
+Always use `limit` and `page` for large searches:
+
+<CodeBlock title="Paginated requests">
+```bash
+GET /api/v1/names/search?q=*&filters[maxLength]=5&page=1&limit=20
+```
+</CodeBlock>
+
+### Combine Filters Strategically
+
+Start broad, then narrow:
+
+<CodeBlock title="Progressive refinement">
+```bash
+# Step 1: Get count of short names
+GET /api/v1/names/search?q=*&filters[maxLength]=4&limit=0
+
+# Step 2: Add price filter
+GET /api/v1/names/search?q=*&filters[maxLength]=4&filters[maxPrice]=1000000000000000000
+
+# Step 3: Add club filter
+GET /api/v1/names/search?q=*&filters[maxLength]=4&filters[maxPrice]=1000000000000000000&filters[clubs][]=10k%20Club
+```
+</CodeBlock>
+
+## Next Steps
+
+- View [complete endpoint reference](/api/endpoints)
+- Understand [OpenSea integration](/api/opensea)
+- Learn about [authentication](/api/authentication)

@@ -31,13 +31,13 @@ export async function POST(request: NextRequest) {
     // First, get or create the ENS name in the database
     let ensNameId: number;
 
-    // Try to find existing ENS name
-    const searchResponse = await fetch(`${API_BASE_URL}/listings/search?q=${ens_name}&showAll=true&limit=1`);
+    // Try to find existing ENS name using the new search endpoint
+    const searchResponse = await fetch(`${API_BASE_URL}/search?q=${ens_name}&limit=1`);
     if (searchResponse.ok) {
       const searchData = await searchResponse.json();
-      if (searchData.success && searchData.data.listings.length > 0) {
-        // Name exists, get the ID from the listings search
-        const existingName = searchData.data.listings[0];
+      if (searchData.success && searchData.data.results.length > 0) {
+        // Name exists, get the ID from the search results
+        const existingName = searchData.data.results[0];
         // We need to query the ens_names table to get the ID
         // For now, we'll use The Graph to get name details
       }

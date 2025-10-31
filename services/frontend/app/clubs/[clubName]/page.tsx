@@ -11,6 +11,12 @@ interface Club {
   name: string;
   description: string;
   member_count: number;
+  floor_price_wei: string | null;
+  floor_price_currency: string | null;
+  total_sales_count: number;
+  total_sales_volume_wei: string;
+  last_floor_update: string | null;
+  last_sales_update: string | null;
   created_at: string;
 }
 
@@ -110,30 +116,87 @@ export default function ClubDetailPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 mb-4 text-sm text-gray-400">
+      {/* Breadcrumb */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
           <Link href="/clubs" className="hover:text-purple-400 transition">
             Clubs
           </Link>
           <span>/</span>
           <span className="text-white">{clubName}</span>
         </div>
+      </div>
 
-        {data?.club && (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <h1 className="text-3xl font-bold text-white">{data.club.name}</h1>
-              <span className="bg-purple-900/30 text-purple-400 px-4 py-2 rounded-full text-sm font-semibold border border-purple-700">
-                {data.club.member_count} {data.club.member_count === 1 ? 'member' : 'members'}
-              </span>
-            </div>
+      {/* Header with Title and Description */}
+      {data?.club && (
+        <>
+          <div className="mb-6">
+            <h1 className="text-4xl font-bold text-white mb-2">{data.club.name}</h1>
             {data.club.description && (
               <p className="text-gray-400 text-lg">{data.club.description}</p>
             )}
-          </>
-        )}
-      </div>
+          </div>
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            {/* Total Members */}
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <p className="text-gray-400 text-sm">Members</p>
+              </div>
+              <p className="text-white text-2xl font-bold">{data.club.member_count}</p>
+            </div>
+
+            {/* Floor Price */}
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                </svg>
+                <p className="text-gray-400 text-sm">Floor Price</p>
+              </div>
+              {data.club.floor_price_wei ? (
+                <p className="text-white text-2xl font-bold">
+                  {(parseFloat(data.club.floor_price_wei) / 1e18).toFixed(3)} ETH
+                </p>
+              ) : (
+                <p className="text-gray-600 text-2xl font-bold">—</p>
+              )}
+            </div>
+
+            {/* Total Sales */}
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <p className="text-gray-400 text-sm">Total Sales</p>
+              </div>
+              <p className="text-white text-2xl font-bold">{data.club.total_sales_count}</p>
+            </div>
+
+            {/* Total Volume */}
+            <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
+                <p className="text-gray-400 text-sm">Total Volume</p>
+              </div>
+              {data.club.total_sales_volume_wei && parseFloat(data.club.total_sales_volume_wei) > 0 ? (
+                <p className="text-white text-2xl font-bold">
+                  {(parseFloat(data.club.total_sales_volume_wei) / 1e18).toFixed(1)} ETH
+                </p>
+              ) : (
+                <p className="text-gray-600 text-2xl font-bold">—</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* View Toggle and Pagination */}
       {data && data.names.length > 0 && (

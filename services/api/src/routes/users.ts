@@ -1,7 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { randomBytes } from 'crypto';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { getQueueClient } from '../queue';
 
 const UpdateProfileSchema = z.object({
   email: z.string().email().optional(),
@@ -34,6 +36,28 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const updates = UpdateProfileSchema.parse(request.body);
       const userId = parseInt(request.user.sub);
 
+      // Get current user data to check if email changed
+      const currentUserResult = await pool.query(
+        'SELECT email FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (currentUserResult.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const currentEmail = currentUserResult.rows[0].email;
+      const emailChanged = updates.email !== undefined && updates.email !== currentEmail;
+
       // Build dynamic UPDATE query
       const updateFields: string[] = [];
       const values: any[] = [];
@@ -45,7 +69,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
 
         // Reset email verification if email changed
-        updateFields.push(`email_verified = FALSE`);
+        if (emailChanged) {
+          updateFields.push(`email_verified = FALSE`);
+        }
       }
 
       if (updates.telegram !== undefined) {
@@ -99,6 +125,34 @@ export async function usersRoutes(fastify: FastifyInstance) {
       }
 
       const user = result.rows[0];
+
+      // If email changed, generate verification token and send email
+      if (emailChanged && updates.email) {
+        try {
+          // Generate cryptographically secure token
+          const token = randomBytes(32).toString('base64url');
+
+          // Insert verification token
+          await pool.query(
+            `INSERT INTO email_verification_tokens (user_id, token, email, expires_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')`,
+            [userId, token, updates.email]
+          );
+
+          // Send verification email via queue
+          const boss = await getQueueClient();
+          await boss.send('send-verification-email', {
+            userId,
+            email: updates.email,
+            token,
+          });
+
+          fastify.log.info({ userId, email: updates.email }, 'Verification email queued');
+        } catch (emailError) {
+          fastify.log.error({ error: emailError, userId }, 'Failed to send verification email');
+          // Don't fail the request if email sending fails
+        }
+      }
 
       const response: APIResponse = {
         success: true,

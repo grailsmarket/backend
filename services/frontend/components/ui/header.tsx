@@ -56,12 +56,6 @@ export function Header() {
                 <Link href="/clubs" className="text-gray-300 hover:text-white transition">
                   Clubs
                 </Link>
-                <Link href="/portfolio" className="text-gray-300 hover:text-white transition">
-                  My Portfolio
-                </Link>
-                <Link href="/offers" className="text-gray-300 hover:text-white transition">
-                  My Offers
-                </Link>
               </nav>
             </div>
             <div className="flex items-center gap-3">
@@ -128,11 +122,18 @@ export function Header() {
                   {showUserMenu && (
                     <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-50">
                       <Link
-                        href="/settings"
+                        href="/portfolio"
                         onClick={() => setShowUserMenu(false)}
                         className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
                       >
-                        Settings
+                        My Portfolio
+                      </Link>
+                      <Link
+                        href="/offers"
+                        onClick={() => setShowUserMenu(false)}
+                        className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                      >
+                        My Offers
                       </Link>
                       <Link
                         href="/watchlist"
@@ -140,6 +141,13 @@ export function Header() {
                         className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
                       >
                         Watchlist
+                      </Link>
+                      <Link
+                        href="/settings"
+                        onClick={() => setShowUserMenu(false)}
+                        className="block px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                      >
+                        Settings
                       </Link>
                       <hr className="border-zinc-800" />
                       <button
