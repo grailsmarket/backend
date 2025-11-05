@@ -16,6 +16,11 @@ import { clubsRoutes } from './clubs';
 import { votesRoutes } from './votes';
 import { searchRoutes } from './search';
 import { verificationRoutes } from './verification';
+import { trendingRoutes } from './trending';
+import { recommendationsRoutes } from './recommendations';
+import { analyticsRoutes } from './analytics';
+import { userInsightsRoutes } from './user-insights';
+import { cartRoutes } from './cart';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -26,6 +31,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   fastify.register(votesRoutes, { prefix: '/api/v1/votes' });
   fastify.register(searchRoutes, { prefix: '/api/v1/search' });
+  fastify.register(cartRoutes, { prefix: '/api/v1/cart' });
   fastify.register(namesRoutes, { prefix: '/api/v1/names' });
   fastify.register(ordersRoutes, { prefix: '/api/v1/orders' });
   fastify.register(listingsRoutes, { prefix: '/api/v1/listings' });
@@ -34,5 +40,9 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
   fastify.register(clubsRoutes, { prefix: '/api/v1/clubs' });
+  fastify.register(trendingRoutes, { prefix: '/api/v1/trending' });
+  fastify.register(recommendationsRoutes, { prefix: '/api/v1/recommendations' });
+  fastify.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
+  fastify.register(userInsightsRoutes, { prefix: '/api/v1/user' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
 
 interface WatchlistItem {
@@ -41,7 +41,12 @@ interface WatchlistResponse {
   };
 }
 
-export function useWatchlist() {
+interface UseWatchlistOptions {
+  autoFetch?: boolean; // Whether to automatically fetch watchlist on mount
+}
+
+export function useWatchlist(options: UseWatchlistOptions = {}) {
+  const { autoFetch = true } = options;
   const { token, isAuthenticated } = useAuth();
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -187,14 +192,59 @@ export function useWatchlist() {
     );
   };
 
-  // Fetch watchlist when authenticated
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchWatchlist();
-    } else {
-      setWatchlist([]);
+  const checkIsInWatchlist = useCallback(async (
+    ensName: string
+  ): Promise<{ isWatching: boolean; watchlistEntry: WatchlistItem | null }> => {
+    if (!token || !isAuthenticated) {
+      return { isWatching: false, watchlistEntry: null };
     }
-  }, [isAuthenticated, token]);
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/watchlist/check/${encodeURIComponent(ensName)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // If name not found, treat as not watched
+        if (response.status === 404) {
+          return { isWatching: false, watchlistEntry: null };
+        }
+        throw new Error('Failed to check watchlist status');
+      }
+
+      const { data } = await response.json();
+      return {
+        isWatching: data.isWatching,
+        watchlistEntry: data.watchlistEntry,
+      };
+    } catch (err: any) {
+      console.error('Check watchlist error:', err);
+      // On error, fall back to local check
+      const item = watchlist.find(
+        (w) => w.ensName.toLowerCase() === ensName.toLowerCase()
+      );
+      return {
+        isWatching: !!item,
+        watchlistEntry: item || null,
+      };
+    }
+  }, [token, isAuthenticated, watchlist]);
+
+  // Fetch watchlist when authenticated (only if autoFetch is enabled)
+  useEffect(() => {
+    if (autoFetch) {
+      if (isAuthenticated) {
+        fetchWatchlist();
+      } else {
+        setWatchlist([]);
+      }
+    }
+  }, [isAuthenticated, token, autoFetch]);
 
   return {
     watchlist,
@@ -206,5 +256,6 @@ export function useWatchlist() {
     updateWatchlistItem,
     isInWatchlist,
     getWatchlistItem,
+    checkIsInWatchlist,
   };
 }

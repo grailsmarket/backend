@@ -239,25 +239,16 @@ export class WALListener {
     switch (change.operation) {
       case 'INSERT':
         await this.esSync.indexENSName(change.data);
-
-        // Check if this is a mint (first registration)
-        if (change.data?.owner_address && change.data.owner_address.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) {
-          try {
-            await this.activityHistory.handleMint({
-              ens_name_id: change.data.id,
-              recipient_address: change.data.owner_address,
-              token_id: change.data.token_id,
-              transaction_hash: change.data.transaction_hash,
-              block_number: change.data.block_number,
-            });
-          } catch (error) {
-            logger.error('Failed to create mint activity record:', error);
-          }
-        }
+        // Note: Mint events are now created by the ENS indexer with proper blockchain timestamps
+        // when it processes NameRegistered events. We don't create them here to avoid duplicate
+        // mint events or mint events with incorrect (current) timestamps.
         break;
 
       case 'UPDATE':
-        await this.esSync.indexENSName(change.data);
+        // Use updateENSNameListing instead of indexENSName to ensure we fetch
+        // the listing data via JOIN, preventing the status field from being
+        // incorrectly set to 'unlisted' when only view_count changes
+        await this.esSync.updateENSNameListing(change.data.id);
 
         // Check for ownership transfer
         if (change.oldData && change.data) {
@@ -267,18 +258,11 @@ export class WALListener {
           // Only process if owner actually changed
           if (oldOwner !== newOwner) {
             try {
-              // Check for mint (from zero address)
-              if (oldOwner === ZERO_ADDRESS.toLowerCase() && newOwner !== ZERO_ADDRESS.toLowerCase()) {
-                await this.activityHistory.handleMint({
-                  ens_name_id: change.data.id,
-                  recipient_address: change.data.owner_address,
-                  token_id: change.data.token_id,
-                  transaction_hash: change.data.transaction_hash,
-                  block_number: change.data.block_number,
-                });
-              }
+              // Note: Mint events are now created by the ENS indexer with proper blockchain timestamps.
+              // We only handle burns and transfers here.
+
               // Check for burn (to zero address)
-              else if (newOwner === ZERO_ADDRESS.toLowerCase() && oldOwner !== ZERO_ADDRESS.toLowerCase()) {
+              if (newOwner === ZERO_ADDRESS.toLowerCase() && oldOwner !== ZERO_ADDRESS.toLowerCase()) {
                 await this.activityHistory.handleBurn({
                   ens_name_id: change.data.id,
                   sender_address: change.oldData.owner_address,
@@ -287,7 +271,7 @@ export class WALListener {
                   block_number: change.data.block_number,
                 });
               }
-              // Regular transfer between two addresses
+              // Regular transfer between two addresses (not from or to zero address)
               else if (oldOwner !== ZERO_ADDRESS.toLowerCase() && newOwner !== ZERO_ADDRESS.toLowerCase()) {
                 await this.activityHistory.handleTransfer({
                   ens_name_id: change.data.id,

@@ -6,10 +6,13 @@ import { useProfile } from '@/hooks/useProfile';
 import { ProfileHeader } from '@/components/profile/ProfileHeader';
 import { OwnedNames } from '@/components/profile/OwnedNames';
 import { ProfileActivity } from '@/components/profile/ProfileActivity';
+import { ProfileStats } from '@/components/profile/ProfileStats';
+import { useAccount } from 'wagmi';
 
 export default function ProfilePage() {
   const params = useParams();
   const addressOrName = params.address as string;
+  const { address: connectedAddress } = useAccount();
 
   const { data: profile, isLoading, error } = useProfile(addressOrName);
 
@@ -50,6 +53,11 @@ export default function ProfilePage() {
 
       {/* Profile Header with ENS Records */}
       <ProfileHeader profile={profile} />
+
+      {/* Stats Dashboard - Only show if viewing own profile */}
+      {connectedAddress && profile.address.toLowerCase() === connectedAddress.toLowerCase() && (
+        <ProfileStats address={profile.address} />
+      )}
 
       {/* Owned Names Section */}
       <div className="mb-6">

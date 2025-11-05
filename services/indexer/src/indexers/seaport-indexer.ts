@@ -275,13 +275,20 @@ export class SeaportIndexer {
 
         try {
           // Try to resolve the actual ENS name
-          const ensName = await this.resolver.resolveTokenIdToName(tokenId);
-          const nameToStore = ensName || `token-${tokenId}`;
+          const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+          const nameToStore = resolvedData?.name || `token-${tokenId}`;
+          const expiryDate = resolvedData?.expiryDate || null;
+          const resolvedOwner = resolvedData?.ownerAddress || null;
+          const registrationDate = resolvedData?.registrationDate || null;
+          const textRecords = resolvedData?.textRecords || {};
+
+          // Use resolved owner if available, otherwise use recipient
+          const ownerAddress = resolvedOwner || recipient.toLowerCase();
 
           // First ensure the ENS name exists in the database
           const upsertQuery = `
-            INSERT INTO ens_names (token_id, name, owner_address, updated_at)
-            VALUES ($1, $2, $3, NOW())
+            INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
             ON CONFLICT (token_id) DO UPDATE
             SET
               owner_address = EXCLUDED.owner_address,
@@ -289,6 +296,9 @@ export class SeaportIndexer {
                 WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
                 ELSE ens_names.name
               END,
+              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+              registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+              metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
               updated_at = NOW()
             RETURNING id
           `;
@@ -296,7 +306,10 @@ export class SeaportIndexer {
           const nameResult = await this.pool.query(upsertQuery, [
             tokenId,
             nameToStore,
-            recipient.toLowerCase()
+            ownerAddress,
+            expiryDate,
+            registrationDate,
+            JSON.stringify(textRecords)
           ]);
 
           const ensNameId = nameResult.rows[0].id;

@@ -17,6 +17,7 @@ export function Header() {
   const { data: ensAvatar } = useEnsAvatar({ name: ensName, chainId: 1 });
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   const handleSignInClick = () => {
     if (!isConnected) {
@@ -39,13 +40,29 @@ export function Header() {
       <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-8">
+            <div className="flex items-center space-x-4">
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setShowMobileMenu(!showMobileMenu)}
+                className="md:hidden text-gray-300 hover:text-white transition p-2"
+                aria-label="Toggle menu"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+
               <Link href="/" className="text-2xl font-bold text-purple-500 hover:text-purple-400 transition">
                 Grails
               </Link>
+
+              {/* Desktop Navigation */}
               <nav className="hidden md:flex space-x-6">
-                <Link href="/" className="text-gray-300 hover:text-white transition">
+                <Link href="/marketplace" className="text-gray-300 hover:text-white transition">
                   Marketplace
+                </Link>
+                <Link href="/analytics" className="text-gray-300 hover:text-white transition">
+                  Analytics
                 </Link>
                 <Link href="/activity" className="text-gray-300 hover:text-white transition">
                   Activity
@@ -55,6 +72,9 @@ export function Header() {
                 </Link>
                 <Link href="/clubs" className="text-gray-300 hover:text-white transition">
                   Clubs
+                </Link>
+                <Link href="/trending" className="italic text-cyan-400 hover:text-cyan-300 transition">
+                  Trending
                 </Link>
               </nav>
             </div>
@@ -165,6 +185,79 @@ export function Header() {
           </div>
         </div>
       </header>
+
+      {/* Mobile Navigation Menu */}
+      {showMobileMenu && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setShowMobileMenu(false)}
+          />
+
+          {/* Slide-out Menu */}
+          <div className="fixed top-0 left-0 h-full w-64 bg-gray-900 border-r border-gray-800 z-50 md:hidden overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-xl font-bold text-purple-500">Menu</h2>
+                <button
+                  onClick={() => setShowMobileMenu(false)}
+                  className="text-gray-400 hover:text-white transition"
+                >
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <nav className="space-y-4">
+                <Link
+                  href="/marketplace"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block text-gray-300 hover:text-white transition py-2"
+                >
+                  Marketplace
+                </Link>
+                <Link
+                  href="/analytics"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block text-gray-300 hover:text-white transition py-2"
+                >
+                  Analytics
+                </Link>
+                <Link
+                  href="/activity"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block text-gray-300 hover:text-white transition py-2"
+                >
+                  Activity
+                </Link>
+                <Link
+                  href="/leaderboard"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block text-gray-300 hover:text-white transition py-2"
+                >
+                  Leaderboard
+                </Link>
+                <Link
+                  href="/clubs"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block text-gray-300 hover:text-white transition py-2"
+                >
+                  Clubs
+                </Link>
+                <Link
+                  href="/trending"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="block italic text-cyan-400 hover:text-cyan-300 transition py-2"
+                >
+                  Trending
+                </Link>
+              </nav>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Sign In Modal */}
       <SignInModal

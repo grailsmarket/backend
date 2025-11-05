@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "resync": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/resync-elasticsearch.js",
     "backfill-attributes": "npx tsx src/scripts/backfill-name-attributes.ts",
-    "backfill-club-stats": "npx tsx src/scripts/backfill-club-stats.ts"
+    "backfill-club-stats": "npx tsx src/scripts/backfill-club-stats.ts",
+    "backfill-highest-offers": "npx tsx src/scripts/backfill-highest-offers.ts"
   },
   "dependencies": {
     "pg-boss": "^9.0.3",

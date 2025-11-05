@@ -89,7 +89,7 @@ interface GraphQLResponse {
     domain?: {
       id: string;
       name: string;
-      owner?: {
+      wrappedOwner?: {
         id: string;
       };
       registrant?: {
@@ -110,7 +110,7 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
         domain(id: $id) {
           id
           name
-          owner {
+          wrappedOwner {
             id
           }
           registrant {
@@ -141,8 +141,8 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
       return null;
     }
 
-    // Return the owner from the domain
-    return result.data.domain.owner?.id || null;
+    // Return the owner from the domain - prefer wrappedOwner, fallback to registrant
+    return result.data.domain.wrappedOwner?.id || result.data.domain.registrant?.id || null;
   } catch (error: any) {
     console.log(`    Error fetching from Graph for ${name}: ${error.message}`);
     return null;

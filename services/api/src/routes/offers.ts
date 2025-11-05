@@ -79,6 +79,15 @@ export async function offersRoutes(fastify: FastifyInstance) {
           );
           fastify.log.info({ offerId: offer.id, expiresAt: offer.expires_at }, 'Scheduled offer expiry job');
         }
+
+        // Publish highest offer update job
+        await boss.send('update-highest-offer', {
+          ensNameId: offer.ens_name_id,
+          offerId: offer.id,
+          offerAmountWei: offer.offer_amount_wei,
+          currencyAddress: offer.currency_address,
+        });
+        fastify.log.info({ offerId: offer.id, ensNameId: offer.ens_name_id }, 'Published highest offer update job');
       } catch (queueError) {
         // Don't fail the request if queue publishing fails
         fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for offer');
@@ -289,9 +298,46 @@ export async function offersRoutes(fastify: FastifyInstance) {
       });
     }
 
+    const updatedOffer = result.rows[0];
+
+    // Publish queue jobs based on what was updated
+    try {
+      const { getQueueClient } = await import('../queue');
+      const boss = await getQueueClient();
+
+      // If offer amount changed and still pending, update highest offer
+      if (body.offerAmountWei !== undefined && updatedOffer.status === 'pending') {
+        await boss.send('update-highest-offer', {
+          ensNameId: updatedOffer.ens_name_id,
+          offerId: updatedOffer.id,
+          offerAmountWei: updatedOffer.offer_amount_wei,
+          currencyAddress: updatedOffer.currency_address,
+        });
+        fastify.log.info({ offerId: updatedOffer.id }, 'Published highest offer update for amount change');
+      }
+
+      // If status changed from pending to something else, recalculate highest offer
+      if (body.status !== undefined && body.status !== 'pending') {
+        // Check if this might have been the highest offer
+        const checkHighest = await pool.query(
+          'SELECT highest_offer_id FROM ens_names WHERE id = $1',
+          [updatedOffer.ens_name_id]
+        );
+
+        if (checkHighest.rows[0]?.highest_offer_id === updatedOffer.id) {
+          await boss.send('recalculate-highest-offer', {
+            ensNameId: updatedOffer.ens_name_id,
+          });
+          fastify.log.info({ offerId: updatedOffer.id, ensNameId: updatedOffer.ens_name_id }, 'Published recalculate highest offer (was highest)');
+        }
+      }
+    } catch (queueError) {
+      fastify.log.error({ error: queueError }, 'Failed to publish highest offer queue jobs');
+    }
+
     const response: APIResponse<Offer> = {
       success: true,
-      data: result.rows[0],
+      data: updatedOffer,
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',

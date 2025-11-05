@@ -119,4 +119,21 @@ const rawConfig = {
 
 export const config = ConfigSchema.parse(rawConfig);
 
+// Currency constants
+export const CURRENCY_ADDRESSES = {
+  ETH: '0x0000000000000000000000000000000000000000',
+  WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+} as const;
+
+// Helper to check if currency is ETH or WETH
+export function isEthOrWeth(currencyAddress: string | null | undefined): boolean {
+  if (!currencyAddress) return false;
+  const normalized = currencyAddress.toLowerCase();
+  return normalized === CURRENCY_ADDRESSES.ETH.toLowerCase() ||
+         normalized === CURRENCY_ADDRESSES.WETH.toLowerCase();
+}
+
+// SQL fragment for filtering ETH/WETH currencies
+export const ETH_WETH_FILTER = `(currency_address = '${CURRENCY_ADDRESSES.ETH}' OR currency_address = '${CURRENCY_ADDRESSES.WETH}')`;
+
 export default config;

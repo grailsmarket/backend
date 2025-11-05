@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { SignInModal } from '@/components/auth/SignInModal';
@@ -9,15 +9,52 @@ interface AddToWatchlistProps {
   ensName: string;
 }
 
+interface WatchlistItem {
+  id: number;
+  userId: number;
+  ensNameId: number;
+  ensName: string;
+  notifyOnSale: boolean;
+  notifyOnOffer: boolean;
+  notifyOnListing: boolean;
+  notifyOnPriceChange: boolean;
+  addedAt: string;
+}
+
 export function AddToWatchlist({ ensName }: AddToWatchlistProps) {
   const { isAuthenticated } = useAuth();
-  const { isInWatchlist, addToWatchlist, removeFromWatchlist, getWatchlistItem } = useWatchlist();
+  const { checkIsInWatchlist, addToWatchlist, removeFromWatchlist } = useWatchlist({ autoFetch: false });
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inWatchlist, setInWatchlist] = useState(false);
+  const [watchlistItem, setWatchlistItem] = useState<WatchlistItem | null>(null);
 
-  const inWatchlist = isInWatchlist(ensName);
-  const watchlistItem = getWatchlistItem(ensName);
+  // Check watchlist status on mount and when auth changes
+  useEffect(() => {
+    const checkStatus = async () => {
+      setIsChecking(true);
+      try {
+        const result = await checkIsInWatchlist(ensName);
+        setInWatchlist(result.isWatching);
+        setWatchlistItem(result.watchlistEntry);
+      } catch (err) {
+        console.error('Failed to check watchlist status:', err);
+      } finally {
+        setIsChecking(false);
+      }
+    };
+
+    if (isAuthenticated) {
+      checkStatus();
+    } else {
+      setInWatchlist(false);
+      setWatchlistItem(null);
+      setIsChecking(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensName, isAuthenticated]);
 
   const handleToggleWatchlist = async () => {
     if (!isAuthenticated) {
@@ -31,8 +68,14 @@ export function AddToWatchlist({ ensName }: AddToWatchlistProps) {
     try {
       if (inWatchlist && watchlistItem) {
         await removeFromWatchlist(watchlistItem.id);
+        setInWatchlist(false);
+        setWatchlistItem(null);
       } else {
         await addToWatchlist(ensName);
+        // Re-check status to get the watchlist item ID
+        const result = await checkIsInWatchlist(ensName);
+        setInWatchlist(result.isWatching);
+        setWatchlistItem(result.watchlistEntry);
       }
     } catch (err: any) {
       console.error('Watchlist toggle error:', err);
@@ -46,14 +89,14 @@ export function AddToWatchlist({ ensName }: AddToWatchlistProps) {
     <>
       <button
         onClick={handleToggleWatchlist}
-        disabled={isLoading}
+        disabled={isLoading || isChecking}
         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
           inWatchlist
             ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30'
             : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
         } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
-        {isLoading ? (
+        {isLoading || isChecking ? (
           <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle
               className="opacity-25"
