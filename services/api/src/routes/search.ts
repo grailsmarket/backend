@@ -109,6 +109,16 @@ export async function searchRoutes(fastify: FastifyInstance) {
     const must: any[] = [];
     const filter: any[] = [];
 
+    // Exclude placeholder names from all searches
+    filter.push({
+      bool: {
+        must_not: [
+          { prefix: { 'name.keyword': 'token-' } },
+          { regexp: { 'name.keyword': '\\d+\\.eth' } }
+        ]
+      }
+    });
+
     // Only filter by status if showListings is true (opposite of listings/search)
     if (showListings === true || showListings === 'true') {
       filter.push({ term: { status: 'active' } });
@@ -263,7 +273,15 @@ export async function searchRoutes(fastify: FastifyInstance) {
       const order = sortOrder || 'desc';
 
       // Special handling for fields that may have null values
-      if (sortBy === 'last_sale_price') {
+      if (sortBy === 'price') {
+        // Sort by listing price
+        sort.push({
+          'price': {
+            order,
+            missing: '_last'  // Put documents without listings at the end
+          }
+        });
+      } else if (sortBy === 'last_sale_price') {
         // Sort by USD value, not raw wei/token amount
         sort.push({
           'last_sale_price_usd': {
@@ -304,21 +322,25 @@ export async function searchRoutes(fastify: FastifyInstance) {
       },
     };
 
+
     if (!usePostgresql) {
       try {
         const esResult = await es.search(esQuery);
 
       fastify.log.info('Elasticsearch returned results');
 
-      // Log scores for debugging
-      if (q && esResult.hits.hits.length > 0) {
-        const scores = esResult.hits.hits.map((hit: any) => ({ name: hit._source.name, score: hit._score }));
-        fastify.log.info(`ES scores sample (first 5): ${JSON.stringify(scores.slice(0, 5))}`);
-        fastify.log.info(`ES scores sample (last 5): ${JSON.stringify(scores.slice(-5))}`);
-      }
-
       // Extract ENS names from Elasticsearch results
-      const ensNames = esResult.hits.hits.map((hit: any) => hit._source.name);
+      const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
+
+      // Filter out placeholder names (token-### or just numbers)
+      // These are names that haven't been resolved yet or are stale in ES
+      const ensNames = allNames.filter((name: string) => {
+        return name &&
+               !name.startsWith('token-') &&
+               !/^\d+$/.test(name.replace('.eth', ''));
+      });
+
+      fastify.log.info(`ES returned ${allNames.length} names, ${ensNames.length} after filtering placeholders. First 5: ${JSON.stringify(ensNames.slice(0, 5))}`);
 
       if (ensNames.length === 0) {
         fastify.log.info('No ES results found');
@@ -348,36 +370,45 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Build search results using shared utility
       const results = await buildSearchResults(ensNames, userId);
 
-      const currentPage = parseInt(page);
-      const pageLimit = parseInt(limit);
-      const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
-      const totalPages = Math.ceil(total / pageLimit);
+      fastify.log.info(`buildSearchResults returned ${results.length} results from ${ensNames.length} names`);
 
-      fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
+      // If Elasticsearch returned names but PostgreSQL has none of them,
+      // it means ES has stale data. Fall back to PostgreSQL.
+      if (results.length === 0 && ensNames.length > 0) {
+        fastify.log.warn(`Elasticsearch returned ${ensNames.length} names but PostgreSQL has none of them. Falling back to PostgreSQL for this query.`);
+        usePostgresql = true;
+      } else {
+        const currentPage = parseInt(page);
+        const pageLimit = parseInt(limit);
+        const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
+        const totalPages = Math.ceil(total / pageLimit);
 
-      const response: APIResponse<{
-        results: any[];
-        pagination: any;
-      }> = {
-        success: true,
-        data: {
-          results,
-          pagination: {
-            page: currentPage,
-            limit: pageLimit,
-            total,
-            totalPages,
-            hasNext: currentPage < totalPages,
-            hasPrev: currentPage > 1,
+        fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
+
+        const response: APIResponse<{
+          results: any[];
+          pagination: any;
+        }> = {
+          success: true,
+          data: {
+            results,
+            pagination: {
+              page: currentPage,
+              limit: pageLimit,
+              total,
+              totalPages,
+              hasNext: currentPage < totalPages,
+              hasPrev: currentPage > 1,
+            },
           },
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-          version: '1.0.0',
-        },
-      };
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+          },
+        };
 
-      return reply.send(response);
+        return reply.send(response);
+      }
       } catch (error: any) {
         fastify.log.warn('Elasticsearch search failed, falling back to PostgreSQL:', error.message);
         usePostgresql = true;
@@ -400,7 +431,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
-      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}`);
+      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
 
       // Add name search condition
       if (q && q.trim()) {
@@ -471,9 +502,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'watchers_count') {
         // Sort by watchers count - use alias from SELECT clause to avoid DISTINCT conflict
         orderByClause = `ORDER BY sort_value ${sqlOrder}`;
-      } else if (sortBy === 'price' && listingsOnly) {
-        // Sort by listing price when filtering by listings
-        orderByClause = `ORDER BY CAST(l.price_wei AS NUMERIC) ${sqlOrder}`;
+      } else if (sortBy === 'price') {
+        // Sort by listing price using the subquery alias
+        // When not filtering, names without listings will have NULL and appear last
+        orderByClause = `ORDER BY sort_value ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'expiry_date') {
         orderByClause = `ORDER BY en.expiry_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'registration_date') {
@@ -497,7 +529,6 @@ export async function searchRoutes(fastify: FastifyInstance) {
       ` : `
         SELECT COUNT(*)
         FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
         WHERE ${whereClause}
       `;
 
@@ -516,8 +547,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'DISTINCT en.name, en.last_sale_date';
       } else if (sortBy === 'character_count') {
         selectClause = 'DISTINCT en.name, LENGTH(REPLACE(en.name, \'.eth\', \'\')) as sort_value';
-      } else if (sortBy === 'price' && listingsOnly) {
-        selectClause = 'DISTINCT en.name, l.price_wei';
+      } else if (sortBy === 'price') {
+        // Use a subquery to get the max price for each name to avoid DISTINCT issues
+        selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
       }
 
       const dataQuery = listingsOnly ? `
@@ -530,7 +562,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       ` : `
         SELECT ${selectClause}
         FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+        ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
         WHERE ${whereClause}
         ${orderByClause}
         LIMIT $${paramCount} OFFSET $${paramCount + 1}
@@ -555,6 +587,11 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const ensNames = dataResult.rows.map((row: any) => row.name);
         const results = await buildSearchResults(ensNames, userId);
 
+        fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(ensNames.slice(0, 5))}`);
+        if (sortBy === 'price') {
+          const sortValues = dataResult.rows.slice(0, 5).map((row: any) => row.sort_value || row.price_wei);
+          fastify.log.info(`First 5 sort values for price: ${JSON.stringify(sortValues)}`);
+        }
         fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
 
         return reply.send({

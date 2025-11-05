@@ -91,30 +91,43 @@ export function ListingCard({ listing }: ListingCardProps) {
           )}
         </div>
 
-        <div className="flex justify-between items-end">
-          <div>
-            {isListed ? (
-              <>
-                <p className="text-sm text-gray-400 mb-1">Price</p>
-                <p className="text-2xl font-bold text-purple-400">
-                  {formatPrice(listing.price_wei, listing.currency_address)}
+        <div className="space-y-3">
+          <div className="flex justify-between items-end">
+            <div>
+              {isListed ? (
+                <>
+                  <p className="text-sm text-gray-400 mb-1">Price</p>
+                  <p className="text-2xl font-bold text-purple-400">
+                    {formatPrice(listing.price_wei, listing.currency_address)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-400 mb-1">Not Listed</p>
+                  <p className="text-lg font-semibold text-gray-300">
+                    Make an Offer
+                  </p>
+                </>
+              )}
+            </div>
+
+            {isListed && listing.expires_at && (
+              <div className="text-right">
+                <p className="text-xs text-gray-500">
+                  Expires: {new Date(listing.expires_at).toLocaleDateString()}
                 </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-gray-400 mb-1">Not Listed</p>
-                <p className="text-lg font-semibold text-gray-300">
-                  Make an Offer
-                </p>
-              </>
+              </div>
             )}
           </div>
 
-          {isListed && listing.expires_at && (
-            <div className="text-right">
-              <p className="text-xs text-gray-500">
-                Expires: {new Date(listing.expires_at).toLocaleDateString()}
-              </p>
+          {listing.highest_offer_wei && (
+            <div className="pt-3 border-t border-gray-700">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-400">Highest Offer</span>
+                <span className="text-lg font-semibold text-green-400">
+                  {formatPrice(listing.highest_offer_wei, listing.highest_offer_currency || '0x0000000000000000000000000000000000000000')}
+                </span>
+              </div>
             </div>
           )}
         </div>

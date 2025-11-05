@@ -81,6 +81,9 @@ class ListingsAPI {
             current_owner: result.owner,
             name_expiry_date: result.expiry_date,
             last_sale_date: result.last_sale_date,
+            highest_offer_wei: result.highest_offer_wei,
+            highest_offer_currency: result.highest_offer_currency,
+            highest_offer_id: result.highest_offer_id,
           });
         }
       } else {
@@ -103,6 +106,9 @@ class ListingsAPI {
           current_owner: result.owner,
           name_expiry_date: result.expiry_date,
           last_sale_date: result.last_sale_date,
+          highest_offer_wei: result.highest_offer_wei,
+          highest_offer_currency: result.highest_offer_currency,
+          highest_offer_id: result.highest_offer_id,
         });
       }
     }

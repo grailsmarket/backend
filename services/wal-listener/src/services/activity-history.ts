@@ -1,5 +1,7 @@
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
 
 export type ActivityEventType =
   | 'listed'
@@ -26,10 +28,15 @@ interface ActivityHistoryParams {
   transaction_hash?: string;
   block_number?: number;
   metadata?: Record<string, any>;
+  event_date?: Date; // Blockchain timestamp of the event (defaults to NOW() if not provided)
 }
 
 export class ActivityHistoryService {
   private pool = getPostgresPool();
+  private client = createPublicClient({
+    chain: mainnet,
+    transport: http(config.blockchain.rpcUrl),
+  });
 
   /**
    * Create a new activity history record
@@ -47,6 +54,7 @@ export class ActivityHistoryService {
       transaction_hash,
       block_number,
       metadata = {},
+      event_date,
     } = params;
 
     try {
@@ -62,8 +70,9 @@ export class ActivityHistoryService {
           currency_address,
           transaction_hash,
           block_number,
-          metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          metadata,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id`,
         [
           ens_name_id,
@@ -77,6 +86,7 @@ export class ActivityHistoryService {
           transaction_hash || null,
           block_number || null,
           JSON.stringify(metadata),
+          event_date || new Date(),
         ]
       );
 
@@ -371,6 +381,19 @@ export class ActivityHistoryService {
   }): Promise<void> {
     const { ens_name_id, sender_address, token_id, transaction_hash, block_number } = params;
 
+    // Fetch block timestamp if block_number is provided
+    let event_date: Date | undefined;
+    if (block_number) {
+      try {
+        const block = await this.client.getBlock({ blockNumber: BigInt(block_number) });
+        event_date = new Date(Number(block.timestamp) * 1000);
+        logger.debug(`Fetched block timestamp for burn event: ${event_date.toISOString()}`);
+      } catch (error: any) {
+        logger.error(`Failed to fetch block ${block_number} timestamp:`, error.message);
+        // Continue without event_date, will default to NOW()
+      }
+    }
+
     await this.createActivityRecord({
       ens_name_id,
       event_type: 'burn',
@@ -382,6 +405,7 @@ export class ActivityHistoryService {
         token_id,
         to_address: '0x0000000000000000000000000000000000000000',
       },
+      event_date,
     });
 
     logger.info(`Created burn activity record for ENS name ID ${ens_name_id}`);
@@ -400,6 +424,19 @@ export class ActivityHistoryService {
   }): Promise<void> {
     const { ens_name_id, from_address, to_address, token_id, transaction_hash, block_number } = params;
 
+    // Fetch block timestamp if block_number is provided
+    let event_date: Date | undefined;
+    if (block_number) {
+      try {
+        const block = await this.client.getBlock({ blockNumber: BigInt(block_number) });
+        event_date = new Date(Number(block.timestamp) * 1000);
+        logger.debug(`Fetched block timestamp for transfer event: ${event_date.toISOString()}`);
+      } catch (error: any) {
+        logger.error(`Failed to fetch block ${block_number} timestamp:`, error.message);
+        // Continue without event_date, will default to NOW()
+      }
+    }
+
     // Create 'sent' record for sender
     await this.createActivityRecord({
       ens_name_id,
@@ -413,6 +450,7 @@ export class ActivityHistoryService {
         token_id,
         role: 'sender',
       },
+      event_date,
     });
 
     // Create 'received' record for recipient
@@ -428,6 +466,7 @@ export class ActivityHistoryService {
         token_id,
         role: 'recipient',
       },
+      event_date,
     });
 
     logger.info(`Created transfer activity records for ENS name ID ${ens_name_id} from ${from_address} to ${to_address}`);

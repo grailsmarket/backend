@@ -531,6 +531,100 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GET /api/v1/watchlist/check/:name
+   * Check if a specific ENS name is in the user's watchlist
+   */
+  fastify.get('/check/:name', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const { name } = request.params as { name: string };
+      const userId = parseInt(request.user.sub);
+
+      // Look up the ENS name and check if it's in the watchlist
+      const result = await pool.query(
+        `SELECT
+          w.id,
+          w.notify_on_sale,
+          w.notify_on_offer,
+          w.notify_on_listing,
+          w.notify_on_price_change,
+          w.added_at,
+          en.id as ens_name_id,
+          en.name
+        FROM ens_names en
+        LEFT JOIN watchlist w ON w.ens_name_id = en.id AND w.user_id = $1
+        WHERE LOWER(en.name) = LOWER($2)`,
+        [userId, name]
+      );
+
+      if (result.rows.length === 0) {
+        // ENS name doesn't exist in database
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'ENS_NAME_NOT_FOUND',
+            message: `ENS name "${name}" not found`,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const row = result.rows[0];
+      const isWatching = row.id !== null;
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          isWatching,
+          watchlistEntry: isWatching ? {
+            id: row.id,
+            ensNameId: row.ens_name_id,
+            ensName: row.name,
+            notifyOnSale: row.notify_on_sale,
+            notifyOnOffer: row.notify_on_offer,
+            notifyOnListing: row.notify_on_listing,
+            notifyOnPriceChange: row.notify_on_price_change,
+            addedAt: row.added_at,
+          } : null,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error('Error checking watchlist:', error);
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to check watchlist',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
    * GET /api/v1/watchlist/search
    * Search and filter user's watchlist using Elasticsearch
    */

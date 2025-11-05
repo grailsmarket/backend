@@ -48,22 +48,16 @@ export async function profilesRoutes(fastify: FastifyInstance) {
             name
             labelName
             labelhash
-            owner {
-              id
-            }
             registrant {
               id
             }
             wrappedOwner {
               id
             }
-            resolver {
-              id
-              addr {
-                id
-              }
+            registration {
+              expiryDate
+              registrationDate
             }
-            expiryDate
             createdAt
           }
         }
@@ -108,10 +102,8 @@ export async function profilesRoutes(fastify: FastifyInstance) {
 
       // Priority for finding owner:
       // 1. wrappedOwner - for wrapped names, this is the actual owner
-      // 2. resolver.addr.id - the address the name resolves to
-      // 3. registrant - the registrant address
-      // 4. owner - fallback to owner field
-      const ownerAddress = domain.wrappedOwner?.id || domain.resolver?.addr?.id || domain.registrant?.id || domain.owner?.id;
+      // 2. registrant - the registrant address
+      const ownerAddress = domain.wrappedOwner?.id || domain.registrant?.id;
 
       if (!ownerAddress) {
         fastify.log.warn({ ensName }, 'No owner found for ENS name');
@@ -174,15 +166,15 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         RETURNING id
       `;
 
-      const expiryDate = domain.expiryDate ? new Date(parseInt(domain.expiryDate) * 1000) : null;
-      const createdAt = domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null;
+      const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
+      const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
 
       await pool.query(insertQuery, [
         tokenId,
         ensName,
         ownerAddress.toLowerCase(),
         expiryDate,
-        createdAt,
+        registrationDate,
         metadata ? JSON.stringify(metadata) : null
       ]);
 

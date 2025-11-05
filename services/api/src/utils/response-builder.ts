@@ -34,6 +34,14 @@ export interface SearchResult {
 
   // Watchlist fields
   watchers_count: number;
+
+  // Highest offer fields
+  highest_offer_wei: string | null;
+  highest_offer_currency: string | null;
+  highest_offer_id: number | null;
+
+  // View count field
+  view_count: number;
 }
 
 export interface Listing {
@@ -91,6 +99,14 @@ export async function buildSearchResults(
       en.last_sale_price,
       en.last_sale_currency,
       en.last_sale_price_usd,
+
+      -- Highest offer fields
+      en.highest_offer_wei,
+      en.highest_offer_currency,
+      en.highest_offer_id,
+
+      -- View count
+      COALESCE(en.view_count, 0) as view_count,
 
       -- Vote fields
       COALESCE(en.upvotes, 0) as upvotes,
@@ -156,6 +172,10 @@ export async function buildSearchResults(
       downvotes: row.downvotes,
       net_score: row.net_score,
       watchers_count: parseInt(row.watchers_count) || 0,
+      highest_offer_wei: row.highest_offer_wei,
+      highest_offer_currency: row.highest_offer_currency,
+      highest_offer_id: row.highest_offer_id,
+      view_count: parseInt(row.view_count) || 0,
     };
 
     // Only include user_vote if userId was provided

@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool, createSale } from '../../../shared/src';
+import { config, getPostgresPool, createSale, isEthOrWeth } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -243,12 +243,20 @@ export class OpenSeaStreamListener {
 
       // Try to get the ENS name from metadata first (e.g., "277.eth")
       let nameToStore = item.metadata?.name || null;
+      let expiryDate: Date | null = null;
+      let resolvedOwner: string | null = null;
+      let registrationDate: Date | null = null;
+      let textRecords: Record<string, string> = {};
 
       // If no name in metadata or it doesn't look like an ENS name, try to resolve it
       if (!nameToStore || !nameToStore.endsWith('.eth')) {
-        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
-        if (resolvedName) {
-          nameToStore = resolvedName;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+        if (resolvedData) {
+          nameToStore = resolvedData.name;
+          expiryDate = resolvedData.expiryDate;
+          resolvedOwner = resolvedData.ownerAddress;
+          registrationDate = resolvedData.registrationDate;
+          textRecords = resolvedData.textRecords;
         } else if (nameToStore && !nameToStore.endsWith('.eth')) {
           // If we have a name but it's not an ENS name, use placeholder
           nameToStore = `token-${tokenId}`;
@@ -259,8 +267,9 @@ export class OpenSeaStreamListener {
 
       logger.info(`Storing ENS name: ${nameToStore} for token ID: ${tokenId}`);
 
-      // Upsert ENS name
-      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, maker.address.toLowerCase());
+      // Upsert ENS name - use resolved owner if available, otherwise use maker address
+      const ownerAddress = resolvedOwner || maker.address.toLowerCase();
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords);
 
       // Create or update listing
       // First, cancel any existing active listings for this ENS name and seller
@@ -361,12 +370,20 @@ export class OpenSeaStreamListener {
 
       // Extract ENS name from metadata and normalize placeholders
       let nameToStore = item.metadata?.name || null;
+      let expiryDate: Date | null = null;
+      let resolvedOwner: string | null = null;
+      let registrationDate: Date | null = null;
+      let textRecords: Record<string, string> = {};
 
       // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
       if (!nameToStore || !nameToStore.endsWith('.eth')) {
-        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
-        if (resolvedName) {
-          nameToStore = resolvedName;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+        if (resolvedData) {
+          nameToStore = resolvedData.name;
+          expiryDate = resolvedData.expiryDate;
+          resolvedOwner = resolvedData.ownerAddress;
+          registrationDate = resolvedData.registrationDate;
+          textRecords = resolvedData.textRecords;
         } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
           // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
           nameToStore = `token-${tokenId}`;
@@ -382,7 +399,9 @@ export class OpenSeaStreamListener {
       const sellerAddress = maker?.address?.toLowerCase() || null;
 
       // Create ENS name if it doesn't exist (will be updated by ENS indexer later)
-      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, buyerAddress || sellerAddress || '0x0000000000000000000000000000000000000000', true);
+      // Use resolved owner if available, otherwise use buyer or seller
+      const ownerAddress = resolvedOwner || buyerAddress || sellerAddress || '0x0000000000000000000000000000000000000000';
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords);
 
       // Find the listing that's being sold
       let listingId: number | undefined;
@@ -432,10 +451,10 @@ export class OpenSeaStreamListener {
 
           logger.info(`Sale created in sales table for token ${tokenId}`);
 
-          // Publish club sales stats job if sale has clubs
+          // Publish club sales stats job if sale has clubs and currency is ETH or WETH
           if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
             const currencyAddress = eventData.payment_token?.address || '0x0000000000000000000000000000000000000000';
-            if (currencyAddress === '0x0000000000000000000000000000000000000000') {
+            if (isEthOrWeth(currencyAddress)) {
               try {
                 const PgBoss = require('pg-boss');
                 const boss = new PgBoss({ connectionString: config.database.url });
@@ -529,12 +548,20 @@ export class OpenSeaStreamListener {
 
       // Extract ENS name from metadata and normalize placeholders
       let nameToStore = item.metadata?.name || null;
+      let expiryDate: Date | null = null;
+      let resolvedOwner: string | null = null;
+      let registrationDate: Date | null = null;
+      let textRecords: Record<string, string> = {};
 
       // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
       if (!nameToStore || !nameToStore.endsWith('.eth')) {
-        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
-        if (resolvedName) {
-          nameToStore = resolvedName;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+        if (resolvedData) {
+          nameToStore = resolvedData.name;
+          expiryDate = resolvedData.expiryDate;
+          resolvedOwner = resolvedData.ownerAddress;
+          registrationDate = resolvedData.registrationDate;
+          textRecords = resolvedData.textRecords;
         } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
           // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
           nameToStore = `token-${tokenId}`;
@@ -544,7 +571,9 @@ export class OpenSeaStreamListener {
       }
 
       // Ensure ENS name exists and update owner
-      await this.upsertEnsName(tokenId, nameToStore, newOwner, true);
+      // Use resolved owner if available, otherwise use the transfer recipient
+      const ownerAddress = resolvedOwner || newOwner;
+      await this.upsertEnsName(tokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords);
 
       logger.info(`Transfer recorded for token ${tokenId} to ${to_account.address}`);
     } catch (error: any) {
@@ -643,12 +672,20 @@ export class OpenSeaStreamListener {
 
       // Extract ENS name from metadata and normalize placeholders
       let nameToStore = item.metadata?.name || null;
+      let expiryDate: Date | null = null;
+      let resolvedOwner: string | null = null;
+      let registrationDate: Date | null = null;
+      let textRecords: Record<string, string> = {};
 
       // Normalize placeholder names: OpenSea may send "#12345..." which we convert to "token-12345"
       if (!nameToStore || !nameToStore.endsWith('.eth')) {
-        const resolvedName = await this.resolver.resolveTokenIdToName(tokenId);
-        if (resolvedName) {
-          nameToStore = resolvedName;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+        if (resolvedData) {
+          nameToStore = resolvedData.name;
+          expiryDate = resolvedData.expiryDate;
+          resolvedOwner = resolvedData.ownerAddress;
+          registrationDate = resolvedData.registrationDate;
+          textRecords = resolvedData.textRecords;
         } else if (nameToStore && (nameToStore.startsWith('#') || !nameToStore.endsWith('.eth'))) {
           // Convert OpenSea's #-prefix or other non-.eth names to standard placeholder
           nameToStore = `token-${tokenId}`;
@@ -660,14 +697,16 @@ export class OpenSeaStreamListener {
       logger.info(`Processing bid for: ${nameToStore} (token ${tokenId})`);
 
       // First ensure the ENS name exists
-      // We'll use the current owner from the item metadata or leave it empty
-      const ownerAddress = item.owner?.address ||
+      // Use resolved owner if available, otherwise try to get from item metadata
+      const fallbackOwner = item.owner?.address ||
                           item.permalink?.split('/').includes('0x') ?
                           item.permalink.split('/').find((part: string) => part.startsWith('0x')) :
                           '0x0000000000000000000000000000000000000000';
 
+      const ownerAddress = resolvedOwner || fallbackOwner;
+
       // Upsert ENS name
-      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, ownerAddress.toLowerCase());
+      const ensNameId = await this.upsertEnsName(tokenId, nameToStore, ownerAddress.toLowerCase(), false, expiryDate, registrationDate, textRecords);
 
       const offerQuery = `
         INSERT INTO offers (
@@ -780,12 +819,20 @@ export class OpenSeaStreamListener {
   /**
    * Upsert ENS name - handles duplicate name and token_id constraints
    */
-  private async upsertEnsName(tokenId: string, name: string, ownerAddress: string, includeTransferDate = false): Promise<number> {
+  private async upsertEnsName(
+    tokenId: string,
+    name: string,
+    ownerAddress: string,
+    includeTransferDate = false,
+    expiryDate: Date | null = null,
+    registrationDate: Date | null = null,
+    textRecords: Record<string, string> = {}
+  ): Promise<number> {
     try {
       // Use INSERT ... ON CONFLICT to avoid race conditions
       const upsertQuery = includeTransferDate ? `
-        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), NOW(), NOW())
+        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, expiry_date, registration_date, metadata, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), $4, $5, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
@@ -793,22 +840,35 @@ export class OpenSeaStreamListener {
             ELSE ens_names.name
           END,
           last_transfer_date = NOW(),
+          expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+          registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
           updated_at = NOW()
         RETURNING id
       ` : `
-        INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), NOW())
+        INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
             WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
+          expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+          registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
           updated_at = NOW()
         RETURNING id
       `;
 
-      const result = await this.pool.query(upsertQuery, [tokenId, name, ownerAddress]);
+      const result = await this.pool.query(upsertQuery, [
+        tokenId,
+        name,
+        ownerAddress,
+        expiryDate,
+        registrationDate,
+        JSON.stringify(textRecords)
+      ]);
       return result.rows[0].id;
     } catch (error: any) {
       // If we get a unique constraint violation on name, it means the name already exists

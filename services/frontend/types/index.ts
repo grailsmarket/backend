@@ -39,6 +39,9 @@ export interface ENSName {
   listing_expires_at?: string;
   listing_seller?: string;
   active_offers_count?: number;
+  highest_offer_wei?: string;
+  highest_offer_currency?: string;
+  highest_offer_id?: number;
   recent_transactions?: Transaction[];
   // Vote fields
   upvotes?: number;
@@ -69,6 +72,9 @@ export interface Listing {
   name_expiry_date?: string;
   registration_date?: string;
   last_sale_date?: string;
+  highest_offer_wei?: string;
+  highest_offer_currency?: string;
+  highest_offer_id?: number;
 }
 
 // Offer types

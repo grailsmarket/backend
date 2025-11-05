@@ -5,6 +5,7 @@ import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
+import { trackNameView, getViewerIdentifier } from '../services/name-views';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -13,6 +14,11 @@ const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const NAME_WRAPPER_ABI = [
   'function ownerOf(uint256 id) view returns (address)'
 ];
+
+// NOTE: The Graph has two expiry fields:
+// - domain.expiryDate: includes 90-day grace period (END of grace period)
+// - domain.registration.expiryDate: true expiry date (when name actually expires)
+// We use domain.registration.expiryDate to get the correct expiry date.
 
 const ListNamesQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
@@ -164,7 +170,131 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const userId = request.user ? parseInt(request.user.sub) : undefined;
 
     // Use buildNameResult helper to get name with vote data
-    const nameResult = await buildNameResult(name, userId);
+    let nameResult = await buildNameResult(name, userId);
+
+    // If name doesn't exist in database, try to fetch from The Graph
+    if (!nameResult) {
+      try {
+        fastify.log.info({ name }, 'Name not found in database, querying The Graph');
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+
+        if (config.theGraph?.apiKey) {
+          headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+        }
+
+        const graphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            query: `
+              query GetDomain($name: String!) {
+                domains(where: { name: $name }) {
+                  id
+                  name
+                  labelhash
+                  registrant {
+                    id
+                  }
+                  wrappedOwner {
+                    id
+                  }
+                  resolver {
+                    textChangeds {
+                      key
+                      value
+                    }
+                  }
+                  registration {
+                    expiryDate
+                    registrationDate
+                  }
+                }
+              }
+            `,
+            variables: {
+              name: name.toLowerCase(),
+            },
+          }),
+        });
+
+        const graphData: any = await graphResponse.json();
+        const domain = graphData?.data?.domains?.[0];
+
+        if (domain) {
+          // Convert labelhash to token ID
+          const tokenId = domain.labelhash ? BigInt(domain.labelhash).toString() : null;
+
+          if (tokenId) {
+            // Process text records - keep the last value for each key
+            const textRecords: Record<string, string> = {};
+            if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
+              for (const record of domain.resolver.textChangeds) {
+                if (record.key && record.value) {
+                  textRecords[record.key] = record.value;
+                }
+              }
+            }
+
+            // Get owner address - prefer wrappedOwner if available, fallback to registrant
+            let ownerAddress: string | null = null;
+            if (domain.wrappedOwner?.id) {
+              ownerAddress = domain.wrappedOwner.id.toLowerCase();
+            } else if (domain.registrant?.id) {
+              ownerAddress = domain.registrant.id.toLowerCase();
+            }
+
+            let expiryDate: Date | null = null;
+            if (domain.registration?.expiryDate) {
+              expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
+            }
+
+            const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : null;
+
+            // Insert name into database
+            const upsertQuery = `
+              INSERT INTO ens_names (
+                token_id,
+                name,
+                owner_address,
+                expiry_date,
+                registration_date,
+                metadata,
+                created_at,
+                updated_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+              ON CONFLICT (token_id)
+              DO UPDATE SET
+                name = EXCLUDED.name,
+                owner_address = EXCLUDED.owner_address,
+                expiry_date = EXCLUDED.expiry_date,
+                registration_date = EXCLUDED.registration_date,
+                metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+                updated_at = NOW()
+              RETURNING id
+            `;
+
+            await pool.query(upsertQuery, [
+              tokenId,
+              domain.name,
+              ownerAddress,
+              expiryDate,
+              registrationDate,
+              JSON.stringify(textRecords),
+            ]);
+
+            fastify.log.info({ name, tokenId }, 'Successfully imported name from The Graph');
+
+            // Query again to get full data with buildNameResult
+            nameResult = await buildNameResult(name, userId);
+          }
+        }
+      } catch (error: any) {
+        fastify.log.error({ error, name }, 'Error fetching from The Graph');
+      }
+    }
 
     if (!nameResult) {
       return reply.status(404).send({
@@ -188,7 +318,19 @@ export async function namesRoutes(fastify: FastifyInstance) {
       },
     };
 
-    return reply.send(response);
+    // Send response immediately
+    reply.send(response);
+
+    // Track view asynchronously (fire-and-forget) - for ALL users (authenticated + anonymous)
+    if (nameResult.id) {
+      const viewer = getViewerIdentifier(request);
+      trackNameView(nameResult.id, viewer.identifier, viewer.type).catch((error) => {
+        fastify.log.error(
+          { error, ensNameId: nameResult.id, name, viewerType: viewer.type },
+          'Failed to track name view asynchronously'
+        );
+      });
+    }
   });
 
   // Legacy endpoint - keeping for backwards compatibility
@@ -264,10 +406,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
                   wrappedOwner {
                     id
                   }
-                  resolver {
-                    addr {
-                      id
-                    }
+                  registrant {
+                    id
                   }
                 }
               }
@@ -280,11 +420,11 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
         const graphData: any = await graphResponse.json();
         const domain = graphData?.data?.domains?.[0];
-        let correctOwner = domain?.wrappedOwner?.id || domain?.resolver?.addr?.id;
+        let correctOwner = domain?.wrappedOwner?.id || domain?.registrant?.id;
 
-        // If no wrappedOwner or resolver.addr, query the Name Wrapper contract directly
+        // If no wrappedOwner or registrant, query the Name Wrapper contract directly
         if (!correctOwner) {
-          fastify.log.info({ name }, 'No wrappedOwner or resolver addr found, querying Name Wrapper contract');
+          fastify.log.info({ name }, 'No wrappedOwner or registrant found, querying Name Wrapper contract');
           correctOwner = await getWrappedNameOwner(name);
         }
 
@@ -342,7 +482,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
                       id
                     }
                   }
-                  expiryDate
+                  registration {
+                    expiryDate
+                    registrationDate
+                  }
                   createdAt
                 }
               }
@@ -413,8 +556,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
         // 3. registrant - the registrant address
         // 4. owner - fallback to owner field
         const ownerAddress = domain.wrappedOwner?.id || domain.resolver?.addr?.id || domain.registrant?.id || domain.owner?.id;
-        const expiryDate = domain.expiryDate ? new Date(parseInt(domain.expiryDate) * 1000) : null;
-        const registrationDate = domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null;
+        const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
+        const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
 
         const upsertResult = await pool.query(upsertQuery, [
           tokenId,

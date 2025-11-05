@@ -183,8 +183,7 @@ export class ElasticsearchSync {
       const query = `
         SELECT
           en.*,
-          COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
-          MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer
+          COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count
         FROM ens_names en
         LEFT JOIN offers o ON o.ens_name_id = en.id
         WHERE en.id = $1
@@ -200,7 +199,7 @@ export class ElasticsearchSync {
           body: {
             doc: {
               active_offers_count: result.rows[0].active_offers_count,
-              highest_offer: result.rows[0].highest_offer,
+              highest_offer: result.rows[0].highest_offer_wei,
             },
           },
         });
@@ -234,7 +233,6 @@ export class ElasticsearchSync {
             l.status as listing_status,
             l.created_at as listing_created_at,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
-            MAX(o.offer_amount_wei) FILTER (WHERE o.status = 'pending') as highest_offer,
             en.last_sale_date,
             en.last_sale_price,
             en.last_sale_currency,
@@ -330,7 +328,7 @@ export class ElasticsearchSync {
       last_sale_price_usd: data.last_sale_price_usd,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
-      highest_offer: data.highest_offer || null,
+      highest_offer: data.highest_offer_wei || null,
       // Expiration state fields
       is_expired: expirationState.isExpired,
       is_grace_period: expirationState.isGracePeriod,

@@ -7,6 +7,8 @@ import { registerNotificationWorker } from './workers/notifications';
 import { registerPriceSyncWorker } from './workers/price-sync';
 import { registerVerificationWorker } from './workers/verification';
 import { registerClubStatsWorker } from './workers/club-stats';
+import { registerHighestOfferWorker } from './workers/highest-offer';
+import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-analytics';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -30,6 +32,11 @@ async function start() {
     await registerPriceSyncWorker(boss);
     await registerVerificationWorker(boss);
     await registerClubStatsWorker(boss);
+    await registerHighestOfferWorker(boss);
+
+    // Register analytics refresh worker
+    await boss.work('refresh-analytics', refreshAnalytics);
+    await scheduleAnalyticsRefresh(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import { logger } from '../utils/logger';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
@@ -26,7 +26,7 @@ async function recalculateFloorPrice(clubName: string): Promise<void> {
   logger.info({ clubName }, 'Recalculating floor price for club');
 
   try {
-    // Find minimum active listing price for club members (ETH only)
+    // Find minimum active listing price for club members (ETH and WETH)
     const result = await pool.query(
       `
       SELECT MIN(l.price_wei::numeric) as floor_price,
@@ -35,7 +35,7 @@ async function recalculateFloorPrice(clubName: string): Promise<void> {
       JOIN ens_names e ON l.ens_name_id = e.id
       WHERE l.status = 'active'
         AND $1 = ANY(e.clubs)
-        AND l.currency_address = '0x0000000000000000000000000000000000000000'
+        AND ${ETH_WETH_FILTER}
       GROUP BY l.currency_address
       `,
       [clubName]
@@ -129,7 +129,7 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
   logger.info({ clubName }, 'Recalculating sales stats for club');
 
   try {
-    // Calculate total sales count and volume (ETH only)
+    // Calculate total sales count and volume (ETH and WETH)
     const result = await pool.query(
       `
       SELECT COUNT(*) as sales_count,
@@ -137,7 +137,7 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
       FROM sales s
       JOIN ens_names e ON s.ens_name_id = e.id
       WHERE $1 = ANY(e.clubs)
-        AND s.currency_address = '0x0000000000000000000000000000000000000000'
+        AND ${ETH_WETH_FILTER}
       `,
       [clubName]
     );

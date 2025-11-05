@@ -17,6 +17,7 @@ async function start() {
     requestIdLogLabel: 'reqId',
     disableRequestLogging: false,
     trustProxy: true,
+    maxParamLength: 500, // Increase from default 100 to handle long ENS names (max ENS length is ~255 chars)
   });
 
   await fastify.register(cors, {

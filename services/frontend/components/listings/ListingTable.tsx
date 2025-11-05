@@ -54,6 +54,7 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
             <tr>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Name</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Price</th>
+              <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Highest Offer</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Seller</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Source</th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Last Sale</th>
@@ -64,6 +65,7 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
             {[...Array(8)].map((_, i) => (
               <tr key={i} className="border-b border-gray-700 animate-pulse">
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-32"></div></td>
+                <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-20"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-20"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-24"></div></td>
                 <td className="px-6 py-4"><div className="h-4 bg-gray-700 rounded w-16"></div></td>
@@ -96,6 +98,9 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
               </th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
                 Price
+              </th>
+              <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Highest Offer
               </th>
               <th className="px-6 py-4 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
                 Seller
@@ -136,6 +141,15 @@ export function ListingTable({ listings, loading }: ListingTableProps) {
                       </span>
                     ) : (
                       <span className="text-gray-500">Not listed</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {listing.highest_offer_wei ? (
+                      <span className="text-green-400 font-semibold">
+                        {formatPrice(listing.highest_offer_wei, listing.highest_offer_currency || '0x0000000000000000000000000000000000000000')}
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">—</span>
                     )}
                   </td>
                   <td className="px-6 py-4">

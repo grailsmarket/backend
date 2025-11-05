@@ -257,8 +257,8 @@ export class ENSIndexer {
         has_emoji = existingRecord.rows[0].has_emoji;
       } else {
         // Record doesn't exist - try to resolve from The Graph
-        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
-        nameToStore = ensName || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        nameToStore = resolvedData?.name || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
         const attributes = this.calculateNameAttributes(nameToStore);
         has_numbers = attributes.has_numbers;
         has_emoji = attributes.has_emoji;
@@ -352,8 +352,8 @@ export class ENSIndexer {
       // If we get a unique constraint violation on name, it means the name already exists
       // with a different token_id. Fetch the existing record by name.
       if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
-        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
-        const nameToStore = ensName || `token-${tokenIdStr}`;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        const nameToStore = resolvedData?.name || `token-${tokenIdStr}`;
         logger.warn(`ENS name "${nameToStore}" already exists with different token_id. Fetching existing record.`);
 
         const existingQuery = 'SELECT id FROM ens_names WHERE name = $1';
@@ -435,8 +435,8 @@ export class ENSIndexer {
     let block: any;
     try {
       // Try to resolve the actual ENS name
-      const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
-      const nameToStore = ensName || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+      const nameToStore = resolvedData?.name || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
       const { has_numbers, has_emoji } = this.calculateNameAttributes(nameToStore);
 
       block = await this.client.getBlock({ blockNumber: log.blockNumber! });
@@ -466,7 +466,7 @@ export class ENSIndexer {
           updated_at = NOW()
       `;
 
-      await this.pool.query(upsertQuery, [
+      const result = await this.pool.query(upsertQuery + ' RETURNING id', [
         tokenIdStr,
         owner.toLowerCase(),
         expiryDate,
@@ -475,12 +475,54 @@ export class ENSIndexer {
         has_numbers,
         has_emoji
       ]);
+
+      // Create mint activity record with the registration date as the event timestamp
+      if (result.rows.length > 0) {
+        const ensNameId = result.rows[0].id;
+        const registrationDate = new Date(Number(block.timestamp) * 1000);
+
+        try {
+          await this.pool.query(
+            `INSERT INTO activity_history (
+              ens_name_id,
+              event_type,
+              actor_address,
+              platform,
+              chain_id,
+              transaction_hash,
+              block_number,
+              metadata,
+              created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT DO NOTHING`,
+            [
+              ensNameId,
+              'mint',
+              owner.toLowerCase(),
+              'blockchain',
+              1,
+              log.transactionHash || null,
+              log.blockNumber?.toString() || null,
+              JSON.stringify({ token_id: tokenIdStr }),
+              registrationDate
+            ]
+          );
+          logger.debug(`Created mint activity for ${nameToStore} (token ${tokenIdStr}) with registration date ${registrationDate.toISOString()}`);
+        } catch (activityError: any) {
+          logger.error('Failed to create mint activity:', {
+            error: activityError.message,
+            tokenId: tokenIdStr,
+            ensNameId
+          });
+          // Don't fail the entire registration if activity creation fails
+        }
+      }
     } catch (error: any) {
       // If we get a unique constraint violation on name, it means the name already exists
       // with a different token_id. This shouldn't happen for NameRegistered events but handle it gracefully.
       if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
-        const ensName = await this.resolver.resolveTokenIdToName(tokenIdStr);
-        const nameToStore = ensName || `token-${tokenIdStr}`;
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        const nameToStore = resolvedData?.name || `token-${tokenIdStr}`;
         logger.warn(`ENS name "${nameToStore}" already exists during NameRegistered event. This indicates a data inconsistency.`);
         // Continue processing - the name already exists in the database
       } else {
