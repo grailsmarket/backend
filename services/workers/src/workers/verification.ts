@@ -24,7 +24,7 @@ export async function registerVerificationWorker(boss: PgBoss): Promise<void> {
       logger.info({ userId, email }, 'Sending email verification');
 
       try {
-        const verificationUrl = `${FRONTEND_URL}/verify-email?token=${encodeURIComponent(token)}`;
+        const verificationUrl = `${FRONTEND_URL}/verify?token=${encodeURIComponent(token)}`;
 
         const emailTemplate = buildEmailVerificationEmail({
           verificationUrl,

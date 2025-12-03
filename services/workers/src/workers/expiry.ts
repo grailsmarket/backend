@@ -140,81 +140,104 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
         let totalExpiredListings = 0;
         let totalExpiredOffers = 0;
 
-        // Process in batches of 50 to avoid pg_notify payload limit (8000 bytes)
-        const BATCH_SIZE = 50;
+        // Process in smaller batches to avoid pg_notify issues with rapid-fire triggers
+        const BATCH_SIZE = 10;
 
         // Expire overdue listings in batches
         while (true) {
-          const listingsResult = await pool.query(
-            `UPDATE listings
-             SET status = 'expired', updated_at = NOW()
-             WHERE id IN (
-               SELECT id FROM listings
-               WHERE status = 'active'
-                 AND expires_at IS NOT NULL
-                 AND expires_at <= NOW()
-               LIMIT $1
-             )
-             RETURNING id`,
-            [BATCH_SIZE]
-          );
+          await pool.query('BEGIN');
+          try {
+            // Disable triggers for this transaction
+            await pool.query('SET LOCAL session_replication_role = replica');
 
-          totalExpiredListings += listingsResult.rows.length;
+            const listingsResult = await pool.query(
+              `UPDATE listings
+               SET status = 'expired', updated_at = NOW()
+               WHERE id IN (
+                 SELECT id FROM listings
+                 WHERE status = 'active'
+                   AND expires_at IS NOT NULL
+                   AND expires_at <= NOW()
+                 LIMIT $1
+               )
+               RETURNING id`,
+              [BATCH_SIZE]
+            );
 
-          if (listingsResult.rows.length < BATCH_SIZE) {
-            break; // No more listings to expire
+            await pool.query('COMMIT');
+            totalExpiredListings += listingsResult.rows.length;
+
+            if (listingsResult.rows.length < BATCH_SIZE) {
+              break; // No more listings to expire
+            }
+          } catch (txError) {
+            await pool.query('ROLLBACK');
+            throw txError;
           }
         }
 
         // Expire overdue offers in batches
         while (true) {
-          const offersResult = await pool.query(
-            `UPDATE offers
-             SET status = 'expired'
-             WHERE id IN (
-               SELECT id FROM offers
-               WHERE status = 'pending'
-                 AND expires_at IS NOT NULL
-                 AND expires_at <= NOW()
-               LIMIT $1
-             )
-             RETURNING id, ens_name_id`,
-            [BATCH_SIZE]
-          );
+          await pool.query('BEGIN');
+          try {
+            // Disable triggers for this transaction
+            await pool.query('SET LOCAL session_replication_role = replica');
 
-          totalExpiredOffers += offersResult.rows.length;
+            const offersResult = await pool.query(
+              `UPDATE offers
+               SET status = 'expired'
+               WHERE id IN (
+                 SELECT id FROM offers
+                 WHERE status = 'pending'
+                   AND expires_at IS NOT NULL
+                   AND expires_at <= NOW()
+                 LIMIT $1
+               )
+               RETURNING id, ens_name_id`,
+              [BATCH_SIZE]
+            );
 
-          // Trigger recalculation for each expired offer that might have been highest
-          if (offersResult.rows.length > 0) {
-            try {
-              // Get unique ens_name_ids that need recalculation
-              const ensNameIds = [...new Set(offersResult.rows.map((row: any) => row.ens_name_id))];
+            await pool.query('COMMIT');
+            totalExpiredOffers += offersResult.rows.length;
 
-              for (const ensNameId of ensNameIds) {
-                // Check if any of the expired offers was the highest for this name
-                const checkHighest = await pool.query(
-                  `SELECT highest_offer_id FROM ens_names WHERE id = $1`,
-                  [ensNameId]
-                );
+            // Trigger recalculation for each expired offer that might have been highest
+            if (offersResult.rows.length > 0) {
+              try {
+                // Get unique ens_name_ids that need recalculation
+                const ensNameIds = [...new Set(offersResult.rows.map((row: any) => row.ens_name_id))];
 
-                const wasHighest = offersResult.rows.some(
-                  (row: any) => row.id === checkHighest.rows[0]?.highest_offer_id && row.ens_name_id === ensNameId
-                );
+                for (const ensNameId of ensNameIds) {
+                  // Check if any of the expired offers was the highest for this name
+                  const checkHighest = await pool.query(
+                    `SELECT highest_offer_id FROM ens_names WHERE id = $1`,
+                    [ensNameId]
+                  );
 
-                if (wasHighest) {
-                  await boss.send('recalculate-highest-offer', { ensNameId });
-                  logger.info({ ensNameId }, 'Published recalculate highest offer (batch expiry)');
+                  const wasHighest = offersResult.rows.some(
+                    (row: any) => row.id === checkHighest.rows[0]?.highest_offer_id && row.ens_name_id === ensNameId
+                  );
+
+                  if (wasHighest) {
+                    await boss.send('recalculate-highest-offer', { ensNameId });
+                    logger.info({ ensNameId }, 'Published recalculate highest offer (batch expiry)');
+                  }
                 }
+              } catch (queueError) {
+                logger.error({ error: queueError }, 'Failed to publish recalculate jobs for batch expired offers');
               }
-            } catch (queueError) {
-              logger.error({ error: queueError }, 'Failed to publish recalculate jobs for batch expired offers');
             }
-          }
 
-          if (offersResult.rows.length < BATCH_SIZE) {
-            break; // No more offers to expire
+            if (offersResult.rows.length < BATCH_SIZE) {
+              break; // No more offers to expire
+            }
+          } catch (txError) {
+            await pool.query('ROLLBACK');
+            throw txError;
           }
         }
+
+        // Re-enable triggers (SET LOCAL will auto-reset at end of transaction anyway)
+        await pool.query('SET LOCAL session_replication_role = DEFAULT');
 
         if (totalExpiredListings > 0 || totalExpiredOffers > 0) {
           logger.info(

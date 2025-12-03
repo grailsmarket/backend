@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "backfill-names": "npx tsx src/scripts/backfill-ens-names.ts"
+    "backfill-names": "npx tsx src/scripts/backfill-ens-names.ts",
+    "update-names": "npm run build && node --max-old-space-size=2048 dist/indexer/src/scripts/update-ens-names.js"
   },
   "dependencies": {
     "p-queue": "^6.6.2",

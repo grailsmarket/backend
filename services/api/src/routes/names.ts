@@ -6,6 +6,7 @@ import { ethers } from 'ethers';
 import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
+import { cacheHandler } from '../middleware/cache';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -55,13 +56,17 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
   }
 
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: cacheHandler }, async (request, reply) => {
     const query = ListNamesQuerySchema.parse(request.query);
     const offset = (query.page - 1) * query.limit;
 
     let whereConditions = [];
     let params: any[] = [];
     let paramCount = 1;
+
+    // Exclude names past grace period (90 days after expiry)
+    // Allow: non-expired names, names in grace period, and subnames (no expiry date)
+    whereConditions.push(`(expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW())`);
 
     if (query.owner) {
       whereConditions.push(`LOWER(owner_address) = LOWER($${paramCount})`);
@@ -334,7 +339,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
   });
 
   // Legacy endpoint - keeping for backwards compatibility
-  fastify.get('/:name/legacy', async (request, reply) => {
+  fastify.get('/:name/legacy', { preHandler: cacheHandler }, async (request, reply) => {
     const { name } = request.params as { name: string };
 
     const query = `
@@ -607,7 +612,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.get('/:name/history', async (request, reply) => {
+  fastify.get('/:name/history', { preHandler: cacheHandler }, async (request, reply) => {
     const { name } = request.params as { name: string };
     const { page = 1, limit = 20 } = request.query as any;
     const offset = (page - 1) * limit;

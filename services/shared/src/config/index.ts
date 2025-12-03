@@ -39,7 +39,7 @@ const ConfigSchema = z.object({
     port: z.number().default(3000),
     host: z.string().default('0.0.0.0'),
     corsOrigins: z.array(z.string()).default(['http://localhost:3000']),
-    rateLimitMax: z.number().default(100),
+    rateLimitMax: z.number().default(150),
     rateLimitWindow: z.number().default(60000),
   }),
   monitoring: z.object({
@@ -60,6 +60,11 @@ const ConfigSchema = z.object({
   }),
   frontend: z.object({
     url: z.string().default('http://localhost:3001'),
+  }),
+  redis: z.object({
+    url: z.string().default('redis://localhost:6379'),
+    enabled: z.boolean().default(true),
+    cacheTtlSeconds: z.number().default(15),
   }),
 });
 
@@ -93,7 +98,7 @@ const rawConfig = {
     port: parseInt(process.env.API_PORT || '3000'),
     host: process.env.API_HOST,
     corsOrigins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'],
-    rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '100'),
+    rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '150'),
     rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW || '60000'),
   },
   monitoring: {
@@ -114,6 +119,11 @@ const rawConfig = {
   },
   frontend: {
     url: process.env.FRONTEND_URL,
+  },
+  redis: {
+    url: process.env.REDIS_URL,
+    enabled: process.env.REDIS_ENABLED !== 'false',
+    cacheTtlSeconds: process.env.CACHE_TTL_SECONDS ? parseInt(process.env.CACHE_TTL_SECONDS) : 15,
   },
 };
 

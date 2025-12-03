@@ -13,6 +13,10 @@ interface ActivityWSClient {
   addressSubscriptions: Set<string>; // Set of addresses to watch
   nameSubscriptions: Set<string>;     // Set of ENS names to watch
   subscribeAll: boolean;              // Subscribe to all activity
+  eventTypeFilters: {
+    include?: Set<string>;            // If set, only include these event types
+    exclude?: Set<string>;            // If set, exclude these event types
+  };
 }
 
 const clients = new Map<string, WSClient>();
@@ -99,6 +103,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       addressSubscriptions: new Set(),
       nameSubscriptions: new Set(),
       subscribeAll: false,
+      eventTypeFilters: {},
     };
 
     activityClients.set(clientId, client);
@@ -266,6 +271,38 @@ function handleActivityMessage(client: ActivityWSClient, data: any) {
       }
       break;
 
+    case 'set_event_filter':
+      // Set event type filter - can be 'include' or 'exclude'
+      if (data.filter_type && data.event_types && Array.isArray(data.event_types)) {
+        if (data.filter_type === 'include') {
+          client.eventTypeFilters.include = new Set(data.event_types);
+          client.eventTypeFilters.exclude = undefined;
+        } else if (data.filter_type === 'exclude') {
+          client.eventTypeFilters.exclude = new Set(data.event_types);
+          client.eventTypeFilters.include = undefined;
+        }
+        client.ws.send(JSON.stringify({
+          type: 'filter_set',
+          filter_type: data.filter_type,
+          event_types: data.event_types,
+          timestamp: new Date().toISOString(),
+        }));
+      } else {
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid filter format. Expected: { type: "set_event_filter", filter_type: "include"|"exclude", event_types: string[] }',
+        }));
+      }
+      break;
+
+    case 'clear_event_filter':
+      client.eventTypeFilters = {};
+      client.ws.send(JSON.stringify({
+        type: 'filter_cleared',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
     case 'ping':
       client.ws.send(JSON.stringify({
         type: 'pong',
@@ -314,6 +351,18 @@ export function broadcastActivityEvent(activityData: any) {
     // Check if client is subscribed to the ENS name
     if (name && client.nameSubscriptions.has(name)) {
       shouldSend = true;
+    }
+
+    // Apply event type filters
+    if (shouldSend && event_type) {
+      // If include filter is set, only send if event_type is in the include set
+      if (client.eventTypeFilters.include) {
+        shouldSend = client.eventTypeFilters.include.has(event_type);
+      }
+      // If exclude filter is set, don't send if event_type is in the exclude set
+      else if (client.eventTypeFilters.exclude) {
+        shouldSend = !client.eventTypeFilters.exclude.has(event_type);
+      }
     }
 
     if (shouldSend) {

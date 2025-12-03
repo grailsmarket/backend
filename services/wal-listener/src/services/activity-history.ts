@@ -10,7 +10,9 @@ export type ActivityEventType =
   | 'bought'
   | 'sold'
   | 'offer_accepted'
-  | 'cancelled'
+  | 'listing_cancelled'
+  | 'offer_cancelled'
+  | 'cancelled' // Deprecated - kept for backwards compatibility
   | 'mint'
   | 'burn'
   | 'sent'
@@ -58,6 +60,59 @@ export class ActivityHistoryService {
     } = params;
 
     try {
+      // For blockchain events (with transaction_hash and block_number),
+      // check if this event already exists to prevent duplicates
+      if (transaction_hash && block_number) {
+        const existingEvent = await this.pool.query(
+          `SELECT id FROM activity_history
+           WHERE ens_name_id = $1
+             AND event_type = $2
+             AND transaction_hash = $3
+             AND block_number = $4
+             AND actor_address = $5
+           LIMIT 1`,
+          [ens_name_id, event_type, transaction_hash, block_number, actor_address]
+        );
+
+        if (existingEvent.rows.length > 0) {
+          logger.debug(
+            `Skipping duplicate activity record: ${event_type} for ENS name ID ${ens_name_id}, tx ${transaction_hash}`
+          );
+          return;
+        }
+      }
+
+      // For non-blockchain events (listings, offers), check for duplicates based on metadata
+      // to prevent duplicate activity records from WAL trigger re-execution
+      if (!transaction_hash && !block_number) {
+        const listingId = metadata?.listing_id;
+        const offerId = metadata?.offer_id;
+
+        // For listing/offer events, check if we already have a recent record with same ID
+        if (listingId || offerId) {
+          const duplicateCheck = await this.pool.query(
+            `SELECT id FROM activity_history
+             WHERE ens_name_id = $1
+               AND event_type = $2
+               AND actor_address = $3
+               AND (
+                 (metadata->>'listing_id')::integer = $4
+                 OR (metadata->>'offer_id')::integer = $5
+               )
+               AND created_at > NOW() - INTERVAL '1 minute'
+             LIMIT 1`,
+            [ens_name_id, event_type, actor_address, listingId || null, offerId || null]
+          );
+
+          if (duplicateCheck.rows.length > 0) {
+            logger.debug(
+              `Skipping duplicate activity record: ${event_type} for ENS name ID ${ens_name_id}, listing_id ${listingId}, offer_id ${offerId}`
+            );
+            return;
+          }
+        }
+      }
+
       const result = await this.pool.query(
         `INSERT INTO activity_history (
           ens_name_id,
@@ -226,9 +281,11 @@ export class ActivityHistoryService {
 
     await this.createActivityRecord({
       ens_name_id: listing.ens_name_id,
-      event_type: 'cancelled',
+      event_type: 'listing_cancelled',
       actor_address: listing.seller_address,
       platform: listing.source || 'grails',
+      price_wei: listing.price_wei,
+      currency_address: listing.currency_address,
       metadata: {
         listing_id: listing.id,
         cancelled_type: 'listing',
@@ -331,9 +388,11 @@ export class ActivityHistoryService {
 
     await this.createActivityRecord({
       ens_name_id: offer.ens_name_id,
-      event_type: 'cancelled',
+      event_type: 'offer_cancelled',
       actor_address: offer.buyer_address,
       platform: offer.source || 'grails',
+      price_wei: offer.offer_amount_wei,
+      currency_address: offer.currency_address,
       metadata: {
         offer_id: offer.id,
         cancelled_type: 'offer',

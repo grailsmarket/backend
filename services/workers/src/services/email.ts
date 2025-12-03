@@ -331,3 +331,87 @@ This link will expire in 24 hours. If you didn't add this email address to Grail
     `.trim(),
   };
 }
+
+/**
+ * Build email template for offer received notification (owner notification)
+ */
+export function buildOfferReceivedEmail(params: {
+  ensName: string;
+  priceEth: string;
+  offerUrl: string;
+  unsubscribeUrl: string;
+}): EmailTemplate {
+  const { ensName, priceEth, offerUrl, unsubscribeUrl } = params;
+
+  return {
+    subject: `You Received an Offer on ${ensName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>🎉 New Offer Received!</h2>
+        <p>Great news! Someone made an offer on your ENS name <strong>${ensName}</strong>.</p>
+        <p><strong>Offer Amount:</strong> ${priceEth} ETH</p>
+        <p><a href="${offerUrl}" style="background-color: #7C3AED; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">View Offer</a></p>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+          You received this email because you own ${ensName}.
+          <a href="${unsubscribeUrl}">Manage notification preferences</a>
+        </p>
+      </div>
+    `,
+    text: `
+You Received an Offer on ${ensName}
+
+Great news! Someone made an offer on your ENS name ${ensName}.
+
+Offer Amount: ${priceEth} ETH
+
+View offer: ${offerUrl}
+
+---
+You received this email because you own ${ensName}.
+Manage notification preferences: ${unsubscribeUrl}
+    `.trim(),
+  };
+}
+
+/**
+ * Build email template for listing sold notification (seller notification)
+ */
+export function buildListingSoldEmail(params: {
+  ensName: string;
+  priceEth: string;
+  saleUrl: string;
+  unsubscribeUrl: string;
+}): EmailTemplate {
+  const { ensName, priceEth, saleUrl, unsubscribeUrl } = params;
+
+  return {
+    subject: `Your Listing for ${ensName} Was Sold!`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>🎊 Congratulations! Your Listing Was Sold</h2>
+        <p>Your listing for <strong>${ensName}</strong> has been sold!</p>
+        <p><strong>Sale Price:</strong> ${priceEth} ETH</p>
+        <p><a href="${saleUrl}" style="background-color: #22C55E; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">View Sale Details</a></p>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+          You received this email because your listing was sold on Grails.
+          <a href="${unsubscribeUrl}">Manage notification preferences</a>
+        </p>
+      </div>
+    `,
+    text: `
+Your Listing for ${ensName} Was Sold!
+
+Congratulations! Your listing for ${ensName} has been sold!
+
+Sale Price: ${priceEth} ETH
+
+View sale details: ${saleUrl}
+
+---
+You received this email because your listing was sold on Grails.
+Manage notification preferences: ${unsubscribeUrl}
+    `.trim(),
+  };
+}

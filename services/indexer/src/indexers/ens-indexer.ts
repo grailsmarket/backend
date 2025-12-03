@@ -150,7 +150,6 @@ export class ENSIndexer {
         processed: false,
       };
 
-      await this.saveEvent(blockchainEvent);
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
       // Only log actual errors, not decode failures
@@ -236,84 +235,97 @@ export class ENSIndexer {
   private async handleTransfer(args: any, log: Log) {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+    const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
     let ensNameId: number | null = null;
 
     try {
-      // First, check if this token_id already exists in our database
-      const existingRecord = await this.pool.query(
-        'SELECT id, name, has_numbers, has_emoji FROM ens_names WHERE token_id = $1',
-        [tokenIdStr]
-      );
+      // Check if this involves the Name Wrapper contract
+      const isNameWrapperTransfer =
+        to.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase() ||
+        from.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase();
 
+      let correctTokenId = tokenIdStr;
       let nameToStore: string;
       let has_numbers: boolean;
       let has_emoji: boolean;
+      let ownerToStore: string;
 
-      if (existingRecord.rows.length > 0) {
-        // Record exists - use the existing name instead of calling The Graph
-        nameToStore = existingRecord.rows[0].name;
-        has_numbers = existingRecord.rows[0].has_numbers;
-        has_emoji = existingRecord.rows[0].has_emoji;
-      } else {
-        // Record doesn't exist - try to resolve from The Graph
+      if (isNameWrapperTransfer) {
+        // Name Wrapper involved - resolve from The Graph to get correct token ID and owner
+        logger.debug(`Name Wrapper transfer detected for token ${tokenIdStr}, querying The Graph`);
         const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
-        nameToStore = resolvedData?.name || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
+
+        // Require successful resolution for Name Wrapper transfers
+        if (!resolvedData || !resolvedData.name) {
+          logger.warn(`Could not resolve Name Wrapper transfer from The Graph for token ${tokenIdStr}, skipping Transfer event`);
+          return;
+        }
+
+        correctTokenId = resolvedData.correctTokenId;
+        nameToStore = resolvedData.name;
         const attributes = this.calculateNameAttributes(nameToStore);
         has_numbers = attributes.has_numbers;
         has_emoji = attributes.has_emoji;
+
+        // Use resolved owner (wrappedOwner for wrapped names)
+        ownerToStore = resolvedData.ownerAddress || to.toLowerCase();
+        logger.debug(`Name Wrapper transfer: using correctTokenId ${correctTokenId}, owner ${ownerToStore} for ${nameToStore}`);
+      } else {
+        // Standard unwrapped transfer - use blockchain event data
+        // First check if we already have this name in the database
+        const existingRecord = await this.pool.query(
+          'SELECT name, has_numbers, has_emoji FROM ens_names WHERE token_id = $1',
+          [tokenIdStr]
+        );
+
+        if (existingRecord.rows.length > 0) {
+          // Use existing name data
+          nameToStore = existingRecord.rows[0].name;
+          has_numbers = existingRecord.rows[0].has_numbers;
+          has_emoji = existingRecord.rows[0].has_emoji;
+        } else {
+          // New name - try to resolve from The Graph
+          const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+          if (resolvedData && resolvedData.name) {
+            nameToStore = resolvedData.name;
+            const attributes = this.calculateNameAttributes(nameToStore);
+            has_numbers = attributes.has_numbers;
+            has_emoji = attributes.has_emoji;
+          } else {
+            // Can't resolve - skip this transfer
+            logger.warn(`Could not resolve name for unwrapped transfer token ${tokenIdStr}, skipping Transfer event`);
+            return;
+          }
+        }
+
+        // For standard transfers, use the 'to' address as owner
+        ownerToStore = to.toLowerCase();
+        logger.debug(`Standard transfer: token ${tokenIdStr}, owner ${ownerToStore}`);
       }
 
-      // Check if this name exists with a different token_id (edge case)
+      // Check if this name exists with a different token_id (edge case for wrapped/unwrapped transitions)
       const duplicateName = await this.pool.query(
         'SELECT id FROM ens_names WHERE name = $1 AND token_id != $2',
-        [nameToStore, tokenIdStr]
+        [nameToStore, correctTokenId]
       );
 
       let result;
 
       if (duplicateName.rows.length > 0) {
-        // Name exists with different token_id - just update the existing record
+        // Name exists with different token_id - update the existing record by name
         result = await this.pool.query(
           `UPDATE ens_names SET
             owner_address = $1,
             last_transfer_date = NOW(),
             updated_at = NOW()
-          WHERE token_id = $2
-          RETURNING id`,
-          [to.toLowerCase(), tokenIdStr]
-        );
-      } else if (existingRecord.rows.length > 0) {
-        // Name exists, just update it
-        const updateQuery = `
-          UPDATE ens_names SET
-            owner_address = $1,
-            name = CASE
-              WHEN name LIKE 'token-%' THEN $2
-              ELSE name
-            END,
-            has_numbers = CASE
-              WHEN name LIKE 'token-%' THEN $3
-              ELSE has_numbers
-            END,
-            has_emoji = CASE
-              WHEN name LIKE 'token-%' THEN $4
-              ELSE has_emoji
-            END,
-            last_transfer_date = NOW(),
-            updated_at = NOW()
           WHERE name = $2
-          RETURNING id
-        `;
-
-        result = await this.pool.query(updateQuery, [
-          to.toLowerCase(),
-          nameToStore,
-          has_numbers,
-          has_emoji
-        ]);
+          RETURNING id`,
+          [ownerToStore, nameToStore]
+        );
       } else {
-        // Name doesn't exist, insert it
+        // Upsert by token_id
         const upsertQuery = `
           INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
           VALUES ($1, $2, $3, NOW(), $4, $5)
@@ -337,9 +349,9 @@ export class ENSIndexer {
         `;
 
         result = await this.pool.query(upsertQuery, [
-          tokenIdStr,
+          correctTokenId,
           nameToStore,
-          to.toLowerCase(),
+          ownerToStore,
           has_numbers,
           has_emoji
         ]);
@@ -349,27 +361,12 @@ export class ENSIndexer {
         ensNameId = result.rows[0].id;
       }
     } catch (error: any) {
-      // If we get a unique constraint violation on name, it means the name already exists
-      // with a different token_id. Fetch the existing record by name.
-      if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
-        const nameToStore = resolvedData?.name || `token-${tokenIdStr}`;
-        logger.warn(`ENS name "${nameToStore}" already exists with different token_id. Fetching existing record.`);
-
-        const existingQuery = 'SELECT id FROM ens_names WHERE name = $1';
-        const existingResult = await this.pool.query(existingQuery, [nameToStore]);
-
-        if (existingResult.rows.length > 0) {
-          ensNameId = existingResult.rows[0].id;
-        }
-      } else {
-        logger.error('Failed to upsert ENS name:', {
-          error: error.message,
-          tokenId: tokenIdStr,
-          to
-        });
-        throw error;
-      }
+      logger.error('Failed to process Transfer event:', {
+        error: error.message,
+        tokenId: tokenIdStr,
+        to
+      });
+      throw error;
     }
 
     // Publish ownership update job to queue
@@ -431,26 +428,110 @@ export class ENSIndexer {
   private async handleNameRegistered(args: any, log: Log) {
     const { id: tokenId, owner, expires } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
-    let block: any;
+    // Set defaults outside try block so they're available for transaction logging
+    let correctTokenId = tokenIdStr;
+    let registrationDate: Date | null = null;
+    let registrantAddress = owner.toLowerCase();
+
     try {
-      // Try to resolve the actual ENS name
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
-      const nameToStore = resolvedData?.name || `token-${tokenIdStr}`; // Fallback to placeholder if not resolved
-      const { has_numbers, has_emoji } = this.calculateNameAttributes(nameToStore);
+      // Check if owner is Name Wrapper (edge case)
+      const isWrappedRegistration = owner.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase();
 
-      block = await this.client.getBlock({ blockNumber: log.blockNumber! });
-      const expiryDate = new Date(Number(expires) * 1000);
+      let nameToStore: string;
+      let has_numbers: boolean;
+      let has_emoji: boolean;
+      let ownerAddress: string;
+      let expiryDate: Date;
 
-      const upsertQuery = `
-        INSERT INTO ens_names (
-          token_id, owner_address, registrant,
-          expiry_date, registration_date, name, has_numbers, has_emoji
-        ) VALUES ($1, $2, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (token_id) DO UPDATE SET
+      if (isWrappedRegistration) {
+        // Name Wrapper registration - resolve from The Graph to get correct data
+        logger.debug(`Name Wrapper registration detected for token ${tokenIdStr}, querying The Graph`);
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+
+        // Require successful resolution for wrapped registrations
+        if (!resolvedData || !resolvedData.name) {
+          logger.warn(`Could not resolve Name Wrapper registration from The Graph for token ${tokenIdStr}, skipping NameRegistered event`);
+          return;
+        }
+
+        correctTokenId = resolvedData.correctTokenId;
+        nameToStore = resolvedData.name;
+        const attributes = this.calculateNameAttributes(nameToStore);
+        has_numbers = attributes.has_numbers;
+        has_emoji = attributes.has_emoji;
+
+        // Use resolved owner and registrant (handles wrappedOwner correctly)
+        ownerAddress = resolvedData.ownerAddress || owner.toLowerCase();
+        registrantAddress = resolvedData.registrantAddress || owner.toLowerCase();
+
+        // Use dates from The Graph, fallback to event data
+        expiryDate = resolvedData.expiryDate || new Date(Number(expires) * 1000);
+        registrationDate = resolvedData.registrationDate;
+
+        logger.debug(`Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`);
+      } else {
+        // Standard unwrapped registration - resolve name from The Graph but use event data for ownership
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+
+        if (resolvedData && resolvedData.name) {
+          nameToStore = resolvedData.name;
+          registrationDate = resolvedData.registrationDate;
+        } else {
+          // Can't resolve name - skip this registration
+          logger.warn(`Could not resolve name for registration token ${tokenIdStr}, skipping NameRegistered event`);
+          return;
+        }
+
+        const attributes = this.calculateNameAttributes(nameToStore);
+        has_numbers = attributes.has_numbers;
+        has_emoji = attributes.has_emoji;
+
+        // For standard registrations, use event data for owner/registrant
+        ownerAddress = owner.toLowerCase();
+        registrantAddress = owner.toLowerCase();
+        expiryDate = new Date(Number(expires) * 1000);
+
+        logger.debug(`Standard registration: token ${tokenIdStr}, name ${nameToStore}, owner ${ownerAddress}`);
+      }
+
+      // Check if this name exists with a different token_id (wrapping/unwrapping transition)
+      const duplicateName = await this.pool.query(
+        'SELECT id, token_id FROM ens_names WHERE name = $1 AND token_id != $2',
+        [nameToStore, correctTokenId]
+      );
+
+      let result;
+
+      if (duplicateName.rows.length > 0) {
+        // Name exists with different token_id - update the existing record by name
+        result = await this.pool.query(
+          `UPDATE ens_names SET
+            token_id = $1,
+            owner_address = $2,
+            registrant = $3,
+            expiry_date = $4,
+            registration_date = COALESCE(registration_date, $5),
+            has_numbers = $6,
+            has_emoji = $7,
+            updated_at = NOW()
+          WHERE name = $8
+          RETURNING id`,
+          [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore]
+        );
+      } else {
+        // Upsert by token_id
+        const upsertQuery = `
+          INSERT INTO ens_names (
+            token_id, owner_address, registrant,
+            expiry_date, registration_date, name, has_numbers, has_emoji
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           registrant = EXCLUDED.registrant,
           expiry_date = EXCLUDED.expiry_date,
+          registration_date = COALESCE(ens_names.registration_date, EXCLUDED.registration_date),
           name = CASE
             WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
             ELSE ens_names.name
@@ -464,22 +545,23 @@ export class ENSIndexer {
             ELSE ens_names.has_emoji
           END,
           updated_at = NOW()
-      `;
+        `;
 
-      const result = await this.pool.query(upsertQuery + ' RETURNING id', [
-        tokenIdStr,
-        owner.toLowerCase(),
-        expiryDate,
-        new Date(Number(block.timestamp) * 1000),
-        nameToStore,
-        has_numbers,
-        has_emoji
-      ]);
+        result = await this.pool.query(upsertQuery + ' RETURNING id', [
+          correctTokenId,
+          ownerAddress,
+          registrantAddress,
+          expiryDate,
+          registrationDate,
+          nameToStore,
+          has_numbers,
+          has_emoji
+        ]);
+      }
 
       // Create mint activity record with the registration date as the event timestamp
-      if (result.rows.length > 0) {
+      if (result.rows.length > 0 && registrationDate) {
         const ensNameId = result.rows[0].id;
-        const registrationDate = new Date(Number(block.timestamp) * 1000);
 
         try {
           await this.pool.query(
@@ -498,45 +580,35 @@ export class ENSIndexer {
             [
               ensNameId,
               'mint',
-              owner.toLowerCase(),
+              registrantAddress,
               'blockchain',
               1,
               log.transactionHash || null,
               log.blockNumber?.toString() || null,
-              JSON.stringify({ token_id: tokenIdStr }),
+              JSON.stringify({ token_id: correctTokenId }),
               registrationDate
             ]
           );
-          logger.debug(`Created mint activity for ${nameToStore} (token ${tokenIdStr}) with registration date ${registrationDate.toISOString()}`);
+          logger.debug(`Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}`);
         } catch (activityError: any) {
           logger.error('Failed to create mint activity:', {
             error: activityError.message,
-            tokenId: tokenIdStr,
+            tokenId: correctTokenId,
             ensNameId
           });
           // Don't fail the entire registration if activity creation fails
         }
       }
     } catch (error: any) {
-      // If we get a unique constraint violation on name, it means the name already exists
-      // with a different token_id. This shouldn't happen for NameRegistered events but handle it gracefully.
-      if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
-        const nameToStore = resolvedData?.name || `token-${tokenIdStr}`;
-        logger.warn(`ENS name "${nameToStore}" already exists during NameRegistered event. This indicates a data inconsistency.`);
-        // Continue processing - the name already exists in the database
-      } else {
-        logger.error('Failed to handle NameRegistered:', {
-          error: error.message,
-          tokenId: tokenIdStr,
-          owner
-        });
-        throw error;
-      }
+      logger.error('Failed to handle NameRegistered:', {
+        error: error.message,
+        tokenId: tokenIdStr,
+        owner
+      });
+      throw error;
     }
 
-    if (!block) return;
-
+    // Log transaction data
     const txQuery = `
       INSERT INTO transactions (
         ens_name_id, transaction_hash, block_number,
@@ -548,17 +620,26 @@ export class ENSIndexer {
     `;
 
     try {
+      // Get timestamp - use registrationDate from Graph, or fetch block timestamp
+      let timestamp: Date;
+      if (registrationDate) {
+        timestamp = registrationDate;
+      } else {
+        const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+        timestamp = new Date(Number(block.timestamp) * 1000);
+      }
+
       await this.pool.query(txQuery, [
-        tokenIdStr,
+        correctTokenId,
         log.transactionHash,
         log.blockNumber?.toString(),
-        owner.toLowerCase(),
-        new Date(Number(block.timestamp) * 1000),
+        registrantAddress,
+        timestamp,
       ]);
     } catch (error: any) {
       logger.error('Failed to insert registration transaction:', {
         error: error.message,
-        tokenId: tokenIdStr
+        tokenId: correctTokenId
       });
     }
   }

@@ -7,10 +7,11 @@ import {
   getRecentSales,
   getSalesAnalytics
 } from '../../../shared/src';
+import { cacheHandler, longCacheHandler } from '../middleware/cache';
 
 export async function salesRoutes(fastify: FastifyInstance) {
   // GET /api/v1/sales - Get recent sales
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: cacheHandler }, async (request, reply) => {
     const { page = '1', limit = '20' } = request.query as any;
     const currentPage = parseInt(page);
     const pageLimit = parseInt(limit);
@@ -56,7 +57,7 @@ export async function salesRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/v1/sales/name/:name - Get sales for specific ENS name
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: longCacheHandler }, async (request, reply) => {
     const { name } = request.params as { name: string };
     const { page = '1', limit = '20' } = request.query as any;
     const currentPage = parseInt(page);
@@ -103,7 +104,7 @@ export async function salesRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/v1/sales/address/:address - Get sales by address
-  fastify.get('/address/:address', async (request, reply) => {
+  fastify.get('/address/:address', { preHandler: cacheHandler }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = '1', limit = '20', type = 'both' } = request.query as any;
     const currentPage = parseInt(page);
@@ -155,7 +156,7 @@ export async function salesRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/v1/sales/:nameOrId/analytics - Get sales analytics
-  fastify.get('/:nameOrId/analytics', async (request, reply) => {
+  fastify.get('/:nameOrId/analytics', { preHandler: longCacheHandler }, async (request, reply) => {
     const { nameOrId } = request.params as { nameOrId: string };
 
     try {

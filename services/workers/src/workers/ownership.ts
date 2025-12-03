@@ -73,46 +73,38 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
           'Ownership updated'
         );
 
-        // Cancel any active listings (ownership changed = seller can't fulfill)
-        const cancelledListings = await client.query(
+        // Mark listings as unfunded (ownership changed = seller can't fulfill)
+        // Using unfunded instead of cancelled allows revalidation if ownership returns
+        const unfundedListings = await client.query(
           `UPDATE listings
-           SET status = 'cancelled', updated_at = NOW()
+           SET status = 'unfunded',
+               unfunded_at = NOW(),
+               unfunded_reason = 'ownership_lost',
+               last_validated_at = NOW(),
+               updated_at = NOW()
            WHERE ens_name_id = $1
              AND status = 'active'
            RETURNING id, seller_address, price_wei`,
           [ensNameId]
         );
 
-        if (cancelledListings.rows.length > 0) {
+        if (unfundedListings.rows.length > 0) {
           logger.info(
-            { ensNameId, ensName, count: cancelledListings.rows.length },
-            'Cancelled active listings due to ownership change'
+            { ensNameId, ensName, count: unfundedListings.rows.length },
+            'Marked listings as unfunded due to ownership change'
           );
 
-          // Publish notification jobs for each cancelled listing
-          const notificationJobs = cancelledListings.rows.map((listing) => ({
-            name: QUEUE_NAMES.SEND_NOTIFICATION,
-            data: {
-              type: 'listing-cancelled-ownership-change' as const,
-              recipientAddress: listing.seller_address,
-              ensNameId,
-              metadata: {
-                listingId: listing.id,
-                priceWei: listing.price_wei,
-                oldOwner: currentOwner,
-                newOwner,
-              },
-              transactionHash,
-            },
+          // Trigger immediate validation for these listings
+          const validationJobs = unfundedListings.rows.map((listing) => ({
+            name: 'validate-listing-ownership',
+            data: { listingId: listing.id }
           }));
 
-          if (notificationJobs.length > 0) {
-            await boss.insert(notificationJobs);
-            logger.info(
-              { count: notificationJobs.length },
-              'Notification jobs published for cancelled listings'
-            );
-          }
+          await boss.insert(validationJobs);
+          logger.info(
+            { count: validationJobs.length },
+            'Validation jobs queued for unfunded listings'
+          );
         }
 
         await client.query('COMMIT');

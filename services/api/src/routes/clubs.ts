@@ -1,12 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { searchNames } from '../services/search';
+import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
 
 export async function clubsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // Get all clubs with metadata
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: veryLongCacheHandler }, async (request, reply) => {
     try {
       const query = `
         SELECT
@@ -50,7 +51,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
   });
 
   // Get names in a specific club
-  fastify.get('/:clubName', async (request, reply) => {
+  fastify.get('/:clubName', { preHandler: cacheHandler }, async (request, reply) => {
     const { clubName } = request.params as { clubName: string };
     const { page = '1', limit = '20' } = request.query as { page?: string; limit?: string };
 

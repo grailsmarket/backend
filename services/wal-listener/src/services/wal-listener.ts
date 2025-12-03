@@ -210,7 +210,21 @@ export class WALListener {
   }
 
   private async processChange(change: Change) {
-    logger.info(`Processing ${change.operation} on ${change.table}`, {
+    // Get ens_name_id for context
+    let ensNameId: number | undefined;
+    if (change.table === 'offers' && change.data?.ens_name_id) {
+      ensNameId = change.data.ens_name_id;
+    } else if (change.table === 'listings' && change.data?.ens_name_id) {
+      ensNameId = change.data.ens_name_id;
+    } else if (change.table === 'ens_names' && change.data?.id) {
+      ensNameId = change.data.id;
+    }
+
+    const logMessage = ensNameId
+      ? `Processing ${change.operation} on ${change.table} for ensNameId ${ensNameId}`
+      : `Processing ${change.operation} on ${change.table}`;
+
+    logger.info(logMessage, {
       table: change.table,
       operation: change.operation,
       dataId: change.data?.id
@@ -245,6 +259,21 @@ export class WALListener {
         break;
 
       case 'UPDATE':
+        // Skip Elasticsearch re-indexing if only view_count changed
+        // This prevents the document from being moved to the bottom of search results
+        // when users view a name (which increments view_count)
+        if (change.oldData && change.data) {
+          const ignoredFields = ['view_count', 'updated_at'];
+          const changedFields = Object.keys(change.data).filter(key => {
+            return !ignoredFields.includes(key) && change.oldData[key] !== change.data[key];
+          });
+
+          if (changedFields.length === 0) {
+            logger.debug(`Skipping ES update for ${change.data.name} - only view_count/updated_at changed`);
+            break;
+          }
+        }
+
         // Use updateENSNameListing instead of indexENSName to ensure we fetch
         // the listing data via JOIN, preventing the status field from being
         // incorrectly set to 'unlisted' when only view_count changes
@@ -258,20 +287,21 @@ export class WALListener {
           // Only process if owner actually changed
           if (oldOwner !== newOwner) {
             try {
-              // Note: Mint events are now created by the ENS indexer with proper blockchain timestamps.
-              // We only handle burns and transfers here.
+              // Note: Mint and burn events are now created by the ENS indexer with proper blockchain timestamps.
+              // We only handle regular transfers here (between two non-zero addresses).
 
-              // Check for burn (to zero address)
-              if (newOwner === ZERO_ADDRESS.toLowerCase() && oldOwner !== ZERO_ADDRESS.toLowerCase()) {
-                await this.activityHistory.handleBurn({
-                  ens_name_id: change.data.id,
-                  sender_address: change.oldData.owner_address,
-                  token_id: change.data.token_id,
-                  transaction_hash: change.data.transaction_hash,
-                  block_number: change.data.block_number,
-                });
+              // Skip burn events (to zero address) - these are usually temporary states or wrapped names
+              // The indexer will handle actual burns if needed
+              if (newOwner === ZERO_ADDRESS.toLowerCase()) {
+                logger.debug(`Skipping burn event for ${change.data.token_id} - zero address updates are handled by indexer`);
+                // Don't create burn activity records anymore
               }
+              // DISABLED: Transfer sent/received events
               // Regular transfer between two addresses (not from or to zero address)
+              // These events create duplicate-looking entries in activity feeds
+              // Chain data only goes back to Jan 2024, will need full re-index anyway
+              // Can be re-enabled later if needed by uncommenting the block below
+              /*
               else if (oldOwner !== ZERO_ADDRESS.toLowerCase() && newOwner !== ZERO_ADDRESS.toLowerCase()) {
                 await this.activityHistory.handleTransfer({
                   ens_name_id: change.data.id,
@@ -282,6 +312,7 @@ export class WALListener {
                   block_number: change.data.block_number,
                 });
               }
+              */
             } catch (error) {
               logger.error('Failed to create transfer activity record:', error);
             }
@@ -340,6 +371,9 @@ export class WALListener {
                   change.data.transaction_hash
                 );
               }
+
+              // Notify the seller that their listing was sold
+              await this.publishOwnerNotificationForSale(change.data);
             }
           }
           break;
@@ -381,23 +415,30 @@ export class WALListener {
           if (change.oldData && change.data) {
             // Offer accepted
             if (change.oldData.status === 'pending' && change.data.status === 'accepted') {
-              // We need to get the seller address (current owner)
-              // This might require a lookup to the ens_names table
+              // We need to get the seller address from the sales table
+              // Note: We cannot use ens_names.owner_address because ownership may have already
+              // been transferred to the buyer by the time we process this WAL event
               const sellerAddress = change.data.seller_address || change.data.metadata?.seller_address;
               if (sellerAddress) {
                 await this.activityHistory.handleOfferAccepted(change.data, sellerAddress);
               } else {
-                // If we don't have seller address in the offer data, fetch it from ens_names
+                // Fetch seller address from the most recent sale record for this ENS name and buyer
                 try {
                   const result = await this.pool.query(
-                    'SELECT owner_address FROM ens_names WHERE id = $1',
-                    [change.data.ens_name_id]
+                    `SELECT seller_address FROM sales
+                     WHERE ens_name_id = $1
+                     AND buyer_address = $2
+                     ORDER BY created_at DESC
+                     LIMIT 1`,
+                    [change.data.ens_name_id, change.data.buyer_address]
                   );
                   if (result.rows.length > 0) {
-                    await this.activityHistory.handleOfferAccepted(change.data, result.rows[0].owner_address);
+                    await this.activityHistory.handleOfferAccepted(change.data, result.rows[0].seller_address);
+                  } else {
+                    logger.warn(`No sale record found for accepted offer ${change.data.id}, cannot create activity history`);
                   }
                 } catch (err) {
-                  logger.error('Failed to fetch owner address for offer acceptance:', err);
+                  logger.error('Failed to fetch seller address for offer acceptance:', err);
                 }
               }
             }
@@ -570,13 +611,14 @@ export class WALListener {
 
   /**
    * Publish notification jobs for users watching this offer's ENS name
+   * AND for the owner of the ENS name (if they want notifications)
    */
   private async publishNotificationsForOffer(offerData: any) {
     try {
       const { getQueueClient, QUEUE_NAMES } = await import('../queue');
       const boss = await getQueueClient();
 
-      // Find all users watching this ENS name who want offer notifications
+      // 1. Find all users watching this ENS name who want offer notifications
       const watchlistQuery = `
         SELECT w.user_id, u.email
         FROM watchlist w
@@ -604,11 +646,89 @@ export class WALListener {
       if (watchers.rows.length > 0) {
         logger.debug(
           { ensNameId: offerData.ens_name_id, watchersCount: watchers.rows.length },
-          'Published notification jobs for new offer'
+          'Published notification jobs for watchers'
+        );
+      }
+
+      // 2. Notify the owner of the ENS name (if they're a registered user)
+      const ownerQuery = `
+        SELECT u.id, u.email, u.email_verified, u.notify_on_offer_received
+        FROM users u
+        JOIN ens_names en ON LOWER(en.owner_address) = LOWER(u.address)
+        WHERE en.id = $1
+          AND u.email_verified = TRUE
+          AND u.notify_on_offer_received = TRUE
+      `;
+
+      const ownerResult = await this.pool.query(ownerQuery, [offerData.ens_name_id]);
+
+      if (ownerResult.rows.length > 0) {
+        const owner = ownerResult.rows[0];
+
+        await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
+          type: 'offer-received',
+          userId: owner.id,
+          email: owner.email,
+          ensNameId: offerData.ens_name_id,
+          metadata: {
+            offerAmountWei: offerData.offer_amount_wei,
+            buyerAddress: offerData.buyer_address,
+            offerId: offerData.id,
+          },
+        });
+
+        logger.debug(
+          { ensNameId: offerData.ens_name_id, ownerId: owner.id },
+          'Published offer-received notification for owner'
         );
       }
     } catch (error) {
       logger.error({ error, offerData }, 'Failed to publish offer notifications');
+    }
+  }
+
+  /**
+   * Publish notification to the seller when their listing is sold
+   */
+  private async publishOwnerNotificationForSale(listingData: any) {
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+
+      // Find the seller (user with matching address)
+      const sellerQuery = `
+        SELECT id, email, email_verified, notify_on_listing_sold
+        FROM users
+        WHERE LOWER(address) = LOWER($1)
+          AND email_verified = TRUE
+          AND notify_on_listing_sold = TRUE
+      `;
+
+      const sellerResult = await this.pool.query(sellerQuery, [listingData.seller_address]);
+
+      if (sellerResult.rows.length > 0) {
+        const seller = sellerResult.rows[0];
+
+        await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
+          type: 'listing-sold',
+          userId: seller.id,
+          email: seller.email,
+          ensNameId: listingData.ens_name_id,
+          metadata: {
+            priceWei: listingData.price_wei,
+            buyerAddress: listingData.buyer_address || listingData.metadata?.buyer_address,
+            listingId: listingData.id,
+            transactionHash: listingData.transaction_hash,
+          },
+        });
+
+        logger.debug(
+          { listingId: listingData.id, sellerId: seller.id },
+          'Published listing-sold notification for seller'
+        );
+      }
+    } catch (error) {
+      logger.error({ error, listingData }, 'Failed to publish sale notification to owner');
     }
   }
 }

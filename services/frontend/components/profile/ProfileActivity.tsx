@@ -99,8 +99,12 @@ export function ProfileActivity({ address, limit = 50 }: ProfileActivityProps) {
         return '💵';
       case 'offer_accepted':
         return '✅';
-      case 'cancelled':
+      case 'listing_cancelled':
         return '❌';
+      case 'offer_cancelled':
+        return '🚫';
+      case 'cancelled':
+        return '❌'; // Deprecated - for backwards compatibility
       case 'mint':
         return '✨';
       case 'burn':

@@ -13,7 +13,7 @@ const CreateOfferSchema = z.object({
 
 const UpdateOfferSchema = z.object({
   offerAmountWei: z.string().optional(),
-  status: z.enum(['pending', 'accepted', 'rejected', 'expired']).optional(),
+  status: z.enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded']).optional(),
 });
 
 export async function offersRoutes(fastify: FastifyInstance) {
@@ -88,6 +88,12 @@ export async function offersRoutes(fastify: FastifyInstance) {
           currencyAddress: offer.currency_address,
         });
         fastify.log.info({ offerId: offer.id, ensNameId: offer.ens_name_id }, 'Published highest offer update job');
+
+        // Trigger immediate balance validation for new offer
+        await boss.send('validate-offer-balance', {
+          offerId: offer.id
+        });
+        fastify.log.info({ offerId: offer.id }, 'Triggered offer balance validation');
       } catch (queueError) {
         // Don't fail the request if queue publishing fails
         fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for offer');

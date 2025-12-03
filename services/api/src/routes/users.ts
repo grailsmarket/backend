@@ -9,6 +9,8 @@ const UpdateProfileSchema = z.object({
   email: z.string().email().optional(),
   telegram: z.string().max(100).optional(),
   discord: z.string().max(100).optional(),
+  notify_on_offer_received: z.boolean().optional(),
+  notify_on_listing_sold: z.boolean().optional(),
 });
 
 export async function usersRoutes(fastify: FastifyInstance) {
@@ -83,6 +85,18 @@ export async function usersRoutes(fastify: FastifyInstance) {
       if (updates.discord !== undefined) {
         updateFields.push(`discord = $${paramCount}`);
         values.push(updates.discord);
+        paramCount++;
+      }
+
+      if (updates.notify_on_offer_received !== undefined) {
+        updateFields.push(`notify_on_offer_received = $${paramCount}`);
+        values.push(updates.notify_on_offer_received);
+        paramCount++;
+      }
+
+      if (updates.notify_on_listing_sold !== undefined) {
+        updateFields.push(`notify_on_listing_sold = $${paramCount}`);
+        values.push(updates.notify_on_listing_sold);
         paramCount++;
       }
 
@@ -163,6 +177,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
           emailVerified: user.email_verified,
           telegram: user.telegram,
           discord: user.discord,
+          notifyOnOfferReceived: user.notify_on_offer_received,
+          notifyOnListingSold: user.notify_on_listing_sold,
           updatedAt: user.updated_at,
         },
         meta: {

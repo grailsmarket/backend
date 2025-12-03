@@ -8,7 +8,7 @@ interface ActivityEvent {
   ens_name_id: number;
   name: string;
   token_id: string;
-  event_type: 'listed' | 'offer_made' | 'bought' | 'sold' | 'offer_accepted' | 'cancelled' | 'mint' | 'burn' | 'sent' | 'received';
+  event_type: 'listed' | 'offer_made' | 'bought' | 'sold' | 'offer_accepted' | 'listing_cancelled' | 'offer_cancelled' | 'cancelled' | 'mint' | 'burn' | 'sent' | 'received';
   actor_address: string;
   counterparty_address?: string;
   platform: string;
@@ -34,7 +34,9 @@ const EVENT_LABELS: Record<string, string> = {
   bought: 'Bought',
   sold: 'Sold',
   offer_accepted: 'Offer Accepted',
-  cancelled: 'Cancelled',
+  listing_cancelled: 'Listing Cancelled',
+  offer_cancelled: 'Offer Cancelled',
+  cancelled: 'Cancelled', // Deprecated - for backwards compatibility
   mint: 'Minted',
   burn: 'Burned',
   sent: 'Sent',
@@ -47,7 +49,9 @@ const EVENT_COLORS: Record<string, string> = {
   bought: 'text-green-400',
   sold: 'text-green-400',
   offer_accepted: 'text-emerald-400',
-  cancelled: 'text-red-400',
+  listing_cancelled: 'text-red-400',
+  offer_cancelled: 'text-red-400',
+  cancelled: 'text-red-400', // Deprecated - for backwards compatibility
   mint: 'text-cyan-400',
   burn: 'text-orange-400',
   sent: 'text-indigo-400',
@@ -60,7 +64,9 @@ const EVENT_ICONS: Record<string, string> = {
   bought: '🛒',
   sold: '✅',
   offer_accepted: '🤝',
-  cancelled: '❌',
+  listing_cancelled: '❌',
+  offer_cancelled: '🚫',
+  cancelled: '❌', // Deprecated - for backwards compatibility
   mint: '🎨',
   burn: '🔥',
   sent: '📤',
