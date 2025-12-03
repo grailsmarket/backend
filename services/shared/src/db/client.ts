@@ -24,6 +24,9 @@ export function getElasticsearchClient(): ElasticsearchClient {
   if (!esClient) {
     const esConfig: any = {
       node: config.elasticsearch.url,
+      requestTimeout: 300000, // 5 minutes for bulk operations
+      maxRetries: 3,
+      sniffOnStart: false,
     };
 
     // Add authentication if credentials are provided

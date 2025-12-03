@@ -9,6 +9,8 @@ import {
   buildSaleEmail,
   buildNewOfferEmail,
   buildListingCancelledEmail,
+  buildOfferReceivedEmail,
+  buildListingSoldEmail,
 } from '../services/email';
 import { ethers } from 'ethers';
 
@@ -85,38 +87,44 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         }
 
         // Check if we already sent this notification (deduplication)
+        // Note: Some notification types should allow duplicates
         if (userId) {
-          const existingNotification = await pool.query(
-            `SELECT id, metadata FROM notifications
-             WHERE user_id = $1
-               AND type = $2
-               AND ens_name_id = $3
-               AND sent_at > NOW() - INTERVAL '1 hour'`,
-            [userId, type, ensNameId]
-          );
+          // Types that should allow multiple notifications within 12 hours
+          const allowDuplicates = ['listing-sold'];
 
-          if (existingNotification.rows.length > 0) {
-            // If this is a new-listing notification and the price is different, allow it
-            if (type === 'new-listing' && metadata?.priceWei) {
-              const lastNotificationPrice = existingNotification.rows[0].metadata?.priceWei;
-              if (lastNotificationPrice && lastNotificationPrice !== metadata.priceWei) {
-                logger.info(
-                  { userId, type, ensNameId, oldPrice: lastNotificationPrice, newPrice: metadata.priceWei },
-                  'Price changed since last notification, allowing duplicate'
-                );
+          if (!allowDuplicates.includes(type)) {
+            const existingNotification = await pool.query(
+              `SELECT id, metadata FROM notifications
+               WHERE user_id = $1
+                 AND type = $2
+                 AND ens_name_id = $3
+                 AND sent_at > NOW() - INTERVAL '12 hours'`,
+              [userId, type, ensNameId]
+            );
+
+            if (existingNotification.rows.length > 0) {
+              // If this is a new-listing notification and the price is different, allow it
+              if (type === 'new-listing' && metadata?.priceWei) {
+                const lastNotificationPrice = existingNotification.rows[0].metadata?.priceWei;
+                if (lastNotificationPrice && lastNotificationPrice !== metadata.priceWei) {
+                  logger.info(
+                    { userId, type, ensNameId, oldPrice: lastNotificationPrice, newPrice: metadata.priceWei },
+                    'Price changed since last notification, allowing duplicate'
+                  );
+                } else {
+                  logger.info(
+                    { userId, type, ensNameId },
+                    'Duplicate notification detected (sent within last 12 hours), skipping'
+                  );
+                  return;
+                }
               } else {
                 logger.info(
                   { userId, type, ensNameId },
-                  'Duplicate notification detected (sent within last hour), skipping'
+                  'Duplicate notification detected (sent within last 12 hours), skipping'
                 );
                 return;
               }
-            } else {
-              logger.info(
-                { userId, type, ensNameId },
-                'Duplicate notification detected (sent within last hour), skipping'
-              );
-              return;
             }
           }
         }
@@ -133,7 +141,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             emailTemplate = buildNewListingEmail({
               ensName,
               priceEth,
-              listingUrl: `${FRONTEND_URL}/names/${ensName}`,
+              listingUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;
@@ -149,7 +157,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
               ensName,
               oldPriceEth,
               newPriceEth,
-              listingUrl: `${FRONTEND_URL}/names/${ensName}`,
+              listingUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;
@@ -162,7 +170,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             emailTemplate = buildSaleEmail({
               ensName,
               priceEth,
-              listingUrl: `${FRONTEND_URL}/names/${ensName}`,
+              listingUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;
@@ -175,7 +183,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             emailTemplate = buildNewOfferEmail({
               ensName,
               priceEth,
-              offerUrl: `${FRONTEND_URL}/names/${ensName}`,
+              offerUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;
@@ -184,7 +192,33 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           case 'listing-cancelled-ownership-change': {
             emailTemplate = buildListingCancelledEmail({
               ensName,
-              listingUrl: `${FRONTEND_URL}/names/${ensName}`,
+              listingUrl: `${FRONTEND_URL}/${ensName}`,
+              unsubscribeUrl,
+            });
+            break;
+          }
+
+          case 'offer-received': {
+            const offerAmountWei = metadata?.offerAmountWei || '0';
+            const priceEth = ethers.formatEther(offerAmountWei);
+
+            emailTemplate = buildOfferReceivedEmail({
+              ensName,
+              priceEth,
+              offerUrl: `${FRONTEND_URL}/${ensName}`,
+              unsubscribeUrl,
+            });
+            break;
+          }
+
+          case 'listing-sold': {
+            const priceWei = metadata?.priceWei || '0';
+            const priceEth = ethers.formatEther(priceWei);
+
+            emailTemplate = buildListingSoldEmail({
+              ensName,
+              priceEth,
+              saleUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;

@@ -11,15 +11,31 @@ interface ENSNameData {
   name: string | null;
   labelName: string | null;
   labelhash: string;
+  owner?: {
+    id: string;
+  };
+  expiryDate?: string;
   registration?: {
     expiryDate: string;
   };
 }
 
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+
+function hexToDecimal(hex: string): string {
+  // Remove 0x prefix if present
+  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+
+  // Convert hex string to decimal using BigInt
+  return BigInt('0x' + cleanHex).toString(10);
+}
+
 interface ResolvedNameData {
   name: string;
+  correctTokenId: string;
   expiryDate: Date | null;
   ownerAddress: string | null;
+  registrantAddress: string | null;
   registrationDate: Date | null;
   textRecords: Record<string, string>;
 }
@@ -130,6 +146,10 @@ export class ENSResolver {
             name
             labelName
             labelhash
+            owner {
+              id
+            }
+            expiryDate
             registrant {
               id
             }
@@ -216,6 +236,12 @@ export class ENSResolver {
             ownerAddress = domain.registrant.id.toLowerCase();
           }
 
+          // Get registrant address (the original registerer of the name)
+          let registrantAddress: string | null = null;
+          if (domain.registrant?.id) {
+            registrantAddress = domain.registrant.id.toLowerCase();
+          }
+
           // Process text records - keep the last value for each key
           const textRecords: Record<string, string> = {};
           if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
@@ -226,8 +252,37 @@ export class ENSResolver {
             }
           }
 
-          logger.info(`Resolved token ${tokenId} to name: ${name}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, text records: ${Object.keys(textRecords).length}`);
-          return { name, expiryDate, ownerAddress, registrationDate, textRecords };
+          // Calculate correct token_id based on wrapped/expired status
+          // Logic: if owned by Name Wrapper and not expired, use domain.id; otherwise use labelhash
+          let correctTokenId = tokenId; // Default to the input token_id (labelhash decimal)
+
+          const ownerAddr = domain.owner?.id?.toLowerCase();
+          const isOwnedByWrapper = ownerAddr === NAME_WRAPPER_ADDRESS.toLowerCase();
+
+          // Check if expired - use domain.expiryDate which includes grace period
+          let isExpired = false;
+          if (domain.expiryDate) {
+            try {
+              const expiryTimestamp = typeof domain.expiryDate === 'string'
+                ? parseInt(domain.expiryDate)
+                : domain.expiryDate;
+              isExpired = expiryTimestamp * 1000 < Date.now();
+            } catch (e) {
+              logger.warn(`Failed to check expiry for ${name}: ${domain.expiryDate}`);
+            }
+          }
+
+          if (isOwnedByWrapper && !isExpired) {
+            // For wrapped, non-expired names: use domain.id (the wrapped token ID)
+            correctTokenId = hexToDecimal(domain.id);
+            logger.debug(`Name ${name} is wrapped and not expired - using domain.id: ${correctTokenId}`);
+          } else {
+            // For unwrapped or expired names: use labelhash (already in tokenId)
+            logger.debug(`Name ${name} is ${isExpired ? 'expired' : 'unwrapped'} - using labelhash: ${correctTokenId}`);
+          }
+
+          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}`);
+          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords };
         }
       }
 

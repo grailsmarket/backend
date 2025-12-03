@@ -37,8 +37,7 @@ export class ElasticsearchSync {
                 token_id: { type: 'keyword' },
                 owner: { type: 'keyword' },
                 price: {
-                  type: 'scaled_float',
-                  scaling_factor: 1000000000000000000,
+                  type: 'double',
                 },
                 expiry_date: { type: 'date' },
                 registration_date: { type: 'date' },
@@ -49,8 +48,7 @@ export class ElasticsearchSync {
                 tags: { type: 'keyword' },
                 clubs: { type: 'keyword' },
                 last_sale_price: {
-                  type: 'scaled_float',
-                  scaling_factor: 1000000000000000000,
+                  type: 'double',
                 },
                 last_sale_currency: { type: 'keyword' },
                 last_sale_price_usd: {
@@ -60,8 +58,7 @@ export class ElasticsearchSync {
                 listing_created_at: { type: 'date' },
                 active_offers_count: { type: 'integer' },
                 highest_offer: {
-                  type: 'scaled_float',
-                  scaling_factor: 1000000000000000000,
+                  type: 'double',
                 },
                 // Expiration state fields
                 is_expired: { type: 'boolean' },
@@ -314,7 +311,7 @@ export class ElasticsearchSync {
       name,
       token_id: data.token_id,
       owner: data.owner_address,
-      price: data.listing_price || null,
+      price: data.listing_price ? parseFloat(data.listing_price) : null,
       expiry_date: data.expiry_date,
       registration_date: data.registration_date,
       character_count: name.replace('.eth', '').length,
@@ -323,12 +320,12 @@ export class ElasticsearchSync {
       status: data.listing_status || 'unlisted',
       tags: this.generateTags(name),
       clubs: data.clubs || [],
-      last_sale_price: data.last_sale_price,
+      last_sale_price: data.last_sale_price ? parseFloat(data.last_sale_price) : null,
       last_sale_currency: data.last_sale_currency,
       last_sale_price_usd: data.last_sale_price_usd,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
-      highest_offer: data.highest_offer_wei || null,
+      highest_offer: data.highest_offer_wei ? parseFloat(data.highest_offer_wei) : null,
       // Expiration state fields
       is_expired: expirationState.isExpired,
       is_grace_period: expirationState.isGracePeriod,

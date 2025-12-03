@@ -148,11 +148,14 @@ export async function resolveTokenIdToName(tokenId: string): Promise<string | nu
 
     const query = `
       query GetENSName($labelhash: String!) {
-        domains(where: { labelhash: $labelhash }) {
+        domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
           id
           name
           labelName
           labelhash
+          registration {
+            expiryDate
+          }
         }
       }
     `;

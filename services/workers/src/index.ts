@@ -9,6 +9,7 @@ import { registerVerificationWorker } from './workers/verification';
 import { registerClubStatsWorker } from './workers/club-stats';
 import { registerHighestOfferWorker } from './workers/highest-offer';
 import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-analytics';
+import { registerValidationWorkers, registerValidationSchedulers } from './workers/validation';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -33,6 +34,10 @@ async function start() {
     await registerVerificationWorker(boss);
     await registerClubStatsWorker(boss);
     await registerHighestOfferWorker(boss);
+
+    // Register validation workers and schedulers
+    await registerValidationWorkers(boss);
+    await registerValidationSchedulers(boss);
 
     // Register analytics refresh worker
     await boss.work('refresh-analytics', refreshAnalytics);

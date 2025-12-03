@@ -8,6 +8,7 @@ import { registerRoutes } from './routes';
 import { errorHandler } from './middleware/error-handler';
 import { logger } from './utils/logger';
 import { ActivityNotifier } from './services/activity-notifier';
+import { mutelistService } from './services/mutelist';
 
 const activityNotifier = new ActivityNotifier();
 
@@ -46,6 +47,9 @@ async function start() {
       host: config.api.host
     });
     console.log(`Server listening on http://${config.api.host}:${config.api.port}`);
+
+    // Initialize mutelist service
+    await mutelistService.initialize();
 
     // Start activity notifier for real-time WebSocket broadcasts
     await activityNotifier.start();

@@ -9,13 +9,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
   // Global search endpoint - searches all ENS names by default
   // Set showListings=true to limit results to only names with active listings
+  // Set showUnlisted=true to limit results to only names WITHOUT active listings
   fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
     // Transform flat query params into nested structure (same as /names/search and /listings/search)
     const rawQuery = request.query as any;
     const transformedQuery: any = {
       q: rawQuery.q || '',
-      page: rawQuery.page || 1,
-      limit: rawQuery.limit || 20,
+      page: parseInt(rawQuery.page || '1', 10),
+      limit: parseInt(rawQuery.limit || '20', 10),
       sortBy: rawQuery.sortBy,
       sortOrder: rawQuery.sortOrder,
       filters: {},
@@ -37,16 +38,22 @@ export async function searchRoutes(fastify: FastifyInstance) {
             }
             const value = rawQuery[key];
             if (Array.isArray(value)) {
-              transformedQuery.filters[filterName].push(...value);
+              // Convert to strings for clubs filter (important for numeric club names like "999")
+              const values = filterName === 'clubs' ? value.map((v: any) => String(v)) : value;
+              transformedQuery.filters[filterName].push(...values);
             } else {
-              transformedQuery.filters[filterName].push(value);
+              // Convert to string for clubs filter
+              const val = filterName === 'clubs' ? String(value) : value;
+              transformedQuery.filters[filterName].push(val);
             }
           } else {
             // Handle non-array values: filters[minPrice] or filters[clubs] (convert clubs to array)
             const value = rawQuery[key];
-            // Special handling for clubs - always convert to array
+            // Special handling for clubs - always convert to array and ensure strings
             if (filterName === 'clubs') {
-              transformedQuery.filters[filterName] = Array.isArray(value) ? value : [value];
+              const clubValues = Array.isArray(value) ? value : [value];
+              // Convert all club values to strings (important for numeric club names like "999")
+              transformedQuery.filters[filterName] = clubValues.map((c: any) => String(c));
             } else {
               transformedQuery.filters[filterName] = value;
             }
@@ -56,7 +63,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner } = filters;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -95,7 +102,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
     }
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts that don't exist in Elasticsearch
@@ -110,25 +117,64 @@ export async function searchRoutes(fastify: FastifyInstance) {
     const filter: any[] = [];
 
     // Exclude placeholder names from all searches
+    // Only exclude token-* prefixes, not numeric names (which are valid ENS names in clubs like 999, 10k)
     filter.push({
       bool: {
         must_not: [
-          { prefix: { 'name.keyword': 'token-' } },
-          { regexp: { 'name.keyword': '\\d+\\.eth' } }
+          { prefix: { 'name.keyword': 'token-' } }
         ]
       }
     });
 
-    // Only filter by status if showListings is true (opposite of listings/search)
-    if (showListings === true || showListings === 'true') {
+    if (includeExpired !== true && includeExpired !== 'true') {
+      filter.push({
+        bool: {
+          should: [
+            { bool: { must_not: { exists: { field: 'expiry_date' } } } },
+            { range: { expiry_date: { gte: 'now-90d' } } }
+          ],
+          minimum_should_match: 1
+        }
+      });
+    }
+
+    // Exclude subnames - only match *.eth pattern (not *.*.eth or deeper)
+    filter.push({
+      bool: {
+        must_not: [
+          { wildcard: { 'name.keyword': '*.*.eth' } }
+        ]
+      }
+    });
+
+    // Filter by listing status
+    // When sorting by price, we should only show listings
+    // When showListings is explicitly true, filter to active listings
+    // When showUnlisted is explicitly true, filter to names WITHOUT active listings
+    if (showListings === true || showListings === 'true' || sortBy === 'price') {
       filter.push({ term: { status: 'active' } });
+    } else if (showUnlisted === true || showUnlisted === 'true') {
+      filter.push({
+        bool: {
+          must_not: [
+            { term: { status: 'active' } }
+          ]
+        }
+      });
     }
 
     if (q) {
+      // Normalize query - add .eth suffix if not present for exact match checking
+      const normalizedQuery = q.toLowerCase();
+      const queryWithEth = normalizedQuery.endsWith('.eth') ? normalizedQuery : `${normalizedQuery}.eth`;
+
       must.push({
         bool: {
           should: [
-            // Exact match gets highest boost
+            // Exact keyword match gets MASSIVE boost (both with and without .eth)
+            { term: { 'name.keyword': { value: queryWithEth, boost: 1000 } } },
+            { term: { 'name.keyword': { value: normalizedQuery, boost: 1000 } } },
+            // Full-text exact match gets very high boost
             { match: { name: { query: q, boost: 10 } } },
             // Prefix match gets high boost
             { prefix: { name: { value: q, boost: 5 } } },
@@ -301,9 +347,27 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else {
         sort.push({ [sortBy]: { order } });
       }
+    } else if (resolvedOwnerAddress) {
+      // When filtering by owner without explicit sort, use a stable alphabetical sort by name
+      // This prevents documents from moving around due to ES internal state changes
+      sort.push({ 'name.keyword': { order: 'asc' } });
     } else {
       sort.push({ _score: { order: 'desc' } });
       sort.push({ listing_created_at: { order: 'desc' } });
+    }
+
+    // Dynamic min_score based on query length
+    // Short queries (1-3 chars) need lower threshold because they rely on prefix/ngram matching
+    // Longer queries can use higher threshold for better relevance
+    let minScore: number | undefined = undefined;
+    if (q) {
+      if (q.length <= 3) {
+        minScore = 1.0;  // Very low threshold for short queries (e.g., "241", "abc")
+      } else if (q.length <= 5) {
+        minScore = 5.0;  // Low threshold for medium queries
+      } else {
+        minScore = 20.0; // Original threshold for longer queries
+      }
     }
 
     const esQuery = {
@@ -315,13 +379,18 @@ export async function searchRoutes(fastify: FastifyInstance) {
             filter,
           },
         },
-        min_score: q ? 20.0 : undefined, // Only filter by score if there's a text query
+        min_score: minScore,
         from,
         size: limit,
         sort,
       },
     };
 
+    // Debug logging for price sort
+    if (sortBy === 'price') {
+      fastify.log.info(`Price sort query - sortBy: ${sortBy}, sortOrder: ${sortOrder}, showListings: ${showListings}`);
+      fastify.log.info(`ES Query: ${JSON.stringify(esQuery, null, 2)}`);
+    }
 
     if (!usePostgresql) {
       try {
@@ -329,15 +398,23 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       fastify.log.info('Elasticsearch returned results');
 
+      // Debug: Check first 5 results when sorting by price
+      if (sortBy === 'price' && esResult.hits.hits.length > 0) {
+        const first5 = esResult.hits.hits.slice(0, 5).map((hit: any) => ({
+          name: hit._source.name,
+          price: hit._source.price,
+          status: hit._source.status
+        }));
+        fastify.log.info(`First 5 ES results: ${JSON.stringify(first5)}`);
+      }
+
       // Extract ENS names from Elasticsearch results
       const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
 
-      // Filter out placeholder names (token-### or just numbers)
-      // These are names that haven't been resolved yet or are stale in ES
+      // Filter out placeholder names (token-###)
+      // Note: Numeric names like 0000.eth are valid ENS names (999 club, 10k club, etc.)
       const ensNames = allNames.filter((name: string) => {
-        return name &&
-               !name.startsWith('token-') &&
-               !/^\d+$/.test(name.replace('.eth', ''));
+        return name && !name.startsWith('token-');
       });
 
       fastify.log.info(`ES returned ${allNames.length} names, ${ensNames.length} after filtering placeholders. First 5: ${JSON.stringify(ensNames.slice(0, 5))}`);
@@ -419,19 +496,31 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Fallback to PostgreSQL-based search
       // showListings=true means only show names with active listings (opposite of old showAll)
+      // showUnlisted=true means only show names WITHOUT active listings
       const listingsOnly = showListings === true || showListings === 'true';
+      const unlistedOnly = showUnlisted === true || showUnlisted === 'true';
       let whereConditions: string[] = [];
       let params: any[] = [];
       let paramCount = 1;
 
-      // Only filter by status if showing listings only
+      if (includeExpired !== true && includeExpired !== 'true') {
+        whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+      }
+
+      // Exclude subnames - only show *.eth pattern (not *.*.eth or deeper)
+      whereConditions.push(`en.name NOT LIKE '%.%.eth'`);
+
+      // Filter by listing status
       if (listingsOnly) {
         whereConditions.push(`l.status = $${paramCount}`);
         params.push('active');
         paramCount++;
+      } else if (unlistedOnly) {
+        // Only show names that don't have an active listing
+        whereConditions.push(`(l.id IS NULL OR l.status != 'active')`);
       }
 
-      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
+      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
 
       // Add name search condition
       if (q && q.trim()) {
@@ -506,6 +595,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Sort by listing price using the subquery alias
         // When not filtering, names without listings will have NULL and appear last
         orderByClause = `ORDER BY sort_value ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'offer') {
+        // Sort by highest offer price using the aliased cast column
+        orderByClause = `ORDER BY offer_sort ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'expiry_date') {
         orderByClause = `ORDER BY en.expiry_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'registration_date') {
@@ -550,6 +642,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'price') {
         // Use a subquery to get the max price for each name to avoid DISTINCT issues
         selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
+      } else if (sortBy === 'offer') {
+        selectClause = 'DISTINCT en.name, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort';
       }
 
       const dataQuery = listingsOnly ? `

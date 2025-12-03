@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { cacheHandler } from '../middleware/cache';
+import { mutelistService } from '../services/mutelist';
 
 const pool = getPostgresPool();
 
@@ -17,7 +19,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
    * GET /api/v1/activity/:name
    * Get activity history for a specific ENS name
    */
-  fastify.get('/:name', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/:name', { preHandler: cacheHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { name } = request.params as { name: string };
     const {
       page = '1',
@@ -158,7 +160,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
    * GET /api/v1/activity/address/:address
    * Get activity history for a specific address (buyer or seller)
    */
-  fastify.get('/address/:address', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/address/:address', { preHandler: cacheHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { address } = request.params as { address: string };
     const {
       page = '1',
@@ -278,7 +280,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
    * GET /api/v1/activity
    * Get recent activity across all ENS names (global feed)
    */
-  fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/', { preHandler: cacheHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
     const {
       page = '1',
       limit = '50',
@@ -310,6 +312,16 @@ export async function activityRoutes(fastify: FastifyInstance) {
         conditions.push(`platform = $${paramCount}`);
         params.push(platform);
       }
+
+      // Add mutelist filtering - exclude activity where actor or counterparty is muted
+      // Use NOT EXISTS with mutelist table for efficient filtering at database level
+      conditions.push(`
+        NOT EXISTS (
+          SELECT 1 FROM mutelist
+          WHERE LOWER(address) = LOWER(ah.actor_address)
+             OR LOWER(address) = LOWER(ah.counterparty_address)
+        )
+      `);
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -347,13 +359,12 @@ export async function activityRoutes(fastify: FastifyInstance) {
 
       const result = await pool.query(query, params);
 
-      // Get total count
       const countQuery = `
         SELECT COUNT(*) as total
         FROM activity_history ah
         ${whereClause}
       `;
-      const countResult = await pool.query(countQuery, params.slice(0, -2)); // Remove limit/offset params
+      const countResult = await pool.query(countQuery, params.slice(0, -2));
 
       const total = parseInt(countResult.rows[0].total);
       const totalPages = Math.ceil(total / pageLimit);

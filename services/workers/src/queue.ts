@@ -80,7 +80,7 @@ export interface UpdateOwnershipJob {
 }
 
 export interface SendNotificationJob {
-  type: 'new-listing' | 'price-change' | 'sale' | 'new-offer' | 'listing-cancelled-ownership-change';
+  type: 'new-listing' | 'price-change' | 'sale' | 'new-offer' | 'listing-cancelled-ownership-change' | 'offer-received' | 'listing-sold';
   userId?: number;
   email?: string;
   recipientAddress?: string;

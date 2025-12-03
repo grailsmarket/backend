@@ -21,6 +21,7 @@ import { recommendationsRoutes } from './recommendations';
 import { analyticsRoutes } from './analytics';
 import { userInsightsRoutes } from './user-insights';
 import { cartRoutes } from './cart';
+import { poapRoutes } from './poap';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -32,6 +33,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(votesRoutes, { prefix: '/api/v1/votes' });
   fastify.register(searchRoutes, { prefix: '/api/v1/search' });
   fastify.register(cartRoutes, { prefix: '/api/v1/cart' });
+  fastify.register(poapRoutes, { prefix: '/api/v1/poap' });
   fastify.register(namesRoutes, { prefix: '/api/v1/names' });
   fastify.register(ordersRoutes, { prefix: '/api/v1/orders' });
   fastify.register(listingsRoutes, { prefix: '/api/v1/listings' });

@@ -9,7 +9,7 @@ interface ActivityEvent {
   ens_name_id: number;
   name: string;
   token_id: string;
-  event_type: 'listed' | 'offer_made' | 'bought' | 'sold' | 'offer_accepted' | 'cancelled' | 'mint' | 'burn' | 'sent' | 'received';
+  event_type: 'listed' | 'offer_made' | 'bought' | 'sold' | 'offer_accepted' | 'listing_cancelled' | 'offer_cancelled' | 'cancelled' | 'mint' | 'burn' | 'sent' | 'received';
   actor_address: string;
   counterparty_address?: string;
   platform: string;

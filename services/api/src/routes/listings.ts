@@ -19,7 +19,7 @@ const UpdateListingSchema = z.object({
 const ListListingsQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
-  status: z.enum(['active', 'sold', 'cancelled', 'expired']).optional(),
+  status: z.enum(['active', 'sold', 'cancelled', 'expired', 'unfunded']).optional(),
   seller: z.string().optional(),
   minPrice: z.string().optional(),
   maxPrice: z.string().optional(),
@@ -51,11 +51,20 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     let params: any[] = [];
     let paramCount = 1;
 
+    // Exclude names past grace period (90 days after expiry)
+    // Allow: non-expired names, names in grace period, and subnames (no expiry date)
+    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+
     // Always include status filter, default to active if not specified
     const statusFilter = query.status || 'active';
     whereConditions.push(`l.status = $${paramCount}`);
     params.push(statusFilter);
     paramCount++;
+
+    // If filtering for active listings, also exclude expired ones based on expires_at
+    if (statusFilter === 'active') {
+      whereConditions.push(`(l.expires_at IS NULL OR l.expires_at > NOW())`);
+    }
 
     if (query.seller) {
       whereConditions.push(`l.seller_address = $${paramCount}`);

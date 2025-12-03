@@ -143,16 +143,6 @@ export class SeaportIndexer {
         return;
       }
 
-      await this.saveEvent({
-        blockNumber: log.blockNumber || 0n,
-        transactionHash: log.transactionHash || '',
-        logIndex: log.logIndex || 0,
-        contractAddress: log.address,
-        eventName,
-        eventData: decodedLog.args as any,
-        processed: false,
-      });
-
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
       const errorDetails = {
@@ -283,7 +273,7 @@ export class SeaportIndexer {
           const textRecords = resolvedData?.textRecords || {};
 
           // Use resolved owner if available, otherwise use recipient
-          const ownerAddress = resolvedOwner || recipient.toLowerCase();
+          const ownerAddress = (resolvedOwner || recipient).toLowerCase();
 
           // First ensure the ENS name exists in the database
           const upsertQuery = `
@@ -376,8 +366,8 @@ export class SeaportIndexer {
             ensNameId,
             log.transactionHash,
             log.blockNumber?.toString(),
-            offerer,
-            recipient,
+            offerer.toLowerCase(),
+            recipient.toLowerCase(),
             price,
             saleDate,
           ]);
@@ -389,7 +379,7 @@ export class SeaportIndexer {
             WHERE token_id = $2
           `;
 
-          await this.pool.query(updateOwnerQuery, [recipient, tokenId]);
+          await this.pool.query(updateOwnerQuery, [recipient.toLowerCase(), tokenId]);
         } catch (err: any) {
           logger.error(`Failed to process Seaport sale for token ${tokenId}: ${err.message}`);
           throw err; // Re-throw to be caught by outer handler

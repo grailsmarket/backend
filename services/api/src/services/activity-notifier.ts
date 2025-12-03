@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 import { getPostgresPool } from '../../../shared/src';
 import { broadcastActivityEvent } from '../routes/websocket';
+import { mutelistService } from './mutelist';
 
 export class ActivityNotifier {
   private client: Client | null = null;
@@ -76,6 +77,19 @@ export class ActivityNotifier {
 
       if (result.rows.length > 0) {
         const activityData = result.rows[0];
+
+        // Filter muted addresses - skip broadcast if actor or counterparty is muted
+        if (mutelistService.isAnyMuted(activityData.actor_address, activityData.counterparty_address)) {
+          console.log(
+            `Skipping broadcast for activity ${activityId} - muted address detected`,
+            {
+              actor: activityData.actor_address,
+              counterparty: activityData.counterparty_address,
+            }
+          );
+          return;
+        }
+
         // Broadcast to WebSocket clients
         broadcastActivityEvent(activityData);
       }
