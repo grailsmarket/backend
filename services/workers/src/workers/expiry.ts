@@ -2,6 +2,7 @@ import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { QUEUE_NAMES, ExpireOrdersJob } from '../queue';
+import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
 
 /**
  * Expiry Worker
@@ -33,12 +34,32 @@ export async function registerExpiryWorker(boss: PgBoss): Promise<void> {
              WHERE id = $1
                AND status = 'active'
                AND expires_at <= NOW()
-             RETURNING id, status, expires_at`,
+             RETURNING id, status, expires_at, ens_name_id`,
             [id]
           );
 
           if (result.rows.length > 0) {
-            logger.info({ listingId: id, row: result.rows[0] }, 'Listing expired successfully');
+            const expiredListing = result.rows[0];
+            logger.info({ listingId: id, row: expiredListing }, 'Listing expired successfully');
+
+            // Recalculate club floor price since a listing expired
+            try {
+              const clubsResult = await pool.query(
+                'SELECT clubs FROM ens_names WHERE id = $1',
+                [expiredListing.ens_name_id]
+              );
+              const clubs = clubsResult.rows[0]?.clubs || [];
+
+              if (clubs.length > 0) {
+                await boss.send('update-club-floor-price', {
+                  clubNames: clubs,
+                  eventType: 'delete', // Triggers full recalculation since listing is no longer active
+                });
+                logger.info({ listingId: id, clubs }, 'Published club floor price recalculation (listing expired)');
+              }
+            } catch (queueError) {
+              logger.error({ error: queueError, listingId: id }, 'Failed to publish club floor price recalculation');
+            }
           } else {
             // Check if listing exists and why it wasn't updated
             const checkResult = await pool.query(
@@ -143,6 +164,9 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
         // Process in smaller batches to avoid pg_notify issues with rapid-fire triggers
         const BATCH_SIZE = 10;
 
+        // Track all ens_name_ids that need floor price recalculation
+        const ensNameIdsForFloorRecalc: number[] = [];
+
         // Expire overdue listings in batches
         while (true) {
           await pool.query('BEGIN');
@@ -160,12 +184,19 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
                    AND expires_at <= NOW()
                  LIMIT $1
                )
-               RETURNING id`,
+               RETURNING id, ens_name_id`,
               [BATCH_SIZE]
             );
 
             await pool.query('COMMIT');
             totalExpiredListings += listingsResult.rows.length;
+
+            // Collect ens_name_ids for floor price recalculation
+            for (const row of listingsResult.rows) {
+              if (row.ens_name_id && !ensNameIdsForFloorRecalc.includes(row.ens_name_id)) {
+                ensNameIdsForFloorRecalc.push(row.ens_name_id);
+              }
+            }
 
             if (listingsResult.rows.length < BATCH_SIZE) {
               break; // No more listings to expire
@@ -173,6 +204,47 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
           } catch (txError) {
             await pool.query('ROLLBACK');
             throw txError;
+          }
+        }
+
+        // Trigger floor price recalculation for all affected clubs
+        if (ensNameIdsForFloorRecalc.length > 0) {
+          try {
+            const clubsResult = await pool.query(
+              'SELECT DISTINCT unnest(clubs) as club FROM ens_names WHERE id = ANY($1) AND clubs IS NOT NULL',
+              [ensNameIdsForFloorRecalc]
+            );
+            const clubs = clubsResult.rows.map((row: any) => row.club);
+
+            if (clubs.length > 0) {
+              await boss.send('update-club-floor-price', {
+                clubNames: clubs,
+                eventType: 'delete', // Triggers full recalculation
+              });
+              logger.info({ clubs, expiredCount: ensNameIdsForFloorRecalc.length }, 'Published club floor price recalculation (batch listing expiry)');
+            }
+          } catch (queueError) {
+            logger.error({ error: queueError }, 'Failed to publish club floor price recalculation for batch expiry');
+          }
+
+          // Sync expired listings to Elasticsearch
+          // Since triggers are disabled, WAL listener won't receive updates
+          // We manually sync each affected ENS name to remove stale listing data from ES
+          try {
+            const esSync = new ElasticsearchSync();
+            logger.info({ count: ensNameIdsForFloorRecalc.length }, 'Syncing expired listings to Elasticsearch');
+
+            for (const ensNameId of ensNameIdsForFloorRecalc) {
+              try {
+                await esSync.updateENSNameListing(ensNameId);
+              } catch (syncError) {
+                logger.error({ error: syncError, ensNameId }, 'Failed to sync ENS name to Elasticsearch after listing expiry');
+              }
+            }
+
+            logger.info({ count: ensNameIdsForFloorRecalc.length }, 'Completed Elasticsearch sync for expired listings');
+          } catch (esSyncError) {
+            logger.error({ error: esSyncError }, 'Failed to initialize Elasticsearch sync for batch expiry');
           }
         }
 

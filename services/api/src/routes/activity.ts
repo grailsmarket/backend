@@ -12,6 +12,7 @@ interface ActivityQueryParams {
   event_type?: string | string[];
   platform?: string;
   actor_address?: string;
+  club?: string;
 }
 
 export async function activityRoutes(fastify: FastifyInstance) {
@@ -286,6 +287,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
       limit = '50',
       event_type,
       platform,
+      club,
     } = request.query as ActivityQueryParams;
 
     try {
@@ -313,15 +315,23 @@ export async function activityRoutes(fastify: FastifyInstance) {
         params.push(platform);
       }
 
+      if (club) {
+        paramCount++;
+        conditions.push(`$${paramCount} = ANY(en.clubs)`);
+        params.push(club);
+      }
+
       // Add mutelist filtering - exclude activity where actor or counterparty is muted
-      // Use NOT EXISTS with mutelist table for efficient filtering at database level
-      conditions.push(`
-        NOT EXISTS (
-          SELECT 1 FROM mutelist
-          WHERE LOWER(address) = LOWER(ah.actor_address)
-             OR LOWER(address) = LOWER(ah.counterparty_address)
-        )
-      `);
+      // Get muted addresses once and filter in the query
+      const mutedAddresses = mutelistService.getMutedAddresses();
+      if (mutedAddresses.length > 0) {
+        paramCount++;
+        conditions.push(`ah.actor_address != ALL($${paramCount})`);
+        params.push(mutedAddresses);
+        paramCount++;
+        conditions.push(`(ah.counterparty_address IS NULL OR ah.counterparty_address != ALL($${paramCount}))`);
+        params.push(mutedAddresses);
+      }
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -362,6 +372,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
       const countQuery = `
         SELECT COUNT(*) as total
         FROM activity_history ah
+        JOIN ens_names en ON ah.ens_name_id = en.id
         ${whereClause}
       `;
       const countResult = await pool.query(countQuery, params.slice(0, -2));

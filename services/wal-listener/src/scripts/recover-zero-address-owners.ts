@@ -17,6 +17,7 @@ import { getPostgresPool } from '../../../shared/src';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface ZeroAddressRecord {
   id: number;
@@ -77,9 +78,20 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
     if (result.data?.domains) {
       for (const domain of result.data.domains) {
+        // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+        let owner: string | null = null;
+        if (domain.registrant?.id) {
+          const registrant = domain.registrant.id.toLowerCase();
+          if (registrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+            owner = domain.wrappedOwner?.id?.toLowerCase() || null;
+          } else {
+            owner = registrant;
+          }
+        }
+
         resultsMap.set(domain.name.toLowerCase(), {
           name: domain.name,
-          owner: domain.wrappedOwner?.id || domain.registrant?.id || null,
+          owner,
         });
       }
     }

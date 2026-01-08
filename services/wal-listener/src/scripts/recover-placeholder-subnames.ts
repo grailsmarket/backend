@@ -17,6 +17,7 @@
 import { getPostgresPool } from '../../../shared/src';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface PlaceholderRecord {
   id: number;
@@ -106,9 +107,20 @@ async function queryGraphForNamesBatch(tokenIdHexArray: string[]): Promise<Map<s
           }
         }
 
+        // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+        let owner: string | null = null;
+        if (domain.registrant?.id) {
+          const registrant = domain.registrant.id.toLowerCase();
+          if (registrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+            owner = domain.wrappedOwner?.id?.toLowerCase() || null;
+          } else {
+            owner = registrant;
+          }
+        }
+
         resultsMap.set(domain.id.toLowerCase(), {
           name: domain.name,
-          owner: domain.wrappedOwner?.id || domain.registrant?.id || null,
+          owner,
           expiryDate: domain.registration?.expiryDate || null,
           registrationDate: domain.registration?.registrationDate || domain.createdAt || null,
           textRecords,

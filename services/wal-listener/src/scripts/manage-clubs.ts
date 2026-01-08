@@ -13,6 +13,7 @@
  *
  * Examples:
  *   npx tsx src/scripts/manage-clubs.ts add brands data/clubs/brands.json --description "Brand names"
+ *   npx tsx src/scripts/manage-clubs.ts add bip_39 data/clubs/bip_39.csv --description "Brand names"
  *   npx tsx src/scripts/manage-clubs.ts add crypto-terms data/clubs/crypto.csv
  *   npx tsx src/scripts/manage-clubs.ts add-pattern 1k-club 3-digits --description "Three digit club (000-999)"
  *   npx tsx src/scripts/manage-clubs.ts add-pattern 10k-club 4-digits --description "Four digit club (0000-9999)"
@@ -21,6 +22,21 @@
  *   npx tsx src/scripts/manage-clubs.ts list-names brands
  *   npx tsx src/scripts/manage-clubs.ts clear brands --confirm
  *   npx tsx src/scripts/manage-clubs.ts delete-club old-club --confirm
+ * 
+ * 
+ *   npx tsx src/scripts/manage-clubs.ts add bip_39 data/clubs/bip_39.csv --description "BIP 39 seedphrase words"
+ *   npx tsx src/scripts/manage-clubs.ts add english_adjectives data/clubs/english_adjectives.csv --description "Common English adjectives"
+ *   npx tsx src/scripts/manage-clubs.ts add periodic_table data/clubs/periodic_table.csv --description "Periodic table elements"
+ 
+ *   npx tsx src/scripts/manage-clubs.ts add prepunk_1k data/clubs/prepunk_1k.csv --description "The first 1,000 ENS names ever registered. Registered before the launch of Cryptopunks"
+ *   npx tsx src/scripts/manage-clubs.ts add prepunk_10k data/clubs/prepunk_10k.csv --description "The first 10,000 ENS names ever registered. Registered before the launch of Cryptopunks"
+ *   npx tsx src/scripts/manage-clubs.ts add prepunk_100 data/clubs/prepunk_100.csv --description "The first 100 ENS names ever registered. Registered before the launch of Cryptopunks"
+ *   npx tsx src/scripts/manage-clubs.ts add un_capital_cities data/clubs/un_capital_cities.csv --description "Capital Cities, as recorded by the United Nations"
+ *   npx tsx src/scripts/manage-clubs.ts add un_countries data/clubs/un_countries.csv --description "Countries, as recorded by United Nations"
+ *   npx tsx src/scripts/manage-clubs.ts add wikidata_top_fantasy_char data/clubs/wikidata_top_fantasy_char.csv --description "Most referenced fantasy characters per wikidata (min sitelinks 20)"
+ *   npx tsx src/scripts/manage-clubs.ts add wikidata_top_nouns data/clubs/wikidata_top_nouns.csv --description "Most referenced nouns, per wikidata (min sitelinks 100)"
+ *   npx tsx src/scripts/manage-clubs.ts add ethmoji_99 data/clubs/ethmoji_99.csv --description "Ethmoji names from 00 to 99"
+ *   npx tsx src/scripts/manage-clubs.ts add ethmoji_999 data/clubs/ethmoji_999.csv --description "Ethmoji names from 000 to 999"
  *
  * File formats supported:
  *   - JSON: ["name1.eth", "name2.eth"]
@@ -33,7 +49,7 @@
  *   - WAL listener syncs to Elasticsearch automatically
  */
 
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, safeNormalize } from '../../../shared/src';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -43,17 +59,21 @@ function loadNamesFromFile(filePath: string): string[] {
   const ext = path.extname(filePath).toLowerCase();
   const content = fs.readFileSync(filePath, 'utf-8');
 
+  let names: string[];
   if (ext === '.json') {
     const data = JSON.parse(content);
-    return Array.isArray(data) ? data : [data];
+    names = Array.isArray(data) ? data : [data];
   } else if (ext === '.csv' || ext === '.txt') {
-    return content
+    names = content
       .split('\n')
       .map(line => line.trim())
       .filter(line => line && !line.startsWith('#')); // Filter empty lines and comments
   } else {
     throw new Error(`Unsupported file format: ${ext}. Use .json, .csv, or .txt`);
   }
+
+  // Normalize all names per ENSIP-15
+  return names.map(name => safeNormalize(name));
 }
 
 function generateNamesFromPattern(pattern: string): string[] {

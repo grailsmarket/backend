@@ -24,7 +24,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, safeNormalize } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
@@ -164,7 +164,8 @@ function mapToEnsNameRecord(row: CSVRow): any {
 
   return {
     token_id: row.token_id?.trim() || null,
-    name: row.name?.trim() || null,
+    // Normalize name per ENSIP-15 (safeNormalize handles placeholders)
+    name: row.name?.trim() ? safeNormalize(row.name.trim()) : null,
     owner_address: cleanAddress(row.owner_address),
     registrant: cleanAddress(row.registrant),
     expiry_date: parseTimestamp(row.expiry_date),

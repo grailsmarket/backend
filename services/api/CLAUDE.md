@@ -1,214 +1,515 @@
 # API Service - CLAUDE.md
 
 ## Service Overview
-This is the REST API service for the Grails ENS marketplace system. It provides comprehensive endpoints for ENS names, listings, offers, user management, notifications, sales history, and integrates with OpenSea's Stream API for real-time marketplace event processing.
+The REST API service for the Grails ENS marketplace system. It provides comprehensive endpoints for ENS names, listings, offers, user management, notifications, sales history, analytics, trending data, recommendations, and integrates with OpenSea for real-time marketplace data. The service also provides WebSocket connections for real-time activity feeds.
 
 ## Technology Stack
 - **Runtime**: Node.js with TypeScript
 - **Framework**: Fastify (high-performance web framework)
 - **Database**: PostgreSQL (shared with other services)
 - **Search**: Elasticsearch (via WAL Listener sync)
+- **Caching**: Redis (optional, for response caching)
 - **Validation**: Zod schemas
 - **Authentication**: SIWE (Sign-In With Ethereum) with JWT
-- **Real-time**: OpenSea Stream API WebSocket client (Phoenix protocol)
+- **Real-time**: WebSocket support via @fastify/websocket
+- **Job Queue**: pg-boss for async job publishing
 
-## Key Components
+## Directory Structure
+```
+src/
+  index.ts              # Main Fastify server entry point
+  queue.ts              # pg-boss queue client for job publishing
+  routes/
+    index.ts            # Route registration
+    auth.ts             # Authentication endpoints (SIWE)
+    names.ts            # ENS name endpoints
+    listings.ts         # Marketplace listing endpoints
+    offers.ts           # Offer management endpoints
+    orders.ts           # Seaport order management
+    sales.ts            # Sales history endpoints
+    watchlist.ts        # User watchlist endpoints
+    notifications.ts    # User notification endpoints
+    users.ts            # User profile endpoints
+    profiles.ts         # Public profile lookup
+    activity.ts         # Activity history endpoints
+    clubs.ts            # ENS clubs endpoints
+    votes.ts            # Name voting endpoints
+    search.ts           # Elasticsearch search endpoints
+    trending.ts         # Trending names endpoints
+    analytics.ts        # Market analytics endpoints
+    recommendations.ts  # Personalized recommendations
+    user-insights.ts    # User activity history
+    cart.ts             # Shopping cart endpoints
+    legends.ts          # ENS Legends endpoints
+    poap.ts             # POAP claim endpoints
+    verification.ts     # Email verification endpoints
+    websocket.ts        # WebSocket handlers
+    health.ts           # Health check endpoints
+  services/
+    seaport.ts          # Seaport order creation/validation
+    opensea.ts          # OpenSea API client
+    search.ts           # Elasticsearch query builder
+    activity-notifier.ts # Real-time activity broadcasts
+    name-views.ts       # View tracking service
+    mutelist.ts         # Address filtering service
+  middleware/
+    auth.ts             # JWT authentication (requireAuth, optionalAuth)
+    cache.ts            # Redis response caching
+    error-handler.ts    # Centralized error handling
+  utils/
+    response-builder.ts # Search result enrichment
+    redis.ts            # Redis client management
+    logger.ts           # Pino logger configuration
+```
 
-### Database Schema (`prisma/schema.prisma`)
-- **ens_names**: Stores ENS domain information (token_id, name, expiry, owner)
-- **listings**: Active marketplace listings with Seaport order data
-- **offers**: Incoming offers on ENS names
-- **opensea_events**: Raw event storage from OpenSea
+## API Endpoints
 
-### API Endpoints
+All endpoints are prefixed with `/api/v1/`
 
-#### Authentication (SIWE)
-- `GET /auth/nonce` - Get nonce for signing
-- `POST /auth/verify` - Verify signature and get JWT token
-- `POST /auth/logout` - Invalidate current token
-- `GET /auth/me` - Get current user info
+### Health Check
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | No | Basic health status |
+| GET | `/health/ready` | No | Readiness check (PostgreSQL + Elasticsearch) |
 
-#### ENS Names
-- `GET /names` - List ENS names with filters
-- `GET /names/search` - Search ENS names with Elasticsearch (advanced filters)
-- `GET /names/:name` - Get specific ENS name details
+### Authentication (SIWE)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/auth/nonce` | No | Get nonce for signing (stored in nonces table) |
+| POST | `/auth/verify` | No | Verify SIWE signature and get JWT token |
+| POST | `/auth/logout` | Yes | Invalidate current token |
+| GET | `/auth/me` | Yes | Get current authenticated user info |
 
-#### Listings
-- `GET /listings` - Get paginated listings
-- `GET /listings/search` - Search listings with Elasticsearch
-- `GET /listings/:name` - Get listing by ENS name
-- `POST /listings` - Create new listing (requires auth)
-- `PATCH /listings/:id` - Update listing (requires auth)
-- `DELETE /listings/:id` - Cancel listing (requires auth)
+### ENS Names
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/names` | Optional | List ENS names with pagination |
+| GET | `/names/search` | Optional | Search ENS names with Elasticsearch |
+| GET | `/names/:name` | Optional | Get specific ENS name details (tracks views) |
 
-#### Offers
-- `GET /offers` - Get offers with filters
-- `GET /offers/:name` - Get offers for specific ENS name
-- `POST /offers` - Submit new offer (requires auth)
-- `DELETE /offers/:id` - Cancel offer (requires auth)
+### Listings
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/listings` | Optional | Get paginated listings |
+| GET | `/listings/search` | Optional | Search listings with Elasticsearch |
+| GET | `/listings/:name` | Optional | Get listing by ENS name |
+| POST | `/listings` | Yes | Create new listing |
+| PATCH | `/listings/:id` | Yes | Update listing |
+| DELETE | `/listings/:id` | Yes | Cancel listing |
 
-#### Watchlist (Auth Required)
-- `GET /watchlist` - Get user's watchlist with pagination
-- `GET /watchlist/search` - Search/filter watchlist with Elasticsearch
-- `POST /watchlist` - Add ENS name to watchlist
-- `PATCH /watchlist/:id` - Update notification preferences
-- `DELETE /watchlist/:id` - Remove from watchlist
+### Offers
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/offers` | Optional | Get offers with filters |
+| GET | `/offers/:name` | Optional | Get offers for specific ENS name |
+| GET | `/offers/address/:address` | Optional | Get offers by address |
+| POST | `/offers` | Yes | Submit new offer |
+| DELETE | `/offers/:id` | Yes | Cancel offer |
 
-#### Notifications (Auth Required)
-- `GET /notifications` - Get user notifications (with unreadOnly filter)
-- `GET /notifications/unread/count` - Get unread count
-- `PATCH /notifications/:id/read` - Mark notification as read
-- `PATCH /notifications/read-all` - Mark all as read
+### Orders (Seaport)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/orders` | No | Save order (listing/offer) to database |
+| POST | `/orders/create` | No | Create Seaport order structure |
+| POST | `/orders/validate` | No | Validate Seaport order |
+| GET | `/orders/:id` | No | Get order by hash or ID |
+| DELETE | `/orders/:id` | No | Cancel order (mark as cancelled) |
 
-#### Sales
-- `GET /sales` - Get recent sales with pagination
-- `GET /sales/name/:name` - Get sales history for ENS name
-- `GET /sales/address/:address` - Get sales by address (buyer/seller)
-- `GET /sales/:nameOrId/analytics` - Get sales analytics for name
+### Watchlist (Auth Required)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/watchlist` | Yes | Get user's watchlist with pagination |
+| GET | `/watchlist/search` | Yes | Search/filter watchlist with Elasticsearch |
+| POST | `/watchlist` | Yes | Add ENS name to watchlist |
+| PATCH | `/watchlist/:id` | Yes | Update notification preferences |
+| DELETE | `/watchlist/:id` | Yes | Remove from watchlist |
 
-#### Profiles
-- `GET /profiles/:addressOrName` - Get profile by address or ENS name
-  - Fetches from The Graph if not in database
-  - Queries Name Wrapper contract for wrapped names
-  - Gets ENS records from EFP API
+### Notifications (Auth Required)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/notifications` | Yes | Get user notifications (supports unreadOnly filter) |
+| GET | `/notifications/unread/count` | Yes | Get unread notification count |
+| PATCH | `/notifications/:id/read` | Yes | Mark notification as read |
+| PATCH | `/notifications/read-all` | Yes | Mark all notifications as read |
 
-#### Activity
-- `GET /activity/:name` - Get activity history for ENS name
+### Sales
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/sales` | No | Get recent sales with pagination |
+| GET | `/sales/name/:name` | No | Get sales history for ENS name |
+| GET | `/sales/address/:address` | No | Get sales by address (buyer/seller) |
 
-#### Clubs
-- `GET /clubs` - List all clubs with member counts
-- `GET /clubs/:clubName` - Get club details with members
+### Profiles
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/profiles/:addressOrName` | No | Get profile by address or ENS name |
 
-#### Votes
-- `POST /votes` - Cast vote on ENS name (requires auth)
-- `GET /votes/:ensName` - Get votes for ENS name
+### Activity
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/activity/:name` | Optional | Get activity history for ENS name |
 
-#### Users (Auth Required)
-- `GET /users/me` - Get current user profile
-- `PATCH /users/me` - Update user profile
+### Clubs
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/clubs` | No | List all clubs with member counts |
+| GET | `/clubs/:clubName` | No | Get club details with members |
+| GET | `/clubs/:clubName/floor` | No | Get club floor price |
+| GET | `/clubs/:clubName/analytics` | No | Get club analytics |
 
-#### Orders
-- `POST /orders/seaport` - Create Seaport order
-- `GET /orders/:hash` - Get order by hash
+### Votes
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/votes` | Yes | Cast vote on ENS name (upvote/downvote) |
+| GET | `/votes/:ensName` | Optional | Get votes for ENS name |
 
-###Search & Filtering
+### Users
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/users/:address/badges` | No | Get POAP badges for address |
+| PATCH | `/users/me` | Yes | Update user profile (email, telegram, discord, notifications) |
 
-The API provides advanced search capabilities through Elasticsearch integration:
+### Search
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/search` | Optional | Unified search with Elasticsearch |
 
-**Search Filters Available:**
-- **Price**: `minPrice`, `maxPrice` (in wei)
-- **Length**: `minLength`, `maxLength` (character count)
-- **Character Types**: `hasNumbers`, `hasEmoji` (boolean)
-- **Clubs**: `clubs[]` (array of club names)
-- **Expiration**: `isExpired`, `isGracePeriod`, `isPremiumPeriod`, `expiringWithinDays`
-- **Sales History**: `hasSales`, `lastSoldAfter`, `lastSoldBefore`, `minDaysSinceLastSale`, `maxDaysSinceLastSale`
+### Trending
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/trending/views` | Optional | Trending by view count |
+| GET | `/trending/watchlist` | Optional | Trending by watchlist additions |
+| GET | `/trending/votes` | Optional | Trending by voting activity |
+| GET | `/trending/sales` | Optional | Trending by sales activity |
+| GET | `/trending/offers` | Optional | Trending by offer activity |
+| GET | `/trending/composite` | Optional | Trending by composite score |
 
-**Filter Notation:**
-- Bracket notation: `filters[minPrice]=1000000000000000000`
-- Array values: `filters[clubs][]=10k Club&filters[clubs][]=999 Club`
+Query parameters: `period` (24h, 7d), `limit` (1-100)
 
-**Response Builder Pattern:**
-Elasticsearch returns name strings → `buildSearchResults()` enriches with PostgreSQL data (listings, offers, watchlist status) → Returns full objects to client
+### Analytics
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/analytics/market` | No | Global market statistics |
+| GET | `/analytics/clubs/:club` | No | Club-specific analytics |
+| GET | `/analytics/price-trends` | No | Price trends over time |
+| GET | `/analytics/volume` | No | Volume distribution by price range |
+| GET | `/analytics/user/me` | Yes | Personal user analytics |
 
-### OpenSea Integration (`src/services/opensea-stream.ts`)
-- **WebSocket Stream**: Phoenix protocol WebSocket to OpenSea Stream API
-- **Event Processing**: Handles item_listed, item_sold, order_cancelled, item_received_bid, collection_offer
-- **Order Parsing**: Extracts Seaport protocol_data and stores in listings.order_data (JSON)
-- **Automatic Sync**: Creates/updates listings and offers based on OpenSea events
-- **Name Resolution**: Resolves placeholder names (token-*) to actual ENS names via The Graph API
+Query parameters: `period` (24h, 7d, 30d, 90d, all)
 
-### Important Files
-- `src/index.ts` - Main Fastify server entry point
-- `src/routes/` - Route definitions (auth, names, listings, offers, watchlist, notifications, sales, profiles, etc.)
-- `src/services/opensea-stream.ts` - OpenSea WebSocket handler (Phoenix protocol)
-- `src/services/search.ts` - Elasticsearch query builder
-- `src/middleware/auth.ts` - JWT authentication middleware (`requireAuth`, `optionalAuth`)
-- `src/utils/response-builder.ts` - Enriches ES results with PostgreSQL data
-- `src/utils/siwe.ts` - Sign-In With Ethereum utilities
+### Recommendations
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/recommendations/also-viewed` | Optional | Names collectors also viewed |
+| GET | `/recommendations/similar-to-watchlist` | Yes | Based on similar watchlists |
+| GET | `/recommendations/based-on-votes` | Yes | Based on voting patterns |
+| GET | `/recommendations/for-you` | Yes | Personalized combined recommendations |
+
+### User Insights (Auth Required)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/user/history/viewed` | Yes | Recently viewed names |
+| GET | `/user/history/watched` | Yes | Watchlist with timestamps |
+| GET | `/user/history/voted` | Yes | Names user has voted on |
+| GET | `/user/history/offers` | Yes | Offers user has made |
+| GET | `/user/history/purchases` | Yes | Names user has purchased |
+| GET | `/user/history/sales` | Yes | Names user has sold |
+
+### Cart
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/cart` | Yes | Get user's cart items |
+| GET | `/cart/summary` | Yes | Get cart item counts by type |
+| POST | `/cart` | Yes | Add single item to cart |
+| POST | `/cart/bulk` | Yes | Add multiple items to cart (max 100) |
+| DELETE | `/cart/:id` | Yes | Remove item from cart |
+| DELETE | `/cart` | Yes | Clear cart (all or by type) |
+
+### Legends
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/legends/:address` | No | Get legend summary for address |
+| GET | `/legends/:address/details` | No | Get detailed legend mints |
+
+### POAP
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/poap/claim` | Yes | Claim a POAP link (one per user) |
+| GET | `/poap/status` | Yes | Check if user has claimed POAP |
+| GET | `/poap/stats` | No | Get POAP statistics |
+
+### Email Verification
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/verification/email` | No | Verify email with token |
+| POST | `/verification/resend` | Yes | Resend verification email |
+
+### WebSocket Endpoints
+| Path | Description |
+|------|-------------|
+| `/ws/events` | General event subscriptions |
+| `/ws/orders` | Order status updates |
+| `/ws/activity` | Real-time activity feed |
+| `/ws/status` | WebSocket connection stats |
+
+## WebSocket Protocol
+
+### /ws/activity
+Real-time activity feed with filters:
+```json
+// Subscribe to all activity
+{ "type": "subscribe_all" }
+
+// Subscribe to specific address
+{ "type": "subscribe_address", "address": "0x..." }
+
+// Subscribe to specific ENS name
+{ "type": "subscribe_name", "name": "vitalik.eth" }
+
+// Filter by event types
+{ "type": "set_event_filter", "filter_type": "include", "event_types": ["sale", "listing"] }
+
+// Clear filters
+{ "type": "clear_event_filter" }
+```
+
+## Search & Filtering
+
+**Endpoint:** `GET /api/v1/search`
+
+**Query format:** `filters[filterName]=value` (e.g., `?filters[showListings]=true&filters[minLength]=3`)
+
+**Pagination:** `page` (default: 1), `limit` (default: 20, max: 100)
+
+**Sorting:** `sortBy` + `sortOrder` (asc/desc)
+
+### Search Filters
+
+| Filter | Type | Description | Validation Rule |
+|--------|------|-------------|-----------------|
+| `showListings` | boolean | Only names with active listings | `listings[]` has item with `status='active'` |
+| `showUnlisted` | boolean | Only names without active listings | `listings[]` empty or no active status |
+| `minPrice` | string | Minimum price (wei) | Listing price >= value |
+| `maxPrice` | string | Maximum price (wei) | Listing price <= value |
+| `minLength` | number | Minimum name length (excl. .eth) | Label length >= value |
+| `maxLength` | number | Maximum name length (excl. .eth) | Label length <= value |
+| `hasNumbers` | boolean | Contains/excludes digits | Name matches/doesn't match `/\d/` |
+| `hasEmoji` | boolean | Contains/excludes emoji | Name has/lacks emoji chars |
+| `clubs[]` | string[] | Filter by club (999, 10k, 100k, etc.) | `clubs[]` includes requested club |
+| `inAnyClub` | boolean | In any club / not in any club | `clubs[]` non-empty / empty |
+| `isExpired` | boolean | Expired / not expired | `expiry_date` < now / > now |
+| `isGracePeriod` | boolean | In 90-day grace period | Expired within last 90 days |
+| `isPremiumPeriod` | boolean | In premium auction period | Expired 90-111 days ago |
+| `expiringWithinDays` | number | Expiring within X days | `expiry_date` between now and now+X days |
+| `hasSales` | boolean | Has/lacks sale history | `last_sale_date` set / null |
+| `lastSoldAfter` | ISO date | Sold after date | `last_sale_date` >= value |
+| `lastSoldBefore` | ISO date | Sold before date | `last_sale_date` <= value |
+| `owner` | address | Filter by owner | `owner` matches address |
+
+### Sort Options
+
+| Value | Description |
+|-------|-------------|
+| `price` | Sort by listing price |
+| `expiry_date` | Sort by expiration date |
+| `registration_date` | Sort by registration date |
+| `last_sale_date` | Sort by last sale date |
+| `character_count` | Sort by name length |
+| `watchers_count` | Sort by watcher count |
+
+### Example Requests
+
+```bash
+# Names with active listings
+curl 'http://localhost:3000/api/v1/search?filters[showListings]=true&limit=10'
+
+# Unlisted names
+curl 'http://localhost:3000/api/v1/search?filters[showUnlisted]=true&limit=10'
+
+# 3-5 char names with numbers, in 10k club, priced 1-5 ETH
+curl 'http://localhost:3000/api/v1/search?filters[hasNumbers]=true&filters[minLength]=3&filters[maxLength]=5&filters[clubs][]=10k&filters[minPrice]=1000000000000000000&filters[maxPrice]=5000000000000000000'
+
+# Names in grace period
+curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
+```
+
+## Database Tables
+
+### Core Tables
+| Table | Description |
+|-------|-------------|
+| `ens_names` | ENS domain info (token_id, name, owner, expiry, clubs, metadata) |
+| `listings` | Active marketplace listings with Seaport order data |
+| `offers` | Incoming offers on ENS names |
+| `sales` | Completed sale records |
+| `users` | User accounts with wallet addresses |
+| `watchlist` | User watchlist entries with notification preferences |
+| `notifications` | User notifications |
+| `nonces` | SIWE authentication nonces |
+| `name_views` | View tracking (unique per user/IP per name) |
+| `name_votes` | User votes on names (upvote/downvote) |
+| `activity_history` | Activity feed events |
+| `cart_items` | Shopping cart items |
+| `legends` | ENS Legend mint records |
+| `poap_links` | POAP claim links |
+| `mutelist` | Addresses to filter from activity broadcasts |
 
 ## Environment Variables
+
 ```env
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/grails
+DATABASE_DIRECT_URL=postgresql://...  # Direct connection for LISTEN/NOTIFY
+DB_MAX_CONNECTIONS=20
 
-# Server
-PORT=3000
-NODE_ENV=development
+# API Server
+API_PORT=3000
+API_HOST=0.0.0.0
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+RATE_LIMIT_MAX=150
+RATE_LIMIT_WINDOW=60000
 
-# Authentication (SIWE)
+# Authentication
 JWT_SECRET=your-secret-key
-JWT_EXPIRATION=7d
+JWT_EXPIRES_IN=24h
+
+# Blockchain
+RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
+CHAIN_ID=1
+ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+SEAPORT_ADDRESS=0x0000000000000068F116a894984e2DB1123eB395
 
 # OpenSea
 OPENSEA_API_KEY=your_opensea_api_key
-OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket
+OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket/websocket
 
-# Blockchain
-CHAIN=ethereum
-ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
-ETHEREUM_RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
-
-# Search
+# Elasticsearch
 ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_INDEX=ens_names
 
 # The Graph
-GRAPH_ENS_SUBGRAPH_URL=https://api.thegraph.com/subgraphs/name/ensdomains/ens
-GRAPH_API_KEY=your-graph-api-key  # Optional
+THE_GRAPH_ENS_SUBGRAPH_URL=https://gateway.thegraph.com/api/subgraphs/id/...
+THE_GRAPH_API_KEY=your-graph-api-key
 
-# External APIs
-EFP_API_URL=https://api.ethfollow.xyz  # For ENS records
+# Redis (Optional)
+REDIS_URL=redis://localhost:6379
+REDIS_ENABLED=true
+CACHE_TTL_SECONDS=15
+
+# Email
+SMTP_SERVER=smtp.example.com
+SMTP_PORT=587
+SMTP_LOGIN=user@example.com
+SMTP_PASSWORD=password
+FROM_EMAIL=noreply@grails.market
+ENABLE_EMAIL=true
+
+# POAP
+POAP_API_KEY=your-poap-api-key
+POAP_COLLECTION_ID=213962
+
+# Frontend
+FRONTEND_URL=http://localhost:3001
+
+# Monitoring
+LOG_LEVEL=info
 ```
 
+## Services
+
+### Activity Notifier (`src/services/activity-notifier.ts`)
+- Listens for PostgreSQL `activity_created` notifications via LISTEN/NOTIFY
+- Broadcasts activity events to WebSocket clients
+- Filters out muted addresses
+- Uses direct database connection (bypasses PgBouncer)
+
+### Name Views Service (`src/services/name-views.ts`)
+- Tracks unique views per user/IP per ENS name
+- Hashes IP addresses with SHA-256 for privacy
+- View counts updated via database trigger
+
+### Search Service (`src/services/search.ts`)
+- Elasticsearch query builder
+- Supports text search, filters, sorting, pagination
+- Returns name strings to be enriched by response builder
+
+## Middleware
+
+### Authentication (`src/middleware/auth.ts`)
+- `requireAuth`: Requires valid JWT token
+- `optionalAuth`: Parses JWT if present, continues if not
+- Attaches `request.user` with `sub` (user ID), `address`
+
+### Cache (`src/middleware/cache.ts`)
+- Redis-based response caching
+- `cacheHandler`: Default 15-second TTL
+- `longCacheHandler`: 60-second TTL
+- Returns `X-Cache: HIT/MISS` header
+
 ## Common Commands
+
 ```bash
 # Development
 npm run dev          # Start with hot reload
 npm run build        # Compile TypeScript
-npm start           # Production mode
+npm start            # Production mode
 
 # Database
 npm run db:migrate   # Run migrations
-npm run db:generate  # Generate Prisma client
-npm run db:seed      # Seed test data
+npm run db:generate  # Generate client
 
 # Testing
-npm test            # Run tests
-npm run lint        # Check code style
+npm test             # Run tests
+npm run lint         # Check code style
 ```
 
-## Architecture Patterns
-1. **Repository Pattern**: Database operations isolated in repository classes
-2. **Service Layer**: Business logic separated from routes
-3. **Event-Driven**: OpenSea events trigger database updates
-4. **Error Handling**: Centralized error middleware with proper status codes
-
-## Key Features
-- Real-time OpenSea event streaming and processing
-- Seaport order data storage and validation
-- Pagination and filtering for all list endpoints
-- Comprehensive error handling and logging
-- TypeScript for type safety
-- OpenAPI documentation at `/api-docs`
+## Important Files
+| File | Purpose |
+|------|---------|
+| `src/index.ts` | Main server entry, middleware setup |
+| `src/routes/index.ts` | Route registration |
+| `src/services/search.ts` | Elasticsearch query builder |
+| `src/services/activity-notifier.ts` | Real-time activity broadcasts |
+| `src/middleware/auth.ts` | JWT authentication |
+| `src/utils/response-builder.ts` | Search result enrichment |
+| `src/queue.ts` | pg-boss queue client |
 
 ## Integration Points
 - **Indexer Service**: Shares database, provides blockchain data
-- **WAL Listener**: Processes database changes via PostgreSQL WAL
-- **Frontend**: Consumes REST API endpoints
+- **WAL Listener**: Syncs PostgreSQL changes to Elasticsearch
+- **Workers Service**: Consumes job queue for async processing
+- **Frontend**: Consumes REST API and WebSocket endpoints
 
 ## Troubleshooting
-- Check OpenSea API key is valid and has proper permissions
-- Ensure PostgreSQL is running and migrations are applied
-- Verify ENS contract address matches the network
-- Monitor WebSocket connection status in logs
 
-## Testing Endpoints
+### Common Issues
+1. **Elasticsearch search fails**
+   - Check `ELASTICSEARCH_URL` is accessible
+   - Verify index exists and has mappings
+
+2. **Activity WebSocket not broadcasting**
+   - Check `DATABASE_DIRECT_URL` for LISTEN/NOTIFY
+   - Verify PostgreSQL trigger is installed
+
+3. **Redis cache not working**
+   - Check `REDIS_ENABLED=true`
+   - Verify Redis connection
+
+4. **JWT authentication fails**
+   - Check `JWT_SECRET` is set
+   - Verify token hasn't expired
+
+### Testing Endpoints
 ```bash
-# Get active listings
-curl http://localhost:3002/api/v1/listings
+# Health check
+curl http://localhost:3000/api/v1/health
 
-# Get specific listing
-curl http://localhost:3002/api/v1/listings/vitalik.eth
+# Get listings
+curl http://localhost:3000/api/v1/listings
 
-# Check OpenSea stream status
-curl http://localhost:3002/api/v1/status
+# Search names
+curl "http://localhost:3000/api/v1/names/search?q=vitalik&filters[minLength]=3"
+
+# Get trending
+curl "http://localhost:3000/api/v1/trending/composite?period=24h&limit=10"
 ```

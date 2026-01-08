@@ -36,7 +36,11 @@
     "backfill-cancelled-prices": "npm run build && node dist/wal-listener/src/scripts/backfill-cancelled-event-prices.js",
     "backfill-cancelled-prices:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-cancelled-event-prices.js --dry-run",
     "import-csv": "npx tsx src/scripts/import-ens-names-csv.ts",
-    "import-csv:build": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/import-ens-names-csv.js"
+    "import-csv:build": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/import-ens-names-csv.js",
+    "cleanup-orphans": "npm run build && node dist/wal-listener/src/scripts/cleanup-orphaned-es-documents.js",
+    "cleanup-orphans:dry": "npm run build && node dist/wal-listener/src/scripts/cleanup-orphaned-es-documents.js --dry-run",
+    "fix-duplicate-names": "npm run build && node dist/wal-listener/src/scripts/fix-duplicate-names.js",
+    "fix-duplicate-names:dry": "npm run build && node dist/wal-listener/src/scripts/fix-duplicate-names.js --dry-run"
   },
   "dependencies": {
     "pg-boss": "^9.0.3",

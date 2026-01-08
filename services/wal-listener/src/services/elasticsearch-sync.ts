@@ -1,9 +1,46 @@
-import { getElasticsearchClient, getPostgresPool, config } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji } from '../../../shared/src';
 import { logger } from '../utils/logger';
+
+// Currency constants
+const USDC_ADDRESS = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+const ETH_DECIMALS = 18;
+const USDC_DECIMALS = 6;
+
+// Maximum price in wei for Elasticsearch indexing (prevents Infinity/overflow)
+// This equals ~1 billion ETH - more than total supply, but finite for ES
+// Prices above this are capped for sorting purposes; actual price comes from DB
+const MAX_ES_PRICE_WEI = 1e27;
+
+/**
+ * Safely parse a price string to a number for Elasticsearch.
+ * Caps extremely large values to prevent Infinity which ES rejects.
+ * The actual price displayed to users comes from PostgreSQL, not ES.
+ */
+function safeParsePrice(priceStr: string | null | undefined): number | null {
+  if (!priceStr) return null;
+
+  const parsed = parseFloat(priceStr);
+
+  // Return null for NaN
+  if (Number.isNaN(parsed)) return null;
+
+  // Cap at max to prevent Infinity (for sorting, these will appear at the top/bottom)
+  if (!Number.isFinite(parsed) || parsed > MAX_ES_PRICE_WEI) {
+    return MAX_ES_PRICE_WEI;
+  }
+
+  // Handle negative prices (shouldn't happen, but be safe)
+  if (parsed < 0) return null;
+
+  return parsed;
+}
 
 export class ElasticsearchSync {
   private esClient = getElasticsearchClient();
   private pool = getPostgresPool();
+  private cachedEthPrice: number | null = null;
+  private ethPriceCacheTime: number = 0;
+  private readonly ETH_PRICE_CACHE_TTL = 300000; // 5 minute cache
 
   async createIndex() {
     const indexName = config.elasticsearch.index;
@@ -39,6 +76,11 @@ export class ElasticsearchSync {
                 price: {
                   type: 'double',
                 },
+                price_usd: {
+                  type: 'scaled_float',
+                  scaling_factor: 100, // 2 decimal precision for dollars
+                },
+                currency_address: { type: 'keyword' },
                 expiry_date: { type: 'date' },
                 registration_date: { type: 'date' },
                 character_count: { type: 'integer' },
@@ -147,6 +189,7 @@ export class ElasticsearchSync {
         SELECT
           en.*,
           l.price_wei as listing_price,
+          l.currency_address as listing_currency_address,
           l.status as listing_status,
           l.created_at as listing_created_at,
           en.last_sale_date,
@@ -227,6 +270,7 @@ export class ElasticsearchSync {
           SELECT
             en.*,
             l.price_wei as listing_price,
+            l.currency_address as listing_currency_address,
             l.status as listing_status,
             l.created_at as listing_created_at,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
@@ -243,7 +287,7 @@ export class ElasticsearchSync {
             LIMIT 1
           ) l ON true
           LEFT JOIN offers o ON o.ens_name_id = en.id
-          GROUP BY en.id, l.price_wei, l.status, l.created_at
+          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at
           ORDER BY en.id
           LIMIT $1 OFFSET $2
         `;
@@ -302,30 +346,93 @@ export class ElasticsearchSync {
     }
   }
 
+  /**
+   * Get current ETH price in USD with caching
+   */
+  private async getEthPriceUsd(): Promise<number> {
+    const now = Date.now();
+
+    // Return cached price if still valid
+    if (this.cachedEthPrice !== null && (now - this.ethPriceCacheTime) < this.ETH_PRICE_CACHE_TTL) {
+      return this.cachedEthPrice;
+    }
+
+    try {
+      const result = await this.pool.query(`
+        SELECT price FROM latest_prices
+        WHERE token_symbol = 'ETH' AND quote_currency = 'USD'
+      `);
+
+      if (result.rows.length > 0) {
+        this.cachedEthPrice = parseFloat(result.rows[0].price);
+        this.ethPriceCacheTime = now;
+        return this.cachedEthPrice;
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch ETH price from database, using fallback');
+    }
+
+    // Fallback price if database query fails
+    const fallbackPrice = 3000;
+    this.cachedEthPrice = fallbackPrice;
+    this.ethPriceCacheTime = now;
+    return fallbackPrice;
+  }
+
+  /**
+   * Calculate USD price from wei amount and currency address
+   */
+  private calculatePriceUsd(priceWei: string | null, currencyAddress: string | null, ethPriceUsd: number): number | null {
+    if (!priceWei) return null;
+
+    const normalizedCurrency = (currencyAddress || '').toLowerCase();
+    const priceNum = safeParsePrice(priceWei);
+
+    if (priceNum === null) return null;
+
+    if (isEthOrWeth(normalizedCurrency) || normalizedCurrency === '' || normalizedCurrency === '0x0000000000000000000000000000000000000000') {
+      // ETH or WETH: convert from wei (18 decimals) to ETH, then to USD
+      const priceInEth = priceNum / Math.pow(10, ETH_DECIMALS);
+      return priceInEth * ethPriceUsd;
+    } else if (normalizedCurrency === USDC_ADDRESS) {
+      // USDC: convert from smallest unit (6 decimals) to USD (1:1)
+      return priceNum / Math.pow(10, USDC_DECIMALS);
+    }
+
+    // Unknown currency - can't convert
+    return null;
+  }
+
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
     const expirationState = this.calculateExpirationState(data.expiry_date);
     const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
+    // Get ETH price for USD conversion
+    const ethPriceUsd = await this.getEthPriceUsd();
+    const priceUsd = this.calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
+
     return {
       name,
       token_id: data.token_id,
       owner: data.owner_address,
-      price: data.listing_price ? parseFloat(data.listing_price) : null,
+      price: safeParsePrice(data.listing_price),
+      price_usd: priceUsd,
+      currency_address: data.listing_currency_address || null,
       expiry_date: data.expiry_date,
       registration_date: data.registration_date,
       character_count: name.replace('.eth', '').length,
       has_numbers: /\d/.test(name),
-      has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+      has_emoji: hasEmoji(name),
       status: data.listing_status || 'unlisted',
       tags: this.generateTags(name),
       clubs: data.clubs || [],
-      last_sale_price: data.last_sale_price ? parseFloat(data.last_sale_price) : null,
+      last_sale_price: safeParsePrice(data.last_sale_price),
       last_sale_currency: data.last_sale_currency,
       last_sale_price_usd: data.last_sale_price_usd,
       listing_created_at: data.listing_created_at,
       active_offers_count: data.active_offers_count || 0,
-      highest_offer: data.highest_offer_wei ? parseFloat(data.highest_offer_wei) : null,
+      highest_offer: safeParsePrice(data.highest_offer_wei),
       // Expiration state fields
       is_expired: expirationState.isExpired,
       is_grace_period: expirationState.isGracePeriod,
@@ -348,7 +455,7 @@ export class ElasticsearchSync {
     if (cleanName.length === 5) tags.push('5-letter');
     if (/^\d+$/.test(cleanName)) tags.push('numeric');
     if (/^[a-z]+$/i.test(cleanName)) tags.push('alphabetic');
-    if (/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(cleanName)) {
+    if (hasEmoji(cleanName)) {
       tags.push('emoji');
     }
 

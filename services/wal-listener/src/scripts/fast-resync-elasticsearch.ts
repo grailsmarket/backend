@@ -14,7 +14,7 @@
  *   npm run resync:fast
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, hasEmoji } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -55,7 +55,7 @@ function enrichENSNameData(data: ENSNameRow) {
     registration_date: data.registration_date,
     character_count: name.replace('.eth', '').length,
     has_numbers: /\d/.test(name),
-    has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+    has_emoji: hasEmoji(name),
     status: data.listing_status || 'unlisted',
     tags: generateTags(name),
     clubs: data.clubs || [],
@@ -85,7 +85,7 @@ function generateTags(name: string): string[] {
   if (cleanName.length === 5) tags.push('5-letter');
   if (/^\d+$/.test(cleanName)) tags.push('numeric');
   if (/^[a-z]+$/i.test(cleanName)) tags.push('alphabetic');
-  if (/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(cleanName)) {
+  if (hasEmoji(cleanName)) {
     tags.push('emoji');
   }
 
@@ -205,7 +205,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
       registration_date: row.registration_date,
       character_count: cleanName.length,
       has_numbers: row.has_numbers !== null ? row.has_numbers : /\d/.test(name),
-      has_emoji: row.has_emoji !== null ? row.has_emoji : /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+      has_emoji: row.has_emoji !== null ? row.has_emoji : hasEmoji(name),
       status: 'unlisted',
       tags: generateTags(name),
       clubs: row.clubs || [],

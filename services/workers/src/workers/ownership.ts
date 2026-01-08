@@ -94,10 +94,11 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
             'Marked listings as unfunded due to ownership change'
           );
 
-          // Trigger immediate validation for these listings
+          // Trigger immediate validation for these listings with singletonKey to prevent duplicates
           const validationJobs = unfundedListings.rows.map((listing) => ({
             name: 'validate-listing-ownership',
-            data: { listingId: listing.id }
+            data: { listingId: listing.id },
+            singletonKey: `listing-${listing.id}`
           }));
 
           await boss.insert(validationJobs);

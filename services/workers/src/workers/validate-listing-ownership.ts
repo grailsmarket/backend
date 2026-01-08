@@ -15,6 +15,9 @@ import {
 
 const pool = getPostgresPool();
 
+// Name Wrapper contract address
+const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+
 // Initialize provider (will be set by environment)
 let provider: ethers.Provider | null = null;
 
@@ -48,25 +51,73 @@ async function fetchListingWithOwner(listingId: number): Promise<ListingWithOwne
 }
 
 /**
- * Get ENS owner from on-chain (ENS Registrar contract)
+ * Get ENS owner from on-chain
+ *
+ * Handles both wrapped and unwrapped names:
+ * - For unwrapped names: Base Registrar ownerOf returns the actual owner
+ * - For wrapped names: Base Registrar ownerOf returns Name Wrapper, so we query Name Wrapper
+ *
+ * The tokenId could be either:
+ * - A labelhash (Base Registrar token ID for unwrapped names)
+ * - A namehash (Name Wrapper token ID for wrapped names stored in our DB)
  */
 async function getENSOwnerFromRPC(tokenId: string): Promise<string | null> {
   if (!provider) {
     throw new Error('Provider not initialized. Call initializeProvider() first.');
   }
 
-  try {
-    const registrar = new ethers.Contract(
-      ENS_REGISTRAR_ADDRESS,
-      ['function ownerOf(uint256 tokenId) view returns (address)'],
-      provider
-    );
+  const registrar = new ethers.Contract(
+    ENS_REGISTRAR_ADDRESS,
+    ['function ownerOf(uint256 tokenId) view returns (address)'],
+    provider
+  );
 
-    const owner = await registrar.ownerOf(tokenId);
-    return owner;
-  } catch (error: any) {
-    // Token might not exist or contract error
-    console.error(`Error fetching on-chain owner for token ${tokenId}:`, error.message);
+  const nameWrapper = new ethers.Contract(
+    NAME_WRAPPER_ADDRESS,
+    ['function ownerOf(uint256 id) view returns (address)'],
+    provider
+  );
+
+  try {
+    // First, try Base Registrar with the token ID
+    const registrarOwner = await registrar.ownerOf(tokenId);
+
+    // If owner is Name Wrapper, get the real owner from Name Wrapper
+    if (registrarOwner.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+      try {
+        // For wrapped names, the Name Wrapper uses namehash as token ID
+        // Our DB stores namehash for wrapped names, so this should work
+        const wrappedOwner = await nameWrapper.ownerOf(tokenId);
+
+        // Zero address means not wrapped or burned
+        if (wrappedOwner && wrappedOwner !== ethers.ZeroAddress) {
+          return wrappedOwner;
+        }
+      } catch (wrapperError: any) {
+        console.warn(`Name Wrapper ownerOf failed for token ${tokenId}:`, wrapperError.message);
+      }
+      // Fall back to registrar owner (Name Wrapper address)
+      return registrarOwner;
+    }
+
+    return registrarOwner;
+  } catch (registrarError: any) {
+    // Base Registrar failed - this could happen if:
+    // 1. The token ID is a namehash (for wrapped names) but not a valid labelhash
+    // 2. The name doesn't exist or is expired
+
+    // Try Name Wrapper directly with the token ID (might be a namehash)
+    try {
+      const wrappedOwner = await nameWrapper.ownerOf(tokenId);
+
+      if (wrappedOwner && wrappedOwner !== ethers.ZeroAddress) {
+        return wrappedOwner;
+      }
+    } catch (wrapperError: any) {
+      // Both failed - log and return null
+      console.error(`Error fetching on-chain owner for token ${tokenId}:`, registrarError.message);
+    }
+
     return null;
   }
 }

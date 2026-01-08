@@ -36,7 +36,7 @@ export interface ListingWithOwner {
 export interface OfferWithBalance {
   id: number;
   buyer_address: string;
-  price_wei: string;
+  offer_amount_wei: string;
   currency_address: string;
   status: string;
   ens_name_id: number;

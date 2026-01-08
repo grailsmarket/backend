@@ -6,14 +6,14 @@
  *   npx tsx src/scripts/backfill-name-attributes.ts
  */
 
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, hasEmoji } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
 function calculateNameAttributes(name: string) {
   return {
     has_numbers: /\d/.test(name),
-    has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+    has_emoji: hasEmoji(name),
   };
 }
 

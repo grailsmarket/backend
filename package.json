@@ -29,13 +29,13 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "typescript": "^5.3.3",
-    "prettier": "^3.2.4",
-    "eslint": "^8.56.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "pg-boss": "9.0.3",
+    "prettier": "^3.2.4",
     "tsx": "^4.7.0",
-    "pg-boss": "9.0.3"
+    "typescript": "^5.3.3"
   },
   "engines": {
     "node": ">=20.0.0",
@@ -43,5 +43,8 @@
   },
   "overrides": {
     "pg-boss": "9.0.3"
+  },
+  "dependencies": {
+    "next": "^15.5.9"
   }
 }

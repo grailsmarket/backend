@@ -17,7 +17,7 @@
  *   --skip-metadata: Skip fetching metadata (only resolve names)
  */
 
-import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, config, hasEmoji } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ethers } from 'ethers';
 
@@ -321,7 +321,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
               try {
                 // Calculate attributes for the resolved name
                 const has_numbers = /\d/.test(resolvedName);
-                const has_emoji = /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(resolvedName);
+                const has_emoji = hasEmoji(resolvedName);
 
                 // Check if this name already exists (different token_id)
                 const existingName = await client.query(

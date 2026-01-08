@@ -3,12 +3,102 @@ import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { searchNames } from '../services/search';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
 
+// Valid sort fields for clubs
+const VALID_SORT_FIELDS = [
+  'total_sales_volume_wei',
+  'sales_volume_wei_1y',
+  'sales_volume_wei_1mo',
+  'sales_volume_wei_1w',
+  'total_sales_count',
+  'sales_count_1y',
+  'sales_count_1mo',
+  'sales_count_1w',
+  'member_count',
+  'floor_price_wei',
+  'name',
+] as const;
+
+// Valid classifications for filtering
+const VALID_CLASSIFICATIONS = [
+  'ethmojis',
+  'digits',
+  'palindromes',
+  'prepunk',
+  'geo',
+  'letters',
+] as const;
+
+// Volume/price fields that need numeric casting for sorting
+const NUMERIC_SORT_FIELDS = [
+  'total_sales_volume_wei',
+  'sales_volume_wei_1y',
+  'sales_volume_wei_1mo',
+  'sales_volume_wei_1w',
+  'floor_price_wei',
+];
+
 export async function clubsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
-  // Get all clubs with metadata
+  // Get all clubs with metadata, filtering, sorting, and search
   fastify.get('/', { preHandler: veryLongCacheHandler }, async (request, reply) => {
     try {
+      const rawQuery = request.query as {
+        sortBy?: string;
+        sortOrder?: string;
+        'class[]'?: string | string[];
+        search?: string;
+      };
+
+      // Parse class array (classifications filter)
+      let classifications: string[] = [];
+      const rawClass = rawQuery['class[]'];
+      if (rawClass) {
+        classifications = Array.isArray(rawClass)
+          ? rawClass
+          : [rawClass];
+        // Filter to valid classifications only
+        classifications = classifications.filter((c) =>
+          VALID_CLASSIFICATIONS.includes(c as typeof VALID_CLASSIFICATIONS[number])
+        );
+      }
+
+      // Validate sort field
+      const sortBy = VALID_SORT_FIELDS.includes(rawQuery.sortBy as typeof VALID_SORT_FIELDS[number])
+        ? rawQuery.sortBy
+        : 'total_sales_volume_wei';
+      const sortOrder = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
+      const search = rawQuery.search?.trim();
+
+      // Build WHERE clause
+      const whereConditions: string[] = [];
+      const params: unknown[] = [];
+      let paramCount = 1;
+
+      // Classification filter (array overlap)
+      if (classifications.length > 0) {
+        whereConditions.push(`classifications && $${paramCount}::text[]`);
+        params.push(classifications);
+        paramCount++;
+      }
+
+      // Search filter (wildcard on name and description)
+      if (search) {
+        whereConditions.push(`(name ILIKE $${paramCount} OR description ILIKE $${paramCount})`);
+        params.push(`%${search}%`);
+        paramCount++;
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(' AND ')}`
+        : '';
+
+      // Build ORDER BY clause with numeric casting for volume/price fields
+      const orderByField = NUMERIC_SORT_FIELDS.includes(sortBy!)
+        ? `${sortBy}::numeric`
+        : sortBy;
+      const orderByClause = `ORDER BY ${orderByField} ${sortOrder} NULLS LAST, name ASC`;
+
       const query = `
         SELECT
           name,
@@ -18,15 +108,23 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           floor_price_currency,
           total_sales_count,
           total_sales_volume_wei,
+          sales_count_1y,
+          sales_count_1mo,
+          sales_count_1w,
+          sales_volume_wei_1y,
+          sales_volume_wei_1mo,
+          sales_volume_wei_1w,
+          classifications,
           last_floor_update,
           last_sales_update,
           created_at,
           updated_at
         FROM clubs
-        ORDER BY member_count DESC, name ASC
+        ${whereClause}
+        ${orderByClause}
       `;
 
-      const result = await pool.query(query);
+      const result = await pool.query(query, params);
 
       const response: APIResponse = {
         success: true,
@@ -66,6 +164,13 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           floor_price_currency,
           total_sales_count,
           total_sales_volume_wei,
+          sales_count_1y,
+          sales_count_1mo,
+          sales_count_1w,
+          sales_volume_wei_1y,
+          sales_volume_wei_1mo,
+          sales_volume_wei_1w,
+          classifications,
           last_floor_update,
           last_sales_update,
           created_at
@@ -112,6 +217,71 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({
         success: false,
         error: 'Failed to fetch club names',
+      });
+    }
+  });
+
+  // Get club counts for an owner address
+  fastify.get<{
+    Params: { address: string };
+  }>('/counts/:address', async (request, reply) => {
+    const { address } = request.params;
+
+    // Basic address validation
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'INVALID_ADDRESS',
+          message: 'Invalid Ethereum address format',
+        },
+      });
+    }
+
+    try {
+      const result = await pool.query(
+        `
+        WITH owner_names AS (
+          SELECT id, clubs
+          FROM ens_names
+          WHERE LOWER(owner_address) = LOWER($1)
+        ),
+        any_count AS (
+          SELECT 'any' AS club_name, COUNT(*)::int AS count, 0 AS sort_order
+          FROM owner_names
+          WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
+        ),
+        club_counts AS (
+          SELECT c.name AS club_name, COUNT(on2.id)::int AS count, 1 AS sort_order
+          FROM clubs c
+          LEFT JOIN owner_names on2 ON c.name = ANY(on2.clubs)
+          GROUP BY c.name
+        )
+        SELECT club_name, count FROM (
+          SELECT * FROM any_count
+          UNION ALL
+          SELECT * FROM club_counts
+        ) AS combined
+        ORDER BY sort_order, count DESC, club_name
+        `,
+        [address]
+      );
+
+      // Transform to object
+      const counts: Record<string, number> = {};
+      for (const row of result.rows) {
+        counts[row.club_name] = row.count;
+      }
+
+      return reply.send({
+        success: true,
+        data: counts,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Failed to fetch club counts',
       });
     }
   });

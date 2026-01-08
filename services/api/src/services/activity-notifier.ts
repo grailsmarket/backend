@@ -1,5 +1,5 @@
 import { Client } from 'pg';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, config } from '../../../shared/src';
 import { broadcastActivityEvent } from '../routes/websocket';
 import { mutelistService } from './mutelist';
 
@@ -12,11 +12,18 @@ export class ActivityNotifier {
     console.log('Starting activity notifier...');
     this.isRunning = true;
 
+    // Use direct database connection (bypassing PgBouncer) for LISTEN/NOTIFY
+    // Falls back to regular DATABASE_URL if direct URL not configured
+    const connectionString = process.env.DATABASE_DIRECT_URL || config.database.url;
+    const usingDirect = !!process.env.DATABASE_DIRECT_URL;
+
     this.client = new Client({
-      connectionString: process.env.DATABASE_URL,
+      connectionString,
+      ssl: config.database.ssl ? { rejectUnauthorized: false } : false,
     });
 
     await this.client.connect();
+    console.log(`[ActivityNotifier] Connected using ${usingDirect ? 'direct' : 'pooled'} connection`);
 
     // Listen for activity_created notifications
     await this.client.query('LISTEN activity_created');
@@ -68,7 +75,8 @@ export class ActivityNotifier {
         `SELECT
           ah.*,
           en.name,
-          en.token_id
+          en.token_id,
+          en.clubs
         FROM activity_history ah
         JOIN ens_names en ON ah.ens_name_id = en.id
         WHERE ah.id = $1`,

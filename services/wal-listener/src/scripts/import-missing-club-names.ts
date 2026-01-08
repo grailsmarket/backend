@@ -21,6 +21,7 @@ import { getPostgresPool, closeAllConnections, config } from '../../../shared/sr
 import { keccak256, toHex, namehash } from 'viem';
 
 const pool = getPostgresPool();
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 // The Graph ENS Subgraph URL
 const GRAPH_ENS_URL = 'https://api.thegraph.com/subgraphs/name/ensdomains/ens';
@@ -141,8 +142,16 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
       return null;
     }
 
-    // Return the owner from the domain - prefer wrappedOwner, fallback to registrant
-    return result.data.domain.wrappedOwner?.id || result.data.domain.registrant?.id || null;
+    // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+    const domain = result.data.domain;
+    if (domain.registrant?.id) {
+      const registrant = domain.registrant.id.toLowerCase();
+      if (registrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+        return domain.wrappedOwner?.id?.toLowerCase() || null;
+      }
+      return registrant;
+    }
+    return null;
   } catch (error: any) {
     console.log(`    Error fetching from Graph for ${name}: ${error.message}`);
     return null;

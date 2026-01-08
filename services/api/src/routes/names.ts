@@ -243,12 +243,18 @@ export async function namesRoutes(fastify: FastifyInstance) {
               }
             }
 
-            // Get owner address - prefer wrappedOwner if available, fallback to registrant
+            // Get owner address based on registrant
+            // If registrant is NameWrapper, use wrappedOwner; otherwise use registrant
             let ownerAddress: string | null = null;
-            if (domain.wrappedOwner?.id) {
-              ownerAddress = domain.wrappedOwner.id.toLowerCase();
-            } else if (domain.registrant?.id) {
-              ownerAddress = domain.registrant.id.toLowerCase();
+            if (domain.registrant?.id) {
+              const registrant = domain.registrant.id.toLowerCase();
+              if (registrant === NAME_WRAPPER_ADDRESS) {
+                // Wrapped name: use wrappedOwner
+                ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+              } else {
+                // Unwrapped name: use registrant
+                ownerAddress = registrant;
+              }
             }
 
             let expiryDate: Date | null = null;
@@ -425,7 +431,16 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
         const graphData: any = await graphResponse.json();
         const domain = graphData?.data?.domains?.[0];
-        let correctOwner = domain?.wrappedOwner?.id || domain?.registrant?.id;
+        // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+        let correctOwner: string | null = null;
+        if (domain?.registrant?.id) {
+          const registrant = domain.registrant.id.toLowerCase();
+          if (registrant === NAME_WRAPPER_ADDRESS) {
+            correctOwner = domain.wrappedOwner?.id || null;
+          } else {
+            correctOwner = registrant;
+          }
+        }
 
         // If no wrappedOwner or registrant, query the Name Wrapper contract directly
         if (!correctOwner) {
@@ -555,12 +570,16 @@ export async function namesRoutes(fastify: FastifyInstance) {
           RETURNING *
         `;
 
-        // Priority for finding owner:
-        // 1. wrappedOwner - for wrapped names, this is the actual owner
-        // 2. resolver.addr.id - the address the name resolves to
-        // 3. registrant - the registrant address
-        // 4. owner - fallback to owner field
-        const ownerAddress = domain.wrappedOwner?.id || domain.resolver?.addr?.id || domain.registrant?.id || domain.owner?.id;
+        // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+        let ownerAddress: string | null = null;
+        if (domain.registrant?.id) {
+          const registrant = domain.registrant.id.toLowerCase();
+          if (registrant === NAME_WRAPPER_ADDRESS) {
+            ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+          } else {
+            ownerAddress = registrant;
+          }
+        }
         const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
         const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
 

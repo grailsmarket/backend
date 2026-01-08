@@ -1,33 +1,33 @@
 # ENS Marketplace System - CLAUDE.md
 
 ## System Overview
-A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates listings from OpenSea, provides a custom frontend for browsing and purchasing ENS names, and maintains synchronized blockchain state. The system consists of four interconnected services working together to provide a complete marketplace experience.
+A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates listings from OpenSea, provides a custom frontend for browsing and purchasing ENS names, and maintains synchronized blockchain state. The system consists of five interconnected services working together to provide a complete marketplace experience.
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────┐     ┌───────────────┐
-│                 │────▶│              │────▶│               │
-│    Frontend     │     │   API        │     │   Database    │
-│   (Next.js)     │◀────│   Service    │◀────│  (PostgreSQL) │
-│                 │     │              │     │               │
-└─────────────────┘     └──────────────┘     └───────────────┘
-                               ▲                      ▲
-                               │                      │
-                        ┌──────┴──────┐       ┌───────┴────────┐
-                        │             │       │                │
-                        │  OpenSea    │       │   Indexer      │
-                        │  Stream API │       │   Service      │
-                        │             │       │                │
-                        └─────────────┘       └────────────────┘
-                                                      ▲
-                                                      │
-                                              ┌───────┴────────┐
-                                              │                │
-                                              │   Ethereum     │
-                                              │   Blockchain   │
-                                              │                │
-                                              └────────────────┘
+┌─────────────────┐     ┌──────────────┐     ┌───────────────┐     ┌───────────────┐
+│                 │────▶│              │────▶│               │────▶│               │
+│    Frontend     │     │   API        │     │   Database    │     │ Elasticsearch │
+│   (Next.js 15)  │◀────│   Service    │◀────│  (PostgreSQL) │◀────│   (Search)    │
+│                 │     │              │     │               │     │               │
+└─────────────────┘     └──────────────┘     └───────────────┘     └───────────────┘
+                               ▲                      ▲                     ▲
+                               │                      │                     │
+                        ┌──────┴──────┐       ┌───────┴────────┐    ┌───────┴────────┐
+                        │             │       │                │    │                │
+                        │  OpenSea    │       │   Indexer      │    │  WAL Listener  │
+                        │  Stream API │       │   Service      │    │   Service      │
+                        │             │       │                │    │                │
+                        └─────────────┘       └────────────────┘    └────────────────┘
+                                                      ▲                     │
+                                                      │                     ▼
+                                              ┌───────┴────────┐    ┌───────────────┐
+                                              │                │    │               │
+                                              │   Ethereum     │    │   Workers     │
+                                              │   Blockchain   │    │   (pg-boss)   │
+                                              │                │    │               │
+                                              └────────────────┘    └───────────────┘
 ```
 
 ## Services
@@ -50,14 +50,22 @@ A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates l
 - Handles blockchain reorganizations
 
 ### 3. WAL Listener Service (`/services/wal-listener`)
-**Purpose**: Real-time database change detection and processing
+**Purpose**: Real-time database change detection and Elasticsearch synchronization
 **Key Features**:
-- PostgreSQL logical replication monitoring
-- Change event processing and routing
-- Cache invalidation triggers
-- External notification dispatch
+- PostgreSQL LISTEN/NOTIFY with database triggers (not logical replication)
+- Elasticsearch document synchronization for search
+- Activity history tracking for user feeds
+- pg-boss job publishing for notifications
 
-### 4. Frontend Service (`/services/frontend`)
+### 4. Workers Service (`/services/workers`)
+**Purpose**: Background job processing for async operations
+**Key Features**:
+- pg-boss PostgreSQL-based job queue (11 workers)
+- Order expiration and ENS metadata sync
+- Listing/offer validation against blockchain state
+- Club stats, price feeds, and analytics refresh
+
+### 5. Frontend Service (`/services/frontend`)
 **Purpose**: User interface for marketplace interaction
 **Port**: 3000/3001
 **Key Features**:
@@ -98,8 +106,9 @@ opensea_events (
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- PostgreSQL 14+
+- Node.js 20+
+- PostgreSQL 14+ with LISTEN/NOTIFY support
+- Elasticsearch 8.x
 - Ethereum RPC endpoint (Alchemy/Infura)
 - OpenSea API key
 
@@ -113,6 +122,7 @@ cd grails-testing
 cd services/api && npm install
 cd ../indexer && npm install
 cd ../wal-listener && npm install
+cd ../workers && npm install
 cd ../frontend && npm install
 
 # Setup database
@@ -156,14 +166,28 @@ npm run dev
 cd services/indexer
 npm run dev
 
-# Terminal 3 - WAL Listener (optional)
+# Terminal 3 - WAL Listener
 cd services/wal-listener
 npm run dev
 
-# Terminal 4 - Frontend
+# Terminal 4 - Workers
+cd services/workers
+npm run dev
+
+# Terminal 5 - Frontend
 cd services/frontend
 npm run dev
 ```
+
+## Shared Configuration (`/services/shared`)
+All backend services share a common configuration module that loads from `.env` files:
+- `config.database` - PostgreSQL connection settings
+- `config.elasticsearch` - Elasticsearch URL and index name
+- `config.blockchain` - RPC URL, chain ID, contract addresses
+- `config.opensea` - API key and stream URL
+- `config.jwt` - Authentication settings
+- `config.email` - SMTP configuration
+- `config.redis` - Caching settings
 
 ## Key Integrations
 
@@ -203,9 +227,11 @@ npm run dev
 ### 3. Data Sync Flow
 1. Indexer monitors blockchain events
 2. Updates ENS ownership in database
-3. WAL listener detects changes
-4. Triggers API cache invalidation
-5. Frontend receives updated data
+3. WAL listener detects changes via LISTEN/NOTIFY
+4. Syncs changes to Elasticsearch for search
+5. Publishes jobs to pg-boss for notifications
+6. Workers process async tasks (validation, stats)
+7. Frontend receives updated data via API/WebSocket
 
 ## Monitoring & Maintenance
 
@@ -303,15 +329,20 @@ kubectl apply -f k8s/
 - Batch processing for blockchain events
 - Lazy loading for frontend components
 
+## Current Features
+- [x] Advanced search and filtering (Elasticsearch)
+- [x] Analytics dashboard (trending, volume, price trends)
+- [x] Notification system (email, watchlist alerts)
+- [x] Clubs (999, 10k, 100k ENS categories)
+- [x] Voting and leaderboards
+- [x] Real-time activity feeds (WebSocket)
+
 ## Roadmap & Future Enhancements
 - [ ] Multi-chain support (Polygon, Arbitrum)
-- [ ] Advanced search and filtering
 - [ ] Price history charts
 - [ ] Automated market making
 - [ ] Mobile app
 - [ ] IPFS integration for metadata
-- [ ] Analytics dashboard
-- [ ] Notification system
 
 ## Support & Documentation
 - Individual service CLAUDE.md files in each service directory

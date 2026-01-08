@@ -7,8 +7,10 @@ The Worker service is an asynchronous job processing service built on pg-boss (P
 - **Runtime**: Node.js with TypeScript
 - **Queue**: pg-boss (PostgreSQL-based job queue)
 - **Database**: PostgreSQL (shared with other services)
-- **Email**: SendGrid (optional, for notifications)
-- **Blockchain**: Ethers.js v6 (for ENS data fetching)
+- **Email**: Nodemailer with SMTP (configurable provider)
+- **Blockchain**: viem (for ENS data fetching and validation)
+- **External APIs**: CoinGecko (price feeds), The Graph (ENS subgraph)
+- **Logging**: Pino with pino-pretty for development
 
 ## Key Components
 
@@ -61,15 +63,110 @@ Sends email notifications to users based on watchlist events.
 - `new-offer` - New offer on watched name
 - `listing-cancelled-ownership-change` - Listing cancelled due to ownership transfer
 
+#### 5. **Price Sync Worker** (`price-sync.ts`)
+Fetches current ETH/USD price from CoinGecko and updates the database for USD price calculations.
+
+**Queue**: `sync-eth-price`
+**Cron**: `*/5 * * * *` (every 5 minutes)
+
+**Actions**:
+- Fetches ETH price from CoinGecko API
+- Updates `eth_price` in price cache table
+- Used for USD price display in frontend
+
+#### 6. **Club Stats Worker** (`club-stats.ts`)
+Calculates and updates statistics for ENS clubs (999, 10k, 100k, etc.).
+
+**Queue**: `update-club-stats`
+**Cron**: `0 * * * *` (hourly)
+
+**Metrics Calculated**:
+- Floor price (lowest active listing)
+- Total listings count
+- 24h sales volume
+- Average sale price
+
+#### 7. **Highest Offer Worker** (`highest-offer.ts`)
+Updates the highest offer for each ENS name when offers change.
+
+**Triggered by**: WAL listener when offers table changes
+
+**Queue**: `update-highest-offer`
+
+**Actions**:
+- Queries max offer for ENS name
+- Updates `highest_offer` in ens_names table
+- Used for quick display without join queries
+
+#### 8. **Refresh Analytics Worker** (`refresh-analytics.ts`)
+Refreshes materialized views for trending and analytics data.
+
+**Queue**: `refresh-analytics`
+**Cron**: `*/15 * * * *` (every 15 minutes)
+
+**Views Refreshed**:
+- `trending_names` - Composite trending score
+- `top_sales` - Recent high-value sales
+- `hot_names` - Names with recent activity
+
+### Validation Workers (`src/workers/validation/`)
+
+These workers validate on-chain state to ensure listings and offers are still fulfillable.
+
+#### 9. **Listing Ownership Validator** (`listing-ownership.ts`)
+Validates that listing sellers still own their ENS names.
+
+**Queue**: `validate-listing-ownership`
+
+**Contract Calls**:
+- `ENS Base Registrar.ownerOf(tokenId)` - For unwrapped names
+- `ENS Name Wrapper.ownerOf(tokenId)` - For wrapped names
+
+**Actions**:
+- Cancels listings where seller no longer owns name
+- Uses Multicall3 for batch validation
+
+#### 10. **Offer Balance Validator** (`offer-balance.ts`)
+Validates that offer makers have sufficient WETH balance and approval.
+
+**Queue**: `validate-offer-balance`
+
+**Contract Calls**:
+- `WETH.balanceOf(maker)` - Check balance
+- `WETH.allowance(maker, conduit)` - Check Seaport approval
+
+**Actions**:
+- Marks offers as unfunded if balance insufficient
+- Reactivates offers when balance restored
+
+#### 11. **Batch Validation Worker** (`batch-validation.ts`)
+Runs periodic batch validation of all active listings and offers.
+
+**Queue**: `batch-validate-orders`
+**Cron**: `0 */6 * * *` (every 6 hours)
+
+**Process**:
+1. Fetches all active listings in batches of 100
+2. Uses Multicall3 for efficient RPC calls
+3. Validates ownership and expiry
+4. Updates invalid listings to cancelled status
+
+**Contract Addresses Used**:
+- **Multicall3**: `0xcA11bde05977b3631167028862bE2a173976CA11`
+- **ENS Name Wrapper**: `0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401`
+- **ENS Base Registrar**: `0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85`
+- **WETH**: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`
+
 ### Services (`src/services/`)
 
 #### **Email Service** (`email.ts`)
-Abstracts email sending via SendGrid with pre-built templates for each notification type.
+Abstracts email sending via Nodemailer with SMTP, featuring pre-built templates for each notification type.
 
 **Features**:
-- Dry-run mode when `SENDGRID_API_KEY` not set
+- Dry-run mode when `ENABLE_EMAIL=false`
 - HTML email templates with unsubscribe links
 - Text fallbacks for all emails
+- Configurable SMTP provider (any SMTP server)
 
 #### **Blockchain Service** (`blockchain.ts`)
 Utilities for fetching ENS data from the blockchain.
@@ -99,10 +196,16 @@ RPC_URL=https://eth-mainnet.alchemyapi.io/v2/your-key
 ENS_REGISTRY_ADDRESS=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
 ENS_REGISTRAR_ADDRESS=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
 
-# Email (SendGrid)
-SENDGRID_API_KEY=your_sendgrid_api_key
+# Email (SMTP via Nodemailer)
+SMTP_SERVER=smtp.example.com
+SMTP_PORT=587
+SMTP_LOGIN=your_smtp_login
+SMTP_PASSWORD=your_smtp_password
 FROM_EMAIL=noreply@grails.market
 ENABLE_EMAIL=true  # Set to false for dry-run mode
+
+# External APIs
+COINGECKO_API_KEY=your_coingecko_key  # Optional, uses free tier if not set
 
 # Frontend URL (for email links)
 FRONTEND_URL=http://localhost:3001
@@ -144,12 +247,25 @@ npm run lint        # Check code style
 All workers register on startup in `src/index.ts`:
 ```typescript
 const boss = await getQueueClient();
+
+// Core workers
 await registerExpiryWorker(boss);
 await registerBatchExpiryWorker(boss);
 await registerEnsSyncWorker(boss);
 await registerDailyEnsSyncScheduler(boss);
 await registerOwnershipWorker(boss);
 await registerNotificationWorker(boss);
+
+// Analytics and stats workers
+await registerPriceSyncWorker(boss);
+await registerClubStatsWorker(boss);
+await registerHighestOfferWorker(boss);
+await registerRefreshAnalyticsWorker(boss);
+
+// Validation workers
+await registerListingOwnershipValidator(boss);
+await registerOfferBalanceValidator(boss);
+await registerBatchValidationWorker(boss);
 ```
 
 ### Error Handling
@@ -214,10 +330,10 @@ The service logs queue statistics every 60 seconds:
 4. Check external dependencies: RPC provider, email service
 
 ### Emails Not Sending
-1. Check `SENDGRID_API_KEY` is set
+1. Check SMTP credentials are set (`SMTP_SERVER`, `SMTP_LOGIN`, `SMTP_PASSWORD`)
 2. Check `ENABLE_EMAIL=true`
-3. Check SendGrid dashboard for bounces/errors
-4. Test with dry-run mode (unset `SENDGRID_API_KEY`) to see logs
+3. Check SMTP server logs for delivery errors
+4. Test with dry-run mode (`ENABLE_EMAIL=false`) to see logs
 
 ### ENS Sync Failures
 1. Check RPC provider rate limits
@@ -299,8 +415,8 @@ await Promise.all(
 
 ## Security Considerations
 - **Database Credentials**: Never commit `.env` files
-- **Email API Keys**: Rotate SendGrid keys regularly
-- **Rate Limiting**: Respect external API limits (RPC, SendGrid)
+- **SMTP Credentials**: Use app-specific passwords, rotate regularly
+- **Rate Limiting**: Respect external API limits (RPC, CoinGecko)
 - **Input Validation**: All job data is validated before processing
 - **SQL Injection**: Use parameterized queries exclusively
 

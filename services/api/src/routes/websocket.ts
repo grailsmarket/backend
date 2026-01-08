@@ -13,6 +13,7 @@ interface ActivityWSClient {
   addressSubscriptions: Set<string>; // Set of addresses to watch
   nameSubscriptions: Set<string>;     // Set of ENS names to watch
   subscribeAll: boolean;              // Subscribe to all activity
+  clubSubscription: string | null;    // Single club subscription (replaces previous)
   eventTypeFilters: {
     include?: Set<string>;            // If set, only include these event types
     exclude?: Set<string>;            // If set, exclude these event types
@@ -22,7 +23,43 @@ interface ActivityWSClient {
 const clients = new Map<string, WSClient>();
 const activityClients = new Map<string, ActivityWSClient>();
 
+// Track broadcast stats for debugging
+let broadcastStats = {
+  totalBroadcasts: 0,
+  lastBroadcastTime: null as Date | null,
+  lastEventType: null as string | null,
+};
+
+export function getWebSocketStats() {
+  return {
+    eventsClients: clients.size,
+    activityClients: activityClients.size,
+    activityClientDetails: Array.from(activityClients.values()).map(c => ({
+      id: c.id,
+      subscribeAll: c.subscribeAll,
+      addressSubscriptions: Array.from(c.addressSubscriptions),
+      nameSubscriptions: Array.from(c.nameSubscriptions),
+      clubSubscription: c.clubSubscription,
+      eventTypeFilters: {
+        include: c.eventTypeFilters.include ? Array.from(c.eventTypeFilters.include) : null,
+        exclude: c.eventTypeFilters.exclude ? Array.from(c.eventTypeFilters.exclude) : null,
+      },
+    })),
+    broadcastStats,
+  };
+}
+
 export async function websocketRoutes(fastify: FastifyInstance) {
+  // Status endpoint for debugging WebSocket connections
+  fastify.get('/status', async (request, reply) => {
+    return reply.send({
+      success: true,
+      data: getWebSocketStats(),
+      meta: {
+        timestamp: new Date().toISOString(),
+      },
+    });
+  });
   fastify.get('/events', { websocket: true }, (connection, req) => {
     const clientId = req.id;
     const client: WSClient = {
@@ -103,10 +140,12 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       addressSubscriptions: new Set(),
       nameSubscriptions: new Set(),
       subscribeAll: false,
+      clubSubscription: null,
       eventTypeFilters: {},
     };
 
     activityClients.set(clientId, client);
+    console.log(`[WebSocket] Activity client connected: ${clientId}, total clients: ${activityClients.size}`);
 
     connection.socket.send(JSON.stringify({
       type: 'connected',
@@ -271,6 +310,27 @@ function handleActivityMessage(client: ActivityWSClient, data: any) {
       }
       break;
 
+    case 'subscribe_club':
+      if (data.club) {
+        client.clubSubscription = data.club;
+        client.ws.send(JSON.stringify({
+          type: 'subscribed',
+          subscription_type: 'club',
+          club: data.club,
+          timestamp: new Date().toISOString(),
+        }));
+      }
+      break;
+
+    case 'unsubscribe_club':
+      client.clubSubscription = null;
+      client.ws.send(JSON.stringify({
+        type: 'unsubscribed',
+        subscription_type: 'club',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
     case 'set_event_filter':
       // Set event type filter - can be 'include' or 'exclude'
       if (data.filter_type && data.event_types && Array.isArray(data.event_types)) {
@@ -330,6 +390,13 @@ export function broadcastActivityEvent(activityData: any) {
     event_type,
   } = activityData;
 
+  // Update broadcast stats
+  broadcastStats.totalBroadcasts++;
+  broadcastStats.lastBroadcastTime = new Date();
+  broadcastStats.lastEventType = event_type;
+
+  console.log(`[WebSocket] Broadcasting activity event: ${event_type}, clients: ${activityClients.size}`);
+
   activityClients.forEach(client => {
     let shouldSend = false;
 
@@ -350,6 +417,11 @@ export function broadcastActivityEvent(activityData: any) {
 
     // Check if client is subscribed to the ENS name
     if (name && client.nameSubscriptions.has(name)) {
+      shouldSend = true;
+    }
+
+    // Check if client is subscribed to a club that this name belongs to
+    if (client.clubSubscription && activityData.clubs?.includes(client.clubSubscription)) {
       shouldSend = true;
     }
 
