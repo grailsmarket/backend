@@ -1,5 +1,19 @@
-import { config } from '../../../shared/src';
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
+import { namehash, labelhash } from 'viem/ens';
+import { config, safeNormalize, isPlaceholderName } from '../../../shared/src';
 import { logger } from '../utils/logger';
+
+// Name Wrapper ABI - just the ownerOf function we need
+const NAME_WRAPPER_ABI = [
+  {
+    inputs: [{ name: 'id', type: 'uint256' }],
+    name: 'ownerOf',
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
 
 // NOTE: The Graph has two expiry fields:
 // - domain.expiryDate: includes 90-day grace period (END of grace period)
@@ -38,13 +52,110 @@ interface ResolvedNameData {
   registrantAddress: string | null;
   registrationDate: Date | null;
   textRecords: Record<string, string>;
+  /** Whether the name from The Graph was already in normalized form.
+   *  If false, this is a "bad" registration (e.g., 'Vitalik.eth' with capital V)
+   *  that should NOT be used to update ownership of the legitimate normalized name. */
+  isNormalized: boolean;
+  /** The original non-normalized name from The Graph (if different from normalized) */
+  originalName: string | null;
 }
 
 export class ENSResolver {
   private cache = new Map<string, string>();
+  private client = createPublicClient({
+    chain: mainnet,
+    transport: http(config.blockchain.rpcUrl),
+  });
 
   clearCache(): void {
     this.cache.clear();
+  }
+
+  /**
+   * Query the Name Wrapper contract directly to get the true owner of a wrapped ENS name.
+   * This bypasses The Graph and gives us authoritative blockchain data.
+   *
+   * @param ensName - Full ENS name (e.g., "vitalik.eth")
+   * @returns The owner address, or null if not wrapped or query fails
+   */
+  async getWrappedNameOwner(ensName: string): Promise<string | null> {
+    // Only works for valid .eth names, not placeholders
+    if (!ensName || !ensName.endsWith('.eth') || ensName.startsWith('token-')) {
+      return null;
+    }
+
+    try {
+      // Compute the namehash - this is what the Name Wrapper uses as token ID
+      const node = namehash(ensName);
+
+      // Call ownerOf on the Name Wrapper contract
+      const owner = await this.client.readContract({
+        address: NAME_WRAPPER_ADDRESS as `0x${string}`,
+        abi: NAME_WRAPPER_ABI,
+        functionName: 'ownerOf',
+        args: [BigInt(node)],
+      });
+
+      // Zero address means not wrapped or doesn't exist
+      if (!owner || owner === '0x0000000000000000000000000000000000000000') {
+        logger.debug(`Name ${ensName} is not wrapped (ownerOf returned zero)`);
+        return null;
+      }
+
+      logger.debug(`Got wrapped owner for ${ensName} from contract: ${owner}`);
+      return owner.toLowerCase();
+    } catch (error: any) {
+      // This can happen if the name doesn't exist in the wrapper
+      logger.debug(`Error querying Name Wrapper for ${ensName}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Compute the labelhash-based token ID for an ENS name.
+   * This is the token ID used by the Base Registrar (ERC-721).
+   *
+   * @param ensName - Full ENS name (e.g., "vitalik.eth")
+   * @returns The labelhash as a decimal string, or null if invalid
+   */
+  getLabelhashTokenId(ensName: string): string | null {
+    if (!ensName || !ensName.endsWith('.eth')) {
+      return null;
+    }
+
+    try {
+      // Extract the label (e.g., "vitalik" from "vitalik.eth")
+      const label = ensName.replace('.eth', '');
+      if (!label) return null;
+
+      // Compute labelhash and convert to decimal
+      const hash = labelhash(label);
+      return BigInt(hash).toString(10);
+    } catch (error: any) {
+      logger.debug(`Error computing labelhash for ${ensName}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Compute the namehash-based token ID for an ENS name.
+   * This is the token ID used by the Name Wrapper (ERC-1155).
+   *
+   * @param ensName - Full ENS name (e.g., "vitalik.eth")
+   * @returns The namehash as a decimal string, or null if invalid
+   */
+  getNamehashTokenId(ensName: string): string | null {
+    if (!ensName || !ensName.endsWith('.eth')) {
+      return null;
+    }
+
+    try {
+      const hash = namehash(ensName);
+      return BigInt(hash).toString(10);
+    } catch (error: any) {
+      logger.debug(`Error computing namehash for ${ensName}: ${error.message}`);
+      return null;
+    }
   }
 
   async resolveTokenIdToName(tokenId: string): Promise<string | null> {
@@ -55,16 +166,27 @@ export class ENSResolver {
     }
 
     try {
-      // The tokenId is the NFT token ID from the ENS Registrar (in decimal)
-      // Convert it to hex to get the labelhash for querying The Graph
-      // Pad to 64 characters (32 bytes) for proper bytes32 format
+      // The tokenId could be either:
+      // 1. A labelhash (from Base Registrar events - unwrapped or the underlying NFT for wrapped names)
+      // 2. A namehash (from Name Wrapper - wrapped names as ERC-1155)
+      //
+      // We try labelhash first (more common for .eth 2LDs), then fall back to namehash (id) lookup.
       const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
-      const labelhash = '0x' + hexString;
+      const tokenIdAsHex = '0x' + hexString;
 
-      logger.debug(`Resolving tokenId ${tokenId} with labelhash ${labelhash}`);
+      logger.debug(`Resolving tokenId ${tokenId} (hex: ${tokenIdAsHex})`);
 
-      const query = `
-        query GetENSName($labelhash: String!) {
+      const headers: any = {
+        'Content-Type': 'application/json',
+      };
+
+      if (config.theGraph.apiKey) {
+        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+      }
+
+      // First, try to find by labelhash (Base Registrar token ID format)
+      const labelhashQuery = `
+        query GetENSNameByLabelhash($labelhash: String!) {
           domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
             id
             name
@@ -77,20 +199,12 @@ export class ENSResolver {
         }
       `;
 
-      const headers: any = {
-        'Content-Type': 'application/json',
-      };
-
-      if (config.theGraph.apiKey) {
-        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
-      }
-
-      const response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await fetch(config.theGraph.ensSubgraphUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          query,
-          variables: { labelhash }
+          query: labelhashQuery,
+          variables: { labelhash: tokenIdAsHex }
         }),
       });
 
@@ -99,20 +213,70 @@ export class ENSResolver {
         return null;
       }
 
-      const data = await response.json() as any;
+      let data = await response.json() as any;
 
       if (data.errors) {
         logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
         return null;
       }
 
-      const domains = data.data?.domains || [];
+      let domains = data.data?.domains || [];
+
+      // If no results from labelhash lookup, try namehash (id) lookup
+      // This handles Name Wrapper ERC-1155 token IDs which use namehash
+      if (domains.length === 0) {
+        logger.debug(`No results for labelhash ${tokenIdAsHex}, trying namehash (id) lookup`);
+
+        const namehashQuery = `
+          query GetENSNameByNamehash($namehash: String!) {
+            domain(id: $namehash) {
+              id
+              name
+              labelName
+              labelhash
+              registration {
+                expiryDate
+              }
+            }
+          }
+        `;
+
+        response = await fetch(config.theGraph.ensSubgraphUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            query: namehashQuery,
+            variables: { namehash: tokenIdAsHex }
+          }),
+        });
+
+        if (!response.ok) {
+          logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+          return null;
+        }
+
+        data = await response.json() as any;
+
+        if (data.errors) {
+          logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          return null;
+        }
+
+        // namehash query returns a single domain, not an array
+        if (data.data?.domain) {
+          domains = [data.data.domain];
+          logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
+        }
+      }
 
       if (domains.length > 0) {
         const domain = domains[0];
-        const name = domain.name || domain.labelName;
+        const rawName = domain.name || domain.labelName;
 
-        if (name) {
+        if (rawName) {
+          // Normalize the name per ENSIP-15
+          const name = safeNormalize(rawName);
+
           // Cache the result
           this.cache.set(tokenId, name);
           logger.info(`Resolved token ${tokenId} to name: ${name}`);
@@ -131,16 +295,30 @@ export class ENSResolver {
 
   async resolveTokenIdToNameData(tokenId: string): Promise<ResolvedNameData | null> {
     try {
-      // The tokenId is the NFT token ID from the ENS Registrar (in decimal)
-      // Convert it to hex to get the labelhash for querying The Graph
-      // Pad to 64 characters (32 bytes) for proper bytes32 format
+      // The tokenId could be either:
+      // 1. A labelhash (from Base Registrar events - unwrapped or the underlying NFT for wrapped names)
+      // 2. A namehash (from Name Wrapper - wrapped names as ERC-1155)
+      //
+      // We try labelhash first (more common for .eth 2LDs), then fall back to namehash (id) lookup.
+      // See: https://docs.ens.domains/dapp-developer-guide/ens-as-nft
+
       const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
-      const labelhash = '0x' + hexString;
+      const tokenIdAsHex = '0x' + hexString;
 
-      logger.debug(`Resolving tokenId ${tokenId} with labelhash ${labelhash}`);
+      logger.debug(`Resolving tokenId ${tokenId} (hex: ${tokenIdAsHex})`);
 
-      const query = `
-        query GetENSName($labelhash: String!) {
+      const headers: any = {
+        'Content-Type': 'application/json',
+      };
+
+      if (config.theGraph.apiKey) {
+        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+      }
+
+      // First, try to find by labelhash (Base Registrar token ID format)
+      // This works for both unwrapped names and the underlying NFT of wrapped names
+      const labelhashQuery = `
+        query GetENSNameByLabelhash($labelhash: String!) {
           domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
             id
             name
@@ -170,20 +348,12 @@ export class ENSResolver {
         }
       `;
 
-      const headers: any = {
-        'Content-Type': 'application/json',
-      };
-
-      if (config.theGraph.apiKey) {
-        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
-      }
-
-      const response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await fetch(config.theGraph.ensSubgraphUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          query,
-          variables: { labelhash }
+          query: labelhashQuery,
+          variables: { labelhash: tokenIdAsHex }
         }),
       });
 
@@ -192,20 +362,97 @@ export class ENSResolver {
         return null;
       }
 
-      const data = await response.json() as any;
+      let data = await response.json() as any;
 
       if (data.errors) {
         logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
         return null;
       }
 
-      const domains = data.data?.domains || [];
+      let domains = data.data?.domains || [];
+
+      // If no results from labelhash lookup, try namehash (id) lookup
+      // This handles Name Wrapper ERC-1155 token IDs which use namehash
+      if (domains.length === 0) {
+        logger.debug(`No results for labelhash ${tokenIdAsHex}, trying namehash (id) lookup`);
+
+        const namehashQuery = `
+          query GetENSNameByNamehash($namehash: String!) {
+            domain(id: $namehash) {
+              id
+              name
+              labelName
+              labelhash
+              owner {
+                id
+              }
+              expiryDate
+              registrant {
+                id
+              }
+              wrappedOwner {
+                id
+              }
+              registration {
+                expiryDate
+                registrationDate
+              }
+              resolver {
+                textChangeds {
+                  value
+                  key
+                }
+              }
+            }
+          }
+        `;
+
+        response = await fetch(config.theGraph.ensSubgraphUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            query: namehashQuery,
+            variables: { namehash: tokenIdAsHex }
+          }),
+        });
+
+        if (!response.ok) {
+          logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+          return null;
+        }
+
+        data = await response.json() as any;
+
+        if (data.errors) {
+          logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          return null;
+        }
+
+        // namehash query returns a single domain, not an array
+        if (data.data?.domain) {
+          domains = [data.data.domain];
+          logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
+        }
+      }
 
       if (domains.length > 0) {
         const domain = domains[0];
-        const name = domain.name || domain.labelName;
+        const rawName = domain.name || domain.labelName;
 
-        if (name) {
+        if (rawName) {
+          // Normalize the name per ENSIP-15 (The Graph may return non-normalized names)
+          const name = safeNormalize(rawName);
+
+          // Check if the name was already normalized - if not, this is a "bad" registration
+          // like "Vitalik.eth" (capital V) which should NOT be used to update ownership
+          // of the legitimate normalized name "vitalik.eth"
+          const isNormalized = rawName === name;
+          const originalName = isNormalized ? null : rawName;
+
+          if (!isNormalized) {
+            logger.warn(`Detected non-normalized ENS registration: "${rawName}" -> "${name}". This may be an attempt to impersonate the legitimate name.`);
+          }
+
           // Parse expiry date if available
           let expiryDate: Date | null = null;
           if (domain.registration?.expiryDate) {
@@ -228,12 +475,18 @@ export class ENSResolver {
             }
           }
 
-          // Get owner address - prefer wrappedOwner if available, fallback to registrant
+          // Get owner address based on registrant
+          // If registrant is NameWrapper, use wrappedOwner; otherwise use registrant
           let ownerAddress: string | null = null;
-          if (domain.wrappedOwner?.id) {
-            ownerAddress = domain.wrappedOwner.id.toLowerCase();
-          } else if (domain.registrant?.id) {
-            ownerAddress = domain.registrant.id.toLowerCase();
+          if (domain.registrant?.id) {
+            const registrant = domain.registrant.id.toLowerCase();
+            if (registrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+              // Wrapped name: use wrappedOwner
+              ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+            } else {
+              // Unwrapped name: use registrant
+              ownerAddress = registrant;
+            }
           }
 
           // Get registrant address (the original registerer of the name)
@@ -281,8 +534,8 @@ export class ENSResolver {
             logger.debug(`Name ${name} is ${isExpired ? 'expired' : 'unwrapped'} - using labelhash: ${correctTokenId}`);
           }
 
-          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}`);
-          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords };
+          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, isNormalized: ${isNormalized}`);
+          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords, isNormalized, originalName };
         }
       }
 
@@ -388,8 +641,10 @@ export class ENSResolver {
         const domain = domainMap.get(labelhash);
 
         if (domain) {
-          const name = domain.name || domain.labelName;
-          if (name) {
+          const rawName = domain.name || domain.labelName;
+          if (rawName) {
+            // Normalize the name per ENSIP-15
+            const name = safeNormalize(rawName);
             this.cache.set(tokenId, name);
             results.set(tokenId, name);
             logger.debug(`Resolved token ${tokenId} to name: ${name}`);

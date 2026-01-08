@@ -88,6 +88,13 @@ class MutelistService {
   }
 
   /**
+   * Get all muted addresses as an array (for SQL queries)
+   */
+  getMutedAddresses(): string[] {
+    return Array.from(this.mutedAddresses);
+  }
+
+  /**
    * Check if the service is initialized
    */
   isInitialized(): boolean {

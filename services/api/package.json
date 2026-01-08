@@ -9,6 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "migrate": "tsx scripts/run-migrations.ts",
     "migrate:dry-run": "tsx scripts/run-migrations.ts --dry-run",
     "migrate:force": "tsx scripts/run-migrations.ts --force",
@@ -34,6 +36,7 @@
     "viem": "^2.7.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.5.10"
+    "@types/ws": "^8.5.10",
+    "vitest": "^1.6.0"
   }
 }

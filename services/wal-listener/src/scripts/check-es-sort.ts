@@ -16,7 +16,7 @@ async function main() {
         bool: {
           must: [
             { term: { status: 'active' } },
-            { term: { is_expired: false } }
+            { range: { expiry_date: { gt: 'now' } } }  // Not expired: use dynamic date check
           ]
         }
       },

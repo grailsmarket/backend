@@ -33,7 +33,7 @@ async function fetchOffer(offerId: number): Promise<OfferWithBalance | null> {
     SELECT
       o.id,
       o.buyer_address,
-      o.price_wei,
+      o.offer_amount_wei,
       o.currency_address,
       o.status,
       o.ens_name_id,
@@ -130,7 +130,7 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
     }
 
     // 4. Compare balance to required amount
-    const required = BigInt(offer.price_wei);
+    const required = BigInt(offer.offer_amount_wei);
 
     if (balance < required) {
       return {

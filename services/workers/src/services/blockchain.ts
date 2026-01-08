@@ -4,6 +4,9 @@ import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
 
+// Name Wrapper contract address
+const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+
 export function getBlockchainProvider(): ethers.JsonRpcProvider {
   if (!provider) {
     provider = new ethers.JsonRpcProvider(config.blockchain.rpcUrl);
@@ -15,6 +18,11 @@ export function getBlockchainProvider(): ethers.JsonRpcProvider {
 // ENS Registry ABI (minimal - just what we need)
 const ENS_REGISTRY_ABI = [
   'function resolver(bytes32 node) view returns (address)',
+];
+
+// Name Wrapper ABI (minimal - just ownerOf)
+const NAME_WRAPPER_ABI = [
+  'function ownerOf(uint256 id) view returns (address)',
 ];
 
 // ENS Resolver ABI (minimal - text record methods)
@@ -115,25 +123,79 @@ export async function fetchENSMetadata(nameHash: string): Promise<ENSMetadata> {
 
 /**
  * Get current owner of ENS name from blockchain
+ *
+ * Handles both wrapped and unwrapped names:
+ * - For unwrapped names: Base Registrar ownerOf returns the actual owner
+ * - For wrapped names: Base Registrar ownerOf returns Name Wrapper, so we query Name Wrapper
+ *
+ * The tokenId could be either:
+ * - A labelhash (Base Registrar token ID for unwrapped names)
+ * - A namehash (Name Wrapper token ID for wrapped names stored in our DB)
  */
 export async function fetchENSOwner(tokenId: string): Promise<string> {
   const provider = getBlockchainProvider();
 
+  // ENS Base Registrar contract
+  const registrar = new ethers.Contract(
+    config.blockchain.ensRegistrarAddress,
+    ['function ownerOf(uint256 tokenId) view returns (address)'],
+    provider
+  );
+
+  // Name Wrapper contract
+  const nameWrapper = new ethers.Contract(
+    NAME_WRAPPER_ADDRESS,
+    NAME_WRAPPER_ABI,
+    provider
+  );
+
   try {
-    // ENS Base Registrar contract
-    const registrar = new ethers.Contract(
-      config.blockchain.ensRegistrarAddress,
-      ['function ownerOf(uint256 tokenId) view returns (address)'],
-      provider
-    );
+    // First, try Base Registrar with the token ID
+    const registrarOwner = await registrar.ownerOf(tokenId);
+    logger.debug({ tokenId, registrarOwner }, 'Base Registrar owner');
 
-    const owner = await registrar.ownerOf(tokenId);
-    logger.debug({ tokenId, owner }, 'Fetched ENS owner');
+    // If owner is Name Wrapper, get the real owner from Name Wrapper
+    if (registrarOwner.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+      try {
+        // For wrapped names, the Name Wrapper uses namehash as token ID
+        // Our DB stores namehash for wrapped names, so this should work
+        const wrappedOwner = await nameWrapper.ownerOf(tokenId);
+        logger.debug({ tokenId, wrappedOwner }, 'Name Wrapper owner');
 
-    return owner;
-  } catch (error) {
-    logger.error({ error, tokenId }, 'Error fetching ENS owner');
-    throw error;
+        // Zero address means not wrapped or burned
+        if (wrappedOwner && wrappedOwner !== ethers.ZeroAddress) {
+          return wrappedOwner;
+        }
+      } catch (wrapperError: any) {
+        logger.warn({ tokenId, error: wrapperError.message }, 'Name Wrapper ownerOf failed, returning registrar owner');
+      }
+      // Fall back to registrar owner (Name Wrapper address)
+      return registrarOwner;
+    }
+
+    return registrarOwner;
+  } catch (registrarError: any) {
+    // Base Registrar failed - this could happen if:
+    // 1. The token ID is a namehash (for wrapped names) but not a valid labelhash
+    // 2. The name doesn't exist or is expired
+
+    logger.debug({ tokenId, error: registrarError.message }, 'Base Registrar ownerOf failed, trying Name Wrapper');
+
+    // Try Name Wrapper directly with the token ID (might be a namehash)
+    try {
+      const wrappedOwner = await nameWrapper.ownerOf(tokenId);
+
+      if (wrappedOwner && wrappedOwner !== ethers.ZeroAddress) {
+        logger.debug({ tokenId, wrappedOwner }, 'Found owner via Name Wrapper');
+        return wrappedOwner;
+      }
+    } catch (wrapperError: any) {
+      logger.debug({ tokenId, error: wrapperError.message }, 'Name Wrapper ownerOf also failed');
+    }
+
+    // Both failed - rethrow original error
+    logger.error({ tokenId, error: registrarError.message }, 'Error fetching ENS owner');
+    throw registrarError;
   }
 }
 

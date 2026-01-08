@@ -66,7 +66,8 @@ async function main() {
         const batch = listingsResult.rows.slice(i, i + LISTING_BATCH_SIZE);
         const jobs = batch.map(row => ({
           name: 'validate-listing-ownership',
-          data: { listingId: row.id }
+          data: { listingId: row.id },
+          singletonKey: `listing-${row.id}`
         }));
 
         await boss.insert(jobs);

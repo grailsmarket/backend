@@ -120,143 +120,6 @@ async function batchValidateOffersJob(job: PgBoss.Job<{ offerIds: number[] }>) {
 }
 
 /**
- * Periodic listing validator - validates oldest unvalidated listings
- */
-async function periodicListingValidation(this: PgBoss) {
-  const BATCH_SIZE = parseInt(process.env.LISTING_VALIDATION_BATCH_SIZE || '50', 10);
-
-  try {
-    // Find listings that need validation (oldest first)
-    const result = await pool.query(`
-      SELECT l.id
-      FROM listings l
-      LEFT JOIN validation_state vs ON vs.entity_type = 'listing' AND vs.entity_id = l.id
-      WHERE l.status = 'active'
-      ORDER BY COALESCE(vs.last_check_at, l.created_at) ASC
-      LIMIT $1
-    `, [BATCH_SIZE]);
-
-    if (result.rows.length === 0) {
-      logger.debug('No listings need validation');
-      return;
-    }
-
-    logger.info({ count: result.rows.length }, 'Scheduling periodic listing validations');
-
-    // Queue individual validation jobs
-    const jobs = result.rows.map(row => ({
-      name: 'validate-listing-ownership',
-      data: { listingId: row.id }
-    }));
-
-    await this.insert(jobs);
-
-  } catch (error: any) {
-    logger.error({
-      error,
-      message: error?.message,
-      stack: error?.stack,
-      code: error?.code,
-      detail: error?.detail
-    }, 'Error in periodic listing validation');
-    throw error;
-  }
-}
-
-/**
- * Periodic offer validator - validates all active offers in batch
- */
-async function periodicOfferValidation(this: PgBoss) {
-  try {
-    // Fetch all active offers
-    const result = await pool.query(`
-      SELECT id
-      FROM offers
-      WHERE status = 'pending'
-      ORDER BY id
-    `);
-
-    if (result.rows.length === 0) {
-      logger.debug('No offers need validation');
-      return;
-    }
-
-    const offerIds = result.rows.map(row => row.id);
-
-    logger.info({ count: offerIds.length }, 'Scheduling batch offer validation');
-
-    // Queue batch validation job
-    await this.send('batch-validate-offers', { offerIds });
-
-  } catch (error: any) {
-    logger.error({
-      error,
-      message: error?.message,
-      stack: error?.stack,
-      code: error?.code,
-      detail: error?.detail
-    }, 'Error in periodic offer validation');
-    throw error;
-  }
-}
-
-/**
- * Unfunded revalidation - check if unfunded items are now valid
- */
-async function unfundedRevalidation(this: PgBoss) {
-  const UNFUNDED_LISTING_MAX_AGE_DAYS = parseInt(
-    process.env.UNFUNDED_LISTING_MAX_AGE_DAYS || '30',
-    10
-  );
-  const UNFUNDED_OFFER_MAX_AGE_DAYS = parseInt(
-    process.env.UNFUNDED_OFFER_MAX_AGE_DAYS || '14',
-    10
-  );
-
-  try {
-    // Find unfunded listings (recent only)
-    const listingsResult = await pool.query(`
-      SELECT id
-      FROM listings
-      WHERE status = 'unfunded'
-        AND unfunded_at > NOW() - INTERVAL '${UNFUNDED_LISTING_MAX_AGE_DAYS} days'
-      ORDER BY unfunded_at DESC
-      LIMIT 100
-    `);
-
-    // Find unfunded offers (recent only)
-    const offersResult = await pool.query(`
-      SELECT id
-      FROM offers
-      WHERE status = 'unfunded'
-        AND unfunded_at > NOW() - INTERVAL '${UNFUNDED_OFFER_MAX_AGE_DAYS} days'
-      ORDER BY unfunded_at DESC
-    `);
-
-    // Queue listing revalidations
-    if (listingsResult.rows.length > 0) {
-      const jobs = listingsResult.rows.map(row => ({
-        name: 'revalidate-unfunded-listing',
-        data: { listingId: row.id }
-      }));
-      await this.insert(jobs);
-      logger.info({ count: jobs.length }, 'Scheduled unfunded listing revalidations');
-    }
-
-    // Queue offer revalidations
-    if (offersResult.rows.length > 0) {
-      const offerIds = offersResult.rows.map(row => row.id);
-      await this.send('revalidate-unfunded-offers', { offerIds });
-      logger.info({ count: offerIds.length }, 'Scheduled unfunded offer revalidations');
-    }
-
-  } catch (error: any) {
-    logger.error({ error }, 'Error in unfunded revalidation');
-    throw error;
-  }
-}
-
-/**
  * Revalidate unfunded listing - check if ownership restored
  */
 async function revalidateUnfundedListingJob(job: PgBoss.Job<{ listingId: number }>) {
@@ -264,6 +127,18 @@ async function revalidateUnfundedListingJob(job: PgBoss.Job<{ listingId: number 
 
   try {
     logger.debug({ listingId }, 'Revalidating unfunded listing');
+
+    // First check if this listing has a sale record - if so, it was fulfilled
+    // and should never be reactivated even if seller re-acquires the name
+    const saleCheck = await pool.query(
+      'SELECT id FROM sales WHERE listing_id = $1 LIMIT 1',
+      [listingId]
+    );
+
+    if (saleCheck.rows.length > 0) {
+      logger.debug({ listingId }, 'Listing has associated sale - skipping revalidation (order was fulfilled)');
+      return;
+    }
 
     const result = await validateListingOwnership(listingId);
 
@@ -322,13 +197,22 @@ async function revalidateUnfundedOffersJob(job: PgBoss.Job<{ offerIds: number[] 
 export async function registerValidationWorkers(boss: PgBoss) {
   logger.info('Registering validation workers...');
 
-  // Individual validation workers
-  await boss.work('validate-listing-ownership', validateListingJob);
+  // Individual validation workers with increased concurrency
+  // teamSize = number of concurrent workers, teamConcurrency = jobs per worker
+  await boss.work(
+    'validate-listing-ownership',
+    { teamSize: 10, teamConcurrency: 5 },  // 50 concurrent jobs
+    validateListingJob
+  );
   await boss.work('validate-offer-balance', validateOfferJob);
   await boss.work('batch-validate-offers', batchValidateOffersJob);
 
   // Unfunded revalidation workers
-  await boss.work('revalidate-unfunded-listing', revalidateUnfundedListingJob);
+  await boss.work(
+    'revalidate-unfunded-listing',
+    { teamSize: 5, teamConcurrency: 2 },  // 10 concurrent jobs
+    revalidateUnfundedListingJob
+  );
   await boss.work('revalidate-unfunded-offers', revalidateUnfundedOffersJob);
 
   logger.info('Validation workers registered');
@@ -345,10 +229,52 @@ export async function registerValidationSchedulers(boss: PgBoss) {
   const UNFUNDED_INTERVAL = process.env.UNFUNDED_REVALIDATION_INTERVAL_MS || '900000'; // 15 minutes
 
   // Periodic listing validation (every 1 minute)
+  // Using inline handler to capture boss in closure scope
   await boss.work(
     'periodic-listing-validation',
     { teamSize: 1 },
-    periodicListingValidation
+    async () => {
+      const BATCH_SIZE = parseInt(process.env.LISTING_VALIDATION_BATCH_SIZE || '2000', 10);
+
+      try {
+        // Find listings that need validation (oldest first)
+        const result = await pool.query(`
+          SELECT l.id
+          FROM listings l
+          LEFT JOIN validation_state vs ON vs.entity_type = 'listing' AND vs.entity_id = l.id
+          WHERE l.status = 'active'
+          ORDER BY COALESCE(vs.last_check_at, l.created_at) ASC
+          LIMIT $1
+        `, [BATCH_SIZE]);
+
+        if (result.rows.length === 0) {
+          logger.debug('No listings need validation');
+          return;
+        }
+
+        logger.info({ count: result.rows.length }, 'Scheduling periodic listing validations');
+
+        // Queue individual validation jobs with singletonKey to prevent duplicates
+        // If a job for this listing is already queued/active, it won't create another
+        const jobs = result.rows.map(row => ({
+          name: 'validate-listing-ownership',
+          data: { listingId: row.id },
+          singletonKey: `listing-${row.id}`
+        }));
+
+        await boss.insert(jobs);
+
+      } catch (error: any) {
+        logger.error({
+          error,
+          message: error?.message,
+          stack: error?.stack,
+          code: error?.code,
+          detail: error?.detail
+        }, 'Error in periodic listing validation');
+        throw error;
+      }
+    }
   );
   await boss.schedule(
     'periodic-listing-validation',
@@ -358,10 +284,43 @@ export async function registerValidationSchedulers(boss: PgBoss) {
   );
 
   // Periodic offer validation (every 5 minutes)
+  // Using inline handler to capture boss in closure scope
   await boss.work(
     'periodic-offer-validation',
     { teamSize: 1 },
-    periodicOfferValidation
+    async () => {
+      try {
+        // Fetch all active offers
+        const result = await pool.query(`
+          SELECT id
+          FROM offers
+          WHERE status = 'pending'
+          ORDER BY id
+        `);
+
+        if (result.rows.length === 0) {
+          logger.debug('No offers need validation');
+          return;
+        }
+
+        const offerIds = result.rows.map(row => row.id);
+
+        logger.info({ count: offerIds.length }, 'Scheduling batch offer validation');
+
+        // Queue batch validation job
+        await boss.send('batch-validate-offers', { offerIds });
+
+      } catch (error: any) {
+        logger.error({
+          error,
+          message: error?.message,
+          stack: error?.stack,
+          code: error?.code,
+          detail: error?.detail
+        }, 'Error in periodic offer validation');
+        throw error;
+      }
+    }
   );
   await boss.schedule(
     'periodic-offer-validation',
@@ -371,10 +330,63 @@ export async function registerValidationSchedulers(boss: PgBoss) {
   );
 
   // Unfunded revalidation (every 15 minutes)
+  // Using inline handler to capture boss in closure scope
   await boss.work(
     'unfunded-revalidation',
     { teamSize: 1 },
-    unfundedRevalidation
+    async () => {
+      const UNFUNDED_LISTING_MAX_AGE_DAYS = parseInt(
+        process.env.UNFUNDED_LISTING_MAX_AGE_DAYS || '30',
+        10
+      );
+      const UNFUNDED_OFFER_MAX_AGE_DAYS = parseInt(
+        process.env.UNFUNDED_OFFER_MAX_AGE_DAYS || '14',
+        10
+      );
+
+      try {
+        // Find unfunded listings (recent only)
+        const listingsResult = await pool.query(`
+          SELECT id
+          FROM listings
+          WHERE status = 'unfunded'
+            AND unfunded_at > NOW() - INTERVAL '${UNFUNDED_LISTING_MAX_AGE_DAYS} days'
+          ORDER BY unfunded_at DESC
+          LIMIT 100
+        `);
+
+        // Find unfunded offers (recent only)
+        const offersResult = await pool.query(`
+          SELECT id
+          FROM offers
+          WHERE status = 'unfunded'
+            AND unfunded_at > NOW() - INTERVAL '${UNFUNDED_OFFER_MAX_AGE_DAYS} days'
+          ORDER BY unfunded_at DESC
+        `);
+
+        // Queue listing revalidations with singletonKey to prevent duplicates
+        if (listingsResult.rows.length > 0) {
+          const jobs = listingsResult.rows.map(row => ({
+            name: 'revalidate-unfunded-listing',
+            data: { listingId: row.id },
+            singletonKey: `unfunded-listing-${row.id}`
+          }));
+          await boss.insert(jobs);
+          logger.info({ count: jobs.length }, 'Scheduled unfunded listing revalidations');
+        }
+
+        // Queue offer revalidations
+        if (offersResult.rows.length > 0) {
+          const offerIds = offersResult.rows.map(row => row.id);
+          await boss.send('revalidate-unfunded-offers', { offerIds });
+          logger.info({ count: offerIds.length }, 'Scheduled unfunded offer revalidations');
+        }
+
+      } catch (error: any) {
+        logger.error({ error }, 'Error in unfunded revalidation');
+        throw error;
+      }
+    }
   );
   await boss.schedule(
     'unfunded-revalidation',

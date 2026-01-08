@@ -1,32 +1,40 @@
 # Frontend Service - CLAUDE.md
 
 ## Service Overview
-The Frontend is a Next.js 14 application providing a user interface for the ENS marketplace. It enables users to browse listings, connect wallets, and purchase ENS names using OpenSea's Seaport protocol.
+The Frontend is a Next.js 15 application (with Turbopack) providing a comprehensive user interface for the Grails ENS Marketplace. It enables users to browse ENS listings, connect wallets via SIWE (Sign-In With Ethereum), track names on watchlists, vote on names, view analytics, and purchase ENS names using OpenSea's Seaport 1.6 protocol. The application features real-time activity updates via WebSocket connections.
 
 ## Technology Stack
-- **Framework**: Next.js 14 with App Router
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **Web3 Stack**: RainbowKit + wagmi v2 + viem
-- **State Management**: TanStack Query + Zustand
-- **API Client**: Axios
-- **Smart Contracts**: Seaport 1.6 protocol
+- **Framework**: Next.js 15.5.9 with App Router and Turbopack
+- **Language**: TypeScript 5
+- **React**: React 19.1.0
+- **Styling**: Tailwind CSS 4
+- **Web3 Stack**: RainbowKit 2.2.8 + wagmi 2.17.4 + viem 2.37.8
+- **State Management**: TanStack Query 5.90.2 + Zustand 5.0.8
+- **API Client**: Axios 1.12.2
+- **Authentication**: SIWE (Sign-In With Ethereum) 3.0.0
+- **Smart Contracts**: OpenSea Seaport JS 4.0.5 + Seaport 1.6 protocol
+- **Date Utilities**: date-fns 4.1.0
+- **Icons**: Lucide React 0.544.0
 
 ## Key Components
 
 ### Pages (`app/`)
-- **Home Page** (`page.tsx`): Marketplace with search and filters
-- **Name Detail** (`names/[name]/page.tsx`): ENS name detail with listing, offers, activity
-- **Watchlist** (`watchlist/page.tsx`): User's watchlist with search/filter
-- **Notifications** (`notifications/page.tsx`): User notification center
-- **Profile** (`profile/[address]/page.tsx`): User profile with owned names
-- **Portfolio** (`portfolio/page.tsx`): Current user's portfolio
-- **Offers** (`offers/page.tsx`): User's made offers
-- **Clubs** (`clubs/page.tsx` and `clubs/[clubName]/page.tsx`): Club browsing
-- **Activity** (`activity/page.tsx`): Global activity feed
+- **Home Page** (`page.tsx`): Home with trending sections (Most Viewed, Top Sales, Hot)
+- **Marketplace** (`marketplace/page.tsx`): Full marketplace with search panel, filters, grid/table views
+- **Name Detail** (`names/[name]/page.tsx`): ENS name detail with listing, offers, activity, characteristics
+- **Watchlist** (`watchlist/page.tsx`): User's watchlist with search and filters (auth required)
+- **Notifications** (`notifications/page.tsx`): User notification center (auth required)
+- **Profile** (`profile/[address]/page.tsx`): User profile with owned names and activity
+- **Portfolio** (`portfolio/page.tsx`): User's owned names, active listings, received offers (auth required)
+- **Offers** (`offers/page.tsx`): User's made offers (auth required)
+- **Clubs** (`clubs/page.tsx` and `clubs/[clubName]/page.tsx`): Club browsing and detail
+- **Activity** (`activity/page.tsx`): Global activity feed with live WebSocket updates
+- **Analytics** (`analytics/page.tsx`): Market analytics: overview, volume, price trends
+- **Trending** (`trending/page.tsx`): Trending names by type (hot, views, votes, sales, offers)
 - **Leaderboard** (`leaderboard/page.tsx`): Top voted names
-- **Settings** (`settings/page.tsx`): User settings
-- **Layout** (`layout.tsx`): App wrapper with providers and header
+- **Settings** (`settings/page.tsx`): Profile settings (email, telegram, discord) (auth required)
+- **Verify Email** (`verify-email/page.tsx`): Email verification handler
+- **Layout** (`layout.tsx`): Root layout with Inter font, Providers wrapper, Header, dark theme
 
 ### Components (`components/`)
 
@@ -92,26 +100,59 @@ The Frontend is a Next.js 14 application providing a user interface for the ENS 
   - `calculateTotalPayment()`: Computes ETH amount needed
 
 ### Hooks (`hooks/`)
-- `useAuth`: Authentication state with SIWE and JWT
-- `useListings`: Fetch and filter listings
-- `useSearch`: Search with filters
-- `useWatchlist`: Watchlist CRUD operations
-- `useWatchlistSearch`: Search within watchlist
-- `useNotifications`: Fetch and manage notifications
-- `useSeaportOrder`: Execute Seaport transactions
-- `useVotes`: Voting functionality
+
+#### Authentication
+- `useAuth`: Complete SIWE authentication with Zustand persistence, signIn/signOut, token validation
+
+#### Data Fetching (TanStack Query)
+- `useListings`: Fetch listings with params (status, sort, price filters)
+- `useListingByName`: Fetch listing by ENS name
+- `useSearchListings`: Search with comprehensive filters
+- `useProfile`: Fetch user profile data
+- `useProfileActivity`: Fetch activity for address
+- `useTrending`: Fetch trending names (composite, views, watchlist, votes, sales, offers)
+- `useMultipleTrending`: Fetch multiple trending types at once
+- `useAlsoViewed`: Recommendations based on viewing patterns
+- `useMarketAnalytics`: Market overview statistics
+- `usePriceTrends`: Price trends over time
+- `useVolumeMetrics`: Volume metrics over time
+
+#### Watchlist and Notifications
+- `useWatchlist`: Watchlist CRUD operations (add, remove, update preferences)
+- `useWatchlistSearch`: Search within user's watchlist with filters
+- `useNotifications`: Fetch and manage notifications, unread count, mark as read
+
+#### Seaport Integration
+- `useSeaportOrder`: Execute Seaport transactions (fulfillOrder, estimateGas)
+- `useSeaportClient`: Full Seaport client (createListing, createOffer, cancelOrders, validateOrder)
+
+#### Other
+- `useVotes`: Voting functionality for ENS names
 
 ## Environment Variables
 ```env
 # API Configuration
 NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1
+NEXT_PUBLIC_WS_URL=ws://localhost:3000/ws
 
 # Chain Configuration
-NEXT_PUBLIC_CHAIN_ID=1  # 1 for mainnet, 11155111 for sepolia
+NEXT_PUBLIC_CHAIN_ID=1                    # 1 for mainnet, 11155111 for sepolia
+NEXT_PUBLIC_ENABLE_TESTNETS=false
 
 # Contract Addresses
 NEXT_PUBLIC_SEAPORT_ADDRESS=0x0000000000000068F116a894984e2DB1123eB395
 NEXT_PUBLIC_ENS_REGISTRAR=0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85
+NEXT_PUBLIC_WETH_ADDRESS=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+NEXT_PUBLIC_USDC_ADDRESS=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+
+# Conduit Configuration
+NEXT_PUBLIC_CONDUIT_ADDRESS=0x73E9cD721a79C208E2F944910c27196307a2a05D
+NEXT_PUBLIC_CONDUIT_KEY=0xC9C3A4337a1bba75D0860A1A81f7B990dc607334000000000000000000000000
+NEXT_PUBLIC_USE_CONDUIT=true
+
+# Marketplace Fees
+NEXT_PUBLIC_FEE_ENABLED=false
+NEXT_PUBLIC_FEE_BASIS_POINTS=250          # 2.5% = 250 basis points
 
 # WalletConnect
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-project-id

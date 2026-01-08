@@ -111,37 +111,70 @@ export async function searchNames(query: SearchQuery) {
       filter.push({ terms: { 'clubs.keyword': query.filters.clubs } });
     }
 
-    // Expiration filters - exclude names without expiry dates (placeholders)
+    // Expiration filters - use dynamic date calculations instead of stale ES boolean fields
+    // ENS expiration states:
+    // - Not expired: expiry_date > now
+    // - Expired (grace period): expiry_date <= now AND expiry_date > now - 90 days
+    // - Expired (premium period): expiry_date <= now - 90 days AND expiry_date > now - 111 days
+    // - Fully expired: expiry_date <= now - 111 days
     if (query.filters.isExpired !== undefined) {
-      filter.push({ term: { is_expired: query.filters.isExpired } });
       filter.push({ exists: { field: 'expiry_date' } });
+      if (query.filters.isExpired) {
+        // Expired: expiry_date is in the past
+        filter.push({ range: { expiry_date: { lte: 'now' } } });
+      } else {
+        // Not expired: expiry_date is in the future
+        filter.push({ range: { expiry_date: { gt: 'now' } } });
+      }
     }
 
     if (query.filters.isGracePeriod !== undefined) {
-      filter.push({ term: { is_grace_period: query.filters.isGracePeriod } });
       filter.push({ exists: { field: 'expiry_date' } });
+      if (query.filters.isGracePeriod) {
+        // In grace period: expired but within 90 days of expiry
+        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+      } else {
+        // Not in grace period: either not expired OR past grace period
+        filter.push({
+          bool: {
+            should: [
+              { range: { expiry_date: { gt: 'now' } } },  // Not expired
+              { range: { expiry_date: { lte: 'now-90d' } } }  // Past grace period
+            ],
+            minimum_should_match: 1
+          }
+        });
+      }
     }
 
     if (query.filters.isPremiumPeriod !== undefined) {
-      filter.push({ term: { is_premium_period: query.filters.isPremiumPeriod } });
       filter.push({ exists: { field: 'expiry_date' } });
+      if (query.filters.isPremiumPeriod) {
+        // In premium period: 90-111 days after expiry (21 day Dutch auction)
+        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+      } else {
+        // Not in premium period: not expired, in grace period, or fully expired
+        filter.push({
+          bool: {
+            should: [
+              { range: { expiry_date: { gt: 'now-90d' } } },  // Not expired or in grace
+              { range: { expiry_date: { lte: 'now-111d' } } }  // Past premium period
+            ],
+            minimum_should_match: 1
+          }
+        });
+      }
     }
 
     if (query.filters.expiringWithinDays !== undefined) {
-      // Filter for names expiring within X days (positive number, not yet expired)
-      // Only include names with valid expiry dates
+      // Filter for names expiring within X days (not yet expired)
+      // Use dynamic date range instead of stale days_until_expiry field
+      const days = query.filters.expiringWithinDays;
       filter.push({
         bool: {
           must: [
             { exists: { field: 'expiry_date' } },
-            {
-              range: {
-                days_until_expiry: {
-                  gte: 0,
-                  lte: query.filters.expiringWithinDays,
-                },
-              },
-            },
+            { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
           ],
         },
       });
@@ -173,20 +206,26 @@ export async function searchNames(query: SearchQuery) {
     }
 
     if (query.filters.minDaysSinceLastSale !== undefined) {
+      // Use dynamic date calculation instead of stale days_since_last_sale field
+      // minDaysSinceLastSale=30 means "sold at least 30 days ago" -> last_sale_date <= now-30d
+      const days = query.filters.minDaysSinceLastSale;
       filter.push({
         range: {
-          days_since_last_sale: {
-            gte: query.filters.minDaysSinceLastSale,
+          last_sale_date: {
+            lte: `now-${days}d`,
           },
         },
       });
     }
 
     if (query.filters.maxDaysSinceLastSale !== undefined) {
+      // Use dynamic date calculation instead of stale days_since_last_sale field
+      // maxDaysSinceLastSale=90 means "sold within last 90 days" -> last_sale_date >= now-90d
+      const days = query.filters.maxDaysSinceLastSale;
       filter.push({
         range: {
-          days_since_last_sale: {
-            lte: query.filters.maxDaysSinceLastSale,
+          last_sale_date: {
+            gte: `now-${days}d`,
           },
         },
       });

@@ -1,0 +1,957 @@
+/**
+ * Integration tests for search API filters
+ *
+ * These tests hit the running API server and validate that results
+ * match the expected filter criteria.
+ *
+ * Prerequisites:
+ * - API server running on localhost:3000
+ * - Elasticsearch and PostgreSQL populated with data
+ *
+ * Run: npm test
+ */
+
+import { describe, it, expect, beforeAll } from 'vitest';
+
+const API_BASE = 'http://localhost:3000/api/v1/search';
+
+interface SearchResult {
+  name: string;
+  owner?: string;
+  expiry_date?: string;
+  last_sale_date?: string;
+  clubs?: string[];
+  listings?: Array<{ status: string; price?: string; source?: string }>;
+  has_numbers?: boolean;
+  has_emoji?: boolean;
+  highest_offer_wei?: string | null;
+}
+
+interface SearchResponse {
+  success: boolean;
+  data?: {
+    results: SearchResult[];
+    pagination: { total: number };
+  };
+}
+
+// Helper to make search requests
+async function search(params: string): Promise<SearchResponse> {
+  const url = `${API_BASE}?${params}`;
+  const response = await fetch(url);
+  return response.json() as Promise<SearchResponse>;
+}
+
+// Helper to get label (name without .eth)
+function getLabel(name: string): string {
+  return name.replace(/\.eth$/, '');
+}
+
+// Comprehensive emoji regex - matches the shared EMOJI_REGEX from shared module
+const EMOJI_REGEX =
+  /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FAFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
+
+describe('Search API Filters', () => {
+  // Verify server is running before tests
+  beforeAll(async () => {
+    try {
+      const response = await fetch(`${API_BASE}?limit=1`);
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+    } catch (error) {
+      throw new Error(
+        'API server not running. Start with: cd services/api && npm run dev'
+      );
+    }
+  });
+
+  describe('Listing Status Filters', () => {
+    it('showListings=true returns only names with active listings', async () => {
+      const { data } = await search('filters[showListings]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const hasActiveListing = result.listings?.some(
+          (l) => l.status === 'active'
+        );
+        if (!hasActiveListing) {
+          failures.push(`${result.name} (listings: ${result.listings?.length ?? 0})`);
+        }
+      }
+
+      expect(failures, `Names without active listings: ${failures.join(', ')}`).toHaveLength(0);
+    });
+
+    it('showUnlisted=true returns only names without active listings', async () => {
+      const { data } = await search('filters[showUnlisted]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const hasActiveListing = result.listings?.some(
+          (l) => l.status === 'active'
+        );
+        expect(hasActiveListing).toBeFalsy();
+      }
+    });
+  });
+
+  describe('Price Filters', () => {
+    it('minPrice filters to listings >= minimum price', async () => {
+      const minPrice = '1000000000000000000'; // 1 ETH
+      const { data } = await search(
+        `filters[showListings]=true&filters[minPrice]=${minPrice}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const listing = result.listings?.find((l) => l.status === 'active');
+        if (!listing) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+          continue;
+        }
+        const price = BigInt(listing.price!);
+        if (price < BigInt(minPrice)) {
+          failures.push(`${result.name}: price ${price} < ${minPrice}`);
+        }
+      }
+
+      expect(failures, `Price filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('maxPrice filters to listings <= maximum price', async () => {
+      const maxPrice = '10000000000000000000'; // 10 ETH
+      const { data } = await search(
+        `filters[showListings]=true&filters[maxPrice]=${maxPrice}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const listing = result.listings?.find((l) => l.status === 'active');
+        if (!listing) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+          continue;
+        }
+        const price = BigInt(listing.price!);
+        if (price > BigInt(maxPrice)) {
+          failures.push(`${result.name}: price ${price} > ${maxPrice}`);
+        }
+      }
+
+      expect(failures, `Price filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('minPrice + maxPrice filters to price range', async () => {
+      const minPrice = '1000000000000000000'; // 1 ETH
+      const maxPrice = '5000000000000000000'; // 5 ETH
+      const { data } = await search(
+        `filters[showListings]=true&filters[minPrice]=${minPrice}&filters[maxPrice]=${maxPrice}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const listing = result.listings?.find((l) => l.status === 'active');
+        if (!listing) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+          continue;
+        }
+        const price = BigInt(listing.price!);
+        if (price < BigInt(minPrice) || price > BigInt(maxPrice)) {
+          failures.push(`${result.name}: price ${price} not in range [${minPrice}, ${maxPrice}]`);
+        }
+      }
+
+      expect(failures, `Price filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+  });
+
+  describe('Character Filters', () => {
+    it('hasNumbers=true returns names containing digits', async () => {
+      const { data } = await search('filters[hasNumbers]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+        expect(/\d/.test(label)).toBe(true);
+      }
+    });
+
+    it('hasNumbers=false returns names without digits', async () => {
+      const { data } = await search('filters[hasNumbers]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+        expect(/\d/.test(label)).toBe(false);
+      }
+    });
+
+    it('hasEmoji=true returns names containing emoji', async () => {
+      const { data } = await search('filters[hasEmoji]=true&limit=50');
+      // May have no emoji names in dataset
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        expect(EMOJI_REGEX.test(result.name)).toBe(true);
+      }
+    });
+
+    it('hasEmoji=false returns names without emoji', async () => {
+      const { data } = await search('filters[hasEmoji]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(EMOJI_REGEX.test(result.name)).toBe(false);
+      }
+    });
+
+    it('minLength filters to names with minimum character count', async () => {
+      const minLength = 5;
+      const { data } = await search(`filters[minLength]=${minLength}&limit=50`);
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+        expect(label.length).toBeGreaterThanOrEqual(minLength);
+      }
+    });
+
+    it('maxLength filters to names with maximum character count', async () => {
+      const maxLength = 4;
+      const { data } = await search(`filters[maxLength]=${maxLength}&limit=50`);
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+        expect(label.length).toBeLessThanOrEqual(maxLength);
+      }
+    });
+
+    it('minLength + maxLength filters to exact length range', async () => {
+      const minLength = 3;
+      const maxLength = 4;
+      const { data } = await search(
+        `filters[minLength]=${minLength}&filters[maxLength]=${maxLength}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+        expect(label.length).toBeGreaterThanOrEqual(minLength);
+        expect(label.length).toBeLessThanOrEqual(maxLength);
+      }
+    });
+  });
+
+  describe('Club Filters', () => {
+    it('clubs[]=999 returns names in 999 club', async () => {
+      const { data } = await search('filters[clubs][]=999&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs).toContain('999');
+      }
+    });
+
+    it('clubs[]=10k returns names in 10k club', async () => {
+      const { data } = await search('filters[clubs][]=10k&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs).toContain('10k');
+      }
+    });
+
+    it('multiple clubs filters with OR logic', async () => {
+      const { data } = await search(
+        'filters[clubs][]=999&filters[clubs][]=10k&limit=50'
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const inRequestedClub =
+          result.clubs?.includes('999') || result.clubs?.includes('10k');
+        expect(inRequestedClub).toBe(true);
+      }
+    });
+
+    it('inAnyClub=true returns names in at least one club', async () => {
+      const { data } = await search('filters[inAnyClub]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs?.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('inAnyClub=false returns names not in any club', async () => {
+      const { data } = await search('filters[inAnyClub]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs?.length ?? 0).toBe(0);
+      }
+    });
+  });
+
+  describe('Expiration Filters', () => {
+    it('isExpired=true returns expired names', async () => {
+      const { data } = await search('filters[isExpired]=true&limit=50');
+      // May have no expired names
+      if (data?.results.length === 0) return;
+
+      const now = Date.now();
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        expect(new Date(result.expiry_date!).getTime()).toBeLessThan(now);
+      }
+    });
+
+    it('isExpired=false returns non-expired names', async () => {
+      const { data } = await search('filters[isExpired]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const now = Date.now();
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        expect(new Date(result.expiry_date!).getTime()).toBeGreaterThan(now);
+      }
+    });
+
+    it('isGracePeriod=true returns names expired within 90 days', async () => {
+      const { data } = await search('filters[isGracePeriod]=true&limit=50');
+      // May have no grace period names
+      if (data?.results.length === 0) return;
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThan(now);
+        expect(expiry).toBeGreaterThan(ninetyDaysAgo);
+      }
+    });
+
+    it('isPremiumPeriod=true returns names expired 90-111 days ago', async () => {
+      const { data } = await search('filters[isPremiumPeriod]=true&limit=50');
+      // May have no premium period names
+      if (data?.results.length === 0) return;
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+      const oneElevenDaysAgo = now - 111 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThanOrEqual(ninetyDaysAgo);
+        expect(expiry).toBeGreaterThan(oneElevenDaysAgo);
+      }
+    });
+
+    it('expiringWithinDays filters to names expiring soon', async () => {
+      const days = 30;
+      const { data } = await search(
+        `filters[expiringWithinDays]=${days}&limit=50`
+      );
+      // May have no names expiring within 30 days
+      if (data?.results.length === 0) return;
+
+      const now = Date.now();
+      const futureDate = now + days * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeGreaterThan(now);
+        expect(expiry).toBeLessThanOrEqual(futureDate);
+      }
+    });
+  });
+
+  describe('Sale History Filters', () => {
+    it('hasSales=true returns names with sale history', async () => {
+      const { data } = await search('filters[hasSales]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.last_sale_date).not.toBeNull();
+      }
+    });
+
+    it('hasSales=false returns names without sale history', async () => {
+      const { data } = await search('filters[hasSales]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.last_sale_date).toBeNull();
+      }
+    });
+
+    it('lastSoldAfter filters to names sold after date', async () => {
+      const afterDate = '2024-01-01T00:00:00Z';
+      const { data } = await search(
+        `filters[hasSales]=true&filters[lastSoldAfter]=${afterDate}&limit=50`
+      );
+      // May have no sales after this date
+      if (data?.results.length === 0) return;
+
+      const after = new Date(afterDate).getTime();
+      for (const result of data!.results) {
+        expect(result.last_sale_date).toBeDefined();
+        expect(new Date(result.last_sale_date!).getTime()).toBeGreaterThanOrEqual(after);
+      }
+    });
+
+    it('lastSoldBefore filters to names sold before date', async () => {
+      const beforeDate = '2024-06-01T00:00:00Z';
+      const { data } = await search(
+        `filters[hasSales]=true&filters[lastSoldBefore]=${beforeDate}&limit=50`
+      );
+      // May have no sales before this date
+      if (data?.results.length === 0) return;
+
+      const before = new Date(beforeDate).getTime();
+      for (const result of data!.results) {
+        expect(result.last_sale_date).toBeDefined();
+        expect(new Date(result.last_sale_date!).getTime()).toBeLessThanOrEqual(before);
+      }
+    });
+  });
+
+  describe('Owner Filter', () => {
+    it('owner filter returns names owned by address', async () => {
+      // First get a name to find an owner address
+      const { data: initial } = await search('limit=1');
+      if (!initial?.results.length || !initial.results[0].owner) {
+        return; // Skip if no data
+      }
+
+      const ownerAddress = initial.results[0].owner;
+      const { data } = await search(
+        `filters[owner]=${ownerAddress}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.owner?.toLowerCase()).toBe(ownerAddress.toLowerCase());
+      }
+    });
+  });
+
+  describe('Combined Filters', () => {
+    it('combines multiple filters correctly', async () => {
+      const { data } = await search(
+        'filters[hasNumbers]=true&filters[minLength]=3&filters[maxLength]=5&filters[showListings]=true&limit=50'
+      );
+
+      // May have no results matching all criteria
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+
+        // hasNumbers=true
+        if (!/\d/.test(label)) {
+          failures.push(`${result.name}: no digits`);
+        }
+
+        // minLength=3, maxLength=5
+        if (label.length < 3 || label.length > 5) {
+          failures.push(`${result.name}: length ${label.length} not in [3,5]`);
+        }
+
+        // showListings=true
+        const hasActiveListing = result.listings?.some(
+          (l) => l.status === 'active'
+        );
+        if (!hasActiveListing) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+        }
+      }
+
+      expect(failures, `Combined filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('4-digit 10k club names with listings', async () => {
+      const { data } = await search(
+        'filters[clubs][]=10k&filters[minLength]=4&filters[maxLength]=4&filters[showListings]=true&limit=50'
+      );
+
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+
+        if (!result.clubs?.includes('10k')) {
+          failures.push(`${result.name}: not in 10k club`);
+        }
+        if (label.length !== 4) {
+          failures.push(`${result.name}: length ${label.length} != 4`);
+        }
+        if (!result.listings?.some((l) => l.status === 'active')) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+        }
+      }
+
+      expect(failures, `10k club filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('short repeating digit names (e.g., 999, 1111)', async () => {
+      // Realistic search: repeating characters, digits only, less than 5 chars
+      const { data } = await search(
+        'filters[repeatingChars]=only&filters[digits]=only&filters[maxLength]=4&limit=50'
+      );
+
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+
+        // repeatingChars=only: all characters must be the same
+        const firstChar = label[0];
+        const isAllSame = label.split('').every((c) => c === firstChar);
+        if (!isAllSame) {
+          failures.push(`${result.name}: not all same character`);
+        }
+
+        // digits=only: must contain only digits
+        if (!/^[0-9]+$/.test(label)) {
+          failures.push(`${result.name}: contains non-digits`);
+        }
+
+        // maxLength=4: must be 4 chars or less
+        if (label.length > 4) {
+          failures.push(`${result.name}: length ${label.length} > 4`);
+        }
+      }
+
+      expect(failures, `Repeating digit filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('short letter-only names that are listed', async () => {
+      // Realistic search: letters only, 3-4 chars, with active listings
+      const { data } = await search(
+        'filters[letters]=only&filters[minLength]=3&filters[maxLength]=4&filters[listed]=true&limit=50'
+      );
+
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+
+        // letters=only: must contain only letters
+        if (!/^[a-zA-Z]+$/.test(label)) {
+          failures.push(`${result.name}: contains non-letters`);
+        }
+
+        // length 3-4
+        if (label.length < 3 || label.length > 4) {
+          failures.push(`${result.name}: length ${label.length} not in [3,4]`);
+        }
+
+        // listed=true: must have active listing
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
+        if (!hasActiveListing) {
+          failures.push(`${result.name}: no active listing (ES/DB drift)`);
+        }
+      }
+
+      expect(failures, `Short letter names filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('names starting with "a" without emoji', async () => {
+      // Realistic search: starts with prefix, no emoji
+      const { data } = await search(
+        'filters[startsWith]=a&filters[emoji]=exclude&limit=50'
+      );
+
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+
+        // startsWith=a: must start with "a"
+        if (!label.startsWith('a')) {
+          failures.push(`${result.name}: doesn't start with 'a'`);
+        }
+
+        // emoji=exclude: must not have emoji
+        if (result.has_emoji) {
+          failures.push(`${result.name}: has emoji`);
+        }
+      }
+
+      expect(failures, `StartsWith + emoji filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+  });
+
+  describe('Tri-State Character Filters', () => {
+    describe('Digits Filter', () => {
+      it('digits=exclude returns names without any digits', async () => {
+        const { data } = await search('filters[digits]=exclude&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          expect(/\d/.test(label)).toBe(false);
+        }
+      });
+
+      it('digits=only returns names containing ONLY digits', async () => {
+        const { data } = await search('filters[digits]=only&limit=50');
+        // May have no digit-only names
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          expect(/^[0-9]+$/.test(label)).toBe(true);
+        }
+      });
+    });
+
+    describe('Letters Filter', () => {
+      it('letters=exclude returns names without any letters', async () => {
+        const { data } = await search('filters[letters]=exclude&limit=50');
+        // May have no names without letters
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          expect(/[a-zA-Z]/.test(label)).toBe(false);
+        }
+      });
+
+      it('letters=only returns names containing ONLY letters', async () => {
+        const { data } = await search('filters[letters]=only&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          expect(/^[a-zA-Z]+$/.test(label)).toBe(true);
+        }
+      });
+    });
+
+    describe('Emoji Filter', () => {
+      it('emoji=exclude returns names without any emoji', async () => {
+        const { data } = await search('filters[emoji]=exclude&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          expect(EMOJI_REGEX.test(result.name)).toBe(false);
+        }
+      });
+
+      it('emoji=only returns names containing ONLY emoji', async () => {
+        const { data } = await search('filters[emoji]=only&limit=50');
+        // May have no emoji-only names
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          // Should have emoji and no alphanumeric characters
+          expect(EMOJI_REGEX.test(result.name)).toBe(true);
+          expect(/[a-zA-Z0-9]/.test(label)).toBe(false);
+        }
+      });
+    });
+
+    describe('Repeating Characters Filter', () => {
+      // Helper to check if all characters in a string are the same
+      const isAllSameChar = (str: string): boolean => {
+        if (str.length === 0) return false;
+        const firstChar = str[0];
+        return str.split('').every((c) => c === firstChar);
+      };
+
+      it('repeatingChars=exclude returns names where NOT all chars are the same', async () => {
+        const { data } = await search('filters[repeatingChars]=exclude&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          // Should NOT be all same character (e.g., "99999" would be excluded)
+          expect(isAllSameChar(label)).toBe(false);
+        }
+      });
+
+      it('repeatingChars=only returns names where ALL chars are the same', async () => {
+        const { data } = await search('filters[repeatingChars]=only&limit=50');
+        // May have no mono-character names
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          // Should be all same character (e.g., "99999", "aaaa", "🔥🔥🔥")
+          expect(isAllSameChar(label)).toBe(true);
+        }
+      });
+    });
+  });
+
+  describe('Has Offer Filter', () => {
+    it('hasOffer=true returns names with offers', async () => {
+      const { data } = await search('filters[hasOffer]=true&limit=50');
+      // May have no names with offers
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        expect(result.highest_offer_wei).not.toBeNull();
+        expect(BigInt(result.highest_offer_wei!)).toBeGreaterThan(0n);
+      }
+    });
+
+    it('hasOffer=false returns names without offers', async () => {
+      const { data } = await search('filters[hasOffer]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const hasOffer = result.highest_offer_wei != null && BigInt(result.highest_offer_wei) > 0n;
+        expect(hasOffer).toBe(false);
+      }
+    });
+  });
+
+  describe('Listed Filter (Unified Listing Status)', () => {
+    it('listed=true returns only names with active listings', async () => {
+      const { data } = await search('filters[listed]=true&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const hasActiveListing = result.listings?.some(
+          (l) => l.status === 'active'
+        );
+        if (!hasActiveListing) {
+          failures.push(`${result.name} (listings: ${result.listings?.length ?? 0})`);
+        }
+      }
+
+      expect(failures, `Names without active listings: ${failures.join(', ')}`).toHaveLength(0);
+    });
+
+    it('listed=false returns only names without active listings', async () => {
+      const { data } = await search('filters[listed]=false&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const hasActiveListing = result.listings?.some(
+          (l) => l.status === 'active'
+        );
+        expect(hasActiveListing).toBeFalsy();
+      }
+    });
+  });
+
+  describe('Status Filter (Unified Expiration States)', () => {
+    it('status=registered returns names with expiry > now', async () => {
+      const { data } = await search('filters[status]=registered&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const now = Date.now();
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        expect(new Date(result.expiry_date!).getTime()).toBeGreaterThan(now);
+      }
+    });
+
+    it('status=grace returns names expired within 90 days', async () => {
+      const { data } = await search('filters[status]=grace&limit=50');
+      expect(
+        data?.results.length,
+        'status=grace returned 0 results - verify grace period names exist in database'
+      ).toBeGreaterThan(0);
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThanOrEqual(now);
+        expect(expiry).toBeGreaterThan(ninetyDaysAgo);
+      }
+    });
+
+    it('status=premium returns names expired 90-111 days ago', async () => {
+      const { data } = await search('filters[status]=premium&limit=50');
+      expect(
+        data?.results.length,
+        'status=premium returned 0 results - verify premium period names exist in database'
+      ).toBeGreaterThan(0);
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+      const oneElevenDaysAgo = now - 111 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThanOrEqual(ninetyDaysAgo);
+        expect(expiry).toBeGreaterThan(oneElevenDaysAgo);
+      }
+    });
+
+    it('status=available returns names expired > 111 days ago', async () => {
+      const { data } = await search('filters[status]=available&limit=50');
+      expect(
+        data?.results.length,
+        'status=available returned 0 results - verify available names exist in database'
+      ).toBeGreaterThan(0);
+
+      const now = Date.now();
+      const oneElevenDaysAgo = now - 111 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThanOrEqual(oneElevenDaysAgo);
+      }
+    });
+  });
+
+  describe('String Pattern Filters', () => {
+    it('contains filter returns names containing exact substring', async () => {
+      const substring = 'abc';
+      const { data } = await search(`filters[contains]=${substring}&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label).toContain(substring.toLowerCase());
+      }
+    });
+
+    it('startsWith filter returns names starting with prefix', async () => {
+      const prefix = 'the';
+      const { data } = await search(`filters[startsWith]=${prefix}&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.startsWith(prefix.toLowerCase())).toBe(true);
+      }
+    });
+
+    it('endsWith filter returns names ending with suffix (before .eth)', async () => {
+      const suffix = 'dao';
+      const { data } = await search(`filters[endsWith]=${suffix}&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.endsWith(suffix.toLowerCase())).toBe(true);
+      }
+    });
+  });
+
+  describe('Sorting', () => {
+    it('sortBy=alphabetical&sortOrder=asc returns names in A-Z order', async () => {
+      const { data } = await search('sortBy=alphabetical&sortOrder=asc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const names = data!.results.map((r) => r.name.toLowerCase());
+      const sorted = [...names].sort();
+      expect(names).toEqual(sorted);
+    });
+
+    it('sortBy=alphabetical&sortOrder=desc returns names in Z-A order', async () => {
+      const { data } = await search('sortBy=alphabetical&sortOrder=desc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const names = data!.results.map((r) => r.name.toLowerCase());
+      const sorted = [...names].sort().reverse();
+      expect(names).toEqual(sorted);
+    });
+  });
+
+  describe('Marketplace Filter', () => {
+    it('marketplace=grails returns only names with Grails listings', async () => {
+      // marketplace filter automatically implies listed=true
+      const { data } = await search('filters[marketplace]=grails&limit=50');
+      // May have no Grails listings
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const hasGrailsListing = result.listings?.some(
+          (l) => l.status === 'active' && l.source === 'grails'
+        );
+        if (!hasGrailsListing) {
+          const sources = result.listings?.map((l) => l.source).join(', ') ?? 'none';
+          failures.push(`${result.name}: sources=[${sources}]`);
+        }
+      }
+
+      expect(failures, `Names without Grails listings:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('marketplace=opensea returns only names with OpenSea listings', async () => {
+      // marketplace filter automatically implies listed=true
+      const { data } = await search('filters[marketplace]=opensea&limit=50');
+      // May have no OpenSea listings
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const hasOpenseaListing = result.listings?.some(
+          (l) => l.status === 'active' && l.source === 'opensea'
+        );
+        if (!hasOpenseaListing) {
+          const sources = result.listings?.map((l) => l.source).join(', ') ?? 'none';
+          failures.push(`${result.name}: sources=[${sources}]`);
+        }
+      }
+
+      expect(failures, `Names without OpenSea listings:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('marketplace filter combined with other filters', async () => {
+      // Test marketplace=grails with letters=only (no emoji or numbers)
+      // marketplace filter automatically implies listed=true
+      const { data } = await search(
+        'filters[marketplace]=grails&filters[letters]=only&limit=50'
+      );
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        const label = getLabel(result.name);
+
+        // Check marketplace
+        const hasGrailsListing = result.listings?.some(
+          (l) => l.status === 'active' && l.source === 'grails'
+        );
+        if (!hasGrailsListing) {
+          failures.push(`${result.name}: no grails listing`);
+        }
+
+        // Check letters=only (no numbers or emoji)
+        if (!/^[a-zA-Z]+$/.test(label)) {
+          failures.push(`${result.name}: contains non-letters`);
+        }
+      }
+
+      expect(failures, `Combined marketplace filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+  });
+});

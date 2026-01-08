@@ -1,14 +1,39 @@
 # Indexer Service - CLAUDE.md
 
 ## Service Overview
-The Indexer service monitors the Ethereum blockchain for ENS-related events and synchronizes blockchain state with the database. It tracks ENS registrations, transfers, name changes, and expiry updates.
+The Indexer service monitors the Ethereum blockchain for ENS-related events and marketplace activity, synchronizing blockchain state with the PostgreSQL database. It consists of three main components that run concurrently:
+
+1. **ENS Indexer** - Monitors the ENS Base Registrar for name registrations, transfers, and renewals
+2. **Seaport Indexer** - Monitors the Seaport 1.6 contract for order fulfillments and cancellations
+3. **OpenSea Stream Listener** - Real-time WebSocket connection to OpenSea's Stream API for marketplace events
 
 ## Technology Stack
 - **Runtime**: Node.js with TypeScript
-- **Blockchain**: Ethers.js v6 for Ethereum interaction
-- **Database**: PostgreSQL with Prisma ORM
-- **RPC**: Alchemy/Infura for reliable blockchain access
-- **Monitoring**: Event listeners and block scanning
+- **Blockchain Client**: viem v2.7.0 (Ethereum interaction)
+- **Database**: PostgreSQL with raw SQL queries via `pg` pool
+- **Queue**: pg-boss for job publishing to workers
+- **WebSocket**: `ws` library for OpenSea Phoenix protocol
+- **Concurrency**: p-queue for rate-limited batch processing
+- **Logging**: pino with pino-pretty for development
+- **External APIs**: The Graph (ENS subgraph), Enstate (metadata)
+
+## Contract Addresses Monitored
+
+### ENS Base Registrar (ERC-721)
+- **Address**: `0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85`
+- **Purpose**: NFT contract for .eth second-level domains
+- **Token ID Format**: Labelhash (keccak256 of label, e.g., "vitalik" in "vitalik.eth")
+
+### ENS Name Wrapper (ERC-1155)
+- **Address**: `0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401`
+- **Purpose**: Wraps ENS names for enhanced functionality (permissions, fuses)
+- **Token ID Format**: Namehash (full name hash, e.g., namehash("vitalik.eth"))
+- **Special Handling**: Never stored as owner; real owner fetched via `ownerOf()` call
+
+### Seaport 1.6
+- **Address**: `0x0000000000000068F116a894984e2DB1123eB395`
+- **Purpose**: OpenSea's marketplace protocol for trades
+- **Order Format**: Seaport BasicOrderParameters
 
 ## Key Components
 

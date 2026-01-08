@@ -100,10 +100,16 @@ export async function profilesRoutes(fastify: FastifyInstance) {
 
       const domain = domains[0];
 
-      // Priority for finding owner:
-      // 1. wrappedOwner - for wrapped names, this is the actual owner
-      // 2. registrant - the registrant address
-      const ownerAddress = domain.wrappedOwner?.id || domain.registrant?.id;
+      // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
+      let ownerAddress: string | null = null;
+      if (domain.registrant?.id) {
+        const registrant = domain.registrant.id.toLowerCase();
+        if (registrant === NAME_WRAPPER_ADDRESS) {
+          ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+        } else {
+          ownerAddress = registrant;
+        }
+      }
 
       if (!ownerAddress) {
         fastify.log.warn({ ensName }, 'No owner found for ENS name');

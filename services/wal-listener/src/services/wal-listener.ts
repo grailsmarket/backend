@@ -3,7 +3,6 @@ import { config, getPostgresPool } from '../../../shared/src';
 import { ElasticsearchSync } from './elasticsearch-sync';
 import { ActivityHistoryService } from './activity-history';
 import { logger } from '../utils/logger';
-import { LogicalReplicationService, PgoutputPlugin } from 'pg-logical-replication';
 
 interface Change {
   table: string;
@@ -13,7 +12,6 @@ interface Change {
 }
 
 export class WALListener {
-  private replicationService: LogicalReplicationService | null = null;
   private client: Client | null = null;
   private isRunning = false;
   private pool = getPostgresPool();
@@ -38,11 +36,6 @@ export class WALListener {
     logger.info('Stopping WAL listener...');
     this.isRunning = false;
 
-    if (this.replicationService) {
-      await this.replicationService.stop();
-      this.replicationService = null;
-    }
-
     if (this.client) {
       await this.client.end();
       this.client = null;
@@ -55,53 +48,7 @@ export class WALListener {
     });
 
     await this.client.connect();
-
-    // Check if replication slot exists, create if not
-    const slotQuery = `
-      SELECT slot_name
-      FROM pg_replication_slots
-      WHERE slot_name = 'elasticsearch_sync'
-    `;
-
-    const slotResult = await this.client.query(slotQuery);
-
-    if (slotResult.rows.length === 0) {
-      try {
-        await this.client.query(`
-          SELECT pg_create_logical_replication_slot('elasticsearch_sync', 'pgoutput')
-        `);
-        logger.info('Created replication slot: elasticsearch_sync');
-      } catch (error: any) {
-        logger.error('Failed to create replication slot:', error);
-        throw error;
-      }
-    } else {
-      logger.info('Replication slot already exists');
-    }
-
-    // Check if publication exists, create if not
-    const pubQuery = `
-      SELECT pubname
-      FROM pg_publication
-      WHERE pubname = 'elasticsearch_pub'
-    `;
-
-    const pubResult = await this.client.query(pubQuery);
-
-    if (pubResult.rows.length === 0) {
-      try {
-        await this.client.query(`
-          CREATE PUBLICATION elasticsearch_pub FOR TABLE ens_names, listings, offers
-        `);
-        logger.info('Created publication: elasticsearch_pub');
-      } catch (error: any) {
-        logger.error('Failed to create publication:', error);
-        throw error;
-      }
-    } else {
-      logger.info('Publication already exists');
-    }
-
+    logger.info('Database client connected for CDC');
   }
 
   private async performInitialSyncInBackground() {
@@ -466,29 +413,11 @@ export class WALListener {
   }
 
   // Alternative: Use LISTEN/NOTIFY for real-time updates
+  // IMPORTANT: This method assumes the notify_changes() function and triggers
+  // already exist from database migrations. It should NEVER recreate or overwrite
+  // database functions - those are managed by migrations only.
   async setupTriggerBasedCDC() {
     logger.info('Setting up trigger-based CDC with LISTEN/NOTIFY...');
-
-    // Create a notification function
-    const createFunctionQuery = `
-      CREATE OR REPLACE FUNCTION notify_changes() RETURNS trigger AS $$
-      DECLARE
-        payload json;
-      BEGIN
-        payload = json_build_object(
-          'table', TG_TABLE_NAME,
-          'operation', TG_OP,
-          'data', row_to_json(NEW),
-          'old_data', row_to_json(OLD)
-        );
-        PERFORM pg_notify('table_changes', payload::text);
-        RETURN NEW;
-      END;
-      $$ LANGUAGE plpgsql;
-    `;
-
-    // Create triggers for each table
-    const tables = ['ens_names', 'listings', 'offers'];
 
     // Ensure we have a database connection
     if (!this.client) {
@@ -496,24 +425,30 @@ export class WALListener {
     }
 
     try {
-      await this.client.query(createFunctionQuery);
-      logger.info('Created notification function');
+      // Verify the notify_changes function exists (created by migrations)
+      const functionCheck = await this.client.query(`
+        SELECT 1 FROM pg_proc WHERE proname = 'notify_changes'
+      `);
 
+      if (functionCheck.rows.length === 0) {
+        throw new Error('notify_changes function not found - ensure database migrations have been run');
+      }
+
+      logger.info('Verified notify_changes function exists');
+
+      // Verify triggers exist for each table (created by migrations)
+      const tables = ['ens_names', 'listings', 'offers'];
       for (const table of tables) {
-        const dropTriggerQuery = `DROP TRIGGER IF EXISTS notify_${table}_changes ON ${table}`;
-        const createTriggerQuery = `
-          CREATE TRIGGER notify_${table}_changes
-          AFTER INSERT OR UPDATE OR DELETE ON ${table}
-          FOR EACH ROW EXECUTE FUNCTION notify_changes();
-        `;
+        const triggerCheck = await this.client.query(`
+          SELECT 1 FROM pg_trigger
+          WHERE tgname LIKE $1
+          AND tgrelid = $2::regclass
+        `, [`%notify%`, table]);
 
-        try {
-          await this.client.query(dropTriggerQuery);
-          await this.client.query(createTriggerQuery);
-          logger.info(`Created trigger for table: ${table}`);
-        } catch (tableError: any) {
-          logger.error(`Failed to create trigger for ${table}:`, tableError?.message);
-          throw tableError;
+        if (triggerCheck.rows.length === 0) {
+          logger.warn(`No notify trigger found for ${table} - notifications for this table may not work`);
+        } else {
+          logger.info(`Verified notify trigger exists for ${table}`);
         }
       }
 

@@ -1,24 +1,35 @@
 # WAL Listener Service - CLAUDE.md
 
 ## Service Overview
-The WAL (Write-Ahead Log) Listener service monitors PostgreSQL's logical replication stream to detect database changes in real-time. It processes these changes and can trigger actions, send notifications, or sync data to other systems.
+The WAL Listener service monitors PostgreSQL database changes in real-time and synchronizes data to Elasticsearch for fast search capabilities. It also tracks activity history for marketplace events and dispatches notifications to users via a job queue.
+
+**Note**: Despite the name, this service uses PostgreSQL LISTEN/NOTIFY with database triggers (not WAL logical replication).
 
 ## Technology Stack
 - **Runtime**: Node.js with TypeScript
-- **Database**: PostgreSQL with logical replication
-- **WAL Decoding**: pg-logical-replication
-- **Message Queue**: Optional (Redis/RabbitMQ for event distribution)
-- **WebSocket**: For real-time client notifications
+- **Database**: PostgreSQL with LISTEN/NOTIFY (primary) or polling fallback
+- **Search Engine**: Elasticsearch 8.x
+- **Job Queue**: pg-boss (PostgreSQL-backed job queue)
+- **Logging**: Pino with pino-pretty for development
+- **Blockchain Client**: viem (for fetching block timestamps)
 
 ## Key Components
 
-### WAL Monitoring (`src/services/wal-listener.ts`)
-- **Replication Slot**: Creates and manages PostgreSQL replication slot (`grails_wal_slot`)
-- **Change Stream**: Processes INSERT, UPDATE, DELETE operations via logical replication
-- **Event Parser**: Decodes WAL entries using `pgoutput` plugin
-- **Action Dispatcher**: Routes changes to Elasticsearch sync handler
-- **Publication**: Subscribes to `grails_publication` (ens_names, listings, offers, sales)
-- **Heartbeat**: Sends keepalive messages to prevent timeout
+### WAL Listener (`src/services/wal-listener.ts`)
+- **Primary Mode**: PostgreSQL LISTEN/NOTIFY via database triggers
+- **Fallback Mode**: Polling every 5 seconds if triggers fail
+- **Initial Sync**: Runs bulkSync in background on startup
+- **Change Handlers**:
+  - `processENSNameChange()`: INSERT/UPDATE/DELETE on ens_names
+  - `processListingChange()`: Marketplace listing events
+  - `processOfferChange()`: Offer events
+- **Notification Publishing**: Sends jobs to pg-boss queue
+
+### Activity History (`src/services/activity-history.ts`)
+- Records marketplace activity for user feeds
+- **Event Types**: listed, listing_updated, offer_made, bought, sold, offer_accepted, listing_cancelled, offer_cancelled, mint, burn, sent, received
+- **Duplicate Prevention**: Checks for existing records before insert
+- **PostgreSQL NOTIFY**: Emits `activity_created` for real-time WebSocket broadcasts
 
 ### Change Handlers (`src/services/elasticsearch-sync.ts`)
 - **ens_names Changes**:

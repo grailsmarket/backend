@@ -17,13 +17,23 @@
  *   npm run build && node dist/wal-listener/src/scripts/complete-resync-elasticsearch.js
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
 
 const BATCH_SIZE = 500;
 const CONCURRENT_BATCHES = 5;
+
+// Currency constants for price conversion
+const USDC_ADDRESS = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+const ETH_DECIMALS = 18;
+const USDC_DECIMALS = 6;
+
+// ETH price cache
+let cachedEthPrice: number | null = null;
+let ethPriceCacheTime: number = 0;
+const ETH_PRICE_CACHE_TTL = 300000; // 5 minute cache
 
 interface ENSNameRow {
   id: number;
@@ -38,6 +48,7 @@ interface ENSNameRow {
   last_sale_currency: string | null;
   last_sale_price_usd: number | null;
   listing_price: string | null;
+  listing_currency_address: string | null;
   listing_status: string | null;
   listing_created_at: string | null;
   active_offers_count: number;
@@ -53,7 +64,7 @@ function generateTags(name: string): string[] {
   if (cleanName.length === 5) tags.push('5-letter');
   if (/^\d+$/.test(cleanName)) tags.push('numeric');
   if (/^[a-z]+$/i.test(cleanName)) tags.push('alphabetic');
-  if (/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(cleanName)) {
+  if (hasEmoji(cleanName)) {
     tags.push('emoji');
   }
 
@@ -142,21 +153,79 @@ function calculateSaleHistoryState(lastSaleDate: string | null) {
   };
 }
 
-function enrichENSNameData(data: ENSNameRow) {
+/**
+ * Get current ETH price in USD with caching
+ */
+async function getEthPriceUsd(): Promise<number> {
+  const now = Date.now();
+
+  // Return cached price if still valid
+  if (cachedEthPrice !== null && (now - ethPriceCacheTime) < ETH_PRICE_CACHE_TTL) {
+    return cachedEthPrice;
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT price FROM latest_prices
+      WHERE token_symbol = 'ETH' AND quote_currency = 'USD'
+    `);
+
+    if (result.rows.length > 0) {
+      cachedEthPrice = parseFloat(result.rows[0].price);
+      ethPriceCacheTime = now;
+      return cachedEthPrice;
+    }
+  } catch (error) {
+    console.warn('Failed to fetch ETH price from database, using fallback');
+  }
+
+  // Fallback price if database query fails
+  const fallbackPrice = 3000;
+  cachedEthPrice = fallbackPrice;
+  ethPriceCacheTime = now;
+  return fallbackPrice;
+}
+
+/**
+ * Calculate USD price from wei amount and currency address
+ */
+function calculatePriceUsd(priceWei: string | null, currencyAddress: string | null, ethPriceUsd: number): number | null {
+  if (!priceWei) return null;
+
+  const normalizedCurrency = (currencyAddress || '').toLowerCase();
+  const priceNum = parseFloat(priceWei);
+
+  if (isEthOrWeth(normalizedCurrency) || normalizedCurrency === '' || normalizedCurrency === '0x0000000000000000000000000000000000000000') {
+    // ETH or WETH: convert from wei (18 decimals) to ETH, then to USD
+    const priceInEth = priceNum / Math.pow(10, ETH_DECIMALS);
+    return priceInEth * ethPriceUsd;
+  } else if (normalizedCurrency === USDC_ADDRESS) {
+    // USDC: convert from smallest unit (6 decimals) to USD (1:1)
+    return priceNum / Math.pow(10, USDC_DECIMALS);
+  }
+
+  // Unknown currency - can't convert
+  return null;
+}
+
+function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
   const name = data.name || '';
   const expirationState = calculateExpirationState(data.expiry_date);
   const saleHistoryState = calculateSaleHistoryState(data.last_sale_date);
+  const priceUsd = calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
 
   return {
     name,
     token_id: data.token_id,
     owner: data.owner_address,
     price: data.listing_price ? parseFloat(data.listing_price) : null,
+    price_usd: priceUsd,
+    currency_address: data.listing_currency_address || null,
     expiry_date: data.expiry_date,
     registration_date: data.registration_date,
     character_count: name.replace('.eth', '').length,
     has_numbers: /\d/.test(name),
-    has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+    has_emoji: hasEmoji(name),
     status: data.listing_status || 'unlisted',
     tags: generateTags(name),
     clubs: data.clubs || [],
@@ -177,7 +246,7 @@ function enrichENSNameData(data: ENSNameRow) {
   };
 }
 
-async function processBatch(offset: number, batchSize: number, totalRows: number): Promise<number> {
+async function processBatch(offset: number, batchSize: number, totalRows: number, ethPriceUsd: number): Promise<number> {
   // Complete query with all JOINs for listings and offers
   const query = `
     SELECT
@@ -193,13 +262,14 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
       en.last_sale_currency,
       en.last_sale_price_usd,
       l.price_wei as listing_price,
+      l.currency_address as listing_currency_address,
       l.status as listing_status,
       l.created_at as listing_created_at,
       COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
       MAX(o.offer_amount_wei::numeric) FILTER (WHERE o.status = 'pending') as highest_offer_wei
     FROM ens_names en
     LEFT JOIN LATERAL (
-      SELECT price_wei, status, created_at
+      SELECT price_wei, currency_address, status, created_at
       FROM listings
       WHERE listings.ens_name_id = en.id
         AND listings.status = 'active'
@@ -210,7 +280,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
     GROUP BY en.id, en.name, en.token_id, en.owner_address, en.expiry_date,
              en.registration_date, en.clubs, en.last_sale_date, en.last_sale_price,
              en.last_sale_currency, en.last_sale_price_usd, en.updated_at,
-             l.price_wei, l.status, l.created_at
+             l.price_wei, l.currency_address, l.status, l.created_at
     ORDER BY en.id ASC
     LIMIT $1 OFFSET $2
   `;
@@ -224,7 +294,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
   // Build bulk body with full enrichment
   const bulkBody = [];
   for (const row of result.rows) {
-    const enrichedData = enrichENSNameData(row);
+    const enrichedData = enrichENSNameData(row, ethPriceUsd);
     bulkBody.push({ index: { _index: config.elasticsearch.index, _id: row.id.toString() } });
     bulkBody.push(enrichedData);
   }
@@ -291,10 +361,15 @@ async function completeResync() {
 
     console.log(`Batch size: ${BATCH_SIZE.toLocaleString()}`);
     console.log(`Concurrent batches: ${CONCURRENT_BATCHES}\n`);
+
+    // Get ETH price for USD conversion
+    const ethPriceUsd = await getEthPriceUsd();
+    console.log(`ETH price for USD conversion: $${ethPriceUsd.toFixed(2)}\n`);
+
     console.log('Starting bulk indexing...\n');
 
     let processed = 0;
-    let offset = 0;
+    let offset = 3128000;
 
     // Process batches with limited concurrency
     while (offset < totalRows) {
@@ -302,7 +377,7 @@ async function completeResync() {
 
       // Launch concurrent batches
       for (let i = 0; i < CONCURRENT_BATCHES && offset < totalRows; i++) {
-        batchPromises.push(processBatch(offset, BATCH_SIZE, totalRows));
+        batchPromises.push(processBatch(offset, BATCH_SIZE, totalRows, ethPriceUsd));
         offset += BATCH_SIZE;
       }
 

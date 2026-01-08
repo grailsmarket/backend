@@ -17,11 +17,13 @@ const SEAPORT_ABI = parseAbi([
   'event OrderFulfilled(bytes32 orderHash, address indexed offerer, address indexed zone, address recipient, (uint8 itemType, address token, uint256 identifier, uint256 amount)[] offer, (uint8 itemType, address token, uint256 identifier, uint256 amount, address recipient)[] consideration)',
   'event OrderCancelled(bytes32 orderHash)',
   'event OrderValidated(bytes32 orderHash, address indexed offerer, address indexed zone)',
+  'event CounterIncremented(uint256 newCounter, address indexed offerer)',
 ]);
 
 const SEAPORT_EVENTS = {
   OrderFulfilled: SEAPORT_ABI[0],
   OrderCancelled: SEAPORT_ABI[1],
+  CounterIncremented: SEAPORT_ABI[3],
 } as const;
 
 export class SeaportIndexer {
@@ -211,6 +213,9 @@ export class SeaportIndexer {
       case 'OrderCancelled':
         await this.handleOrderCancelled(args, log);
         break;
+      case 'CounterIncremented':
+        await this.handleCounterIncremented(args, log);
+        break;
     }
   }
 
@@ -235,9 +240,23 @@ export class SeaportIndexer {
       transactionHash: log.transactionHash
     });
 
-    // Find the listing that's being sold
+    // Check if a sale already exists for this order_hash or transaction_hash
+    // OpenSea stream may not always include order_hash, so we check both
+    const existingSaleQuery = `
+      SELECT id, source FROM sales
+      WHERE order_hash = $1 OR transaction_hash = $2
+      LIMIT 1
+    `;
+    const existingSaleResult = await this.pool.query(existingSaleQuery, [orderHash, log.transactionHash]);
+
+    if (existingSaleResult.rows.length > 0) {
+      logger.debug(`Sale already exists for order_hash ${orderHash} or tx ${log.transactionHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation`);
+      // Still update the listing status below, but don't create duplicate sale
+    }
+
+    // Find the listing that's being sold and check its source
     const findListingQuery = `
-      SELECT id FROM listings
+      SELECT id, source FROM listings
       WHERE order_hash = $1
       ORDER BY created_at DESC
       LIMIT 1
@@ -245,6 +264,24 @@ export class SeaportIndexer {
 
     const listingResult = await this.pool.query(findListingQuery, [orderHash]);
     const listingId = listingResult.rows.length > 0 ? listingResult.rows[0].id : undefined;
+    const listingSource = listingResult.rows.length > 0 ? listingResult.rows[0].source : null;
+
+    // If no listing found, check if this is an offer acceptance
+    let offerId: number | undefined;
+    let offerSource: string | null = null;
+    if (!listingId) {
+      const findOfferQuery = `
+        SELECT id, source FROM offers
+        WHERE order_hash = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      const offerResult = await this.pool.query(findOfferQuery, [orderHash]);
+      if (offerResult.rows.length > 0) {
+        offerId = offerResult.rows[0].id;
+        offerSource = offerResult.rows[0].source;
+      }
+    }
 
     // Update listing status (this is also done by the trigger, but kept for backwards compatibility)
     const updateListingQuery = `
@@ -308,47 +345,75 @@ export class SeaportIndexer {
 
           const saleDate = new Date(Number(block.timestamp) * 1000);
 
-          // Record sale in sales table
-          try {
-            const sale = await createSale({
-              ensNameId,
-              sellerAddress: offerer.toLowerCase(),
-              buyerAddress: recipient.toLowerCase(),
-              salePriceWei: price,
-              listingId,
-              transactionHash: log.transactionHash!,
-              blockNumber: Number(log.blockNumber),
-              orderHash,
-              orderData: {
-                offer: this.serializeBigInts(offer),
-                consideration: this.serializeBigInts(consideration),
-                zone: args.zone,
-              },
-              source: 'grails', // On-chain Seaport sales tracked by our indexer
-              saleDate,
-            });
+          // Create a sale record if no sale exists yet for this order_hash or transaction_hash
+          // This allows the Seaport indexer to act as a backup when OpenSea Stream misses events
+          const saleAlreadyExists = existingSaleResult.rows.length > 0;
 
-            logger.info(`Sale created in sales table for token ${tokenId}`);
+          if (!saleAlreadyExists) {
+            // Record sale in sales table - use listing/offer source or default to 'opensea'
+            const saleSource = listingSource || offerSource || 'opensea';
+            try {
+              const sale = await createSale({
+                ensNameId,
+                sellerAddress: offerer.toLowerCase(),
+                buyerAddress: recipient.toLowerCase(),
+                salePriceWei: price,
+                listingId,
+                offerId,
+                transactionHash: log.transactionHash!,
+                blockNumber: Number(log.blockNumber),
+                orderHash,
+                orderData: {
+                  offer: this.serializeBigInts(offer),
+                  consideration: this.serializeBigInts(consideration),
+                  zone: args.zone,
+                },
+                source: saleSource,
+                saleDate,
+              });
 
-            // Publish club sales stats job if sale has clubs (ETH only)
-            if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
-              try {
-                const PgBoss = require('pg-boss');
-                const boss = new PgBoss({ connectionString: config.database.url });
-                await boss.start();
-                await boss.send('update-club-sales-stats', {
-                  clubNames: sale.clubs,
-                  salePriceWei: price,
-                });
-                await boss.stop();
-                logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
-              } catch (queueError: any) {
-                logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
+              logger.info(`Sale created in sales table for token ${tokenId} (source: ${saleSource})`);
+
+              // Publish club sales stats job if sale has clubs (ETH only)
+              if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
+                try {
+                  const PgBoss = require('pg-boss');
+                  const boss = new PgBoss({ connectionString: config.database.url });
+                  await boss.start();
+                  await boss.send('update-club-sales-stats', {
+                    clubNames: sale.clubs,
+                    salePriceWei: price,
+                  });
+                  await boss.stop();
+                  logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
+                } catch (queueError: any) {
+                  logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
+                }
               }
+            } catch (error: any) {
+              logger.error(`Failed to create sale record: ${error.message}`);
+              // Don't fail the entire handler if sale recording fails
             }
-          } catch (error: any) {
-            logger.error(`Failed to create sale record: ${error.message}`);
-            // Don't fail the entire handler if sale recording fails
+          } else {
+            logger.debug(`Skipping sale creation for ${nameToStore} - sale already exists for order_hash ${orderHash} or tx ${log.transactionHash}`);
+          }
+
+          // Cancel all other active listings for this ENS name
+          // After a sale, ownership has transferred, so all other listings from the seller are invalid
+          const cancelOtherListingsQuery = `
+            UPDATE listings
+            SET status = 'cancelled',
+                updated_at = NOW()
+            WHERE ens_name_id = $1
+              AND status = 'active'
+              AND order_hash IS DISTINCT FROM $2
+            RETURNING id, source
+          `;
+
+          const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [ensNameId, orderHash]);
+
+          if (cancelledListings.rows.length > 0) {
+            logger.info(`Cancelled ${cancelledListings.rows.length} other active listings for ENS ${nameToStore} after sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`);
           }
 
           // Insert the transaction
@@ -398,6 +463,48 @@ export class SeaportIndexer {
     `;
 
     await this.pool.query(updateQuery, [orderHash]);
+  }
+
+  private async handleCounterIncremented(args: any, log: Log) {
+    const { newCounter, offerer } = args;
+    const offererAddress = offerer.toLowerCase();
+
+    logger.info(`Processing CounterIncremented event for ${offererAddress}, new counter: ${newCounter}`, {
+      blockNumber: log.blockNumber,
+      transactionHash: log.transactionHash
+    });
+
+    // Cancel all active listings from this seller
+    // When a user increments their counter, ALL their existing Seaport orders become invalid
+    const cancelListingsQuery = `
+      UPDATE listings
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE seller_address = $1
+        AND status = 'active'
+      RETURNING id, order_hash
+    `;
+
+    const cancelledListings = await this.pool.query(cancelListingsQuery, [offererAddress]);
+
+    if (cancelledListings.rows.length > 0) {
+      logger.info(`Cancelled ${cancelledListings.rows.length} active listings for ${offererAddress} due to counter increment`);
+    }
+
+    // Cancel all active offers from this buyer
+    // Offers are also Seaport orders that become invalid when the counter is incremented
+    const cancelOffersQuery = `
+      UPDATE offers
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE buyer_address = $1
+        AND status = 'active'
+      RETURNING id, order_hash
+    `;
+
+    const cancelledOffers = await this.pool.query(cancelOffersQuery, [offererAddress]);
+
+    if (cancelledOffers.rows.length > 0) {
+      logger.info(`Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`);
+    }
   }
 
   private async getLastProcessedBlock(): Promise<number> {

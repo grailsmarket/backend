@@ -7,6 +7,7 @@
  */
 
 import { Pool } from 'pg';
+import { hasEmoji } from '../../../shared/src';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -126,7 +127,7 @@ async function backfill(batchSize: number, limit?: number) {
 
         if (name && name !== row.name) {
           const hasNumbers = /\d/.test(name);
-          const hasEmoji = /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name);
+          const nameHasEmoji = hasEmoji(name);
 
           const existing = await client.query('SELECT id FROM ens_names WHERE name = $1 AND id != $2', [name, row.id]);
 
@@ -134,7 +135,7 @@ async function backfill(batchSize: number, limit?: number) {
             await client.query('DELETE FROM ens_names WHERE id = $1', [row.id]);
             stats.duplicates++;
           } else {
-            await client.query('UPDATE ens_names SET name = $1, has_numbers = $2, has_emoji = $3 WHERE id = $4', [name, hasNumbers, hasEmoji, row.id]);
+            await client.query('UPDATE ens_names SET name = $1, has_numbers = $2, has_emoji = $3 WHERE id = $4', [name, hasNumbers, nameHasEmoji, row.id]);
             stats.resolved++;
           }
         } else {

@@ -63,7 +63,7 @@ async function fetchOffers(offerIds: number[]): Promise<OfferWithBalance[]> {
     SELECT
       o.id,
       o.buyer_address,
-      o.price_wei,
+      o.offer_amount_wei,
       o.currency_address,
       o.status,
       o.ens_name_id,
@@ -172,7 +172,7 @@ async function batchValidateETHOffers(offers: OfferWithBalance[]): Promise<Map<n
     // Actually, let's do individual ETH balance checks since multicall doesn't help here
     for (const offer of offers) {
       const balance = await provider.getBalance(offer.buyer_address);
-      results.set(offer.id, validateBalanceResult(balance, offer.price_wei, 'ETH'));
+      results.set(offer.id, validateBalanceResult(balance, offer.offer_amount_wei, 'ETH'));
     }
 
   } catch (error: any) {
@@ -225,7 +225,7 @@ async function batchValidateTokenOffers(
     offers.forEach((offer, index) => {
       if (responses[index].success) {
         const balance = decodeBalance(responses[index].returnData);
-        results.set(offer.id, validateBalanceResult(balance, offer.price_wei, currency));
+        results.set(offer.id, validateBalanceResult(balance, offer.offer_amount_wei, currency));
       } else {
         results.set(offer.id, {
           isValid: false,

@@ -13,6 +13,7 @@ const pool = getPostgresPool();
 
 const GRAPH_URL = process.env.GRAPH_ENS_SUBGRAPH_URL || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const GRAPH_API_KEY = process.env.GRAPH_API_KEY || '';
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface GraphNameData {
   name: string;
@@ -102,11 +103,15 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
           } catch (e) {}
         }
 
+        // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
         let ownerAddress: string | null = null;
-        if (domain.wrappedOwner?.id) {
-          ownerAddress = domain.wrappedOwner.id.toLowerCase();
-        } else if (domain.registrant?.id) {
-          ownerAddress = domain.registrant.id.toLowerCase();
+        if (domain.registrant?.id) {
+          const registrant = domain.registrant.id.toLowerCase();
+          if (registrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+            ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+          } else {
+            ownerAddress = registrant;
+          }
         }
 
         const textRecords: Record<string, string> = {};

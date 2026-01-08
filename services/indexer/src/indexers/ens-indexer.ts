@@ -8,7 +8,7 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, BlockchainEvent } from '../../../shared/src';
+import { config, getPostgresPool, BlockchainEvent, hasEmoji } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -203,7 +203,7 @@ export class ENSIndexer {
   private calculateNameAttributes(name: string) {
     return {
       has_numbers: /\d/.test(name),
-      has_emoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u.test(name),
+      has_emoji: hasEmoji(name),
     };
   }
 
@@ -253,7 +253,7 @@ export class ENSIndexer {
       let ownerToStore: string;
 
       if (isNameWrapperTransfer) {
-        // Name Wrapper involved - resolve from The Graph to get correct token ID and owner
+        // Name Wrapper involved - resolve from The Graph to get correct token ID and name
         logger.debug(`Name Wrapper transfer detected for token ${tokenIdStr}, querying The Graph`);
         const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
 
@@ -269,8 +269,67 @@ export class ENSIndexer {
         has_numbers = attributes.has_numbers;
         has_emoji = attributes.has_emoji;
 
-        // Use resolved owner (wrappedOwner for wrapped names)
-        ownerToStore = resolvedData.ownerAddress || to.toLowerCase();
+        // Handle owner for Name Wrapper transfers
+        // Query the Name Wrapper contract directly for authoritative owner data
+        const isWrapping = to.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase();
+        const isUnwrapping = from.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase();
+
+        // First, try to get the owner directly from the Name Wrapper contract
+        const contractOwner = await this.resolver.getWrappedNameOwner(nameToStore);
+
+        if (contractOwner) {
+          // Got authoritative owner from the blockchain
+          ownerToStore = contractOwner;
+          logger.debug(`Name Wrapper transfer for ${nameToStore}: got owner from contract: ${ownerToStore}`);
+        } else if (isWrapping) {
+          // Wrapping but contract query failed - try The Graph, otherwise skip
+          if (resolvedData.ownerAddress && resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
+            ownerToStore = resolvedData.ownerAddress;
+            logger.debug(`Wrapping transfer for ${nameToStore}: using resolved owner: ${ownerToStore}`);
+          } else {
+            logger.info(`Wrapping transfer for ${nameToStore}: cannot determine real owner, skipping`);
+            return;
+          }
+        } else if (isUnwrapping) {
+          // Unwrapping - 'to' is the new actual owner (unless it's zero address)
+          if (to.toLowerCase() === ZERO_ADDRESS) {
+            // Transfer from Name Wrapper to zero address = burning the wrapped token
+            // This happens when a wrapped name expires and gets re-registered
+            // We need to update the token_id from namehash to labelhash to prepare
+            // for the upcoming NameRegistered event which will use labelhash
+            const labelhashTokenId = this.resolver.getLabelhashTokenId(nameToStore);
+            if (labelhashTokenId && labelhashTokenId !== correctTokenId) {
+              logger.info(`Unwrap burn for ${nameToStore}: updating token_id from namehash ${correctTokenId} to labelhash ${labelhashTokenId}`);
+
+              // Update token_id by name (since the name is unique)
+              await this.pool.query(
+                `UPDATE ens_names SET
+                  token_id = $1,
+                  updated_at = NOW()
+                WHERE name = $2`,
+                [labelhashTokenId, nameToStore]
+              );
+
+              logger.info(`Updated token_id for ${nameToStore} to labelhash format`);
+            } else {
+              logger.debug(`Unwrap burn for ${nameToStore}: token_id already in labelhash format or could not compute labelhash`);
+            }
+            // Don't update owner for burn transfers - the NameRegistered event will set the new owner
+            return;
+          }
+          ownerToStore = to.toLowerCase();
+          logger.debug(`Unwrapping transfer for ${nameToStore}: new owner is ${ownerToStore}`);
+        } else {
+          // Fallback to resolved data
+          ownerToStore = resolvedData.ownerAddress || to.toLowerCase();
+        }
+
+        // Final safety check: never store Name Wrapper as owner
+        if (ownerToStore === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+          logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore}, skipping`);
+          return;
+        }
+
         logger.debug(`Name Wrapper transfer: using correctTokenId ${correctTokenId}, owner ${ownerToStore} for ${nameToStore}`);
       } else {
         // Standard unwrapped transfer - use blockchain event data
@@ -307,7 +366,7 @@ export class ENSIndexer {
 
       // Check if this name exists with a different token_id (edge case for wrapped/unwrapped transitions)
       const duplicateName = await this.pool.query(
-        'SELECT id FROM ens_names WHERE name = $1 AND token_id != $2',
+        'SELECT id, token_id FROM ens_names WHERE name = $1 AND token_id != $2',
         [nameToStore, correctTokenId]
       );
 
@@ -315,14 +374,17 @@ export class ENSIndexer {
 
       if (duplicateName.rows.length > 0) {
         // Name exists with different token_id - update the existing record by name
+        // Also update token_id to match the new wrapped/unwrapped state
+        logger.info(`Updating token_id for ${nameToStore} from ${duplicateName.rows[0].token_id} to ${correctTokenId} (wrap/unwrap transition)`);
         result = await this.pool.query(
           `UPDATE ens_names SET
-            owner_address = $1,
+            token_id = $1,
+            owner_address = $2,
             last_transfer_date = NOW(),
             updated_at = NOW()
-          WHERE name = $2
+          WHERE name = $3
           RETURNING id`,
-          [ownerToStore, nameToStore]
+          [correctTokenId, ownerToStore, nameToStore]
         );
       } else {
         // Upsert by token_id
@@ -462,8 +524,26 @@ export class ENSIndexer {
         has_numbers = attributes.has_numbers;
         has_emoji = attributes.has_emoji;
 
-        // Use resolved owner and registrant (handles wrappedOwner correctly)
-        ownerAddress = resolvedData.ownerAddress || owner.toLowerCase();
+        // For wrapped registrations, query the Name Wrapper contract directly for authoritative owner
+        const contractOwner = await this.resolver.getWrappedNameOwner(nameToStore);
+
+        if (contractOwner) {
+          ownerAddress = contractOwner;
+          logger.debug(`Name Wrapper registration for ${nameToStore}: got owner from contract: ${ownerAddress}`);
+        } else if (resolvedData.ownerAddress && resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
+          ownerAddress = resolvedData.ownerAddress;
+          logger.debug(`Name Wrapper registration for ${nameToStore}: using resolved owner: ${ownerAddress}`);
+        } else {
+          logger.info(`Name Wrapper registration for ${nameToStore}: cannot determine real owner, skipping`);
+          return;
+        }
+
+        // Final safety check
+        if (ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+          logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore} registration, skipping`);
+          return;
+        }
+
         registrantAddress = resolvedData.registrantAddress || owner.toLowerCase();
 
         // Use dates from The Graph, fallback to event data
@@ -649,28 +729,71 @@ export class ENSIndexer {
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
     const expiryDate = new Date(Number(expires) * 1000);
 
-    const updateQuery = `
-      UPDATE ens_names
-      SET expiry_date = $1, updated_at = NOW()
-      WHERE token_id = $2
-    `;
+    // The NameRenewed event emits the labelhash as the id, but wrapped names
+    // are stored with the namehash as token_id. We need to resolve the name
+    // first and then update by name to handle both wrapped and unwrapped names.
 
-    await this.pool.query(updateQuery, [expiryDate, tokenIdStr]);
+    // First, try to resolve the name from The Graph using the labelhash
+    const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
 
+    let updateResult;
+    let nameForTx: string | null = null;
+
+    if (resolvedData && resolvedData.name) {
+      // Successfully resolved - update by name (works for both wrapped and unwrapped)
+      nameForTx = resolvedData.name;
+      logger.info(`NameRenewed: resolved labelhash ${tokenIdStr} to name ${nameForTx}, updating expiry to ${expiryDate.toISOString()}`);
+
+      const updateQuery = `
+        UPDATE ens_names
+        SET expiry_date = $1, updated_at = NOW()
+        WHERE name = $2
+      `;
+      updateResult = await this.pool.query(updateQuery, [expiryDate, nameForTx]);
+    } else {
+      // Could not resolve from The Graph - fall back to token_id lookup
+      // This handles unwrapped names that might not be in The Graph yet
+      logger.debug(`NameRenewed: could not resolve labelhash ${tokenIdStr}, falling back to token_id lookup`);
+
+      const updateQuery = `
+        UPDATE ens_names
+        SET expiry_date = $1, updated_at = NOW()
+        WHERE token_id = $2
+      `;
+      updateResult = await this.pool.query(updateQuery, [expiryDate, tokenIdStr]);
+    }
+
+    if (updateResult.rowCount === 0) {
+      logger.warn(`NameRenewed: no rows updated for token ${tokenIdStr}${nameForTx ? ` (${nameForTx})` : ''}`);
+    } else {
+      logger.info(`NameRenewed: updated expiry for ${nameForTx || `token ${tokenIdStr}`} to ${expiryDate.toISOString()}`);
+    }
+
+    // Record the renewal transaction
     const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
 
-    const txQuery = `
-      INSERT INTO transactions (
-        ens_name_id, transaction_hash, block_number,
-        from_address, to_address, transaction_type, timestamp
-      )
-      SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
-      FROM ens_names WHERE token_id = $1
-      ON CONFLICT (transaction_hash) DO NOTHING
-    `;
+    const txQuery = nameForTx
+      ? `
+        INSERT INTO transactions (
+          ens_name_id, transaction_hash, block_number,
+          from_address, to_address, transaction_type, timestamp
+        )
+        SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
+        FROM ens_names WHERE name = $1
+        ON CONFLICT (transaction_hash) DO NOTHING
+      `
+      : `
+        INSERT INTO transactions (
+          ens_name_id, transaction_hash, block_number,
+          from_address, to_address, transaction_type, timestamp
+        )
+        SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
+        FROM ens_names WHERE token_id = $1
+        ON CONFLICT (transaction_hash) DO NOTHING
+      `;
 
     await this.pool.query(txQuery, [
-      tokenIdStr,
+      nameForTx || tokenIdStr,
       log.transactionHash,
       log.blockNumber?.toString(),
       new Date(Number(block.timestamp) * 1000),

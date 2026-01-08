@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { getPostgresPool, APIResponse, config } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { getQueueClient } from '../queue';
 
@@ -13,8 +13,109 @@ const UpdateProfileSchema = z.object({
   notify_on_listing_sold: z.boolean().optional(),
 });
 
+const AddressParamsSchema = z.object({
+  address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address'),
+});
+
 export async function usersRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
+
+  /**
+   * GET /api/v1/users/:address/badges
+   * Get POAP badges for an address (queries all configured collections)
+   */
+  fastify.get('/:address/badges', async (request, reply) => {
+    try {
+      const { address } = AddressParamsSchema.parse(request.params);
+
+      if (!config.poap.apiKey) {
+        return reply.status(503).send({
+          success: false,
+          error: {
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'POAP API key not configured',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      // Fetch badges from all configured collections in parallel
+      const badgePromises = config.poap.collectionIds.map(async (collectionId) => {
+        try {
+          const response = await fetch(
+            `https://api.poap.tech/actions/scan/${address}/${collectionId}`,
+            {
+              method: 'GET',
+              headers: {
+                'X-API-Key': config.poap.apiKey!,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          if (response.status === 404) {
+            return null; // No badge for this collection
+          }
+
+          if (!response.ok) {
+            fastify.log.warn({ status: response.status, address, collectionId }, 'POAP API error for collection');
+            return null;
+          }
+
+          return await response.json();
+        } catch (error) {
+          fastify.log.error({ error, address, collectionId }, 'Failed to fetch POAP badge for collection');
+          return null;
+        }
+      });
+
+      const badgeResults = await Promise.all(badgePromises);
+      const badges = badgeResults.filter((badge): badge is NonNullable<typeof badge> => badge !== null);
+
+      const apiResponse: APIResponse = {
+        success: true,
+        data: {
+          address,
+          badges,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(apiResponse);
+    } catch (error: any) {
+      fastify.log.error('Error fetching POAP badges:', error);
+
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid address format',
+            details: error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch badges',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
 
   /**
    * PATCH /api/v1/users/me

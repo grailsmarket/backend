@@ -18,6 +18,13 @@ interface GraphDomain {
   wrappedOwner?: {
     id: string;
   };
+  registrant?: {
+    id: string;
+  } | null;
+  registration?: {
+    expiryDate: string;
+    registrationDate: string;
+  } | null;
 }
 
 /**
@@ -44,6 +51,13 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
         }
         wrappedOwner {
           id
+        }
+        registrant {
+          id
+        }
+        registration {
+          expiryDate
+          registrationDate
         }
       }
     }
@@ -81,11 +95,28 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
 }
 
 /**
+ * Check if a name is a subname (has more than one dot before .eth)
+ */
+function isSubname(name: string): boolean {
+  // Count dots - subnames have 2+ dots (e.g., "sub.name.eth" has 2 dots)
+  const dotCount = (name.match(/\./g) || []).length;
+  return dotCount > 1;
+}
+
+/**
  * Get correct token ID based on owner and expiry
+ * For 2LD names (.eth): use labelhash if unwrapped, namehash if wrapped
+ * For subnames: always use namehash (domain.id)
  */
 function getCorrectTokenId(domain: GraphDomain): string {
-  const ownerAddress = domain.owner.id.toLowerCase();
-  const isOwnedByWrapper = ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
+  // Subnames always use namehash (domain.id)
+  if (isSubname(domain.name)) {
+    return hexToDecimal(domain.id);
+  }
+
+  // For 2LD names, check registrant to determine wrapped status
+  const registrantAddress = domain.registrant?.id?.toLowerCase();
+  const isOwnedByWrapper = registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
   // Check if expired
   const expiryTimestamp = typeof domain.expiryDate === 'string'
@@ -98,6 +129,27 @@ function getCorrectTokenId(domain: GraphDomain): string {
   }
 
   return hexToDecimal(domain.labelhash);
+}
+
+/**
+ * Get the correct owner address from a domain
+ * For 2LD names: check registrant for wrapper, use wrappedOwner if wrapped
+ * For subnames: use wrappedOwner if available, otherwise owner
+ */
+function getCorrectOwner(domain: GraphDomain): string {
+  // For subnames, use wrappedOwner (they're typically wrapped) or fall back to owner
+  if (isSubname(domain.name)) {
+    return (domain.wrappedOwner?.id || domain.owner.id).toLowerCase();
+  }
+
+  // For 2LD names, check if wrapped via registrant
+  const registrantAddress = domain.registrant?.id?.toLowerCase();
+  if (registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+    return (domain.wrappedOwner?.id || domain.registrant?.id || domain.owner.id).toLowerCase();
+  }
+
+  // Unwrapped 2LD - use registrant or owner
+  return (domain.registrant?.id || domain.owner.id).toLowerCase();
 }
 
 /**
@@ -155,13 +207,28 @@ async function fixDuplicateNames() {
         }
 
         const correctTokenId = getCorrectTokenId(domain);
-        const correctOwner = domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
-          ? (domain.wrappedOwner?.id || domain.owner.id)
-          : domain.owner.id;
+        const correctOwner = getCorrectOwner(domain);
 
-        console.log(`\n[PROCESS] ${name}`);
+        // Get expiry and registration dates from The Graph
+        // Use registration.expiryDate (true expiry) not domain.expiryDate (includes grace period)
+        // Note: subnames don't have registration data, so these may be null
+        const expiryDate = domain.registration?.expiryDate
+          ? new Date(parseInt(domain.registration.expiryDate) * 1000)
+          : null;
+        const registrationDate = domain.registration?.registrationDate
+          ? new Date(parseInt(domain.registration.registrationDate) * 1000)
+          : null;
+
+        // Get registrant address (only for 2LD names, not subnames)
+        const registrantAddress = domain.registrant?.id?.toLowerCase() || null;
+
+        const nameType = isSubname(name) ? 'subname' : '2LD';
+        console.log(`\n[PROCESS] ${name} (${nameType})`);
         console.log(`  Correct token_id: ${correctTokenId}`);
         console.log(`  Correct owner: ${correctOwner}`);
+        console.log(`  Correct expiry: ${expiryDate?.toISOString() || 'unknown'}`);
+        console.log(`  Correct registration: ${registrationDate?.toISOString() || 'unknown'}`);
+        console.log(`  Registrant: ${registrantAddress || 'unknown'}`);
         console.log(`  Found ${ids.length} records with ids: ${ids.join(', ')}`);
 
         // Find which record has the correct token_id
@@ -230,14 +297,21 @@ async function fixDuplicateNames() {
             await pool.query('DELETE FROM ens_names WHERE id = ANY($1)', [incorrectRecordIds]);
             console.log(`  Deleted ${incorrectRecordIds.length} duplicate record(s): ${incorrectRecordIds.join(', ')}`);
 
-            // Update correct record with correct token_id and owner
+            // Update correct record with all correct data from The Graph
             await pool.query(
-              'UPDATE ens_names SET token_id = $1, owner_address = $2, updated_at = NOW() WHERE id = $3',
-              [correctTokenId, correctOwner, correctRecordId]
+              `UPDATE ens_names SET
+                token_id = $1,
+                owner_address = $2,
+                expiry_date = COALESCE($3, expiry_date),
+                registration_date = COALESCE($4, registration_date),
+                registrant = COALESCE($5, registrant),
+                updated_at = NOW()
+              WHERE id = $6`,
+              [correctTokenId, correctOwner.toLowerCase(), expiryDate, registrationDate, registrantAddress, correctRecordId]
             );
 
             await pool.query('COMMIT');
-            console.log(`  ✓ Merged into record ${correctRecordId} with correct data`);
+            console.log(`  ✓ Merged into record ${correctRecordId} with correct data (token_id, owner, expiry, registration)`);
             merged++;
           } catch (txError) {
             await pool.query('ROLLBACK');
@@ -245,7 +319,12 @@ async function fixDuplicateNames() {
           }
         } else {
           console.log(`  [DRY RUN] Would delete records: ${incorrectRecordIds.join(', ')}`);
-          console.log(`  [DRY RUN] Would update record ${correctRecordId} with correct token_id and owner`);
+          console.log(`  [DRY RUN] Would update record ${correctRecordId} with:`);
+          console.log(`    - token_id: ${correctTokenId}`);
+          console.log(`    - owner_address: ${correctOwner}`);
+          console.log(`    - expiry_date: ${expiryDate?.toISOString() || '(keep existing)'}`);
+          console.log(`    - registration_date: ${registrationDate?.toISOString() || '(keep existing)'}`);
+          console.log(`    - registrant: ${registrantAddress || '(keep existing)'}`);
           merged++;
         }
 

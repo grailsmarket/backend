@@ -1,7 +1,47 @@
 import { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../shared/src';
-import { buildSearchResults } from '../utils/response-builder';
+import { buildSearchResults, SearchResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
+import { z } from 'zod';
+
+// Schema for bulk exact search request
+const BulkExactSearchSchema = z.object({
+  terms: z.array(z.string().min(1)).min(1).max(1000),
+  page: z.number().int().min(1).optional().default(1),
+  limit: z.number().int().min(1).max(100).optional().default(20),
+});
+
+// Placeholder result for terms not found in bulk exact search
+function createNotFoundResult(name: string): SearchResult {
+  // Ensure name has .eth suffix
+  const normalizedName = name.toLowerCase().endsWith('.eth') ? name : `${name}.eth`;
+  return {
+    id: 0,
+    name: normalizedName,
+    token_id: '',
+    owner: '',
+    expiry_date: null,
+    registration_date: null,
+    last_sale_date: null,
+    metadata: {},
+    clubs: [],
+    has_numbers: false,
+    has_emoji: false,
+    last_sale_price: null,
+    last_sale_currency: null,
+    last_sale_price_usd: null,
+    listings: [],
+    upvotes: 0,
+    downvotes: 0,
+    net_score: 0,
+    watchers_count: 0,
+    is_user_watching: false,
+    highest_offer_wei: null,
+    highest_offer_currency: null,
+    highest_offer_id: null,
+    view_count: 0,
+  };
+}
 
 export async function searchRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -42,9 +82,16 @@ export async function searchRoutes(fastify: FastifyInstance) {
               const values = filterName === 'clubs' ? value.map((v: any) => String(v)) : value;
               transformedQuery.filters[filterName].push(...values);
             } else {
-              // Convert to string for clubs filter
-              const val = filterName === 'clubs' ? String(value) : value;
-              transformedQuery.filters[filterName].push(val);
+              // Handle comma-separated values (e.g., "club1,club2" -> ["club1", "club2"])
+              const stringValue = String(value);
+              if (stringValue.includes(',')) {
+                const splitValues = stringValue.split(',').map(v => v.trim()).filter(v => v);
+                transformedQuery.filters[filterName].push(...splitValues);
+              } else {
+                // Convert to string for clubs filter
+                const val = filterName === 'clubs' ? stringValue : value;
+                transformedQuery.filters[filterName].push(val);
+              }
             }
           } else {
             // Handle non-array values: filters[minPrice] or filters[clubs] (convert clubs to array)
@@ -63,7 +110,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false } = filters;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -102,13 +149,19 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
     }
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, inAnyClub=${inAnyClub}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
-    // Also force PostgreSQL for sorts that don't exist in Elasticsearch
+    // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
     let usePostgresql = sortBy === 'watchers_count';
 
-    if (usePostgresql) {
+    // Force PostgreSQL for marketplace filter since 'source' is not in ES index
+    if (marketplace && marketplace !== 'all') {
+      usePostgresql = true;
+      fastify.log.info(`Forcing PostgreSQL because marketplace filter="${marketplace}" (source not in Elasticsearch)`);
+    }
+
+    if (usePostgresql && sortBy === 'watchers_count') {
       fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
     }
 
@@ -126,7 +179,11 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
     });
 
-    if (includeExpired !== true && includeExpired !== 'true') {
+    // Skip the default "exclude expired names" filter if user is explicitly filtering
+    // by expiration state (isExpired, isGracePeriod, isPremiumPeriod, or unified status)
+    const hasExplicitExpirationFilter = isExpired !== undefined || isGracePeriod !== undefined || isPremiumPeriod !== undefined || (status !== undefined && status !== 'all');
+
+    if (includeExpired !== true && includeExpired !== 'true' && !hasExplicitExpirationFilter) {
       filter.push({
         bool: {
           should: [
@@ -139,26 +196,51 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     // Exclude subnames - only match *.eth pattern (not *.*.eth or deeper)
+    // Also exclude placeholder names (token-*) that haven't been resolved yet
     filter.push({
       bool: {
         must_not: [
-          { wildcard: { 'name.keyword': '*.*.eth' } }
+          { wildcard: { 'name.keyword': '*.*.eth' } },
+          { prefix: { 'name.keyword': 'token-' } }
         ]
       }
     });
 
     // Filter by listing status
+    // Unified listed filter: true = only listed, false = only unlisted, blank = all
+    // Legacy showListings/showUnlisted kept for backward compatibility
     // When sorting by price, we should only show listings
-    // When showListings is explicitly true, filter to active listings
-    // When showUnlisted is explicitly true, filter to names WITHOUT active listings
-    if (showListings === true || showListings === 'true' || sortBy === 'price') {
+    if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price') {
       filter.push({ term: { status: 'active' } });
-    } else if (showUnlisted === true || showUnlisted === 'true') {
+    } else if (listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true') {
       filter.push({
         bool: {
           must_not: [
             { term: { status: 'active' } }
           ]
+        }
+      });
+    }
+
+    // Filter by offer status
+    // hasOffer=true: names with offers, hasOffer=false: names without offers
+    if (hasOffer === 'true' || hasOffer === true) {
+      filter.push({
+        bool: {
+          must: [
+            { exists: { field: 'highest_offer' } },
+            { range: { highest_offer: { gt: 0 } } }
+          ]
+        }
+      });
+    } else if (hasOffer === 'false' || hasOffer === false) {
+      filter.push({
+        bool: {
+          should: [
+            { bool: { must_not: { exists: { field: 'highest_offer' } } } },
+            { range: { highest_offer: { lte: 0 } } }
+          ],
+          minimum_should_match: 1
         }
       });
     }
@@ -212,14 +294,154 @@ export async function searchRoutes(fastify: FastifyInstance) {
       });
     }
 
-    // Add emoji filter
+    // Add contains filter - exact substring match
+    if (contains) {
+      const normalizedContains = contains.toLowerCase();
+      filter.push({
+        wildcard: {
+          'name.keyword': {
+            value: `*${normalizedContains}*`,
+            case_insensitive: true
+          }
+        }
+      });
+    }
+
+    // Add startsWith filter - prefix match
+    if (startsWith) {
+      const normalizedStartsWith = startsWith.toLowerCase();
+      filter.push({
+        prefix: {
+          'name.keyword': {
+            value: normalizedStartsWith,
+            case_insensitive: true
+          }
+        }
+      });
+    }
+
+    // Add endsWith filter - suffix match (before .eth)
+    if (endsWith) {
+      const normalizedEndsWith = endsWith.toLowerCase();
+      filter.push({
+        wildcard: {
+          'name.keyword': {
+            value: `*${normalizedEndsWith}.eth`,
+            case_insensitive: true
+          }
+        }
+      });
+    }
+
+    // Legacy emoji filter (kept for backward compatibility)
     if (hasEmoji !== undefined) {
       filter.push({ term: { has_emoji: hasEmoji === 'true' || hasEmoji === true } });
     }
 
-    // Add numbers filter
+    // Legacy numbers filter (kept for backward compatibility)
     if (hasNumbers !== undefined) {
       filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
+    }
+
+    // Tri-state digits filter: allowed (default), exclude, only
+    if (digits === 'exclude') {
+      // No digits allowed
+      filter.push({ term: { has_numbers: false } });
+    } else if (digits === 'only') {
+      // Only digits (0-9) - no letters, no emoji
+      filter.push({
+        script: {
+          script: {
+            source: "/^[0-9]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
+            lang: 'painless',
+          },
+        },
+      });
+    }
+
+    // Tri-state letters filter: allowed (default), exclude, only
+    if (letters === 'exclude') {
+      // No letters allowed
+      filter.push({
+        script: {
+          script: {
+            source: "!(/[a-zA-Z]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
+            lang: 'painless',
+          },
+        },
+      });
+    } else if (letters === 'only') {
+      // Only letters (a-z)
+      filter.push({
+        script: {
+          script: {
+            source: "/^[a-zA-Z]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
+            lang: 'painless',
+          },
+        },
+      });
+    }
+
+    // Tri-state emoji filter: allowed (default), exclude, only
+    if (emoji === 'exclude') {
+      // No emoji allowed
+      filter.push({ term: { has_emoji: false } });
+    } else if (emoji === 'only') {
+      // Only emoji - has emoji AND no letters AND no digits
+      filter.push({ term: { has_emoji: true } });
+      filter.push({
+        script: {
+          script: {
+            source: "!(/[a-zA-Z0-9]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
+            lang: 'painless',
+          },
+        },
+      });
+    }
+
+    // Tri-state repeatingChars filter: allowed (default), exclude, only
+    // "only" means ALL characters are the same (e.g., "99999", "aaaa", "🔥🔥🔥")
+    // "exclude" means NOT all characters are the same
+    if (repeatingChars === 'exclude') {
+      // Exclude names where all characters are the same
+      filter.push({
+        script: {
+          script: {
+            source: `
+              def label = doc['name.keyword'].value.replace('.eth', '');
+              if (label.length() == 0) return true;
+              def firstChar = label.charAt(0);
+              for (int i = 1; i < label.length(); i++) {
+                if (label.charAt(i) != firstChar) {
+                  return true;
+                }
+              }
+              return false;
+            `,
+            lang: 'painless',
+          },
+        },
+      });
+    } else if (repeatingChars === 'only') {
+      // Only names where all characters are the same
+      filter.push({
+        script: {
+          script: {
+            source: `
+              def label = doc['name.keyword'].value.replace('.eth', '');
+              if (label.length() == 0) return false;
+              def firstChar = label.charAt(0);
+              for (int i = 1; i < label.length(); i++) {
+                if (label.charAt(i) != firstChar) {
+                  return false;
+                }
+              }
+              return true;
+            `,
+            lang: 'painless',
+          },
+        },
+      });
     }
 
     // Add clubs filter
@@ -227,42 +449,110 @@ export async function searchRoutes(fastify: FastifyInstance) {
       filter.push({ terms: { clubs: clubs } });
     }
 
+    // Add inAnyClub filter - matches names that belong to at least one club
+    if (inAnyClub !== undefined) {
+      const wantInClub = inAnyClub === 'true' || inAnyClub === true;
+      if (wantInClub) {
+        // Has at least one club membership
+        filter.push({ exists: { field: 'clubs' } });
+      } else {
+        // Not in any club
+        filter.push({ bool: { must_not: { exists: { field: 'clubs' } } } });
+      }
+    }
+
     // Add owner filter
     if (resolvedOwnerAddress) {
       filter.push({ term: { owner: resolvedOwnerAddress } });
     }
 
-    // Expiration filters - exclude names without expiry dates (placeholders)
-    if (isExpired !== undefined) {
-      filter.push({ term: { is_expired: isExpired === 'true' || isExpired === true } });
+    // Unified status filter - single filter for expiration states
+    // Values: registered, grace, premium, available
+    if (status && status !== 'all') {
       filter.push({ exists: { field: 'expiry_date' } });
+      if (status === 'registered') {
+        // Registered: expiry_date > now (not expired)
+        filter.push({ range: { expiry_date: { gt: 'now' } } });
+      } else if (status === 'grace') {
+        // Grace period: expired within last 90 days
+        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+      } else if (status === 'premium') {
+        // Premium period: expired 90-111 days ago (Dutch auction)
+        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+      } else if (status === 'available') {
+        // Available: expired more than 111 days ago (fully expired)
+        filter.push({ range: { expiry_date: { lte: 'now-111d' } } });
+      }
+    }
+
+    // Legacy expiration filters - kept for backward compatibility
+    // Use dynamic date calculations instead of stale ES boolean fields
+    // ENS expiration states:
+    // - Not expired: expiry_date > now
+    // - Expired (grace period): expiry_date <= now AND expiry_date > now - 90 days
+    // - Expired (premium period): expiry_date <= now - 90 days AND expiry_date > now - 111 days
+    // - Fully expired: expiry_date <= now - 111 days
+    if (isExpired !== undefined) {
+      const wantExpired = isExpired === 'true' || isExpired === true;
+      filter.push({ exists: { field: 'expiry_date' } });
+      if (wantExpired) {
+        // Expired: expiry_date is in the past
+        filter.push({ range: { expiry_date: { lte: 'now' } } });
+      } else {
+        // Not expired: expiry_date is in the future
+        filter.push({ range: { expiry_date: { gt: 'now' } } });
+      }
     }
 
     if (isGracePeriod !== undefined) {
-      filter.push({ term: { is_grace_period: isGracePeriod === 'true' || isGracePeriod === true } });
+      const wantGracePeriod = isGracePeriod === 'true' || isGracePeriod === true;
       filter.push({ exists: { field: 'expiry_date' } });
+      if (wantGracePeriod) {
+        // In grace period: expired but within 90 days of expiry
+        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+      } else {
+        // Not in grace period: either not expired OR past grace period
+        filter.push({
+          bool: {
+            should: [
+              { range: { expiry_date: { gt: 'now' } } },  // Not expired
+              { range: { expiry_date: { lte: 'now-90d' } } }  // Past grace period
+            ],
+            minimum_should_match: 1
+          }
+        });
+      }
     }
 
     if (isPremiumPeriod !== undefined) {
-      filter.push({ term: { is_premium_period: isPremiumPeriod === 'true' || isPremiumPeriod === true } });
+      const wantPremiumPeriod = isPremiumPeriod === 'true' || isPremiumPeriod === true;
       filter.push({ exists: { field: 'expiry_date' } });
+      if (wantPremiumPeriod) {
+        // In premium period: 90-111 days after expiry (21 day Dutch auction)
+        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+      } else {
+        // Not in premium period: not expired, in grace period, or fully expired
+        filter.push({
+          bool: {
+            should: [
+              { range: { expiry_date: { gt: 'now-90d' } } },  // Not expired or in grace
+              { range: { expiry_date: { lte: 'now-111d' } } }  // Past premium period
+            ],
+            minimum_should_match: 1
+          }
+        });
+      }
     }
 
     if (expiringWithinDays !== undefined) {
-      // Filter for names expiring within X days (positive number, not yet expired)
-      // Only include names with valid expiry dates
+      // Filter for names expiring within X days (not yet expired)
+      // Use dynamic date range instead of stale days_until_expiry field
+      const days = parseInt(expiringWithinDays);
       filter.push({
         bool: {
           must: [
             { exists: { field: 'expiry_date' } },
-            {
-              range: {
-                days_until_expiry: {
-                  gte: 0,
-                  lte: parseInt(expiringWithinDays),
-                },
-              },
-            },
+            { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
           ],
         },
       });
@@ -294,20 +584,26 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     if (minDaysSinceLastSale !== undefined) {
+      // Use dynamic date calculation instead of stale days_since_last_sale field
+      // minDaysSinceLastSale=30 means "sold at least 30 days ago" -> last_sale_date <= now-30d
+      const days = parseInt(minDaysSinceLastSale as any);
       filter.push({
         range: {
-          days_since_last_sale: {
-            gte: parseInt(minDaysSinceLastSale as any),
+          last_sale_date: {
+            lte: `now-${days}d`,
           },
         },
       });
     }
 
     if (maxDaysSinceLastSale !== undefined) {
+      // Use dynamic date calculation instead of stale days_since_last_sale field
+      // maxDaysSinceLastSale=90 means "sold within last 90 days" -> last_sale_date >= now-90d
+      const days = parseInt(maxDaysSinceLastSale as any);
       filter.push({
         range: {
-          days_since_last_sale: {
-            lte: parseInt(maxDaysSinceLastSale as any),
+          last_sale_date: {
+            gte: `now-${days}d`,
           },
         },
       });
@@ -320,9 +616,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Special handling for fields that may have null values
       if (sortBy === 'price') {
-        // Sort by listing price
         sort.push({
-          'price': {
+          'price_usd': {
             order,
             missing: '_last'  // Put documents without listings at the end
           }
@@ -344,11 +639,19 @@ export async function searchRoutes(fastify: FastifyInstance) {
             missing: '_last'
           }
         });
+      } else if (sortBy === 'alphabetical') {
+        // Sort by name alphabetically
+        sort.push({ 'name.keyword': { order } });
       } else {
         sort.push({ [sortBy]: { order } });
       }
+    } else if (q) {
+      // When there's a search query, always sort by relevance score first
+      sort.push({ _score: { order: 'desc' } });
+      // Use name as tiebreaker for stable ordering
+      sort.push({ 'name.keyword': { order: 'asc' } });
     } else if (resolvedOwnerAddress) {
-      // When filtering by owner without explicit sort, use a stable alphabetical sort by name
+      // When filtering by owner without a search query, use stable alphabetical sort by name
       // This prevents documents from moving around due to ES internal state changes
       sort.push({ 'name.keyword': { order: 'asc' } });
     } else {
@@ -397,16 +700,6 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const esResult = await es.search(esQuery);
 
       fastify.log.info('Elasticsearch returned results');
-
-      // Debug: Check first 5 results when sorting by price
-      if (sortBy === 'price' && esResult.hits.hits.length > 0) {
-        const first5 = esResult.hits.hits.slice(0, 5).map((hit: any) => ({
-          name: hit._source.name,
-          price: hit._source.price,
-          status: hit._source.status
-        }));
-        fastify.log.info(`First 5 ES results: ${JSON.stringify(first5)}`);
-      }
 
       // Extract ENS names from Elasticsearch results
       const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
@@ -495,15 +788,19 @@ export async function searchRoutes(fastify: FastifyInstance) {
     if (usePostgresql) {
 
       // Fallback to PostgreSQL-based search
-      // showListings=true means only show names with active listings (opposite of old showAll)
-      // showUnlisted=true means only show names WITHOUT active listings
-      const listingsOnly = showListings === true || showListings === 'true';
-      const unlistedOnly = showUnlisted === true || showUnlisted === 'true';
+      // Unified listed filter: true = only listed, false = only unlisted
+      // Legacy showListings/showUnlisted kept for backward compatibility
+      // Marketplace filter implies listingsOnly since it filters by listing source
+      const hasMarketplaceFilter = marketplace && marketplace !== 'all';
+      const listingsOnly = listed === 'true' || listed === true || showListings === true || showListings === 'true' || hasMarketplaceFilter;
+      const unlistedOnly = listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true';
       let whereConditions: string[] = [];
       let params: any[] = [];
       let paramCount = 1;
 
-      if (includeExpired !== true && includeExpired !== 'true') {
+      // Skip the default "exclude expired names" filter if user is explicitly filtering by status
+      const pgHasExplicitExpirationFilter = status !== undefined && status !== 'all';
+      if (includeExpired !== true && includeExpired !== 'true' && !pgHasExplicitExpirationFilter) {
         whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
       }
 
@@ -515,12 +812,43 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`l.status = $${paramCount}`);
         params.push('active');
         paramCount++;
-      } else if (unlistedOnly) {
+      }
+
+      // Marketplace filter - filter by listing source
+      // Note: marketplace filter now implies listingsOnly (set above), so l.status = 'active' is already handled
+      if (marketplace === 'grails') {
+        whereConditions.push(`l.source = $${paramCount}`);
+        params.push('grails');
+        paramCount++;
+      } else if (marketplace === 'opensea') {
+        whereConditions.push(`l.source = $${paramCount}`);
+        params.push('opensea');
+        paramCount++;
+      }
+
+      if (unlistedOnly) {
         // Only show names that don't have an active listing
         whereConditions.push(`(l.id IS NULL OR l.status != 'active')`);
       }
 
       fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
+
+      // Add unified status filter
+      if (status && status !== 'all') {
+        if (status === 'registered') {
+          // Registered: expiry_date > now
+          whereConditions.push(`en.expiry_date > NOW()`);
+        } else if (status === 'grace') {
+          // Grace period: expired within last 90 days
+          whereConditions.push(`en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days'`);
+        } else if (status === 'premium') {
+          // Premium period: expired 90-111 days ago
+          whereConditions.push(`en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days'`);
+        } else if (status === 'available') {
+          // Available: expired more than 111 days ago
+          whereConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+        }
+      }
 
       // Add name search condition
       if (q && q.trim()) {
@@ -557,6 +885,34 @@ export async function searchRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
+      // Add contains filter - exact substring match
+      if (contains) {
+        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        params.push(`%${contains.toLowerCase()}%`);
+        paramCount++;
+      }
+
+      // Add startsWith filter - prefix match
+      if (startsWith) {
+        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        params.push(`${startsWith.toLowerCase()}%`);
+        paramCount++;
+      }
+
+      // Add endsWith filter - suffix match (before .eth)
+      if (endsWith) {
+        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        params.push(`%${endsWith.toLowerCase()}.eth`);
+        paramCount++;
+      }
+
+      // Add hasOffer filter
+      if (hasOffer === 'true' || hasOffer === true) {
+        whereConditions.push(`en.highest_offer_wei IS NOT NULL AND CAST(en.highest_offer_wei AS NUMERIC) > 0`);
+      } else if (hasOffer === 'false' || hasOffer === false) {
+        whereConditions.push(`(en.highest_offer_wei IS NULL OR CAST(en.highest_offer_wei AS NUMERIC) <= 0)`);
+      }
+
       // Add emoji filter
       if (hasEmoji !== undefined) {
         whereConditions.push(`en.has_emoji = $${paramCount}`);
@@ -569,6 +925,43 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`en.has_numbers = $${paramCount}`);
         params.push(hasNumbers === 'true' || hasNumbers === true);
         paramCount++;
+      }
+
+      // Tri-state digits filter: allowed (default), exclude, only
+      if (digits === 'exclude') {
+        whereConditions.push(`en.has_numbers = false`);
+      } else if (digits === 'only') {
+        // Only digits (0-9) - regex check
+        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^[0-9]+$'`);
+      }
+
+      // Tri-state letters filter: allowed (default), exclude, only
+      if (letters === 'exclude') {
+        // No letters allowed
+        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '[a-zA-Z]'`);
+      } else if (letters === 'only') {
+        // Only letters (a-z)
+        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^[a-zA-Z]+$'`);
+      }
+
+      // Tri-state emoji filter: allowed (default), exclude, only
+      if (emoji === 'exclude') {
+        whereConditions.push(`en.has_emoji = false`);
+      } else if (emoji === 'only') {
+        // Only emoji - has emoji AND no letters AND no digits
+        whereConditions.push(`en.has_emoji = true`);
+        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '[a-zA-Z0-9]'`);
+      }
+
+      // Tri-state repeatingChars filter: allowed (default), exclude, only
+      // "only" means ALL characters are the same (e.g., "99999", "aaaa")
+      // "exclude" means NOT all characters are the same
+      if (repeatingChars === 'exclude') {
+        // Exclude names where all characters are the same
+        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '^(.)\\1*$'`);
+      } else if (repeatingChars === 'only') {
+        // Only names where all characters are the same
+        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^(.)\\1*$'`);
       }
 
       // Add owner filter
@@ -607,6 +1000,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'character_count') {
         // Use alias from SELECT clause to avoid DISTINCT conflict
         orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+      } else if (sortBy === 'alphabetical') {
+        // Sort by name alphabetically
+        orderByClause = `ORDER BY en.name ${sqlOrder}`;
       } else {
         // Default sorting
         orderByClause = listingsOnly ? 'ORDER BY l.created_at DESC' : 'ORDER BY en.name ASC';
@@ -644,6 +1040,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
       } else if (sortBy === 'offer') {
         selectClause = 'DISTINCT en.name, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort';
+      } else if (listingsOnly && !sortBy) {
+        // Default sort for listings-only queries is l.created_at, must include it in SELECT
+        selectClause = 'DISTINCT en.name, l.created_at';
       }
 
       const dataQuery = listingsOnly ? `
@@ -719,6 +1118,158 @@ export async function searchRoutes(fastify: FastifyInstance) {
           },
         });
       }
+    }
+  });
+
+  // Bulk exact search endpoint - searches for exact matches on multiple terms
+  // POST /api/v1/search/bulk-exact
+  fastify.post('/bulk', { preHandler: optionalAuth }, async (request, reply) => {
+    try {
+      // Validate request body
+      const parseResult = BulkExactSearchSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request body',
+            details: parseResult.error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const { terms, page, limit } = parseResult.data;
+      const total = terms.length;
+      const totalPages = Math.ceil(total / limit);
+      const offset = (page - 1) * limit;
+
+      // Paginate the input terms
+      const paginatedTerms = terms.slice(offset, offset + limit);
+
+      fastify.log.info(`Bulk exact search request: ${total} total terms, page ${page}/${totalPages}, showing ${paginatedTerms.length} terms`);
+
+      // Normalize terms - add .eth suffix if not present for exact matching
+      const normalizedTerms = paginatedTerms.map(term => {
+        const lower = term.toLowerCase().trim();
+        return lower.endsWith('.eth') ? lower : `${lower}.eth`;
+      });
+
+      // Build Elasticsearch query for exact keyword matches
+      const esQuery = {
+        index: 'ens_names',
+        body: {
+          query: {
+            bool: {
+              filter: [
+                // Exact match on name.keyword for each term
+                {
+                  terms: {
+                    'name.keyword': normalizedTerms,
+                  },
+                },
+                // Exclude placeholder names
+                {
+                  bool: {
+                    must_not: [
+                      { prefix: { 'name.keyword': 'token-' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+          size: normalizedTerms.length, // We want at most one result per term
+        },
+      };
+
+      let foundNames: string[] = [];
+
+      try {
+        const esResult = await es.search(esQuery);
+        foundNames = esResult.hits.hits.map((hit: any) => hit._source.name.toLowerCase());
+        fastify.log.info(`Elasticsearch found ${foundNames.length} exact matches`);
+      } catch (esError: any) {
+        fastify.log.warn('Elasticsearch bulk exact search failed, falling back to PostgreSQL:', esError.message);
+
+        // Fallback to PostgreSQL
+        const placeholders = normalizedTerms.map((_, i) => `$${i + 1}`).join(',');
+        const pgQuery = `
+          SELECT LOWER(name) as name
+          FROM ens_names
+          WHERE LOWER(name) IN (${placeholders})
+            AND name NOT LIKE 'token-%'
+        `;
+        const pgResult = await pool.query(pgQuery, normalizedTerms);
+        foundNames = pgResult.rows.map((row: any) => row.name);
+        fastify.log.info(`PostgreSQL found ${foundNames.length} exact matches`);
+      }
+
+      // Create a set for quick lookup
+      const foundNamesSet = new Set(foundNames);
+
+      // Get user ID if authenticated
+      const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+      // Build enriched results for found names
+      const enrichedResults = foundNames.length > 0
+        ? await buildSearchResults(foundNames, userId)
+        : [];
+
+      // Create a map of name -> enriched result for quick lookup
+      const resultsMap = new Map<string, SearchResult>();
+      for (const result of enrichedResults) {
+        resultsMap.set(result.name.toLowerCase(), result);
+      }
+
+      // Build response array preserving original term order
+      // Returns standard SearchResult format - placeholder objects for not-found terms
+      const results: SearchResult[] = normalizedTerms.map((normalizedTerm, index) => {
+        const originalTerm = paginatedTerms[index];
+        const found = foundNamesSet.has(normalizedTerm);
+
+        if (found) {
+          const data = resultsMap.get(normalizedTerm);
+          return data!;
+        } else {
+          return createNotFoundResult(originalTerm);
+        }
+      });
+
+      const response: APIResponse<{ results: SearchResult[]; pagination: any }> = {
+        success: true,
+        data: {
+          results,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error({ error }, 'Bulk exact search failed');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'SEARCH_ERROR',
+          message: 'Bulk exact search failed',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
     }
   });
 }

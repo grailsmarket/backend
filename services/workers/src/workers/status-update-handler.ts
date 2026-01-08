@@ -197,7 +197,7 @@ export async function updateOfferStatus(
       if (updateResult.rows.length > 0) {
         // Get offer details for notification
         const offer = await pool.query(`
-          SELECT o.buyer_address, en.name, o.price_wei, o.currency_address
+          SELECT o.buyer_address, en.name, o.offer_amount_wei, o.currency_address
           FROM offers o
           JOIN ens_names en ON en.id = o.ens_name_id
           WHERE o.id = $1

@@ -66,6 +66,10 @@ const ConfigSchema = z.object({
     enabled: z.boolean().default(true),
     cacheTtlSeconds: z.number().default(15),
   }),
+  poap: z.object({
+    apiKey: z.string().optional(),
+    collectionIds: z.array(z.string()).default(['213962', '219949']),
+  }),
 });
 
 const rawConfig = {
@@ -84,7 +88,7 @@ const rawConfig = {
     ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
     seaportAddress: process.env.SEAPORT_ADDRESS,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
-    confirmations: parseInt(process.env.CONFIRMATIONS || '12'),
+    confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
   },
   opensea: {
     apiKey: process.env.OPENSEA_API_KEY,
@@ -124,6 +128,12 @@ const rawConfig = {
     url: process.env.REDIS_URL,
     enabled: process.env.REDIS_ENABLED !== 'false',
     cacheTtlSeconds: process.env.CACHE_TTL_SECONDS ? parseInt(process.env.CACHE_TTL_SECONDS) : 15,
+  },
+  poap: {
+    apiKey: process.env.POAP_API_KEY,
+    collectionIds: process.env.POAP_COLLECTION_IDS
+      ? process.env.POAP_COLLECTION_IDS.split(',')
+      : ['213962', '219949'],
   },
 };
 
