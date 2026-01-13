@@ -559,7 +559,31 @@ export class ENSIndexer {
           nameToStore = resolvedData.name;
           registrationDate = resolvedData.registrationDate;
         } else {
-          // Can't resolve name - skip this registration
+          // The Graph lookup failed - this can happen due to race conditions where
+          // The Graph hasn't indexed this block yet. Check if we already have this
+          // token in our database and update the expiry from the event data.
+          const existingName = await this.pool.query(
+            'SELECT id, name FROM ens_names WHERE token_id = $1',
+            [tokenIdStr]
+          );
+
+          if (existingName.rows.length > 0) {
+            // We have this token already - update expiry from blockchain event data
+            const expiryFromEvent = new Date(Number(expires) * 1000);
+            await this.pool.query(
+              `UPDATE ens_names SET
+                expiry_date = $1,
+                owner_address = $2,
+                registrant = $2,
+                updated_at = NOW()
+              WHERE token_id = $3`,
+              [expiryFromEvent, owner.toLowerCase(), tokenIdStr]
+            );
+            logger.info(`Graph lookup failed but updated existing token ${tokenIdStr} (${existingName.rows[0].name}) with expiry ${expiryFromEvent.toISOString()} from NameRegistered event`);
+            return;
+          }
+
+          // Can't resolve name and don't have it in DB - skip this registration
           logger.warn(`Could not resolve name for registration token ${tokenIdStr}, skipping NameRegistered event`);
           return;
         }

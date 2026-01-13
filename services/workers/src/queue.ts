@@ -98,4 +98,5 @@ export const QUEUE_NAMES = {
   BATCH_RESOLVE_NAMES: 'batch-resolve-names',
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
+  RECONCILE_OPENSEA: 'reconcile-opensea',
 } as const;
