@@ -861,6 +861,78 @@ describe('Search API Filters', () => {
         expect(label.endsWith(suffix.toLowerCase())).toBe(true);
       }
     });
+
+    it('doesNotContain filter returns names NOT containing substring', async () => {
+      const substring = 'a';
+      const { data } = await search(`filters[doesNotContain]=${substring}&limit=50`);
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label).not.toContain(substring.toLowerCase());
+      }
+    });
+
+    it('doesNotStartWith filter returns names NOT starting with prefix', async () => {
+      const prefix = 'a';
+      const { data } = await search(`filters[doesNotStartWith]=${prefix}&limit=50`);
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.startsWith(prefix.toLowerCase())).toBe(false);
+      }
+    });
+
+    it('doesNotEndWith filter returns names NOT ending with suffix (before .eth)', async () => {
+      const suffix = 'a';
+      const { data } = await search(`filters[doesNotEndWith]=${suffix}&limit=50`);
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.endsWith(suffix.toLowerCase())).toBe(false);
+      }
+    });
+
+    it('doesNotContain combined with contains filter', async () => {
+      // Names containing "the" but not containing "ther"
+      const { data } = await search(`filters[contains]=the&filters[doesNotContain]=ther&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label).toContain('the');
+        expect(label).not.toContain('ther');
+      }
+    });
+
+    it('doesNotStartWith combined with startsWith filter', async () => {
+      // Names starting with "a" but not starting with "ab"
+      const { data } = await search(`filters[startsWith]=a&filters[doesNotStartWith]=ab&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.startsWith('a')).toBe(true);
+        expect(label.startsWith('ab')).toBe(false);
+      }
+    });
+
+    it('doesNotEndWith combined with endsWith filter', async () => {
+      // Names ending with "n" but not ending with "on"
+      const { data } = await search(`filters[endsWith]=n&filters[doesNotEndWith]=on&limit=50`);
+      // May have no matching names
+      if (data?.results.length === 0) return;
+
+      for (const result of data!.results) {
+        const label = getLabel(result.name).toLowerCase();
+        expect(label.endsWith('n')).toBe(true);
+        expect(label.endsWith('on')).toBe(false);
+      }
+    });
   });
 
   describe('Sorting', () => {

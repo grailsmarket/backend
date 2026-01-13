@@ -110,7 +110,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
+    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -170,11 +170,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
     const filter: any[] = [];
 
     // Exclude placeholder names from all searches
-    // Only exclude token-* prefixes, not numeric names (which are valid ENS names in clubs like 999, 10k)
+    // Only exclude token-* and [hash].eth prefixes (invalid non-normalized names)
+    // Not numeric names (which are valid ENS names in clubs like 999, 10k)
     filter.push({
       bool: {
         must_not: [
-          { prefix: { 'name.keyword': 'token-' } }
+          { prefix: { 'name.keyword': 'token-' } },
+          { prefix: { 'name.keyword': '[' } }
         ]
       }
     });
@@ -196,12 +198,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     // Exclude subnames - only match *.eth pattern (not *.*.eth or deeper)
-    // Also exclude placeholder names (token-*) that haven't been resolved yet
+    // Also exclude placeholder names (token-* and [hash].eth) that haven't been resolved yet
     filter.push({
       bool: {
         must_not: [
           { wildcard: { 'name.keyword': '*.*.eth' } },
-          { prefix: { 'name.keyword': 'token-' } }
+          { prefix: { 'name.keyword': 'token-' } },
+          { prefix: { 'name.keyword': '[' } }
         ]
       }
     });
@@ -328,6 +331,57 @@ export async function searchRoutes(fastify: FastifyInstance) {
           'name.keyword': {
             value: `*${normalizedEndsWith}.eth`,
             case_insensitive: true
+          }
+        }
+      });
+    }
+
+    // Add doesNotContain filter - exclude names containing substring
+    if (doesNotContain) {
+      const normalizedDoesNotContain = doesNotContain.toLowerCase();
+      filter.push({
+        bool: {
+          must_not: {
+            wildcard: {
+              'name.keyword': {
+                value: `*${normalizedDoesNotContain}*`,
+                case_insensitive: true
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Add doesNotStartWith filter - exclude names starting with prefix
+    if (doesNotStartWith) {
+      const normalizedDoesNotStartWith = doesNotStartWith.toLowerCase();
+      filter.push({
+        bool: {
+          must_not: {
+            wildcard: {
+              'name.keyword': {
+                value: `${normalizedDoesNotStartWith}*`,
+                case_insensitive: true
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Add doesNotEndWith filter - exclude names ending with suffix (before .eth)
+    if (doesNotEndWith) {
+      const normalizedDoesNotEndWith = doesNotEndWith.toLowerCase();
+      filter.push({
+        bool: {
+          must_not: {
+            wildcard: {
+              'name.keyword': {
+                value: `*${normalizedDoesNotEndWith}.eth`,
+                case_insensitive: true
+              }
+            }
           }
         }
       });
@@ -704,10 +758,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Extract ENS names from Elasticsearch results
       const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
 
-      // Filter out placeholder names (token-###)
+      // Filter out placeholder names (token-### and [hash].eth)
       // Note: Numeric names like 0000.eth are valid ENS names (999 club, 10k club, etc.)
       const ensNames = allNames.filter((name: string) => {
-        return name && !name.startsWith('token-');
+        return name && !name.startsWith('token-') && !name.startsWith('[');
       });
 
       fastify.log.info(`ES returned ${allNames.length} names, ${ensNames.length} after filtering placeholders. First 5: ${JSON.stringify(ensNames.slice(0, 5))}`);
@@ -807,6 +861,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Exclude subnames - only show *.eth pattern (not *.*.eth or deeper)
       whereConditions.push(`en.name NOT LIKE '%.%.eth'`);
 
+      // Exclude placeholder names (token-* and [hash].eth)
+      whereConditions.push(`en.name NOT LIKE 'token-%'`);
+      whereConditions.push(`en.name NOT LIKE '[%'`);
+
       // Filter by listing status
       if (listingsOnly) {
         whereConditions.push(`l.status = $${paramCount}`);
@@ -903,6 +961,27 @@ export async function searchRoutes(fastify: FastifyInstance) {
       if (endsWith) {
         whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
         params.push(`%${endsWith.toLowerCase()}.eth`);
+        paramCount++;
+      }
+
+      // Add doesNotContain filter - exclude names containing substring
+      if (doesNotContain) {
+        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        params.push(`%${doesNotContain.toLowerCase()}%`);
+        paramCount++;
+      }
+
+      // Add doesNotStartWith filter - exclude names starting with prefix
+      if (doesNotStartWith) {
+        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        params.push(`${doesNotStartWith.toLowerCase()}%`);
+        paramCount++;
+      }
+
+      // Add doesNotEndWith filter - exclude names ending with suffix (before .eth)
+      if (doesNotEndWith) {
+        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        params.push(`%${doesNotEndWith.toLowerCase()}.eth`);
         paramCount++;
       }
 
@@ -1175,6 +1254,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
                   bool: {
                     must_not: [
                       { prefix: { 'name.keyword': 'token-' } },
+                      { prefix: { 'name.keyword': '[' } },
                     ],
                   },
                 },
@@ -1201,6 +1281,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           FROM ens_names
           WHERE LOWER(name) IN (${placeholders})
             AND name NOT LIKE 'token-%'
+            AND name NOT LIKE '[%'
         `;
         const pgResult = await pool.query(pgQuery, normalizedTerms);
         foundNames = pgResult.rows.map((row: any) => row.name);
