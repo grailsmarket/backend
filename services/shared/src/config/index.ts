@@ -70,6 +70,9 @@ const ConfigSchema = z.object({
     apiKey: z.string().optional(),
     collectionIds: z.array(z.string()).default(['213962', '219949']),
   }),
+  broker: z.object({
+    minFeeBasisPoints: z.number().min(0).max(10000).default(100), // Default 1% minimum
+  }),
 });
 
 const rawConfig = {
@@ -134,6 +137,9 @@ const rawConfig = {
     collectionIds: process.env.POAP_COLLECTION_IDS
       ? process.env.POAP_COLLECTION_IDS.split(',')
       : ['213962', '219949'],
+  },
+  broker: {
+    minFeeBasisPoints: parseInt(process.env.BROKER_MIN_FEE_BASIS_POINTS || '100'),
   },
 };
 
