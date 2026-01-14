@@ -16,6 +16,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables
+dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config();
 
 const API_BASE = 'http://localhost:3000/api/v1/brokered-listings';
 
@@ -33,14 +40,18 @@ const TEST_SELLER_ADDRESSES = [
   '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 ];
 
+// Helper to get database pool
+async function getPool() {
+  const { Pool } = await import('pg');
+  return new Pool({
+    connectionString: process.env.DATABASE_URL,
+  });
+}
+
 // Helper to clean up test data via direct database connection
 async function cleanupTestListings(): Promise<void> {
   try {
-    // Dynamic import to avoid issues if pg isn't available in test context
-    const { Pool } = await import('pg');
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    });
+    const pool = await getPool();
 
     // Delete listings created by test seller addresses with broker_address set
     await pool.query(`
@@ -53,12 +64,47 @@ async function cleanupTestListings(): Promise<void> {
     await pool.query(`
       DELETE FROM ens_names
       WHERE token_id LIKE '123456789%'
-      AND owner_address = ANY($1)
-    `, [TEST_SELLER_ADDRESSES]);
+    `);
 
     await pool.end();
   } catch (error) {
     console.warn('Test cleanup failed (non-critical):', error);
+  }
+}
+
+// Helper to create test ENS name records in the database
+async function createTestEnsNames(): Promise<void> {
+  try {
+    const pool = await getPool();
+
+    // Create ENS name records for all the test token IDs we'll use
+    // Use unique names based on full token_id to avoid duplicate name constraint
+    const testTokenIds = [
+      TEST_TOKEN_ID,          // Base test token
+      TEST_TOKEN_ID + '1',    // For minimum fee test
+      TEST_TOKEN_ID + '2',    // For address normalization test
+      TEST_TOKEN_ID + '3',    // For large fee test
+      TEST_TOKEN_ID + '4',    // For complex consideration test
+      TEST_TOKEN_ID + '5',    // For duplicate order_hash test
+    ];
+
+    for (const tokenId of testTokenIds) {
+      // Use full token_id in name to ensure uniqueness (name column has unique constraint)
+      const uniqueName = `brokertest-${tokenId.slice(-12)}.eth`;
+      await pool.query(`
+        INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        ON CONFLICT (token_id) DO UPDATE SET
+          name = EXCLUDED.name,
+          owner_address = EXCLUDED.owner_address,
+          updated_at = NOW()
+      `, [tokenId, uniqueName, TEST_SELLER.toLowerCase()]);
+    }
+
+    await pool.end();
+  } catch (error) {
+    console.warn('Failed to create test ENS names:', error);
+    throw error;
   }
 }
 
@@ -170,10 +216,14 @@ async function apiRequest(
 describe('Brokered Listings API', () => {
   let minFeeBps: number;
 
-  // Verify server is running and get config
+  // Verify server is running and set up test data
   beforeAll(async () => {
     // Clean up any leftover test data from previous runs
     await cleanupTestListings();
+
+    // Create ENS name records needed for the tests
+    await createTestEnsNames();
+
     try {
       const response = await fetch(`${API_BASE}/config`);
       if (!response.ok) {
@@ -382,6 +432,29 @@ describe('Brokered Listings API', () => {
 
         expect(status).toBe(400);
         expect(data.success).toBe(false);
+      });
+
+      it('returns 404 when ENS name does not exist', async () => {
+        const nonExistentTokenId = '99999999999999999999999999999999999999999999999999999999999999999';
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei: '25000000000000000',
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: nonExistentTokenId,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(404);
+        expect(data.success).toBe(false);
+        expect(data.error!.code).toBe('ENS_NAME_NOT_FOUND');
       });
     });
 

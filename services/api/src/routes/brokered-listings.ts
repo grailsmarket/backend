@@ -100,60 +100,22 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Ensure ENS name exists or create it
-      let ensNameId: number | null = null;
-
+      // Look up the ENS name by token_id - it must already exist in the database
       const ensQuery = `SELECT id, name FROM ens_names WHERE token_id = $1 LIMIT 1`;
       const ensResult = await pool.query(ensQuery, [body.token_id]);
 
-      if (ensResult.rows.length > 0) {
-        ensNameId = ensResult.rows[0].id;
-      } else {
-        // Fetch ENS name from The Graph subgraph
-        let ensName = `token-${body.token_id}.eth`;
-
-        try {
-          const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query: `
-                query GetDomain($tokenId: String!) {
-                  domain(id: $tokenId) {
-                    name
-                    labelhash
-                  }
-                }
-              `,
-              variables: {
-                tokenId: '0x' + BigInt(body.token_id).toString(16).padStart(64, '0'),
-              },
-            }),
-          });
-
-          if (subgraphResponse.ok) {
-            const subgraphData: any = await subgraphResponse.json();
-            if (subgraphData.data?.domain?.name) {
-              ensName = subgraphData.data.domain.name;
-            }
-          }
-        } catch (error: any) {
-          fastify.log.warn(`Failed to fetch ENS name for token ${body.token_id}:`, error);
-        }
-
-        // Create ENS name record
-        const insertEnsQuery = `
-          INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
-          VALUES ($1, $2, $3, NOW(), NOW())
-          RETURNING id
-        `;
-        const insertResult = await pool.query(insertEnsQuery, [
-          body.token_id,
-          ensName,
-          body.seller_address.toLowerCase(),
-        ]);
-        ensNameId = insertResult.rows[0].id;
+      if (ensResult.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'ENS_NAME_NOT_FOUND',
+            message: `ENS name with token_id "${body.token_id}" not found`,
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
       }
+
+      const ensNameId = ensResult.rows[0].id;
 
       // Parse order data to get expiry time
       const orderData = JSON.parse(body.order_data);
@@ -222,16 +184,11 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
 
       const listing = result.rows[0];
 
-      // Fetch the ENS name for the response
-      const nameResult = await pool.query(
-        'SELECT name, token_id FROM ens_names WHERE id = $1',
-        [ensNameId]
-      );
-
+      // Use ENS name data from the initial query
       const responseData = {
         ...listing,
-        ens_name: nameResult.rows[0]?.name,
-        token_id: nameResult.rows[0]?.token_id,
+        ens_name: ensResult.rows[0].name,
+        token_id: body.token_id,
       };
 
       return reply.status(201).send({
