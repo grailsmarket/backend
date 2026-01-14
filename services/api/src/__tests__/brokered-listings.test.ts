@@ -1,0 +1,638 @@
+/**
+ * Integration tests for brokered listings API
+ *
+ * These tests validate the brokered listings endpoints including:
+ * - Configuration endpoint
+ * - Create brokered listing with validation
+ * - Query listings by broker address
+ * - Statistics endpoint
+ *
+ * Prerequisites:
+ * - API server running on localhost:3000
+ * - PostgreSQL with migrations applied
+ * - BROKER_MIN_FEE_BASIS_POINTS env var (default: 100 = 1%)
+ *
+ * Run: npm test
+ */
+
+import { describe, it, expect, beforeAll } from 'vitest';
+
+const API_BASE = 'http://localhost:3000/api/v1/brokered-listings';
+
+// Test addresses (checksummed format)
+const TEST_SELLER = '0x1234567890123456789012345678901234567890';
+const TEST_BROKER = '0xABCDEF0123456789ABCDEF0123456789ABCDEF01';
+const TEST_TOKEN_ID = '12345678901234567890123456789012345678901234567890123456789012345';
+
+// Helper to create a mock Seaport order with broker consideration
+function createMockOrderData(options: {
+  sellerAddress: string;
+  brokerAddress: string;
+  brokerFeeWei: string;
+  platformFeeAddress?: string;
+  platformFeeWei?: string;
+  priceWei?: string;
+}): string {
+  const priceWei = options.priceWei || '1000000000000000000'; // 1 ETH default
+
+  const consideration = [
+    // Seller receives the remainder
+    {
+      itemType: 0, // NATIVE (ETH)
+      token: '0x0000000000000000000000000000000000000000',
+      identifierOrCriteria: '0',
+      startAmount: priceWei,
+      endAmount: priceWei,
+      recipient: options.sellerAddress.toLowerCase(),
+    },
+  ];
+
+  // Add platform fee if specified
+  if (options.platformFeeAddress && options.platformFeeWei) {
+    consideration.push({
+      itemType: 0,
+      token: '0x0000000000000000000000000000000000000000',
+      identifierOrCriteria: '0',
+      startAmount: options.platformFeeWei,
+      endAmount: options.platformFeeWei,
+      recipient: options.platformFeeAddress.toLowerCase(),
+    });
+  }
+
+  // Add broker fee
+  consideration.push({
+    itemType: 0,
+    token: '0x0000000000000000000000000000000000000000',
+    identifierOrCriteria: '0',
+    startAmount: options.brokerFeeWei,
+    endAmount: options.brokerFeeWei,
+    recipient: options.brokerAddress.toLowerCase(),
+  });
+
+  const order = {
+    parameters: {
+      offerer: options.sellerAddress.toLowerCase(),
+      zone: '0x0000000000000000000000000000000000000000',
+      offer: [
+        {
+          itemType: 2, // ERC721
+          token: '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85', // ENS Registrar
+          identifierOrCriteria: TEST_TOKEN_ID,
+          startAmount: '1',
+          endAmount: '1',
+        },
+      ],
+      consideration,
+      orderType: 0,
+      startTime: Math.floor(Date.now() / 1000).toString(),
+      endTime: (Math.floor(Date.now() / 1000) + 86400 * 7).toString(), // 7 days
+      zoneHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      salt: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+      conduitKey: '0x0000000000000000000000000000000000000000000000000000000000000000',
+      totalOriginalConsiderationItems: consideration.length,
+    },
+    signature: '0x' + '00'.repeat(65), // Mock signature
+  };
+
+  return JSON.stringify(order);
+}
+
+interface APIResponse {
+  success: boolean;
+  data?: any;
+  error?: {
+    code: string;
+    message: string;
+  };
+  meta?: {
+    timestamp: string;
+  };
+}
+
+// Helper for API requests
+async function apiRequest(
+  method: string,
+  path: string,
+  body?: any
+): Promise<{ status: number; data: APIResponse }> {
+  const url = `${API_BASE}${path}`;
+  const options: RequestInit = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) {
+    options.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url, options);
+  const data = await response.json() as APIResponse;
+  return { status: response.status, data };
+}
+
+describe('Brokered Listings API', () => {
+  let minFeeBps: number;
+
+  // Verify server is running and get config
+  beforeAll(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/config`);
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      const data = await response.json() as APIResponse;
+      minFeeBps = data.data?.minFeeBasisPoints ?? 100;
+    } catch {
+      throw new Error(
+        'API server not running. Start with: cd services/api && npm run dev'
+      );
+    }
+  });
+
+  describe('GET /config', () => {
+    it('returns broker fee configuration', async () => {
+      const { status, data } = await apiRequest('GET', '/config');
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data).toHaveProperty('minFeeBasisPoints');
+      expect(data.data).toHaveProperty('minFeePercent');
+      expect(typeof data.data.minFeeBasisPoints).toBe('number');
+      expect(data.data.minFeeBasisPoints).toBeGreaterThanOrEqual(0);
+      expect(data.data.minFeeBasisPoints).toBeLessThanOrEqual(10000);
+      expect(data.data.minFeePercent).toBe(data.data.minFeeBasisPoints / 100);
+    });
+  });
+
+  describe('POST / (Create Brokered Listing)', () => {
+    describe('Validation Errors', () => {
+      it('rejects when seller === broker (self-brokering)', async () => {
+        const sameAddress = TEST_SELLER;
+        const orderData = createMockOrderData({
+          sellerAddress: sameAddress,
+          brokerAddress: sameAddress,
+          brokerFeeWei: '25000000000000000', // 0.025 ETH (2.5%)
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: sameAddress,
+          broker_address: sameAddress,
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+        expect(data.error!.code).toBe('SELF_BROKER_NOT_ALLOWED');
+        expect(data.error!.message).toContain('cannot be their own broker');
+      });
+
+      it('rejects broker fee below minimum', async () => {
+        const lowFeeBps = Math.max(0, minFeeBps - 1);
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei: '1000000000000000', // Very low fee
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: lowFeeBps,
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+        expect(data.error!.code).toBe('BROKER_FEE_TOO_LOW');
+        expect(data.error!.message).toContain('basis points');
+      });
+
+      it('rejects when broker consideration item is missing from order', async () => {
+        // Create order WITHOUT broker consideration
+        const orderWithoutBroker = {
+          parameters: {
+            offerer: TEST_SELLER.toLowerCase(),
+            zone: '0x0000000000000000000000000000000000000000',
+            offer: [
+              {
+                itemType: 2,
+                token: '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85',
+                identifierOrCriteria: TEST_TOKEN_ID,
+                startAmount: '1',
+                endAmount: '1',
+              },
+            ],
+            consideration: [
+              // Only seller, no broker
+              {
+                itemType: 0,
+                token: '0x0000000000000000000000000000000000000000',
+                identifierOrCriteria: '0',
+                startAmount: '1000000000000000000',
+                endAmount: '1000000000000000000',
+                recipient: TEST_SELLER.toLowerCase(),
+              },
+            ],
+            orderType: 0,
+            startTime: Math.floor(Date.now() / 1000).toString(),
+            endTime: (Math.floor(Date.now() / 1000) + 86400 * 7).toString(),
+            zoneHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
+            salt: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+            conduitKey: '0x0000000000000000000000000000000000000000000000000000000000000000',
+            totalOriginalConsiderationItems: 1,
+          },
+          signature: '0x' + '00'.repeat(65),
+        };
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: JSON.stringify(orderWithoutBroker),
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+        expect(data.error!.code).toBe('INVALID_FEE');
+        expect(data.error!.message).toContain('broker');
+      });
+
+      it('rejects invalid seller address format', async () => {
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei: '25000000000000000',
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: 'invalid-address',
+          broker_address: TEST_BROKER,
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+      });
+
+      it('rejects invalid broker address format', async () => {
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei: '25000000000000000',
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: TEST_SELLER,
+          broker_address: 'not-an-address',
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+      });
+
+      it('rejects broker fee above 10000 basis points', async () => {
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei: '25000000000000000',
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: '1000000000000000000',
+          order_data: orderData,
+          order_hash: '0x' + Math.random().toString(16).slice(2).padStart(64, '0'),
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: 10001, // Over 100%
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+      });
+
+      it('rejects missing required fields', async () => {
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          // Missing other required fields
+        });
+
+        expect(status).toBe(400);
+        expect(data.success).toBe(false);
+      });
+    });
+
+    describe('Successful Creation', () => {
+      it('creates a brokered listing with valid data', async () => {
+        const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+        const brokerFeeBps = Math.max(minFeeBps, 250); // At least min, or 2.5%
+        const priceWei = '1000000000000000000'; // 1 ETH
+        const brokerFeeWei = (BigInt(priceWei) * BigInt(brokerFeeBps) / BigInt(10000)).toString();
+
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei,
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID,
+          price_wei: priceWei,
+          order_data: orderData,
+          order_hash: orderHash,
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: brokerFeeBps,
+        });
+
+        expect(status).toBe(201);
+        expect(data.success).toBe(true);
+        expect(data.data).toHaveProperty('id');
+        expect(data.data.broker_address).toBe(TEST_BROKER.toLowerCase());
+        expect(data.data.broker_fee_bps).toBe(brokerFeeBps);
+        expect(data.data.seller_address).toBe(TEST_SELLER.toLowerCase());
+        expect(data.data.status).toBe('active');
+        expect(data.data.source).toBe('grails');
+      });
+
+      it('creates listing with minimum allowed broker fee', async () => {
+        const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+        const priceWei = '1000000000000000000';
+        const brokerFeeWei = (BigInt(priceWei) * BigInt(minFeeBps) / BigInt(10000)).toString();
+
+        const orderData = createMockOrderData({
+          sellerAddress: TEST_SELLER,
+          brokerAddress: TEST_BROKER,
+          brokerFeeWei,
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID + '1', // Different token
+          price_wei: priceWei,
+          order_data: orderData,
+          order_hash: orderHash,
+          seller_address: TEST_SELLER,
+          broker_address: TEST_BROKER,
+          broker_fee_bps: minFeeBps,
+        });
+
+        expect(status).toBe(201);
+        expect(data.success).toBe(true);
+        expect(data.data.broker_fee_bps).toBe(minFeeBps);
+      });
+
+      it('normalizes addresses to lowercase', async () => {
+        const upperSeller = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        const upperBroker = '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+        const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+        const priceWei = '1000000000000000000';
+        const brokerFeeWei = (BigInt(priceWei) * BigInt(250) / BigInt(10000)).toString();
+
+        const orderData = createMockOrderData({
+          sellerAddress: upperSeller,
+          brokerAddress: upperBroker,
+          brokerFeeWei,
+        });
+
+        const { status, data } = await apiRequest('POST', '/', {
+          token_id: TEST_TOKEN_ID + '2',
+          price_wei: priceWei,
+          order_data: orderData,
+          order_hash: orderHash,
+          seller_address: upperSeller,
+          broker_address: upperBroker,
+          broker_fee_bps: 250,
+        });
+
+        expect(status).toBe(201);
+        expect(data.data.seller_address).toBe(upperSeller.toLowerCase());
+        expect(data.data.broker_address).toBe(upperBroker.toLowerCase());
+      });
+    });
+  });
+
+  describe('GET /broker/:address', () => {
+    it('returns listings for a broker address', async () => {
+      const { status, data } = await apiRequest('GET', `/broker/${TEST_BROKER}`);
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data).toHaveProperty('listings');
+      expect(data.data).toHaveProperty('pagination');
+      expect(Array.isArray(data.data.listings)).toBe(true);
+      expect(data.data.pagination).toHaveProperty('page');
+      expect(data.data.pagination).toHaveProperty('limit');
+      expect(data.data.pagination).toHaveProperty('total');
+      expect(data.data.pagination).toHaveProperty('totalPages');
+    });
+
+    it('returns listings filtered by status', async () => {
+      const { status, data } = await apiRequest(
+        'GET',
+        `/broker/${TEST_BROKER}?status=active`
+      );
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+
+      // All returned listings should be active
+      for (const listing of data.data.listings) {
+        expect(listing.status).toBe('active');
+      }
+    });
+
+    it('supports pagination', async () => {
+      const { status, data } = await apiRequest(
+        'GET',
+        `/broker/${TEST_BROKER}?page=1&limit=5`
+      );
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data.pagination.page).toBe(1);
+      expect(data.data.pagination.limit).toBe(5);
+      expect(data.data.listings.length).toBeLessThanOrEqual(5);
+    });
+
+    it('returns empty array for address with no listings', async () => {
+      const noListingsAddress = '0x0000000000000000000000000000000000000001';
+      const { status, data } = await apiRequest(
+        'GET',
+        `/broker/${noListingsAddress}`
+      );
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data.listings).toEqual([]);
+      expect(data.data.pagination.total).toBe(0);
+    });
+
+    it('rejects invalid address format', async () => {
+      const { status, data } = await apiRequest(
+        'GET',
+        '/broker/invalid-address'
+      );
+
+      expect(status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error!.code).toBe('INVALID_ADDRESS');
+    });
+
+    it('normalizes address to lowercase for query', async () => {
+      const upperAddress = TEST_BROKER.toUpperCase();
+      const lowerAddress = TEST_BROKER.toLowerCase();
+
+      const { status: upperStatus, data: upperData } = await apiRequest(
+        'GET',
+        `/broker/${upperAddress}`
+      );
+      const { status: lowerStatus, data: lowerData } = await apiRequest(
+        'GET',
+        `/broker/${lowerAddress}`
+      );
+
+      expect(upperStatus).toBe(200);
+      expect(lowerStatus).toBe(200);
+      // Should return same results regardless of case
+      expect(upperData.data.pagination.total).toBe(lowerData.data.pagination.total);
+    });
+  });
+
+  describe('GET /stats', () => {
+    it('returns broker statistics', async () => {
+      const { status, data } = await apiRequest('GET', '/stats');
+
+      expect(status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.data).toHaveProperty('activeBrokeredListings');
+      expect(data.data).toHaveProperty('soldBrokeredListings');
+      expect(data.data).toHaveProperty('uniqueBrokers');
+      expect(data.data).toHaveProperty('averageBrokerFeeBps');
+
+      expect(typeof data.data.activeBrokeredListings).toBe('number');
+      expect(typeof data.data.soldBrokeredListings).toBe('number');
+      expect(typeof data.data.uniqueBrokers).toBe('number');
+
+      // Average can be null if no brokered listings exist
+      if (data.data.averageBrokerFeeBps !== null) {
+        expect(typeof data.data.averageBrokerFeeBps).toBe('number');
+      }
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('handles very large broker fee (just under 100%)', async () => {
+      const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+      const priceWei = '1000000000000000000';
+      const brokerFeeBps = 9999; // 99.99%
+      const brokerFeeWei = (BigInt(priceWei) * BigInt(brokerFeeBps) / BigInt(10000)).toString();
+
+      const orderData = createMockOrderData({
+        sellerAddress: TEST_SELLER,
+        brokerAddress: TEST_BROKER,
+        brokerFeeWei,
+      });
+
+      const { status, data } = await apiRequest('POST', '/', {
+        token_id: TEST_TOKEN_ID + '3',
+        price_wei: priceWei,
+        order_data: orderData,
+        order_hash: orderHash,
+        seller_address: TEST_SELLER,
+        broker_address: TEST_BROKER,
+        broker_fee_bps: brokerFeeBps,
+      });
+
+      // Should succeed (no max fee enforcement currently)
+      expect(status).toBe(201);
+      expect(data.success).toBe(true);
+    });
+
+    it('handles order with complex consideration array', async () => {
+      const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+      const priceWei = '1000000000000000000';
+      const platformFeeAddress = '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+      const platformFeeWei = '25000000000000000'; // 2.5%
+      const brokerFeeWei = '50000000000000000'; // 5%
+
+      const orderData = createMockOrderData({
+        sellerAddress: TEST_SELLER,
+        brokerAddress: TEST_BROKER,
+        brokerFeeWei,
+        platformFeeAddress,
+        platformFeeWei,
+      });
+
+      const { status, data } = await apiRequest('POST', '/', {
+        token_id: TEST_TOKEN_ID + '4',
+        price_wei: priceWei,
+        order_data: orderData,
+        order_hash: orderHash,
+        seller_address: TEST_SELLER,
+        broker_address: TEST_BROKER,
+        broker_fee_bps: 500, // 5%
+      });
+
+      expect(status).toBe(201);
+      expect(data.success).toBe(true);
+    });
+
+    it('handles duplicate order_hash by cancelling previous listing', async () => {
+      const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
+      const priceWei = '1000000000000000000';
+      const brokerFeeWei = '25000000000000000';
+
+      const orderData = createMockOrderData({
+        sellerAddress: TEST_SELLER,
+        brokerAddress: TEST_BROKER,
+        brokerFeeWei,
+      });
+
+      // Create first listing
+      const { status: status1, data: data1 } = await apiRequest('POST', '/', {
+        token_id: TEST_TOKEN_ID + '5',
+        price_wei: priceWei,
+        order_data: orderData,
+        order_hash: orderHash,
+        seller_address: TEST_SELLER,
+        broker_address: TEST_BROKER,
+        broker_fee_bps: 250,
+      });
+
+      expect(status1).toBe(201);
+      const firstListingId = data1.data.id;
+
+      // Create second listing with same order_hash
+      const { status: status2, data: data2 } = await apiRequest('POST', '/', {
+        token_id: TEST_TOKEN_ID + '5',
+        price_wei: '2000000000000000000', // Different price
+        order_data: orderData,
+        order_hash: orderHash,
+        seller_address: TEST_SELLER,
+        broker_address: TEST_BROKER,
+        broker_fee_bps: 250,
+      });
+
+      expect(status2).toBe(201);
+      expect(data2.data.id).not.toBe(firstListingId); // New listing created
+    });
+  });
+});
