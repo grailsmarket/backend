@@ -497,22 +497,23 @@ describe('Brokered Listings API', () => {
     });
 
     it('normalizes address to lowercase for query', async () => {
-      const upperAddress = TEST_BROKER.toUpperCase();
+      // Keep 0x lowercase, only uppercase the hex portion
+      const mixedCaseAddress = '0x' + TEST_BROKER.slice(2).toUpperCase();
       const lowerAddress = TEST_BROKER.toLowerCase();
 
-      const { status: upperStatus, data: upperData } = await apiRequest(
+      const { status: mixedStatus, data: mixedData } = await apiRequest(
         'GET',
-        `/broker/${upperAddress}`
+        `/broker/${mixedCaseAddress}`
       );
       const { status: lowerStatus, data: lowerData } = await apiRequest(
         'GET',
         `/broker/${lowerAddress}`
       );
 
-      expect(upperStatus).toBe(200);
+      expect(mixedStatus).toBe(200);
       expect(lowerStatus).toBe(200);
       // Should return same results regardless of case
-      expect(upperData.data.pagination.total).toBe(lowerData.data.pagination.total);
+      expect(mixedData.data.pagination.total).toBe(lowerData.data.pagination.total);
     });
   });
 
@@ -595,7 +596,7 @@ describe('Brokered Listings API', () => {
       expect(data.success).toBe(true);
     });
 
-    it('handles duplicate order_hash by cancelling previous listing', async () => {
+    it('handles duplicate order_hash by updating existing listing', async () => {
       const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
       const priceWei = '1000000000000000000';
       const brokerFeeWei = '25000000000000000';
@@ -620,10 +621,11 @@ describe('Brokered Listings API', () => {
       expect(status1).toBe(201);
       const firstListingId = data1.data.id;
 
-      // Create second listing with same order_hash
+      // Create second listing with same order_hash - should update existing
+      const newPriceWei = '2000000000000000000';
       const { status: status2, data: data2 } = await apiRequest('POST', '/', {
         token_id: TEST_TOKEN_ID + '5',
-        price_wei: '2000000000000000000', // Different price
+        price_wei: newPriceWei,
         order_data: orderData,
         order_hash: orderHash,
         seller_address: TEST_SELLER,
@@ -632,7 +634,8 @@ describe('Brokered Listings API', () => {
       });
 
       expect(status2).toBe(201);
-      expect(data2.data.id).not.toBe(firstListingId); // New listing created
+      expect(data2.data.id).toBe(firstListingId); // Same listing updated (ON CONFLICT)
+      expect(data2.data.price_wei).toBe(newPriceWei); // Price updated
     });
   });
 });

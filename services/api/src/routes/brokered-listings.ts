@@ -42,7 +42,19 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
 
   // POST /api/v1/brokered-listings - Create a brokered listing
   fastify.post('/', async (request, reply) => {
-    const body = CreateBrokeredListingSchema.parse(request.body);
+    // Validate request body with Zod
+    const parseResult = CreateBrokeredListingSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: parseResult.error.errors.map(e => e.message).join(', '),
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+    const body = parseResult.data;
     const brokerConfig = getBrokerFeeConfig();
 
     // Validate seller !== broker (no self-brokering)
@@ -165,7 +177,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash}`);
       }
 
-      // Insert the brokered listing
+      // Insert the brokered listing (or update if order_hash/source already exists)
       const insertQuery = `
         INSERT INTO listings (
           ens_name_id,
@@ -182,6 +194,17 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
           created_at,
           updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'grails', $7, $8, $9, NOW(), NOW())
+        ON CONFLICT (order_hash, source) DO UPDATE SET
+          ens_name_id = EXCLUDED.ens_name_id,
+          seller_address = EXCLUDED.seller_address,
+          price_wei = EXCLUDED.price_wei,
+          currency_address = EXCLUDED.currency_address,
+          order_data = EXCLUDED.order_data,
+          status = 'active',
+          expires_at = EXCLUDED.expires_at,
+          broker_address = EXCLUDED.broker_address,
+          broker_fee_bps = EXCLUDED.broker_fee_bps,
+          updated_at = NOW()
         RETURNING *
       `;
 
