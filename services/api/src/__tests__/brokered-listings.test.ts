@@ -15,14 +15,52 @@
  * Run: npm test
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const API_BASE = 'http://localhost:3000/api/v1/brokered-listings';
 
-// Test addresses (checksummed format)
+// Test addresses (checksummed format) - use clearly fake addresses for easy cleanup
 const TEST_SELLER = '0x1234567890123456789012345678901234567890';
 const TEST_BROKER = '0xABCDEF0123456789ABCDEF0123456789ABCDEF01';
 const TEST_TOKEN_ID = '12345678901234567890123456789012345678901234567890123456789012345';
+
+// Track created listing IDs for cleanup
+const createdListingIds: number[] = [];
+
+// Test seller addresses used in tests (for cleanup)
+const TEST_SELLER_ADDRESSES = [
+  '0x1234567890123456789012345678901234567890',
+  '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+];
+
+// Helper to clean up test data via direct database connection
+async function cleanupTestListings(): Promise<void> {
+  try {
+    // Dynamic import to avoid issues if pg isn't available in test context
+    const { Pool } = await import('pg');
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+
+    // Delete listings created by test seller addresses with broker_address set
+    await pool.query(`
+      DELETE FROM listings
+      WHERE seller_address = ANY($1)
+      AND broker_address IS NOT NULL
+    `, [TEST_SELLER_ADDRESSES]);
+
+    // Also clean up any ENS names created for test tokens
+    await pool.query(`
+      DELETE FROM ens_names
+      WHERE token_id LIKE '123456789%'
+      AND owner_address = ANY($1)
+    `, [TEST_SELLER_ADDRESSES]);
+
+    await pool.end();
+  } catch (error) {
+    console.warn('Test cleanup failed (non-critical):', error);
+  }
+}
 
 // Helper to create a mock Seaport order with broker consideration
 function createMockOrderData(options: {
@@ -134,6 +172,8 @@ describe('Brokered Listings API', () => {
 
   // Verify server is running and get config
   beforeAll(async () => {
+    // Clean up any leftover test data from previous runs
+    await cleanupTestListings();
     try {
       const response = await fetch(`${API_BASE}/config`);
       if (!response.ok) {
@@ -146,6 +186,11 @@ describe('Brokered Listings API', () => {
         'API server not running. Start with: cd services/api && npm run dev'
       );
     }
+  });
+
+  // Clean up all test data after tests complete
+  afterAll(async () => {
+    await cleanupTestListings();
   });
 
   describe('GET /config', () => {
