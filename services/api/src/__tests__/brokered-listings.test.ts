@@ -548,21 +548,34 @@ describe('Brokered Listings API', () => {
   });
 
   describe('GET /broker/:address', () => {
-    it('returns listings for a broker address', async () => {
+    it('returns results for a broker address in standard search format', async () => {
       const { status, data } = await apiRequest('GET', `/broker/${TEST_BROKER}`);
 
       expect(status).toBe(200);
       expect(data.success).toBe(true);
-      expect(data.data).toHaveProperty('listings');
+      expect(data.data).toHaveProperty('results');
       expect(data.data).toHaveProperty('pagination');
-      expect(Array.isArray(data.data.listings)).toBe(true);
+      expect(Array.isArray(data.data.results)).toBe(true);
       expect(data.data.pagination).toHaveProperty('page');
       expect(data.data.pagination).toHaveProperty('limit');
       expect(data.data.pagination).toHaveProperty('total');
       expect(data.data.pagination).toHaveProperty('totalPages');
+
+      // Verify results have standard search result format with listings
+      if (data.data.results.length > 0) {
+        const result = data.data.results[0];
+        expect(result).toHaveProperty('name');
+        expect(result).toHaveProperty('token_id');
+        expect(result).toHaveProperty('listings');
+        // Listings should include broker fields
+        if (result.listings.length > 0) {
+          expect(result.listings[0]).toHaveProperty('broker_address');
+          expect(result.listings[0]).toHaveProperty('broker_fee_bps');
+        }
+      }
     });
 
-    it('returns listings filtered by status', async () => {
+    it('returns results filtered by status', async () => {
       const { status, data } = await apiRequest(
         'GET',
         `/broker/${TEST_BROKER}?status=active`
@@ -571,9 +584,12 @@ describe('Brokered Listings API', () => {
       expect(status).toBe(200);
       expect(data.success).toBe(true);
 
-      // All returned listings should be active
-      for (const listing of data.data.listings) {
-        expect(listing.status).toBe('active');
+      // All returned results should have active listings
+      for (const result of data.data.results) {
+        const hasActiveListing = result.listings?.some(
+          (l: any) => l.status === 'active'
+        );
+        expect(hasActiveListing).toBe(true);
       }
     });
 
@@ -587,7 +603,7 @@ describe('Brokered Listings API', () => {
       expect(data.success).toBe(true);
       expect(data.data.pagination.page).toBe(1);
       expect(data.data.pagination.limit).toBe(5);
-      expect(data.data.listings.length).toBeLessThanOrEqual(5);
+      expect(data.data.results.length).toBeLessThanOrEqual(5);
     });
 
     it('returns empty array for address with no listings', async () => {
@@ -599,7 +615,7 @@ describe('Brokered Listings API', () => {
 
       expect(status).toBe(200);
       expect(data.success).toBe(true);
-      expect(data.data.listings).toEqual([]);
+      expect(data.data.results).toEqual([]);
       expect(data.data.pagination.total).toBe(0);
     });
 
