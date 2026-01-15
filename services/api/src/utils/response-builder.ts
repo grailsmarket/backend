@@ -56,6 +56,8 @@ export interface Listing {
   expires_at: Date | null;
   created_at: Date;
   source: string;
+  broker_address: string | null;
+  broker_fee_bps: number | null;
 }
 
 /**
@@ -134,7 +136,9 @@ export async function buildSearchResults(
             'order_data', l.order_data,
             'expires_at', l.expires_at,
             'created_at', l.created_at,
-            'source', l.source
+            'source', l.source,
+            'broker_address', l.broker_address,
+            'broker_fee_bps', l.broker_fee_bps
           )
           ORDER BY l.created_at DESC
         ) FILTER (WHERE l.id IS NOT NULL),

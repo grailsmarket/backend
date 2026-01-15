@@ -5,6 +5,7 @@ import {
   getBrokerFeeConfig,
   validateBrokeredListingFees,
 } from '../../../shared/src';
+import { buildSearchResults } from '../utils/response-builder';
 
 const CreateBrokeredListingSchema = z.object({
   token_id: z.string(),
@@ -214,6 +215,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/v1/brokered-listings/broker/:address - Get listings by broker address
+  // Returns results in the standard search format with full ENS name data
   fastify.get('/broker/:address', async (request, reply) => {
     const { address } = request.params as { address: string };
     const query = GetByBrokerQuerySchema.parse(request.query);
@@ -242,33 +244,40 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
       paramCount++;
     }
 
+    // Get count for pagination
     const countQuery = `
-      SELECT COUNT(*) FROM listings l
+      SELECT COUNT(DISTINCT en.name) FROM listings l
+      JOIN ens_names en ON l.ens_name_id = en.id
       WHERE ${whereConditions.join(' AND ')}
     `;
 
-    const dataQuery = `
-      SELECT l.*, en.name as ens_name, en.token_id
+    // Get ENS names for brokered listings (for use with buildSearchResults)
+    const namesQuery = `
+      SELECT DISTINCT en.name
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE ${whereConditions.join(' AND ')}
-      ORDER BY l.created_at DESC
+      ORDER BY en.name
       LIMIT $${paramCount} OFFSET $${paramCount + 1}
     `;
 
     params.push(query.limit, offset);
 
-    const [countResult, dataResult] = await Promise.all([
+    const [countResult, namesResult] = await Promise.all([
       pool.query(countQuery, params.slice(0, paramCount - 1)),
-      pool.query(dataQuery, params),
+      pool.query(namesQuery, params),
     ]);
 
     const total = parseInt(countResult.rows[0].count);
+    const ensNames = namesResult.rows.map((row: { name: string }) => row.name);
+
+    // Use buildSearchResults for consistent response format
+    const results = ensNames.length > 0 ? await buildSearchResults(ensNames) : [];
 
     return reply.send({
       success: true,
       data: {
-        listings: dataResult.rows,
+        results,
         pagination: {
           page: query.page,
           limit: query.limit,
