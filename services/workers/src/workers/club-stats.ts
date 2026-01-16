@@ -210,6 +210,62 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
   }
 }
 
+/**
+ * Recalculate premium and available name counts for all clubs
+ * Premium: expired 90-111 days ago (in premium auction period)
+ * Available: expired > 111 days ago (fully available for registration)
+ * This is done as a bulk update for efficiency since all clubs are updated together
+ */
+async function recalculateStatusCounts(): Promise<void> {
+  logger.info('Recalculating premium/available counts for all clubs');
+
+  try {
+    // Calculate counts for all clubs in a single query using unnest
+    // Then bulk update all clubs
+    await pool.query(
+      `
+      WITH status_counts AS (
+        SELECT
+          unnest(clubs) as club_name,
+          COUNT(*) FILTER (
+            WHERE expiry_date <= NOW() - INTERVAL '90 days'
+              AND expiry_date > NOW() - INTERVAL '111 days'
+          ) as premium,
+          COUNT(*) FILTER (
+            WHERE expiry_date <= NOW() - INTERVAL '111 days'
+          ) as available
+        FROM ens_names
+        WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
+        GROUP BY unnest(clubs)
+      )
+      UPDATE clubs c
+      SET premium_count = COALESCE(sc.premium, 0),
+          available_count = COALESCE(sc.available, 0)
+      FROM status_counts sc
+      WHERE c.name = sc.club_name
+      `
+    );
+
+    // Also set counts to 0 for clubs with no premium/available names
+    await pool.query(
+      `
+      UPDATE clubs
+      SET premium_count = 0, available_count = 0
+      WHERE name NOT IN (
+        SELECT DISTINCT unnest(clubs)
+        FROM ens_names
+        WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
+      )
+      `
+    );
+
+    logger.info('Successfully recalculated premium/available counts for all clubs');
+  } catch (error) {
+    logger.error({ error }, 'Error recalculating status counts');
+    throw error;
+  }
+}
+
 export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
   // Worker 1: Update floor price (optimized - only when needed)
   await boss.work<UpdateClubFloorPriceJob>(
@@ -326,6 +382,10 @@ export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
       logger.info('Starting scheduled club stats recalculation');
 
       try {
+        // First, recalculate premium/available counts for all clubs (bulk operation)
+        await recalculateStatusCounts();
+
+        // Then queue individual club jobs for floor/sales recalculation
         const result = await pool.query('SELECT name FROM clubs ORDER BY name');
         const clubs = result.rows;
 
