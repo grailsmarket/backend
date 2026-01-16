@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../shared/src';
 import { buildSearchResults, SearchResult } from '../utils/response-builder';
+import { buildESFilters, buildESSort, calculateMinScore } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
 import { z } from 'zod';
 
@@ -165,567 +166,54 @@ export async function searchRoutes(fastify: FastifyInstance) {
       fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
     }
 
-    // Build Elasticsearch query
-    const must: any[] = [];
-    const filter: any[] = [];
-
-    // Exclude placeholder names from all searches
-    // Only exclude token-* and [hash].eth prefixes (invalid non-normalized names)
-    // Not numeric names (which are valid ENS names in clubs like 999, 10k)
-    filter.push({
-      bool: {
-        must_not: [
-          { prefix: { 'name.keyword': 'token-' } },
-          { prefix: { 'name.keyword': '[' } }
-        ]
-      }
+    // Build Elasticsearch query using shared utility
+    const { must, filter } = buildESFilters({
+      q,
+      minPrice,
+      maxPrice,
+      minLength,
+      maxLength,
+      hasEmoji,
+      hasNumbers,
+      digits,
+      letters,
+      emoji,
+      repeatingChars,
+      contains,
+      startsWith,
+      endsWith,
+      doesNotContain,
+      doesNotStartWith,
+      doesNotEndWith,
+      listed,
+      showListings,
+      showUnlisted,
+      hasOffer,
+      clubs,
+      inAnyClub,
+      resolvedOwnerAddress,
+      status,
+      isExpired,
+      isGracePeriod,
+      isPremiumPeriod,
+      expiringWithinDays,
+      includeExpired,
+      hasSales,
+      lastSoldAfter,
+      lastSoldBefore,
+      minDaysSinceLastSale,
+      maxDaysSinceLastSale,
+      sortBy,
     });
 
-    // Skip the default "exclude expired names" filter if user is explicitly filtering
-    // by expiration state (isExpired, isGracePeriod, isPremiumPeriod, or unified status)
-    const hasExplicitExpirationFilter = isExpired !== undefined || isGracePeriod !== undefined || isPremiumPeriod !== undefined || (status !== undefined && status !== 'all');
-
-    if (includeExpired !== true && includeExpired !== 'true' && !hasExplicitExpirationFilter) {
-      filter.push({
-        bool: {
-          should: [
-            { bool: { must_not: { exists: { field: 'expiry_date' } } } },
-            { range: { expiry_date: { gte: 'now-90d' } } }
-          ],
-          minimum_should_match: 1
-        }
-      });
-    }
-
-    // Exclude subnames - only match *.eth pattern (not *.*.eth or deeper)
-    // Also exclude placeholder names (token-* and [hash].eth) that haven't been resolved yet
-    filter.push({
-      bool: {
-        must_not: [
-          { wildcard: { 'name.keyword': '*.*.eth' } },
-          { prefix: { 'name.keyword': 'token-' } },
-          { prefix: { 'name.keyword': '[' } }
-        ]
-      }
+    const sort = buildESSort({
+      sortBy,
+      sortOrder,
+      q,
+      resolvedOwnerAddress,
     });
 
-    // Filter by listing status
-    // Unified listed filter: true = only listed, false = only unlisted, blank = all
-    // Legacy showListings/showUnlisted kept for backward compatibility
-    // When sorting by price, we should only show listings
-    if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price') {
-      filter.push({ term: { status: 'active' } });
-    } else if (listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true') {
-      filter.push({
-        bool: {
-          must_not: [
-            { term: { status: 'active' } }
-          ]
-        }
-      });
-    }
-
-    // Filter by offer status
-    // hasOffer=true: names with offers, hasOffer=false: names without offers
-    if (hasOffer === 'true' || hasOffer === true) {
-      filter.push({
-        bool: {
-          must: [
-            { exists: { field: 'highest_offer' } },
-            { range: { highest_offer: { gt: 0 } } }
-          ]
-        }
-      });
-    } else if (hasOffer === 'false' || hasOffer === false) {
-      filter.push({
-        bool: {
-          should: [
-            { bool: { must_not: { exists: { field: 'highest_offer' } } } },
-            { range: { highest_offer: { lte: 0 } } }
-          ],
-          minimum_should_match: 1
-        }
-      });
-    }
-
-    if (q) {
-      // Normalize query - add .eth suffix if not present for exact match checking
-      const normalizedQuery = q.toLowerCase();
-      const queryWithEth = normalizedQuery.endsWith('.eth') ? normalizedQuery : `${normalizedQuery}.eth`;
-
-      must.push({
-        bool: {
-          should: [
-            // Exact keyword match gets MASSIVE boost (both with and without .eth)
-            { term: { 'name.keyword': { value: queryWithEth, boost: 1000 } } },
-            { term: { 'name.keyword': { value: normalizedQuery, boost: 1000 } } },
-            // Full-text exact match gets very high boost
-            { match: { name: { query: q, boost: 10 } } },
-            // Prefix match gets high boost
-            { prefix: { name: { value: q, boost: 5 } } },
-            // Ngram match for fuzzy matching (lower boost)
-            { match: { 'name.ngram': { query: q, boost: 1 } } },
-          ],
-          minimum_should_match: 1,
-        },
-      });
-    }
-
-    if (minPrice || maxPrice) {
-      const range: any = {};
-      if (minPrice) range.gte = minPrice;
-      if (maxPrice) range.lte = maxPrice;
-      filter.push({ range: { price: range } });
-    }
-
-    // Add length filters using script query
-    if (minLength || maxLength) {
-      const scriptConditions: string[] = [];
-      if (minLength) {
-        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(minLength)}`);
-      }
-      if (maxLength) {
-        scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(maxLength)}`);
-      }
-      filter.push({
-        script: {
-          script: {
-            source: scriptConditions.join(' && '),
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Add contains filter - exact substring match
-    if (contains) {
-      const normalizedContains = contains.toLowerCase();
-      filter.push({
-        wildcard: {
-          'name.keyword': {
-            value: `*${normalizedContains}*`,
-            case_insensitive: true
-          }
-        }
-      });
-    }
-
-    // Add startsWith filter - prefix match
-    if (startsWith) {
-      const normalizedStartsWith = startsWith.toLowerCase();
-      filter.push({
-        prefix: {
-          'name.keyword': {
-            value: normalizedStartsWith,
-            case_insensitive: true
-          }
-        }
-      });
-    }
-
-    // Add endsWith filter - suffix match (before .eth)
-    if (endsWith) {
-      const normalizedEndsWith = endsWith.toLowerCase();
-      filter.push({
-        wildcard: {
-          'name.keyword': {
-            value: `*${normalizedEndsWith}.eth`,
-            case_insensitive: true
-          }
-        }
-      });
-    }
-
-    // Add doesNotContain filter - exclude names containing substring
-    if (doesNotContain) {
-      const normalizedDoesNotContain = doesNotContain.toLowerCase();
-      filter.push({
-        bool: {
-          must_not: {
-            wildcard: {
-              'name.keyword': {
-                value: `*${normalizedDoesNotContain}*`,
-                case_insensitive: true
-              }
-            }
-          }
-        }
-      });
-    }
-
-    // Add doesNotStartWith filter - exclude names starting with prefix
-    if (doesNotStartWith) {
-      const normalizedDoesNotStartWith = doesNotStartWith.toLowerCase();
-      filter.push({
-        bool: {
-          must_not: {
-            wildcard: {
-              'name.keyword': {
-                value: `${normalizedDoesNotStartWith}*`,
-                case_insensitive: true
-              }
-            }
-          }
-        }
-      });
-    }
-
-    // Add doesNotEndWith filter - exclude names ending with suffix (before .eth)
-    if (doesNotEndWith) {
-      const normalizedDoesNotEndWith = doesNotEndWith.toLowerCase();
-      filter.push({
-        bool: {
-          must_not: {
-            wildcard: {
-              'name.keyword': {
-                value: `*${normalizedDoesNotEndWith}.eth`,
-                case_insensitive: true
-              }
-            }
-          }
-        }
-      });
-    }
-
-    // Legacy emoji filter (kept for backward compatibility)
-    if (hasEmoji !== undefined) {
-      filter.push({ term: { has_emoji: hasEmoji === 'true' || hasEmoji === true } });
-    }
-
-    // Legacy numbers filter (kept for backward compatibility)
-    if (hasNumbers !== undefined) {
-      filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
-    }
-
-    // Tri-state digits filter: allowed (default), exclude, only
-    if (digits === 'exclude') {
-      // No digits allowed
-      filter.push({ term: { has_numbers: false } });
-    } else if (digits === 'only') {
-      // Only digits (0-9) - no letters, no emoji
-      filter.push({
-        script: {
-          script: {
-            source: "/^[0-9]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Tri-state letters filter: allowed (default), exclude, only
-    if (letters === 'exclude') {
-      // No letters allowed
-      filter.push({
-        script: {
-          script: {
-            source: "!(/[a-zA-Z]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
-            lang: 'painless',
-          },
-        },
-      });
-    } else if (letters === 'only') {
-      // Only letters (a-z)
-      filter.push({
-        script: {
-          script: {
-            source: "/^[a-zA-Z]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Tri-state emoji filter: allowed (default), exclude, only
-    if (emoji === 'exclude') {
-      // No emoji allowed
-      filter.push({ term: { has_emoji: false } });
-    } else if (emoji === 'only') {
-      // Only emoji - has emoji AND no letters AND no digits
-      filter.push({ term: { has_emoji: true } });
-      filter.push({
-        script: {
-          script: {
-            source: "!(/[a-zA-Z0-9]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Tri-state repeatingChars filter: allowed (default), exclude, only
-    // "only" means ALL characters are the same (e.g., "99999", "aaaa", "🔥🔥🔥")
-    // "exclude" means NOT all characters are the same
-    if (repeatingChars === 'exclude') {
-      // Exclude names where all characters are the same
-      filter.push({
-        script: {
-          script: {
-            source: `
-              def label = doc['name.keyword'].value.replace('.eth', '');
-              if (label.length() == 0) return true;
-              def firstChar = label.charAt(0);
-              for (int i = 1; i < label.length(); i++) {
-                if (label.charAt(i) != firstChar) {
-                  return true;
-                }
-              }
-              return false;
-            `,
-            lang: 'painless',
-          },
-        },
-      });
-    } else if (repeatingChars === 'only') {
-      // Only names where all characters are the same
-      filter.push({
-        script: {
-          script: {
-            source: `
-              def label = doc['name.keyword'].value.replace('.eth', '');
-              if (label.length() == 0) return false;
-              def firstChar = label.charAt(0);
-              for (int i = 1; i < label.length(); i++) {
-                if (label.charAt(i) != firstChar) {
-                  return false;
-                }
-              }
-              return true;
-            `,
-            lang: 'painless',
-          },
-        },
-      });
-    }
-
-    // Add clubs filter
-    if (clubs && clubs.length > 0) {
-      filter.push({ terms: { clubs: clubs } });
-    }
-
-    // Add inAnyClub filter - matches names that belong to at least one club
-    if (inAnyClub !== undefined) {
-      const wantInClub = inAnyClub === 'true' || inAnyClub === true;
-      if (wantInClub) {
-        // Has at least one club membership
-        filter.push({ exists: { field: 'clubs' } });
-      } else {
-        // Not in any club
-        filter.push({ bool: { must_not: { exists: { field: 'clubs' } } } });
-      }
-    }
-
-    // Add owner filter
-    if (resolvedOwnerAddress) {
-      filter.push({ term: { owner: resolvedOwnerAddress } });
-    }
-
-    // Unified status filter - single filter for expiration states
-    // Values: registered, grace, premium, available
-    if (status && status !== 'all') {
-      filter.push({ exists: { field: 'expiry_date' } });
-      if (status === 'registered') {
-        // Registered: expiry_date > now (not expired)
-        filter.push({ range: { expiry_date: { gt: 'now' } } });
-      } else if (status === 'grace') {
-        // Grace period: expired within last 90 days
-        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
-      } else if (status === 'premium') {
-        // Premium period: expired 90-111 days ago (Dutch auction)
-        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
-      } else if (status === 'available') {
-        // Available: expired more than 111 days ago (fully expired)
-        filter.push({ range: { expiry_date: { lte: 'now-111d' } } });
-      }
-    }
-
-    // Legacy expiration filters - kept for backward compatibility
-    // Use dynamic date calculations instead of stale ES boolean fields
-    // ENS expiration states:
-    // - Not expired: expiry_date > now
-    // - Expired (grace period): expiry_date <= now AND expiry_date > now - 90 days
-    // - Expired (premium period): expiry_date <= now - 90 days AND expiry_date > now - 111 days
-    // - Fully expired: expiry_date <= now - 111 days
-    if (isExpired !== undefined) {
-      const wantExpired = isExpired === 'true' || isExpired === true;
-      filter.push({ exists: { field: 'expiry_date' } });
-      if (wantExpired) {
-        // Expired: expiry_date is in the past
-        filter.push({ range: { expiry_date: { lte: 'now' } } });
-      } else {
-        // Not expired: expiry_date is in the future
-        filter.push({ range: { expiry_date: { gt: 'now' } } });
-      }
-    }
-
-    if (isGracePeriod !== undefined) {
-      const wantGracePeriod = isGracePeriod === 'true' || isGracePeriod === true;
-      filter.push({ exists: { field: 'expiry_date' } });
-      if (wantGracePeriod) {
-        // In grace period: expired but within 90 days of expiry
-        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
-      } else {
-        // Not in grace period: either not expired OR past grace period
-        filter.push({
-          bool: {
-            should: [
-              { range: { expiry_date: { gt: 'now' } } },  // Not expired
-              { range: { expiry_date: { lte: 'now-90d' } } }  // Past grace period
-            ],
-            minimum_should_match: 1
-          }
-        });
-      }
-    }
-
-    if (isPremiumPeriod !== undefined) {
-      const wantPremiumPeriod = isPremiumPeriod === 'true' || isPremiumPeriod === true;
-      filter.push({ exists: { field: 'expiry_date' } });
-      if (wantPremiumPeriod) {
-        // In premium period: 90-111 days after expiry (21 day Dutch auction)
-        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
-      } else {
-        // Not in premium period: not expired, in grace period, or fully expired
-        filter.push({
-          bool: {
-            should: [
-              { range: { expiry_date: { gt: 'now-90d' } } },  // Not expired or in grace
-              { range: { expiry_date: { lte: 'now-111d' } } }  // Past premium period
-            ],
-            minimum_should_match: 1
-          }
-        });
-      }
-    }
-
-    if (expiringWithinDays !== undefined) {
-      // Filter for names expiring within X days (not yet expired)
-      // Use dynamic date range instead of stale days_until_expiry field
-      const days = parseInt(expiringWithinDays);
-      filter.push({
-        bool: {
-          must: [
-            { exists: { field: 'expiry_date' } },
-            { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
-          ],
-        },
-      });
-    }
-
-    // Sale history filters
-    if (hasSales !== undefined) {
-      filter.push({ term: { has_sales: hasSales === 'true' || hasSales === true } });
-    }
-
-    if (lastSoldAfter) {
-      filter.push({
-        range: {
-          last_sale_date: {
-            gte: lastSoldAfter,
-          },
-        },
-      });
-    }
-
-    if (lastSoldBefore) {
-      filter.push({
-        range: {
-          last_sale_date: {
-            lte: lastSoldBefore,
-          },
-        },
-      });
-    }
-
-    if (minDaysSinceLastSale !== undefined) {
-      // Use dynamic date calculation instead of stale days_since_last_sale field
-      // minDaysSinceLastSale=30 means "sold at least 30 days ago" -> last_sale_date <= now-30d
-      const days = parseInt(minDaysSinceLastSale as any);
-      filter.push({
-        range: {
-          last_sale_date: {
-            lte: `now-${days}d`,
-          },
-        },
-      });
-    }
-
-    if (maxDaysSinceLastSale !== undefined) {
-      // Use dynamic date calculation instead of stale days_since_last_sale field
-      // maxDaysSinceLastSale=90 means "sold within last 90 days" -> last_sale_date >= now-90d
-      const days = parseInt(maxDaysSinceLastSale as any);
-      filter.push({
-        range: {
-          last_sale_date: {
-            gte: `now-${days}d`,
-          },
-        },
-      });
-    }
-
-    // Build sort array
-    const sort: any[] = [];
-    if (sortBy) {
-      const order = sortOrder || 'desc';
-
-      // Special handling for fields that may have null values
-      if (sortBy === 'price') {
-        sort.push({
-          'price_usd': {
-            order,
-            missing: '_last'  // Put documents without listings at the end
-          }
-        });
-      } else if (sortBy === 'last_sale_price') {
-        // Sort by USD value, not raw wei/token amount
-        sort.push({
-          'last_sale_price_usd': {
-            order,
-            missing: '_last'  // Put documents without this field at the end
-          }
-        });
-      } else if (sortBy === 'watchers_count') {
-        // watchers_count doesn't exist in ES, will fall back to PostgreSQL
-        // But prepare sort config in case it's added later
-        sort.push({
-          [sortBy]: {
-            order,
-            missing: '_last'
-          }
-        });
-      } else if (sortBy === 'alphabetical') {
-        // Sort by name alphabetically
-        sort.push({ 'name.keyword': { order } });
-      } else {
-        sort.push({ [sortBy]: { order } });
-      }
-    } else if (q) {
-      // When there's a search query, always sort by relevance score first
-      sort.push({ _score: { order: 'desc' } });
-      // Use name as tiebreaker for stable ordering
-      sort.push({ 'name.keyword': { order: 'asc' } });
-    } else if (resolvedOwnerAddress) {
-      // When filtering by owner without a search query, use stable alphabetical sort by name
-      // This prevents documents from moving around due to ES internal state changes
-      sort.push({ 'name.keyword': { order: 'asc' } });
-    } else {
-      sort.push({ _score: { order: 'desc' } });
-      sort.push({ listing_created_at: { order: 'desc' } });
-    }
-
-    // Dynamic min_score based on query length
-    // Short queries (1-3 chars) need lower threshold because they rely on prefix/ngram matching
-    // Longer queries can use higher threshold for better relevance
-    let minScore: number | undefined = undefined;
-    if (q) {
-      if (q.length <= 3) {
-        minScore = 1.0;  // Very low threshold for short queries (e.g., "241", "abc")
-      } else if (q.length <= 5) {
-        minScore = 5.0;  // Low threshold for medium queries
-      } else {
-        minScore = 20.0; // Original threshold for longer queries
-      }
-    }
+    const minScore = calculateMinScore(q);
 
     const esQuery = {
       index: 'ens_names',
