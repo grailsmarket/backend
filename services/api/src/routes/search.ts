@@ -155,7 +155,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
-    let usePostgresql = sortBy === 'watchers_count';
+    let usePostgresql = sortBy === 'watchers_count' || sortBy === 'view_count';
 
     // Force PostgreSQL for marketplace filter since 'source' is not in ES index
     if (marketplace && marketplace !== 'all') {
@@ -165,6 +165,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     if (usePostgresql && sortBy === 'watchers_count') {
       fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
+    }
+
+    if (usePostgresql && sortBy === 'view_count') {
+      fastify.log.info('Forcing PostgreSQL because sortBy=view_count (not available in Elasticsearch)');
     }
 
     // Build Elasticsearch query using shared utility
@@ -552,6 +556,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'watchers_count') {
         // Sort by watchers count - use alias from SELECT clause to avoid DISTINCT conflict
         orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+      } else if (sortBy === 'view_count') {
+        // Sort by view count - use alias from SELECT clause to avoid DISTINCT conflict
+        orderByClause = `ORDER BY sort_value ${sqlOrder}`;
       } else if (sortBy === 'price') {
         // Sort by listing price using the subquery alias
         // When not filtering, names without listings will have NULL and appear last
@@ -593,6 +600,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       let selectClause = 'DISTINCT en.name';
       if (sortBy === 'watchers_count') {
         selectClause = 'en.name, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value';
+      } else if (sortBy === 'view_count') {
+        selectClause = 'DISTINCT en.name, COALESCE(en.view_count, 0) as sort_value';
       } else if (sortBy === 'last_sale_price') {
         selectClause = 'DISTINCT en.name, en.last_sale_price_usd';
       } else if (sortBy === 'expiry_date') {
