@@ -316,9 +316,15 @@ export async function activityRoutes(fastify: FastifyInstance) {
       }
 
       if (club) {
-        paramCount++;
-        conditions.push(`$${paramCount} = ANY(en.clubs)`);
-        params.push(club);
+        if (club.toLowerCase() === 'any') {
+          // Return activity for any name that's in at least one club
+          conditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        } else {
+          // Return activity for names in a specific club
+          paramCount++;
+          conditions.push(`$${paramCount} = ANY(en.clubs)`);
+          params.push(club);
+        }
       }
 
       // Add mutelist filtering - exclude activity where actor or counterparty is muted
