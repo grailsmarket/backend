@@ -16,6 +16,8 @@ const VALID_SORT_FIELDS = [
   'member_count',
   'floor_price_wei',
   'name',
+  'premium_count',
+  'available_count',
 ] as const;
 
 // Valid classifications for filtering
@@ -114,6 +116,8 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           sales_volume_wei_1y,
           sales_volume_wei_1mo,
           sales_volume_wei_1w,
+          premium_count,
+          available_count,
           classifications,
           last_floor_update,
           last_sales_update,
@@ -282,6 +286,67 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({
         success: false,
         error: 'Failed to fetch club counts',
+      });
+    }
+  });
+
+  // Get club counts for names in premium or available status
+  fastify.get<{
+    Params: { status: string };
+  }>('/counts/:status(premium|available)', async (request, reply) => {
+    const { status } = request.params;
+
+    try {
+      // Build the date filter based on status
+      // Premium: expired 90-111 days ago
+      // Available: expired > 111 days ago
+      const dateFilter = status === 'premium'
+        ? `expiry_date <= NOW() - INTERVAL '90 days' AND expiry_date > NOW() - INTERVAL '111 days'`
+        : `expiry_date <= NOW() - INTERVAL '111 days'`;
+
+      const result = await pool.query(
+        `
+        WITH status_names AS (
+          SELECT id, clubs
+          FROM ens_names
+          WHERE ${dateFilter}
+            AND clubs IS NOT NULL
+            AND array_length(clubs, 1) > 0
+        ),
+        any_count AS (
+          SELECT 'any' AS club_name, COUNT(*)::int AS count, 0 AS sort_order
+          FROM status_names
+        ),
+        club_counts AS (
+          SELECT c.name AS club_name, COUNT(sn.id)::int AS count, 1 AS sort_order
+          FROM clubs c
+          LEFT JOIN status_names sn ON c.name = ANY(sn.clubs)
+          GROUP BY c.name
+        )
+        SELECT club_name, count FROM (
+          SELECT * FROM any_count
+          UNION ALL
+          SELECT * FROM club_counts
+        ) AS combined
+        ORDER BY sort_order, count DESC, club_name
+        `
+      );
+
+      // Transform to object
+      const counts: Record<string, number> = {};
+      for (const row of result.rows) {
+        counts[row.club_name] = row.count;
+      }
+
+      return reply.send({
+        success: true,
+        data: counts,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: `Failed to fetch ${status} club counts`,
       });
     }
   });
