@@ -35,6 +35,7 @@ export interface SearchResult {
   // Watchlist fields
   watchers_count: number;
   is_user_watching: boolean;
+  watchlist_record_id: number | null;  // Only present if user is watching
 
   // Highest offer fields
   highest_offer_wei: string | null;
@@ -122,6 +123,9 @@ export async function buildSearchResults(
       ${userId
         ? `(SELECT EXISTS(SELECT 1 FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1})) as is_user_watching,`
         : 'false as is_user_watching,'}
+      ${userId
+        ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
+        : 'NULL as watchlist_record_id,'}
 
       -- Listing fields (aggregated as JSON array)
       COALESCE(
@@ -181,6 +185,7 @@ export async function buildSearchResults(
       net_score: row.net_score,
       watchers_count: parseInt(row.watchers_count) || 0,
       is_user_watching: row.is_user_watching || false,
+      watchlist_record_id: row.watchlist_record_id || null,
       highest_offer_wei: row.highest_offer_wei,
       highest_offer_currency: row.highest_offer_currency,
       highest_offer_id: row.highest_offer_id,
