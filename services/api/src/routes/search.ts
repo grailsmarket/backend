@@ -485,6 +485,23 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`(en.highest_offer_wei IS NULL OR CAST(en.highest_offer_wei AS NUMERIC) <= 0)`);
       }
 
+      // Add clubs filter
+      if (clubs && clubs.length > 0) {
+        whereConditions.push(`en.clubs && $${paramCount}::text[]`);
+        params.push(clubs);
+        paramCount++;
+      }
+
+      // Add inAnyClub filter
+      if (inAnyClub !== undefined) {
+        const wantInClub = inAnyClub === 'true' || inAnyClub === true;
+        if (wantInClub) {
+          whereConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        } else {
+          whereConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+        }
+      }
+
       // Add emoji filter
       if (hasEmoji !== undefined) {
         whereConditions.push(`en.has_emoji = $${paramCount}`);
