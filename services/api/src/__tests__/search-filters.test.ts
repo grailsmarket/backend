@@ -25,6 +25,8 @@ interface SearchResult {
   has_numbers?: boolean;
   has_emoji?: boolean;
   highest_offer_wei?: string | null;
+  view_count: number;
+  watchers_count: number;
 }
 
 interface SearchResponse {
@@ -952,6 +954,42 @@ describe('Search API Filters', () => {
       const names = data!.results.map((r) => r.name.toLowerCase());
       const sorted = [...names].sort().reverse();
       expect(names).toEqual(sorted);
+    });
+
+    it('sortBy=view_count&sortOrder=desc returns names ordered by most views first', async () => {
+      const { data } = await search('sortBy=view_count&sortOrder=desc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const viewCounts = data!.results.map((r) => r.view_count);
+      const sorted = [...viewCounts].sort((a, b) => b - a);
+      expect(viewCounts).toEqual(sorted);
+    });
+
+    it('sortBy=view_count&sortOrder=asc returns names ordered by least views first', async () => {
+      const { data } = await search('sortBy=view_count&sortOrder=asc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const viewCounts = data!.results.map((r) => r.view_count);
+      const sorted = [...viewCounts].sort((a, b) => a - b);
+      expect(viewCounts).toEqual(sorted);
+    });
+
+    it('sortBy=watchers_count&sortOrder=desc returns names ordered by most watchers first', async () => {
+      const { data } = await search('sortBy=watchers_count&sortOrder=desc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const watchersCounts = data!.results.map((r) => r.watchers_count);
+      const sorted = [...watchersCounts].sort((a, b) => b - a);
+      expect(watchersCounts).toEqual(sorted);
+    });
+
+    it('sortBy=watchers_count&sortOrder=asc returns names ordered by least watchers first', async () => {
+      const { data } = await search('sortBy=watchers_count&sortOrder=asc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const watchersCounts = data!.results.map((r) => r.watchers_count);
+      const sorted = [...watchersCounts].sort((a, b) => a - b);
+      expect(watchersCounts).toEqual(sorted);
     });
   });
 
