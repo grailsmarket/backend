@@ -37,6 +37,7 @@ function createNotFoundResult(name: string): SearchResult {
     net_score: 0,
     watchers_count: 0,
     is_user_watching: false,
+    watchlist_record_id: null,
     highest_offer_wei: null,
     highest_offer_currency: null,
     highest_offer_id: null,
