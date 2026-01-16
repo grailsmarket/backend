@@ -49,10 +49,10 @@ const SearchWatchlistQuerySchema = z.object({
     hasEmoji: booleanString,
 
     // Tri-state character filters
-    digits: z.enum(['allowed', 'exclude', 'only']).optional(),
-    letters: z.enum(['allowed', 'exclude', 'only']).optional(),
-    emoji: z.enum(['allowed', 'exclude', 'only']).optional(),
-    repeatingChars: z.enum(['allowed', 'exclude', 'only']).optional(),
+    digits: z.enum(['include', 'exclude', 'only']).optional(),
+    letters: z.enum(['include', 'exclude', 'only']).optional(),
+    emoji: z.enum(['include', 'exclude', 'only']).optional(),
+    repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
 
     // String pattern filters
     contains: z.string().optional(),

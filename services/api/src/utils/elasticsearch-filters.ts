@@ -23,7 +23,7 @@ export interface ESFilterOptions {
   hasEmoji?: boolean | string;
   hasNumbers?: boolean | string;
 
-  // Tri-state character filters: 'allowed' | 'exclude' | 'only'
+  // Tri-state character filters: 'include' | 'exclude' | 'only'
   digits?: string;
   letters?: string;
   emoji?: string;
