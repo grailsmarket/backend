@@ -1,9 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { getPostgresPool, APIResponse, getElasticsearchClient } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
-import { searchNames } from '../services/search';
 import { buildSearchResults } from '../utils/response-builder';
+import { buildESQuery } from '../utils/elasticsearch-filters';
 
 const AddToWatchlistSchema = z.object({
   ensName: z.string().min(1),
@@ -25,23 +25,64 @@ const WatchlistQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(100).default(20),
 });
 
+// Helper to properly parse boolean strings (unlike z.coerce.boolean which treats "false" as true)
+const booleanString = z.union([z.boolean(), z.string()]).optional();
+
 const SearchWatchlistQuerySchema = z.object({
   q: z.string().default('*'),
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
+  sortBy: z.enum(['price', 'expiry_date', 'registration_date', 'last_sale_date',
+    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
   filters: z.object({
+    // Price filters
     minPrice: z.string().optional(),
     maxPrice: z.string().optional(),
+
+    // Length filters
     minLength: z.coerce.number().optional(),
     maxLength: z.coerce.number().optional(),
-    hasNumbers: z.coerce.boolean().optional(),
-    hasEmoji: z.coerce.boolean().optional(),
+
+    // Legacy character filters (use string to let buildESFilters handle 'true'/'false')
+    hasNumbers: booleanString,
+    hasEmoji: booleanString,
+
+    // Tri-state character filters
+    digits: z.enum(['allowed', 'exclude', 'only']).optional(),
+    letters: z.enum(['allowed', 'exclude', 'only']).optional(),
+    emoji: z.enum(['allowed', 'exclude', 'only']).optional(),
+    repeatingChars: z.enum(['allowed', 'exclude', 'only']).optional(),
+
+    // String pattern filters
+    contains: z.string().optional(),
+    startsWith: z.string().optional(),
+    endsWith: z.string().optional(),
+    doesNotContain: z.string().optional(),
+    doesNotStartWith: z.string().optional(),
+    doesNotEndWith: z.string().optional(),
+
+    // Listing/market filters (use string to let buildESFilters handle 'true'/'false')
+    listed: booleanString,
+    hasOffer: booleanString,
+    marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
+
+    // Club filters
     clubs: z.array(z.string()).optional(),
-    isExpired: z.coerce.boolean().optional(),
-    isGracePeriod: z.coerce.boolean().optional(),
-    isPremiumPeriod: z.coerce.boolean().optional(),
+    inAnyClub: booleanString,
+
+    // Unified status filter
+    status: z.enum(['registered', 'grace', 'premium', 'available', 'all']).optional(),
+
+    // Legacy expiration filters (use string to let buildESFilters handle 'true'/'false')
+    isExpired: booleanString,
+    isGracePeriod: booleanString,
+    isPremiumPeriod: booleanString,
     expiringWithinDays: z.coerce.number().optional(),
-    hasSales: z.coerce.boolean().optional(),
+    includeExpired: booleanString,
+
+    // Sale history filters
+    hasSales: booleanString,
     lastSoldAfter: z.string().optional(),
     lastSoldBefore: z.string().optional(),
     minDaysSinceLastSale: z.coerce.number().optional(),
@@ -651,6 +692,8 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         q: rawQuery.q,
         page: rawQuery.page,
         limit: rawQuery.limit,
+        sortBy: rawQuery.sortBy,
+        sortOrder: rawQuery.sortOrder,
         filters: {},
       };
 
@@ -714,17 +757,58 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       const watchlistNames = watchlistResult.rows.map(row => row.name);
 
-      // Search within watchlist using Elasticsearch
-      const esResults = await searchNames({
-        q: query.q,
+      // Search within watchlist using Elasticsearch with full filter support
+      const esClient = getElasticsearchClient();
+      const filters = query.filters || {};
+      const searchQuery = buildESQuery({
+        q: query.q === '*' ? undefined : query.q,
         page: query.page,
         limit: query.limit,
+        sortBy: query.sortBy,
+        sortOrder: query.sortOrder,
         ensNames: watchlistNames, // Restrict search to watchlist items only
-        filters: query.filters,
+        // All supported filters
+        minPrice: filters.minPrice,
+        maxPrice: filters.maxPrice,
+        minLength: filters.minLength,
+        maxLength: filters.maxLength,
+        hasNumbers: filters.hasNumbers,
+        hasEmoji: filters.hasEmoji,
+        digits: filters.digits,
+        letters: filters.letters,
+        emoji: filters.emoji,
+        repeatingChars: filters.repeatingChars,
+        contains: filters.contains,
+        startsWith: filters.startsWith,
+        endsWith: filters.endsWith,
+        doesNotContain: filters.doesNotContain,
+        doesNotStartWith: filters.doesNotStartWith,
+        doesNotEndWith: filters.doesNotEndWith,
+        listed: filters.listed,
+        hasOffer: filters.hasOffer,
+        clubs: filters.clubs,
+        inAnyClub: filters.inAnyClub,
+        status: filters.status,
+        isExpired: filters.isExpired,
+        isGracePeriod: filters.isGracePeriod,
+        isPremiumPeriod: filters.isPremiumPeriod,
+        expiringWithinDays: filters.expiringWithinDays,
+        includeExpired: filters.includeExpired,
+        hasSales: filters.hasSales,
+        lastSoldAfter: filters.lastSoldAfter,
+        lastSoldBefore: filters.lastSoldBefore,
+        minDaysSinceLastSale: filters.minDaysSinceLastSale,
+        maxDaysSinceLastSale: filters.maxDaysSinceLastSale,
       });
 
+      const esResponse = await esClient.search(searchQuery);
+      const hits = esResponse.hits.hits;
+      const total = typeof esResponse.hits.total === 'number'
+        ? esResponse.hits.total
+        : esResponse.hits.total?.value ?? 0;
+
       // Extract names from Elasticsearch results
-      const resultNames = esResults.results.map((hit: any) => hit.name);
+      const resultNames = hits.map((hit: any) => hit._source.name);
 
       // Build results with watchlist metadata
       const results = await buildSearchResults(resultNames, userId);
@@ -768,11 +852,19 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         };
       });
 
+      const totalPages = Math.ceil(total / query.limit);
       const response: APIResponse = {
         success: true,
         data: {
           results: enrichedResults,
-          pagination: esResults.pagination,
+          pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            totalPages,
+            hasNext: query.page < totalPages,
+            hasPrev: query.page > 1,
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),

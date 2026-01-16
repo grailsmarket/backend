@@ -1,0 +1,695 @@
+/**
+ * Shared Elasticsearch filter and sort building utilities
+ * Used by both /search and /watchlist/search endpoints
+ */
+
+export interface ESFilterOptions {
+  // Search query
+  q?: string;
+
+  // Pagination
+  page?: number;
+  limit?: number;
+
+  // Price filters
+  minPrice?: string;
+  maxPrice?: string;
+
+  // Length filters
+  minLength?: number | string;
+  maxLength?: number | string;
+
+  // Legacy character filters
+  hasEmoji?: boolean | string;
+  hasNumbers?: boolean | string;
+
+  // Tri-state character filters: 'allowed' | 'exclude' | 'only'
+  digits?: string;
+  letters?: string;
+  emoji?: string;
+  repeatingChars?: string;
+
+  // String pattern filters
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+  doesNotContain?: string;
+  doesNotStartWith?: string;
+  doesNotEndWith?: string;
+
+  // Listing status filters
+  listed?: boolean | string;
+  showListings?: boolean | string;
+  showUnlisted?: boolean | string;
+
+  // Offer filter
+  hasOffer?: boolean | string;
+
+  // Marketplace filter
+  marketplace?: string;
+
+  // Club filters
+  clubs?: string[];
+  inAnyClub?: boolean | string;
+
+  // Owner filter (resolved address)
+  resolvedOwnerAddress?: string | null;
+
+  // Unified status filter: 'registered' | 'grace' | 'premium' | 'available' | 'all'
+  status?: string;
+
+  // Legacy expiration filters
+  isExpired?: boolean | string;
+  isGracePeriod?: boolean | string;
+  isPremiumPeriod?: boolean | string;
+  expiringWithinDays?: number | string;
+
+  // Include expired names (default: false)
+  includeExpired?: boolean | string;
+
+  // Sale history filters
+  hasSales?: boolean | string;
+  lastSoldAfter?: string;
+  lastSoldBefore?: string;
+  minDaysSinceLastSale?: number | string;
+  maxDaysSinceLastSale?: number | string;
+
+  // For watchlist: restrict to specific ENS names
+  ensNames?: string[];
+
+  // Sort options
+  sortBy?: string;
+  sortOrder?: string;
+}
+
+export interface ESQueryResult {
+  must: any[];
+  filter: any[];
+  sort: any[];
+  minScore?: number;
+}
+
+/**
+ * Build Elasticsearch filter and must arrays from filter options
+ */
+export function buildESFilters(options: ESFilterOptions): { must: any[]; filter: any[] } {
+  const must: any[] = [];
+  const filter: any[] = [];
+
+  const {
+    q,
+    minPrice,
+    maxPrice,
+    minLength,
+    maxLength,
+    hasEmoji,
+    hasNumbers,
+    digits,
+    letters,
+    emoji,
+    repeatingChars,
+    contains,
+    startsWith,
+    endsWith,
+    doesNotContain,
+    doesNotStartWith,
+    doesNotEndWith,
+    listed,
+    showListings,
+    showUnlisted,
+    hasOffer,
+    clubs,
+    inAnyClub,
+    resolvedOwnerAddress,
+    status,
+    isExpired,
+    isGracePeriod,
+    isPremiumPeriod,
+    expiringWithinDays,
+    includeExpired,
+    hasSales,
+    lastSoldAfter,
+    lastSoldBefore,
+    minDaysSinceLastSale,
+    maxDaysSinceLastSale,
+    ensNames,
+    sortBy,
+  } = options;
+
+  // Exclude placeholder names from all searches
+  filter.push({
+    bool: {
+      must_not: [
+        { prefix: { 'name.keyword': 'token-' } },
+        { prefix: { 'name.keyword': '[' } }
+      ]
+    }
+  });
+
+  // Skip the default "exclude expired names" filter if user is explicitly filtering
+  // by expiration state
+  const hasExplicitExpirationFilter =
+    isExpired !== undefined ||
+    isGracePeriod !== undefined ||
+    isPremiumPeriod !== undefined ||
+    (status !== undefined && status !== 'all');
+
+  if (includeExpired !== true && includeExpired !== 'true' && !hasExplicitExpirationFilter) {
+    filter.push({
+      bool: {
+        should: [
+          { bool: { must_not: { exists: { field: 'expiry_date' } } } },
+          { range: { expiry_date: { gte: 'now-90d' } } }
+        ],
+        minimum_should_match: 1
+      }
+    });
+  }
+
+  // Exclude subnames - only match *.eth pattern (not *.*.eth or deeper)
+  filter.push({
+    bool: {
+      must_not: [
+        { wildcard: { 'name.keyword': '*.*.eth' } },
+        { prefix: { 'name.keyword': 'token-' } },
+        { prefix: { 'name.keyword': '[' } }
+      ]
+    }
+  });
+
+  // Restrict to specific ENS names (for watchlist)
+  if (ensNames && ensNames.length > 0) {
+    filter.push({
+      terms: { 'name.keyword': ensNames.map(n => n.toLowerCase()) }
+    });
+  }
+
+  // Filter by listing status
+  if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price') {
+    filter.push({ term: { status: 'active' } });
+  } else if (listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true') {
+    filter.push({
+      bool: {
+        must_not: [{ term: { status: 'active' } }]
+      }
+    });
+  }
+
+  // Filter by offer status
+  if (hasOffer === 'true' || hasOffer === true) {
+    filter.push({
+      bool: {
+        must: [
+          { exists: { field: 'highest_offer' } },
+          { range: { highest_offer: { gt: 0 } } }
+        ]
+      }
+    });
+  } else if (hasOffer === 'false' || hasOffer === false) {
+    filter.push({
+      bool: {
+        should: [
+          { bool: { must_not: { exists: { field: 'highest_offer' } } } },
+          { range: { highest_offer: { lte: 0 } } }
+        ],
+        minimum_should_match: 1
+      }
+    });
+  }
+
+  // Search query
+  if (q) {
+    const normalizedQuery = q.toLowerCase();
+    const queryWithEth = normalizedQuery.endsWith('.eth') ? normalizedQuery : `${normalizedQuery}.eth`;
+
+    must.push({
+      bool: {
+        should: [
+          { term: { 'name.keyword': { value: queryWithEth, boost: 1000 } } },
+          { term: { 'name.keyword': { value: normalizedQuery, boost: 1000 } } },
+          { match: { name: { query: q, boost: 10 } } },
+          { prefix: { name: { value: q, boost: 5 } } },
+          { match: { 'name.ngram': { query: q, boost: 1 } } },
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  }
+
+  // Price filters
+  if (minPrice || maxPrice) {
+    const range: any = {};
+    if (minPrice) range.gte = minPrice;
+    if (maxPrice) range.lte = maxPrice;
+    filter.push({ range: { price: range } });
+  }
+
+  // Length filters
+  if (minLength || maxLength) {
+    const scriptConditions: string[] = [];
+    if (minLength) {
+      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(String(minLength))}`);
+    }
+    if (maxLength) {
+      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(String(maxLength))}`);
+    }
+    filter.push({
+      script: {
+        script: {
+          source: scriptConditions.join(' && '),
+          lang: 'painless',
+        },
+      },
+    });
+  }
+
+  // String pattern filters
+  if (contains) {
+    const normalizedContains = contains.toLowerCase();
+    filter.push({
+      wildcard: {
+        'name.keyword': {
+          value: `*${normalizedContains}*`,
+          case_insensitive: true
+        }
+      }
+    });
+  }
+
+  if (startsWith) {
+    const normalizedStartsWith = startsWith.toLowerCase();
+    filter.push({
+      prefix: {
+        'name.keyword': {
+          value: normalizedStartsWith,
+          case_insensitive: true
+        }
+      }
+    });
+  }
+
+  if (endsWith) {
+    const normalizedEndsWith = endsWith.toLowerCase();
+    filter.push({
+      wildcard: {
+        'name.keyword': {
+          value: `*${normalizedEndsWith}.eth`,
+          case_insensitive: true
+        }
+      }
+    });
+  }
+
+  if (doesNotContain) {
+    const normalizedDoesNotContain = doesNotContain.toLowerCase();
+    filter.push({
+      bool: {
+        must_not: {
+          wildcard: {
+            'name.keyword': {
+              value: `*${normalizedDoesNotContain}*`,
+              case_insensitive: true
+            }
+          }
+        }
+      }
+    });
+  }
+
+  if (doesNotStartWith) {
+    const normalizedDoesNotStartWith = doesNotStartWith.toLowerCase();
+    filter.push({
+      bool: {
+        must_not: {
+          wildcard: {
+            'name.keyword': {
+              value: `${normalizedDoesNotStartWith}*`,
+              case_insensitive: true
+            }
+          }
+        }
+      }
+    });
+  }
+
+  if (doesNotEndWith) {
+    const normalizedDoesNotEndWith = doesNotEndWith.toLowerCase();
+    filter.push({
+      bool: {
+        must_not: {
+          wildcard: {
+            'name.keyword': {
+              value: `*${normalizedDoesNotEndWith}.eth`,
+              case_insensitive: true
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Legacy emoji filter
+  if (hasEmoji !== undefined) {
+    filter.push({ term: { has_emoji: hasEmoji === 'true' || hasEmoji === true } });
+  }
+
+  // Legacy numbers filter
+  if (hasNumbers !== undefined) {
+    filter.push({ term: { has_numbers: hasNumbers === 'true' || hasNumbers === true } });
+  }
+
+  // Tri-state digits filter
+  if (digits === 'exclude') {
+    filter.push({ term: { has_numbers: false } });
+  } else if (digits === 'only') {
+    filter.push({
+      script: {
+        script: {
+          source: "/^[0-9]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
+          lang: 'painless',
+        },
+      },
+    });
+  }
+
+  // Tri-state letters filter
+  if (letters === 'exclude') {
+    filter.push({
+      script: {
+        script: {
+          source: "!(/[a-zA-Z]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
+          lang: 'painless',
+        },
+      },
+    });
+  } else if (letters === 'only') {
+    filter.push({
+      script: {
+        script: {
+          source: "/^[a-zA-Z]+\\.eth$/.matcher(doc['name.keyword'].value).matches()",
+          lang: 'painless',
+        },
+      },
+    });
+  }
+
+  // Tri-state emoji filter
+  if (emoji === 'exclude') {
+    filter.push({ term: { has_emoji: false } });
+  } else if (emoji === 'only') {
+    filter.push({ term: { has_emoji: true } });
+    filter.push({
+      script: {
+        script: {
+          source: "!(/[a-zA-Z0-9]/.matcher(doc['name.keyword'].value.replace('.eth', '')).find())",
+          lang: 'painless',
+        },
+      },
+    });
+  }
+
+  // Tri-state repeatingChars filter
+  if (repeatingChars === 'exclude') {
+    filter.push({
+      script: {
+        script: {
+          source: `
+            def label = doc['name.keyword'].value.replace('.eth', '');
+            if (label.length() == 0) return true;
+            def firstChar = label.charAt(0);
+            for (int i = 1; i < label.length(); i++) {
+              if (label.charAt(i) != firstChar) {
+                return true;
+              }
+            }
+            return false;
+          `,
+          lang: 'painless',
+        },
+      },
+    });
+  } else if (repeatingChars === 'only') {
+    filter.push({
+      script: {
+        script: {
+          source: `
+            def label = doc['name.keyword'].value.replace('.eth', '');
+            if (label.length() == 0) return false;
+            def firstChar = label.charAt(0);
+            for (int i = 1; i < label.length(); i++) {
+              if (label.charAt(i) != firstChar) {
+                return false;
+              }
+            }
+            return true;
+          `,
+          lang: 'painless',
+        },
+      },
+    });
+  }
+
+  // Clubs filter
+  if (clubs && clubs.length > 0) {
+    filter.push({ terms: { clubs: clubs } });
+  }
+
+  // inAnyClub filter
+  if (inAnyClub !== undefined) {
+    const wantInClub = inAnyClub === 'true' || inAnyClub === true;
+    if (wantInClub) {
+      filter.push({ exists: { field: 'clubs' } });
+    } else {
+      filter.push({ bool: { must_not: { exists: { field: 'clubs' } } } });
+    }
+  }
+
+  // Owner filter
+  if (resolvedOwnerAddress) {
+    filter.push({ term: { owner: resolvedOwnerAddress } });
+  }
+
+  // Unified status filter
+  if (status && status !== 'all') {
+    filter.push({ exists: { field: 'expiry_date' } });
+    if (status === 'registered') {
+      filter.push({ range: { expiry_date: { gt: 'now' } } });
+    } else if (status === 'grace') {
+      filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+    } else if (status === 'premium') {
+      filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+    } else if (status === 'available') {
+      filter.push({ range: { expiry_date: { lte: 'now-111d' } } });
+    }
+  }
+
+  // Legacy expiration filters
+  if (isExpired !== undefined) {
+    const wantExpired = isExpired === 'true' || isExpired === true;
+    filter.push({ exists: { field: 'expiry_date' } });
+    if (wantExpired) {
+      filter.push({ range: { expiry_date: { lte: 'now' } } });
+    } else {
+      filter.push({ range: { expiry_date: { gt: 'now' } } });
+    }
+  }
+
+  if (isGracePeriod !== undefined) {
+    const wantGracePeriod = isGracePeriod === 'true' || isGracePeriod === true;
+    filter.push({ exists: { field: 'expiry_date' } });
+    if (wantGracePeriod) {
+      filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+    } else {
+      filter.push({
+        bool: {
+          should: [
+            { range: { expiry_date: { gt: 'now' } } },
+            { range: { expiry_date: { lte: 'now-90d' } } }
+          ],
+          minimum_should_match: 1
+        }
+      });
+    }
+  }
+
+  if (isPremiumPeriod !== undefined) {
+    const wantPremiumPeriod = isPremiumPeriod === 'true' || isPremiumPeriod === true;
+    filter.push({ exists: { field: 'expiry_date' } });
+    if (wantPremiumPeriod) {
+      filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+    } else {
+      filter.push({
+        bool: {
+          should: [
+            { range: { expiry_date: { gt: 'now-90d' } } },
+            { range: { expiry_date: { lte: 'now-111d' } } }
+          ],
+          minimum_should_match: 1
+        }
+      });
+    }
+  }
+
+  if (expiringWithinDays !== undefined) {
+    const days = parseInt(String(expiringWithinDays));
+    filter.push({
+      bool: {
+        must: [
+          { exists: { field: 'expiry_date' } },
+          { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
+        ],
+      },
+    });
+  }
+
+  // Sale history filters
+  if (hasSales !== undefined) {
+    filter.push({ term: { has_sales: hasSales === 'true' || hasSales === true } });
+  }
+
+  if (lastSoldAfter) {
+    filter.push({
+      range: {
+        last_sale_date: { gte: lastSoldAfter },
+      },
+    });
+  }
+
+  if (lastSoldBefore) {
+    filter.push({
+      range: {
+        last_sale_date: { lte: lastSoldBefore },
+      },
+    });
+  }
+
+  if (minDaysSinceLastSale !== undefined) {
+    const days = parseInt(String(minDaysSinceLastSale));
+    filter.push({
+      range: {
+        last_sale_date: { lte: `now-${days}d` },
+      },
+    });
+  }
+
+  if (maxDaysSinceLastSale !== undefined) {
+    const days = parseInt(String(maxDaysSinceLastSale));
+    filter.push({
+      range: {
+        last_sale_date: { gte: `now-${days}d` },
+      },
+    });
+  }
+
+  return { must, filter };
+}
+
+/**
+ * Build Elasticsearch sort array from sort options
+ */
+export function buildESSort(options: {
+  sortBy?: string;
+  sortOrder?: string;
+  q?: string;
+  resolvedOwnerAddress?: string | null;
+}): any[] {
+  const { sortBy, sortOrder, q, resolvedOwnerAddress } = options;
+  const sort: any[] = [];
+
+  if (sortBy) {
+    const order = sortOrder || 'desc';
+
+    if (sortBy === 'price') {
+      sort.push({
+        'price_usd': {
+          order,
+          missing: '_last'
+        }
+      });
+    } else if (sortBy === 'last_sale_price') {
+      sort.push({
+        'last_sale_price_usd': {
+          order,
+          missing: '_last'
+        }
+      });
+    } else if (sortBy === 'watchers_count') {
+      sort.push({
+        [sortBy]: {
+          order,
+          missing: '_last'
+        }
+      });
+    } else if (sortBy === 'alphabetical') {
+      sort.push({ 'name.keyword': { order } });
+    } else {
+      sort.push({ [sortBy]: { order } });
+    }
+  } else if (q) {
+    sort.push({ _score: { order: 'desc' } });
+    sort.push({ 'name.keyword': { order: 'asc' } });
+  } else if (resolvedOwnerAddress) {
+    sort.push({ 'name.keyword': { order: 'asc' } });
+  } else {
+    sort.push({ _score: { order: 'desc' } });
+    sort.push({ listing_created_at: { order: 'desc' } });
+  }
+
+  return sort;
+}
+
+/**
+ * Calculate minimum score based on query length
+ */
+export function calculateMinScore(q?: string): number | undefined {
+  if (!q) return undefined;
+
+  if (q.length <= 3) {
+    return 1.0;
+  } else if (q.length <= 5) {
+    return 5.0;
+  } else {
+    return 20.0;
+  }
+}
+
+/**
+ * Build complete ES query object
+ */
+export function buildESQuery(options: ESFilterOptions & { from?: number }): {
+  index: string;
+  body: {
+    query: { bool: { must: any[]; filter: any[] } };
+    min_score?: number;
+    from: number;
+    size: number;
+    sort: any[];
+  };
+} {
+  const { must, filter } = buildESFilters(options);
+  const sort = buildESSort({
+    sortBy: options.sortBy,
+    sortOrder: options.sortOrder,
+    q: options.q,
+    resolvedOwnerAddress: options.resolvedOwnerAddress,
+  });
+  const minScore = calculateMinScore(options.q);
+  const from = options.from ?? ((options.page ?? 1) - 1) * (options.limit ?? 20);
+  const size = options.limit ?? 20;
+
+  return {
+    index: 'ens_names',
+    body: {
+      query: {
+        bool: {
+          must: must.length > 0 ? must : [{ match_all: {} }],
+          filter,
+        },
+      },
+      min_score: minScore,
+      from,
+      size,
+      sort,
+    },
+  };
+}
