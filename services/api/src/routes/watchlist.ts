@@ -793,7 +793,8 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         isGracePeriod: filters.isGracePeriod,
         isPremiumPeriod: filters.isPremiumPeriod,
         expiringWithinDays: filters.expiringWithinDays,
-        includeExpired: filters.includeExpired,
+        // Default to including expired names in watchlist (user explicitly added them)
+        includeExpired: filters.includeExpired ?? true,
         hasSales: filters.hasSales,
         lastSoldAfter: filters.lastSoldAfter,
         lastSoldBefore: filters.lastSoldBefore,
