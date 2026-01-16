@@ -494,7 +494,7 @@ export class SeaportIndexer {
     // Offers are also Seaport orders that become invalid when the counter is incremented
     const cancelOffersQuery = `
       UPDATE offers
-      SET status = 'cancelled', updated_at = NOW()
+      SET status = 'cancelled'
       WHERE buyer_address = $1
         AND status = 'active'
       RETURNING id, order_hash
