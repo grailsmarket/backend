@@ -28,6 +28,8 @@ const VALID_CLASSIFICATIONS = [
   'prepunk',
   'geo',
   'letters',
+  'fantasy',
+  'crypto'
 ] as const;
 
 // Volume/price fields that need numeric casting for sorting
