@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 // Schema for bulk exact search request
 const BulkExactSearchSchema = z.object({
-  terms: z.array(z.string().min(1)).min(1).max(1000),
+  terms: z.array(z.string().min(1)).min(1).max(10000),
   page: z.number().int().min(1).optional().default(1),
   limit: z.number().int().min(1).max(100).optional().default(20),
 });
