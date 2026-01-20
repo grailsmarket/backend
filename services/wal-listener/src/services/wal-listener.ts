@@ -281,9 +281,10 @@ export class WALListener {
 
       // For UPDATEs, check if only ignored fields changed
       if (change.operation === 'UPDATE') {
+        logger.info(`[LISTING-UPDATE-CHECK] id=${change.data?.id} hasOldData=${!!change.oldData}`);
         // Debug: log whether we have oldData
         if (!change.oldData) {
-          logger.debug(`Listing UPDATE for ${change.data?.id} - no oldData available from trigger`);
+          logger.info(`Listing UPDATE for ${change.data?.id} - no oldData available from trigger`);
         }
 
         if (change.oldData && change.data) {
@@ -300,7 +301,7 @@ export class WALListener {
           });
 
           if (changedFields.length === 0) {
-            logger.debug(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
+            logger.info(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
             // Skip activity history processing below as well
             return;
           } else {
