@@ -729,6 +729,78 @@ describe('Search API Filters', () => {
     });
   });
 
+  describe('Offer Amount Filters', () => {
+    it('minOffer filters to offers >= minimum offer amount', async () => {
+      const minOffer = '100000000000000000'; // 0.1 ETH
+      const { data } = await search(
+        `filters[minOffer]=${minOffer}&limit=50`
+      );
+      // May have no names with offers >= minOffer
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.highest_offer_wei) {
+          failures.push(`${result.name}: no offer`);
+          continue;
+        }
+        const offer = BigInt(result.highest_offer_wei);
+        if (offer < BigInt(minOffer)) {
+          failures.push(`${result.name}: offer ${offer} < ${minOffer}`);
+        }
+      }
+
+      expect(failures, `Offer filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('maxOffer filters to offers <= maximum offer amount', async () => {
+      const maxOffer = '10000000000000000000'; // 10 ETH
+      const { data } = await search(
+        `filters[hasOffer]=true&filters[maxOffer]=${maxOffer}&limit=50`
+      );
+      // May have no names with offers
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.highest_offer_wei) {
+          failures.push(`${result.name}: no offer (ES/DB drift)`);
+          continue;
+        }
+        const offer = BigInt(result.highest_offer_wei);
+        if (offer > BigInt(maxOffer)) {
+          failures.push(`${result.name}: offer ${offer} > ${maxOffer}`);
+        }
+      }
+
+      expect(failures, `Offer filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('minOffer + maxOffer filters to offer range', async () => {
+      const minOffer = '100000000000000000'; // 0.1 ETH
+      const maxOffer = '5000000000000000000'; // 5 ETH
+      const { data } = await search(
+        `filters[minOffer]=${minOffer}&filters[maxOffer]=${maxOffer}&limit=50`
+      );
+      // May have no names with offers in range
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.highest_offer_wei) {
+          failures.push(`${result.name}: no offer`);
+          continue;
+        }
+        const offer = BigInt(result.highest_offer_wei);
+        if (offer < BigInt(minOffer) || offer > BigInt(maxOffer)) {
+          failures.push(`${result.name}: offer ${offer} not in range [${minOffer}, ${maxOffer}]`);
+        }
+      }
+
+      expect(failures, `Offer filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+  });
+
   describe('Listed Filter (Unified Listing Status)', () => {
     it('listed=true returns only names with active listings', async () => {
       const { data } = await search('filters[listed]=true&limit=50');

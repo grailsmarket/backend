@@ -112,7 +112,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -176,6 +176,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       q,
       minPrice,
       maxPrice,
+      minOffer,
+      maxOffer,
       minLength,
       maxLength,
       hasEmoji,
@@ -483,6 +485,19 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`en.highest_offer_wei IS NOT NULL AND CAST(en.highest_offer_wei AS NUMERIC) > 0`);
       } else if (hasOffer === 'false' || hasOffer === false) {
         whereConditions.push(`(en.highest_offer_wei IS NULL OR CAST(en.highest_offer_wei AS NUMERIC) <= 0)`);
+      }
+
+      // Add offer amount filters
+      if (minOffer) {
+        whereConditions.push(`CAST(en.highest_offer_wei AS NUMERIC) >= $${paramCount}`);
+        params.push(minOffer);
+        paramCount++;
+      }
+
+      if (maxOffer) {
+        whereConditions.push(`CAST(en.highest_offer_wei AS NUMERIC) <= $${paramCount}`);
+        params.push(maxOffer);
+        paramCount++;
       }
 
       // Add clubs filter

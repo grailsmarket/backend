@@ -15,6 +15,10 @@ export interface ESFilterOptions {
   minPrice?: string;
   maxPrice?: string;
 
+  // Offer filters
+  minOffer?: string;
+  maxOffer?: string;
+
   // Length filters
   minLength?: number | string;
   maxLength?: number | string;
@@ -100,6 +104,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     q,
     minPrice,
     maxPrice,
+    minOffer,
+    maxOffer,
     minLength,
     maxLength,
     hasEmoji,
@@ -242,6 +248,14 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     if (minPrice) range.gte = minPrice;
     if (maxPrice) range.lte = maxPrice;
     filter.push({ range: { price: range } });
+  }
+
+  // Offer filters
+  if (minOffer || maxOffer) {
+    const range: any = {};
+    if (minOffer) range.gte = minOffer;
+    if (maxOffer) range.lte = maxOffer;
+    filter.push({ range: { highest_offer: range } });
   }
 
   // Length filters
