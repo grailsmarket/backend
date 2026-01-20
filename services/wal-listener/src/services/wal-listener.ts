@@ -157,21 +157,8 @@ export class WALListener {
   }
 
   private async processChange(change: Change) {
-    // Get ens_name_id for context
-    let ensNameId: number | undefined;
-    if (change.table === 'offers' && change.data?.ens_name_id) {
-      ensNameId = change.data.ens_name_id;
-    } else if (change.table === 'listings' && change.data?.ens_name_id) {
-      ensNameId = change.data.ens_name_id;
-    } else if (change.table === 'ens_names' && change.data?.id) {
-      ensNameId = change.data.id;
-    }
-
-    const logMessage = ensNameId
-      ? `Processing ${change.operation} on ${change.table} for ensNameId ${ensNameId}`
-      : `Processing ${change.operation} on ${change.table}`;
-
-    logger.info(logMessage, {
+    // Log at debug level - actual sync operations will log at info level
+    logger.debug(`Received ${change.operation} on ${change.table}`, {
       table: change.table,
       operation: change.operation,
       dataId: change.data?.id
@@ -281,39 +268,31 @@ export class WALListener {
 
       // For UPDATEs, check if only ignored fields changed
       if (change.operation === 'UPDATE') {
-        logger.info(`[LISTING-UPDATE-CHECK] id=${change.data?.id} hasOldData=${!!change.oldData}`);
-        // Debug: log whether we have oldData
-        if (!change.oldData) {
-          logger.info(`Listing UPDATE for ${change.data?.id} - no oldData available from trigger`);
-        }
-
         if (change.oldData && change.data) {
           const ignoredFields = ['last_validated_at', 'updated_at'];
           const changedFields = Object.keys(change.data).filter(key => {
             if (ignoredFields.includes(key)) return false;
             // Compare values - use JSON.stringify for deep comparison
-            const oldVal = change.oldData[key];
-            const newVal = change.data[key];
-            // Use JSON.stringify to handle objects, arrays, and normalize comparison
-            const oldStr = JSON.stringify(oldVal);
-            const newStr = JSON.stringify(newVal);
+            const oldStr = JSON.stringify(change.oldData[key]);
+            const newStr = JSON.stringify(change.data[key]);
             return oldStr !== newStr;
           });
 
           if (changedFields.length === 0) {
-            logger.info(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
-            // Skip activity history processing below as well
+            // Skip ES update - only timestamp fields changed
             return;
-          } else {
-            logger.info(`Listing ${change.data.id} changed fields: ${changedFields.join(', ')}`);
-            await this.esSync.updateENSNameListing(ensNameId);
           }
+
+          logger.info(`Syncing listing ${change.data.id} to ES (changed: ${changedFields.join(', ')})`);
+          await this.esSync.updateENSNameListing(ensNameId);
         } else {
-          // No oldData available - we need to update ES since we can't tell what changed
+          // No oldData available - update ES since we can't tell what changed
+          logger.info(`Syncing listing ${change.data?.id} to ES (no oldData for comparison)`);
           await this.esSync.updateENSNameListing(ensNameId);
         }
       } else {
         // For INSERT/DELETE, always update ES
+        logger.info(`Syncing listing ${change.data?.id || change.oldData?.id} to ES (${change.operation})`);
         await this.esSync.updateENSNameListing(ensNameId);
       }
     }
