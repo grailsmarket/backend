@@ -280,24 +280,35 @@ export class WALListener {
       const ensNameId = change.data?.ens_name_id || change.oldData?.ens_name_id;
 
       // For UPDATEs, check if only ignored fields changed
-      if (change.operation === 'UPDATE' && change.oldData && change.data) {
-        const ignoredFields = ['last_validated_at', 'updated_at'];
-        const changedFields = Object.keys(change.data).filter(key => {
-          if (ignoredFields.includes(key)) return false;
-          // Compare values, handling null/undefined
-          const oldVal = change.oldData[key];
-          const newVal = change.data[key];
-          if (oldVal === newVal) return false;
-          // Handle date comparisons
-          if (oldVal instanceof Date && newVal instanceof Date) {
-            return oldVal.getTime() !== newVal.getTime();
-          }
-          return true;
-        });
+      if (change.operation === 'UPDATE') {
+        // Debug: log whether we have oldData
+        if (!change.oldData) {
+          logger.debug(`Listing UPDATE for ${change.data?.id} - no oldData available from trigger`);
+        }
 
-        if (changedFields.length === 0) {
-          logger.debug(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
+        if (change.oldData && change.data) {
+          const ignoredFields = ['last_validated_at', 'updated_at'];
+          const changedFields = Object.keys(change.data).filter(key => {
+            if (ignoredFields.includes(key)) return false;
+            // Compare values - use JSON.stringify for deep comparison
+            const oldVal = change.oldData[key];
+            const newVal = change.data[key];
+            // Use JSON.stringify to handle objects, arrays, and normalize comparison
+            const oldStr = JSON.stringify(oldVal);
+            const newStr = JSON.stringify(newVal);
+            return oldStr !== newStr;
+          });
+
+          if (changedFields.length === 0) {
+            logger.debug(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
+            // Skip activity history processing below as well
+            return;
+          } else {
+            logger.info(`Listing ${change.data.id} changed fields: ${changedFields.join(', ')}`);
+            await this.esSync.updateENSNameListing(ensNameId);
+          }
         } else {
+          // No oldData available - we need to update ES since we can't tell what changed
           await this.esSync.updateENSNameListing(ensNameId);
         }
       } else {
