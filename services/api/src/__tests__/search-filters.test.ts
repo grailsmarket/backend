@@ -897,6 +897,85 @@ describe('Search API Filters', () => {
         expect(expiry).toBeLessThanOrEqual(oneElevenDaysAgo);
       }
     });
+
+    it('status[]=premium&status[]=available returns names in either status (OR logic)', async () => {
+      const { data } = await search('filters[status][]=premium&filters[status][]=available&limit=50');
+      expect(
+        data?.results.length,
+        'Multiple status filter returned 0 results - verify premium or available names exist'
+      ).toBeGreaterThan(0);
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+
+        // Should be either premium (90-111 days ago) or available (>111 days ago)
+        // Combined: expiry <= 90 days ago
+        if (expiry > ninetyDaysAgo) {
+          failures.push(`${result.name}: expiry ${result.expiry_date} is not in premium or available status`);
+        }
+      }
+
+      expect(failures, `Status filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('status=premium,available (comma-separated) returns names in either status', async () => {
+      const { data } = await search('filters[status]=premium,available&limit=50');
+      expect(
+        data?.results.length,
+        'Comma-separated status filter returned 0 results - verify premium or available names exist'
+      ).toBeGreaterThan(0);
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+
+        // Should be either premium (90-111 days ago) or available (>111 days ago)
+        // Combined: expiry <= 90 days ago
+        if (expiry > ninetyDaysAgo) {
+          failures.push(`${result.name}: expiry ${result.expiry_date} is not in premium or available status`);
+        }
+      }
+
+      expect(failures, `Status filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('multiple status filter combined with owner filter', async () => {
+      // First get a name to find an owner address
+      const { data: initial } = await search('filters[status]=premium&limit=1');
+      if (!initial?.results.length || !initial.results[0].owner) {
+        return; // Skip if no premium names with owners
+      }
+
+      const ownerAddress = initial.results[0].owner;
+      const { data } = await search(
+        `filters[owner]=${ownerAddress}&filters[status][]=premium&filters[status][]=available&limit=50`
+      );
+
+      // May have no results if owner has no premium/available names
+      if (data?.results.length === 0) return;
+
+      const now = Date.now();
+      const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
+
+      for (const result of data!.results) {
+        // Check owner
+        expect(result.owner?.toLowerCase()).toBe(ownerAddress.toLowerCase());
+
+        // Check status (premium or available)
+        expect(result.expiry_date).toBeDefined();
+        const expiry = new Date(result.expiry_date!).getTime();
+        expect(expiry).toBeLessThanOrEqual(ninetyDaysAgo);
+      }
+    });
   });
 
   describe('String Pattern Filters', () => {
