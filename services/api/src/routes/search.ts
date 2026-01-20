@@ -103,6 +103,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
               const clubValues = Array.isArray(value) ? value : [value];
               // Convert all club values to strings (important for numeric club names like "999")
               transformedQuery.filters[filterName] = clubValues.map((c: any) => String(c));
+            } else if (filterName === 'status') {
+              // Special handling for status - support comma-separated values
+              const stringValue = String(value);
+              if (stringValue.includes(',')) {
+                transformedQuery.filters[filterName] = stringValue.split(',').map(v => v.trim()).filter(v => v);
+              } else {
+                transformedQuery.filters[filterName] = value;
+              }
             } else {
               transformedQuery.filters[filterName] = value;
             }
@@ -348,7 +356,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       let paramCount = 1;
 
       // Skip the default "exclude expired names" filter if user is explicitly filtering by status
-      const pgHasExplicitExpirationFilter = status !== undefined && status !== 'all';
+      const pgHasExplicitStatusFilter = status !== undefined &&
+        (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
+      const pgHasExplicitExpirationFilter = pgHasExplicitStatusFilter;
       if (includeExpired !== true && includeExpired !== 'true' && !pgHasExplicitExpirationFilter) {
         whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
       }
@@ -386,20 +396,41 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
 
-      // Add unified status filter
+      // Add unified status filter - supports single value or array (OR logic for multiple)
       if (status && status !== 'all') {
-        if (status === 'registered') {
-          // Registered: expiry_date > now
-          whereConditions.push(`en.expiry_date > NOW()`);
-        } else if (status === 'grace') {
-          // Grace period: expired within last 90 days
-          whereConditions.push(`en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days'`);
-        } else if (status === 'premium') {
-          // Premium period: expired 90-111 days ago
-          whereConditions.push(`en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days'`);
-        } else if (status === 'available') {
-          // Available: expired more than 111 days ago
-          whereConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+        const statuses = Array.isArray(status) ? status.filter((s: string) => s !== 'all') : [status];
+
+        // Helper to build SQL condition for a single status
+        const buildStatusCondition = (s: string): string | null => {
+          switch (s) {
+            case 'registered':
+              return `en.expiry_date > NOW()`;
+            case 'grace':
+              return `(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`;
+            case 'premium':
+              return `(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`;
+            case 'available':
+              return `en.expiry_date <= NOW() - INTERVAL '111 days'`;
+            default:
+              return null;
+          }
+        };
+
+        if (statuses.length === 1) {
+          // Single status
+          const condition = buildStatusCondition(statuses[0]);
+          if (condition) {
+            whereConditions.push(condition);
+          }
+        } else if (statuses.length > 1) {
+          // Multiple statuses - use OR logic
+          const conditions = statuses
+            .map(buildStatusCondition)
+            .filter((c): c is string => c !== null);
+
+          if (conditions.length > 0) {
+            whereConditions.push(`(${conditions.join(' OR ')})`);
+          }
         }
       }
 

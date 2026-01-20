@@ -60,7 +60,8 @@ export interface ESFilterOptions {
   resolvedOwnerAddress?: string | null;
 
   // Unified status filter: 'registered' | 'grace' | 'premium' | 'available' | 'all'
-  status?: string;
+  // Supports single value or array for multiple statuses (OR logic)
+  status?: string | string[];
 
   // Legacy expiration filters
   isExpired?: boolean | string;
@@ -154,11 +155,13 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
 
   // Skip the default "exclude expired names" filter if user is explicitly filtering
   // by expiration state
+  const hasExplicitStatusFilter = status !== undefined &&
+    (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
   const hasExplicitExpirationFilter =
     isExpired !== undefined ||
     isGracePeriod !== undefined ||
     isPremiumPeriod !== undefined ||
-    (status !== undefined && status !== 'all');
+    hasExplicitStatusFilter;
 
   if (includeExpired !== true && includeExpired !== 'true' && !hasExplicitExpirationFilter) {
     filter.push({
@@ -483,17 +486,50 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     filter.push({ term: { owner: resolvedOwnerAddress } });
   }
 
-  // Unified status filter
+  // Unified status filter - supports single value or array (OR logic for multiple)
   if (status && status !== 'all') {
-    filter.push({ exists: { field: 'expiry_date' } });
-    if (status === 'registered') {
-      filter.push({ range: { expiry_date: { gt: 'now' } } });
-    } else if (status === 'grace') {
-      filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
-    } else if (status === 'premium') {
-      filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
-    } else if (status === 'available') {
-      filter.push({ range: { expiry_date: { lte: 'now-111d' } } });
+    const statuses = Array.isArray(status) ? status.filter(s => s !== 'all') : [status];
+
+    if (statuses.length > 0) {
+      filter.push({ exists: { field: 'expiry_date' } });
+
+      // Helper to build range query for a single status
+      const buildStatusRange = (s: string): any => {
+        switch (s) {
+          case 'registered':
+            return { range: { expiry_date: { gt: 'now' } } };
+          case 'grace':
+            return { range: { expiry_date: { lte: 'now', gt: 'now-90d' } } };
+          case 'premium':
+            return { range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } };
+          case 'available':
+            return { range: { expiry_date: { lte: 'now-111d' } } };
+          default:
+            return null;
+        }
+      };
+
+      if (statuses.length === 1) {
+        // Single status - add directly
+        const rangeQuery = buildStatusRange(statuses[0]);
+        if (rangeQuery) {
+          filter.push(rangeQuery);
+        }
+      } else {
+        // Multiple statuses - use bool.should (OR logic)
+        const shouldClauses = statuses
+          .map(buildStatusRange)
+          .filter((q): q is any => q !== null);
+
+        if (shouldClauses.length > 0) {
+          filter.push({
+            bool: {
+              should: shouldClauses,
+              minimum_should_match: 1
+            }
+          });
+        }
+      }
     }
   }
 
