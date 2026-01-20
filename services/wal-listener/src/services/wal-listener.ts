@@ -275,9 +275,35 @@ export class WALListener {
 
   private async processListingChange(change: Change) {
     // When a listing changes, we need to update the associated ENS name in ES
+    // But skip ES reindexing if only validation timestamp changed (no actual data change)
     if (change.data?.ens_name_id || change.oldData?.ens_name_id) {
       const ensNameId = change.data?.ens_name_id || change.oldData?.ens_name_id;
-      await this.esSync.updateENSNameListing(ensNameId);
+
+      // For UPDATEs, check if only ignored fields changed
+      if (change.operation === 'UPDATE' && change.oldData && change.data) {
+        const ignoredFields = ['last_validated_at', 'updated_at'];
+        const changedFields = Object.keys(change.data).filter(key => {
+          if (ignoredFields.includes(key)) return false;
+          // Compare values, handling null/undefined
+          const oldVal = change.oldData[key];
+          const newVal = change.data[key];
+          if (oldVal === newVal) return false;
+          // Handle date comparisons
+          if (oldVal instanceof Date && newVal instanceof Date) {
+            return oldVal.getTime() !== newVal.getTime();
+          }
+          return true;
+        });
+
+        if (changedFields.length === 0) {
+          logger.debug(`Skipping ES update for listing ${change.data.id} - only last_validated_at/updated_at changed`);
+        } else {
+          await this.esSync.updateENSNameListing(ensNameId);
+        }
+      } else {
+        // For INSERT/DELETE, always update ES
+        await this.esSync.updateENSNameListing(ensNameId);
+      }
     }
 
     // Track activity history based on operation
