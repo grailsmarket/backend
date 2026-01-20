@@ -222,9 +222,14 @@ export class SeaportIndexer {
   private async handleOrderFulfilled(args: any, log: Log) {
     const { orderHash, offerer, recipient, offer, consideration } = args;
 
-    // Check if this is an ENS order
+    // Check if this is an ENS order (either Base Registrar or Name Wrapper)
+    const ensRegistrar = config.blockchain.ensRegistrarAddress.toLowerCase();
+    const ensNameWrapper = config.blockchain.ensNameWrapperAddress.toLowerCase();
     const isENSOrder = offer && offer.some((item: any) =>
-      item.token && item.token.toLowerCase() === config.blockchain.ensRegistrarAddress.toLowerCase()
+      item.token && (
+        item.token.toLowerCase() === ensRegistrar ||
+        item.token.toLowerCase() === ensNameWrapper
+      )
     );
 
     if (!isENSOrder) {
@@ -296,9 +301,16 @@ export class SeaportIndexer {
     const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
 
     for (const item of offer) {
-      if (item.token.toLowerCase() === config.blockchain.ensRegistrarAddress.toLowerCase()) {
+      const tokenAddress = item.token.toLowerCase();
+      const isENSToken = tokenAddress === ensRegistrar || tokenAddress === ensNameWrapper;
+      if (isENSToken) {
         const tokenId = item.identifier.toString();
+        const isWrapped = tokenAddress === ensNameWrapper;
         const price = consideration[0]?.amount?.toString() || '0';
+
+        if (isWrapped) {
+          logger.info(`Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`);
+        }
 
         try {
           // Try to resolve the actual ENS name
