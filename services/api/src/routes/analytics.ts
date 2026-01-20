@@ -12,6 +12,32 @@ const ClubAnalyticsQuerySchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d']).default('7d'),
 });
 
+const SalesQuerySchema = z.object({
+  period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
+  sortBy: z.enum(['price', 'date']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  page: z.string().default('1'),
+  limit: z.string().default('20'),
+});
+
+const ListingsQuerySchema = z.object({
+  period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
+  status: z.enum(['active', 'cancelled', 'sold']).optional(),
+  sortBy: z.enum(['price', 'date']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  page: z.string().default('1'),
+  limit: z.string().default('20'),
+});
+
+const OffersQuerySchema = z.object({
+  period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
+  status: z.enum(['pending', 'active', 'cancelled', 'accepted']).optional(),
+  sortBy: z.enum(['price', 'date']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  page: z.string().default('1'),
+  limit: z.string().default('20'),
+});
+
 export async function analyticsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
@@ -402,5 +428,258 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     };
 
     return reply.send(response);
+  });
+
+  // Helper to convert period to PostgreSQL interval
+  const periodToInterval = (period: string): string => {
+    const map: Record<string, string> = {
+      '24h': '24 hours',
+      '7d': '7 days',
+      '30d': '30 days',
+      '1y': '1 year',
+      'all': '100 years',
+    };
+    return map[period] || '7 days';
+  };
+
+  /**
+   * GET /analytics/sales
+   * Get sales records with filtering, sorting, and pagination
+   */
+  fastify.get('/sales', async (request, reply) => {
+    const query = SalesQuerySchema.parse(request.query);
+    const interval = periodToInterval(query.period);
+    const page = parseInt(query.page);
+    const limit = Math.min(parseInt(query.limit), 100);
+    const offset = (page - 1) * limit;
+
+    const orderByColumn = query.sortBy === 'price' ? 's.sale_price_wei::numeric' : 's.sale_date';
+    const orderDirection = query.sortOrder.toUpperCase();
+
+    try {
+      const [dataResult, countResult] = await Promise.all([
+        pool.query(
+          `SELECT
+            s.*,
+            en.name,
+            en.token_id
+          FROM sales s
+          JOIN ens_names en ON s.ens_name_id = en.id
+          WHERE s.sale_date > NOW() - INTERVAL '${interval}'
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT $1 OFFSET $2`,
+          [limit, offset]
+        ),
+        pool.query(
+          `SELECT COUNT(*) as count
+          FROM sales s
+          WHERE s.sale_date > NOW() - INTERVAL '${interval}'`
+        ),
+      ]);
+
+      const total = parseInt(countResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: dataResult.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch sales',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /analytics/listings
+   * Get listings records with filtering, sorting, and pagination
+   */
+  fastify.get('/listings', async (request, reply) => {
+    const query = ListingsQuerySchema.parse(request.query);
+    const interval = periodToInterval(query.period);
+    const page = parseInt(query.page);
+    const limit = Math.min(parseInt(query.limit), 100);
+    const offset = (page - 1) * limit;
+
+    const orderByColumn = query.sortBy === 'price' ? 'l.price_wei::numeric' : 'l.created_at';
+    const orderDirection = query.sortOrder.toUpperCase();
+
+    // Build status condition
+    let statusCondition = '';
+    const params: any[] = [limit, offset];
+    if (query.status) {
+      statusCondition = 'AND l.status = $3';
+      params.push(query.status);
+    }
+
+    try {
+      const [dataResult, countResult] = await Promise.all([
+        pool.query(
+          `SELECT
+            l.*,
+            en.name,
+            en.token_id
+          FROM listings l
+          JOIN ens_names en ON l.ens_name_id = en.id
+          WHERE l.created_at > NOW() - INTERVAL '${interval}'
+          ${statusCondition}
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT $1 OFFSET $2`,
+          params
+        ),
+        pool.query(
+          `SELECT COUNT(*) as count
+          FROM listings l
+          WHERE l.created_at > NOW() - INTERVAL '${interval}'
+          ${statusCondition}`,
+          query.status ? [query.status] : []
+        ),
+      ]);
+
+      const total = parseInt(countResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: dataResult.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch listings',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /analytics/offers
+   * Get offers records with filtering, sorting, and pagination
+   */
+  fastify.get('/offers', async (request, reply) => {
+    const query = OffersQuerySchema.parse(request.query);
+    const interval = periodToInterval(query.period);
+    const page = parseInt(query.page);
+    const limit = Math.min(parseInt(query.limit), 100);
+    const offset = (page - 1) * limit;
+
+    const orderByColumn = query.sortBy === 'price' ? 'o.offer_amount_wei::numeric' : 'o.created_at';
+    const orderDirection = query.sortOrder.toUpperCase();
+
+    // Build status condition
+    let statusCondition = '';
+    const params: any[] = [limit, offset];
+    if (query.status) {
+      statusCondition = 'AND o.status = $3';
+      params.push(query.status);
+    }
+
+    try {
+      const [dataResult, countResult] = await Promise.all([
+        pool.query(
+          `SELECT
+            o.*,
+            en.name,
+            en.token_id
+          FROM offers o
+          JOIN ens_names en ON o.ens_name_id = en.id
+          WHERE o.created_at > NOW() - INTERVAL '${interval}'
+          ${statusCondition}
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT $1 OFFSET $2`,
+          params
+        ),
+        pool.query(
+          `SELECT COUNT(*) as count
+          FROM offers o
+          WHERE o.created_at > NOW() - INTERVAL '${interval}'
+          ${statusCondition}`,
+          query.status ? [query.status] : []
+        ),
+      ]);
+
+      const total = parseInt(countResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          results: dataResult.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch offers',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
   });
 }
