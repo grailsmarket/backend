@@ -466,9 +466,18 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     });
   }
 
-  // Clubs filter
+  // Clubs filter - handle special values 'none' and 'any'
   if (clubs && clubs.length > 0) {
-    filter.push({ terms: { clubs: clubs } });
+    if (clubs.includes('none')) {
+      // 'none' means names NOT in any club
+      filter.push({ bool: { must_not: { exists: { field: 'clubs' } } } });
+    } else if (clubs.includes('any')) {
+      // 'any' means names in at least one club
+      filter.push({ exists: { field: 'clubs' } });
+    } else {
+      // Regular club filter - match any of the specified clubs
+      filter.push({ terms: { clubs: clubs } });
+    }
   }
 
   // inAnyClub filter

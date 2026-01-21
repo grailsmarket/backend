@@ -298,6 +298,24 @@ describe('Search API Filters', () => {
         expect(result.clubs?.length ?? 0).toBe(0);
       }
     });
+
+    it('clubs[]=none returns names not in any club', async () => {
+      const { data } = await search('filters[clubs][]=none&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs?.length ?? 0).toBe(0);
+      }
+    });
+
+    it('clubs[]=any returns names in at least one club', async () => {
+      const { data } = await search('filters[clubs][]=any&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        expect(result.clubs?.length).toBeGreaterThan(0);
+      }
+    });
   });
 
   describe('Expiration Filters', () => {

@@ -535,11 +535,20 @@ export async function searchRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
-      // Add clubs filter
+      // Add clubs filter - handle special values 'none' and 'any'
       if (clubs && clubs.length > 0) {
-        whereConditions.push(`en.clubs && $${paramCount}::text[]`);
-        params.push(clubs);
-        paramCount++;
+        if (clubs.includes('none')) {
+          // 'none' means names NOT in any club
+          whereConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+        } else if (clubs.includes('any')) {
+          // 'any' means names in at least one club
+          whereConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        } else {
+          // Regular club filter - match any of the specified clubs
+          whereConditions.push(`en.clubs && $${paramCount}::text[]`);
+          params.push(clubs);
+          paramCount++;
+        }
       }
 
       // Add inAnyClub filter
