@@ -163,7 +163,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
-    let usePostgresql = sortBy === 'watchers_count' || sortBy === 'view_count';
+    let usePostgresql = sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count';
 
     // Force PostgreSQL for marketplace filter since 'source' is not in ES index
     if (marketplace && marketplace !== 'all') {
@@ -177,6 +177,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     if (usePostgresql && sortBy === 'view_count') {
       fastify.log.info('Forcing PostgreSQL because sortBy=view_count (not available in Elasticsearch)');
+    }
+
+    if (usePostgresql && sortBy === 'clubs_count') {
+      fastify.log.info('Forcing PostgreSQL because sortBy=clubs_count (not available in Elasticsearch)');
     }
 
     // Build Elasticsearch query using shared utility
@@ -638,6 +642,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'character_count') {
         // Use alias from SELECT clause to avoid DISTINCT conflict
         orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+      } else if (sortBy === 'clubs_count') {
+        // Sort by number of clubs with alphabetical tie-breaker (COLLATE "C" for consistent ASCII ordering)
+        orderByClause = `ORDER BY sort_value ${sqlOrder}, name_sort ASC`;
       } else if (sortBy === 'alphabetical') {
         // Sort by name alphabetically
         orderByClause = `ORDER BY en.name ${sqlOrder}`;
@@ -675,6 +682,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'DISTINCT en.name, en.last_sale_date';
       } else if (sortBy === 'character_count') {
         selectClause = 'DISTINCT en.name, LENGTH(REPLACE(en.name, \'.eth\', \'\')) as sort_value';
+      } else if (sortBy === 'clubs_count') {
+        // Include (en.name COLLATE "C") in SELECT to satisfy DISTINCT + ORDER BY requirement
+        selectClause = 'DISTINCT en.name, (en.name COLLATE "C") as name_sort, COALESCE(array_length(en.clubs, 1), 0) as sort_value';
       } else if (sortBy === 'price') {
         // Use a subquery to get the max price for each name to avoid DISTINCT issues
         selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
