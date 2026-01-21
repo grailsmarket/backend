@@ -24,6 +24,7 @@ import { cartRoutes } from './cart';
 import { poapRoutes } from './poap';
 import { legendsRoutes } from './legends';
 import { brokeredListingsRoutes } from './brokered-listings';
+import { chartsRoutes } from './charts';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -49,6 +50,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(trendingRoutes, { prefix: '/api/v1/trending' });
   fastify.register(recommendationsRoutes, { prefix: '/api/v1/recommendations' });
   fastify.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
+  fastify.register(chartsRoutes, { prefix: '/api/v1/charts' });
   fastify.register(userInsightsRoutes, { prefix: '/api/v1/user' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }
