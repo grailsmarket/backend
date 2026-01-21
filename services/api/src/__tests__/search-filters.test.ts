@@ -1142,6 +1142,47 @@ describe('Search API Filters', () => {
       const sorted = [...watchersCounts].sort((a, b) => a - b);
       expect(watchersCounts).toEqual(sorted);
     });
+
+    it('sortBy=clubs_count&sortOrder=desc returns names ordered by most clubs first', async () => {
+      const { data } = await search('sortBy=clubs_count&sortOrder=desc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const clubsCounts = data!.results.map((r) => r.clubs?.length ?? 0);
+      const sorted = [...clubsCounts].sort((a, b) => b - a);
+      expect(clubsCounts).toEqual(sorted);
+    });
+
+    it('sortBy=clubs_count&sortOrder=asc returns names ordered by least clubs first', async () => {
+      const { data } = await search('sortBy=clubs_count&sortOrder=asc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const clubsCounts = data!.results.map((r) => r.clubs?.length ?? 0);
+      const sorted = [...clubsCounts].sort((a, b) => a - b);
+      expect(clubsCounts).toEqual(sorted);
+    });
+
+    it('sortBy=clubs_count has alphabetical secondary sort for ties', async () => {
+      const { data } = await search('sortBy=clubs_count&sortOrder=desc&limit=100');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      // Group results by clubs count
+      const byClubsCount = new Map<number, string[]>();
+      for (const result of data!.results) {
+        const count = result.clubs?.length ?? 0;
+        if (!byClubsCount.has(count)) {
+          byClubsCount.set(count, []);
+        }
+        byClubsCount.get(count)!.push(result.name);
+      }
+
+      // For each group with more than one name, verify alphabetical order (ASCII byte order)
+      for (const [count, names] of byClubsCount) {
+        if (names.length > 1) {
+          const sorted = [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+          expect(names).toEqual(sorted);
+        }
+      }
+    });
   });
 
   describe('Marketplace Filter', () => {
