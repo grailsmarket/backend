@@ -14,6 +14,7 @@ const ClubAnalyticsQuerySchema = z.object({
 
 const SalesQuerySchema = z.object({
   period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
+  source: z.enum(['opensea', 'grails']).optional(),
   sortBy: z.enum(['price', 'date']).default('date'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
@@ -23,6 +24,7 @@ const SalesQuerySchema = z.object({
 const ListingsQuerySchema = z.object({
   period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
   status: z.enum(['active', 'cancelled', 'sold']).optional(),
+  source: z.enum(['opensea', 'grails']).optional(),
   sortBy: z.enum(['price', 'date']).default('date'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
@@ -32,6 +34,7 @@ const ListingsQuerySchema = z.object({
 const OffersQuerySchema = z.object({
   period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
   status: z.enum(['pending', 'active', 'cancelled', 'accepted']).optional(),
+  source: z.enum(['opensea', 'grails']).optional(),
   sortBy: z.enum(['price', 'date']).default('date'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
@@ -456,6 +459,18 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 's.sale_price_wei::numeric' : 's.sale_date';
     const orderDirection = query.sortOrder.toUpperCase();
 
+    // Build source conditions - different param numbers for data vs count query
+    let dataSourceCondition = '';
+    let countSourceCondition = '';
+    const dataParams: any[] = [limit, offset];
+    const countParams: any[] = [];
+    if (query.source) {
+      dataSourceCondition = 'AND s.source = $3';
+      dataParams.push(query.source);
+      countSourceCondition = 'AND s.source = $1';
+      countParams.push(query.source);
+    }
+
     try {
       const [dataResult, countResult] = await Promise.all([
         pool.query(
@@ -466,14 +481,17 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           FROM sales s
           JOIN ens_names en ON s.ens_name_id = en.id
           WHERE s.sale_date > NOW() - INTERVAL '${interval}'
+          ${dataSourceCondition}
           ORDER BY ${orderByColumn} ${orderDirection}
           LIMIT $1 OFFSET $2`,
-          [limit, offset]
+          dataParams
         ),
         pool.query(
           `SELECT COUNT(*) as count
           FROM sales s
-          WHERE s.sale_date > NOW() - INTERVAL '${interval}'`
+          WHERE s.sale_date > NOW() - INTERVAL '${interval}'
+          ${countSourceCondition}`,
+          countParams
         ),
       ]);
 
@@ -529,13 +547,29 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'l.price_wei::numeric' : 'l.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Build status condition
-    let statusCondition = '';
-    const params: any[] = [limit, offset];
+    // Build filter conditions - different param numbers for data vs count query
+    const dataConditions: string[] = [];
+    const countConditions: string[] = [];
+    const dataParams: any[] = [limit, offset];
+    const countParams: any[] = [];
+    let dataParamNum = 3;
+    let countParamNum = 1;
+
     if (query.status) {
-      statusCondition = 'AND l.status = $3';
-      params.push(query.status);
+      dataConditions.push(`l.status = $${dataParamNum++}`);
+      dataParams.push(query.status);
+      countConditions.push(`l.status = $${countParamNum++}`);
+      countParams.push(query.status);
     }
+    if (query.source) {
+      dataConditions.push(`l.source = $${dataParamNum++}`);
+      dataParams.push(query.source);
+      countConditions.push(`l.source = $${countParamNum++}`);
+      countParams.push(query.source);
+    }
+
+    const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
+    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([
@@ -547,17 +581,17 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           FROM listings l
           JOIN ens_names en ON l.ens_name_id = en.id
           WHERE l.created_at > NOW() - INTERVAL '${interval}'
-          ${statusCondition}
+          ${dataFilterClause}
           ORDER BY ${orderByColumn} ${orderDirection}
           LIMIT $1 OFFSET $2`,
-          params
+          dataParams
         ),
         pool.query(
           `SELECT COUNT(*) as count
           FROM listings l
           WHERE l.created_at > NOW() - INTERVAL '${interval}'
-          ${statusCondition}`,
-          query.status ? [query.status] : []
+          ${countFilterClause}`,
+          countParams
         ),
       ]);
 
@@ -613,13 +647,29 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'o.offer_amount_wei::numeric' : 'o.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Build status condition
-    let statusCondition = '';
-    const params: any[] = [limit, offset];
+    // Build filter conditions - different param numbers for data vs count query
+    const dataConditions: string[] = [];
+    const countConditions: string[] = [];
+    const dataParams: any[] = [limit, offset];
+    const countParams: any[] = [];
+    let dataParamNum = 3;
+    let countParamNum = 1;
+
     if (query.status) {
-      statusCondition = 'AND o.status = $3';
-      params.push(query.status);
+      dataConditions.push(`o.status = $${dataParamNum++}`);
+      dataParams.push(query.status);
+      countConditions.push(`o.status = $${countParamNum++}`);
+      countParams.push(query.status);
     }
+    if (query.source) {
+      dataConditions.push(`o.source = $${dataParamNum++}`);
+      dataParams.push(query.source);
+      countConditions.push(`o.source = $${countParamNum++}`);
+      countParams.push(query.source);
+    }
+
+    const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
+    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([
@@ -631,17 +681,17 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           FROM offers o
           JOIN ens_names en ON o.ens_name_id = en.id
           WHERE o.created_at > NOW() - INTERVAL '${interval}'
-          ${statusCondition}
+          ${dataFilterClause}
           ORDER BY ${orderByColumn} ${orderDirection}
           LIMIT $1 OFFSET $2`,
-          params
+          dataParams
         ),
         pool.query(
           `SELECT COUNT(*) as count
           FROM offers o
           WHERE o.created_at > NOW() - INTERVAL '${interval}'
-          ${statusCondition}`,
-          query.status ? [query.status] : []
+          ${countFilterClause}`,
+          countParams
         ),
       ]);
 
