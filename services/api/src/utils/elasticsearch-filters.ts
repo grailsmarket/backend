@@ -715,8 +715,9 @@ export function buildESSort(options: {
   } else if (resolvedOwnerAddress) {
     sort.push({ 'name.keyword': { order: 'asc' } });
   } else {
+    // Default sort: just _score to let ES naturally mix results
+    // No secondary sort to avoid biasing toward listed or unlisted names
     sort.push({ _score: { order: 'desc' } });
-    sort.push({ listing_created_at: { order: 'desc' } });
   }
 
   return sort;
