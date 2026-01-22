@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { getPostgresPool, APIResponse, getElasticsearchClient } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { buildSearchResults } from '../utils/response-builder';
-import { buildESQuery } from '../utils/elasticsearch-filters';
+import { buildESQuery, buildESFilters, buildESSort, calculateMinScore, ESFilterOptions } from '../utils/elasticsearch-filters';
+import { stringify } from 'csv-stringify';
 
 const AddToWatchlistSchema = z.object({
   ensName: z.string().min(1),
@@ -882,6 +883,307 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to search watchlist',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /api/v1/watchlist/export
+   * Export user's watchlist as CSV
+   */
+  fastify.get('/export', { preHandler: requireAuth }, async (request, reply) => {
+    const MAX_EXPORT_ROWS = 10000;
+    const BATCH_SIZE = 1000;
+
+    const CSV_HEADERS = [
+      'id',
+      'name',
+      'token_id',
+      'owner_address',
+      'expiry_date',
+      'status',
+      'list_price',
+      'registration_date',
+      'clubs',
+      'view_count',
+    ];
+
+    try {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const userId = parseInt(request.user.sub);
+      const rawQuery = request.query as any;
+      const filename = rawQuery.filename || 'watchlist-export';
+
+      // Transform flat query params into nested structure (same as /search)
+      const transformedQuery: any = {
+        q: rawQuery.q,
+        sortBy: rawQuery.sortBy,
+        sortOrder: rawQuery.sortOrder,
+        filters: {},
+      };
+
+      // Parse filters from bracket notation
+      for (const key in rawQuery) {
+        if (key.startsWith('filters[')) {
+          const match = key.match(/filters\[([^\]]+)\](\[\])?/);
+          if (match) {
+            const filterName = match[1];
+            const isArray = match[2] === '[]';
+
+            if (isArray) {
+              if (!transformedQuery.filters[filterName]) {
+                transformedQuery.filters[filterName] = [];
+              }
+              const value = rawQuery[key];
+              if (Array.isArray(value)) {
+                transformedQuery.filters[filterName].push(...value);
+              } else {
+                transformedQuery.filters[filterName].push(value);
+              }
+            } else {
+              transformedQuery.filters[filterName] = rawQuery[key];
+            }
+          }
+        }
+      }
+
+      const filters = transformedQuery.filters || {};
+      const { sortBy, sortOrder, q } = transformedQuery;
+
+      fastify.log.info(`Watchlist export request: q="${q}", sortBy=${sortBy}, filters=${JSON.stringify(filters)}`);
+
+      // Get user's watchlist ENS names
+      const watchlistResult = await pool.query(
+        `SELECT en.name
+         FROM watchlist w
+         JOIN ens_names en ON w.ens_name_id = en.id
+         WHERE w.user_id = $1`,
+        [userId]
+      );
+
+      if (watchlistResult.rows.length === 0) {
+        // Return empty CSV with headers
+        reply.header('Content-Type', 'text/csv');
+        reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+        return reply.send(CSV_HEADERS.join(',') + '\n');
+      }
+
+      const watchlistNames = watchlistResult.rows.map(row => row.name);
+
+      // Build ES filter options
+      const esOptions: ESFilterOptions = {
+        q: q === '*' ? undefined : q,
+        sortBy,
+        sortOrder,
+        ensNames: watchlistNames, // Restrict to watchlist items
+        minPrice: filters.minPrice,
+        maxPrice: filters.maxPrice,
+        minLength: filters.minLength,
+        maxLength: filters.maxLength,
+        hasNumbers: filters.hasNumbers,
+        hasEmoji: filters.hasEmoji,
+        digits: filters.digits,
+        letters: filters.letters,
+        emoji: filters.emoji,
+        repeatingChars: filters.repeatingChars,
+        contains: filters.contains,
+        startsWith: filters.startsWith,
+        endsWith: filters.endsWith,
+        doesNotContain: filters.doesNotContain,
+        doesNotStartWith: filters.doesNotStartWith,
+        doesNotEndWith: filters.doesNotEndWith,
+        listed: filters.listed,
+        hasOffer: filters.hasOffer,
+        clubs: filters.clubs,
+        inAnyClub: filters.inAnyClub,
+        status: filters.status,
+        isExpired: filters.isExpired,
+        isGracePeriod: filters.isGracePeriod,
+        isPremiumPeriod: filters.isPremiumPeriod,
+        expiringWithinDays: filters.expiringWithinDays,
+        includeExpired: filters.includeExpired ?? true,
+        hasSales: filters.hasSales,
+        lastSoldAfter: filters.lastSoldAfter,
+        lastSoldBefore: filters.lastSoldBefore,
+        minDaysSinceLastSale: filters.minDaysSinceLastSale,
+        maxDaysSinceLastSale: filters.maxDaysSinceLastSale,
+      };
+
+      // Fetch names from Elasticsearch using search_after for large exports
+      const esClient = getElasticsearchClient();
+      const { must, filter } = buildESFilters(esOptions);
+      const sort = buildESSort({
+        sortBy: esOptions.sortBy,
+        sortOrder: esOptions.sortOrder,
+        q: esOptions.q,
+      });
+      const minScore = calculateMinScore(esOptions.q);
+
+      // Add tie-breaker for search_after
+      const sortWithTieBreaker = [...sort];
+      if (!sortWithTieBreaker.some((s: any) => s['name.keyword'])) {
+        sortWithTieBreaker.push({ 'name.keyword': { order: 'asc' } });
+      }
+
+      const allNames: string[] = [];
+      let searchAfter: any[] | undefined;
+
+      while (allNames.length < MAX_EXPORT_ROWS) {
+        const remaining = MAX_EXPORT_ROWS - allNames.length;
+        const batchSize = Math.min(BATCH_SIZE, remaining);
+
+        const esQuery: any = {
+          index: 'ens_names',
+          body: {
+            query: {
+              bool: {
+                must: must.length > 0 ? must : [{ match_all: {} }],
+                filter,
+              },
+            },
+            size: batchSize,
+            sort: sortWithTieBreaker,
+          },
+        };
+
+        if (minScore !== undefined) {
+          esQuery.body.min_score = minScore;
+        }
+
+        if (searchAfter) {
+          esQuery.body.search_after = searchAfter;
+        }
+
+        const esResult = await esClient.search(esQuery);
+        const hits = esResult.hits.hits;
+
+        if (hits.length === 0) {
+          break;
+        }
+
+        const names = hits
+          .map((hit: any) => hit._source.name)
+          .filter((name: string) => name && !name.startsWith('token-') && !name.startsWith('['));
+
+        allNames.push(...names);
+        searchAfter = hits[hits.length - 1].sort;
+
+        fastify.log.info(`Watchlist export: fetched ${names.length} names (total: ${allNames.length})`);
+
+        if (hits.length < batchSize) {
+          break;
+        }
+      }
+
+      const exportNames = allNames.slice(0, MAX_EXPORT_ROWS);
+
+      if (exportNames.length === 0) {
+        reply.header('Content-Type', 'text/csv');
+        reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+        return reply.send(CSV_HEADERS.join(',') + '\n');
+      }
+
+      // Fetch export data from PostgreSQL
+      const placeholders = exportNames.map((_, i) => `$${i + 1}`).join(',');
+      const query = `
+        SELECT
+          en.id,
+          en.name,
+          en.token_id,
+          en.owner_address,
+          en.expiry_date,
+          en.registration_date,
+          en.clubs,
+          COALESCE(en.view_count, 0) as view_count,
+          MIN(CASE WHEN l.status = 'active' THEN l.price_wei END) as list_price,
+          CASE
+            WHEN en.expiry_date IS NULL THEN 'registered'
+            WHEN en.expiry_date > NOW() THEN 'registered'
+            WHEN en.expiry_date > NOW() - INTERVAL '90 days' THEN 'grace'
+            WHEN en.expiry_date > NOW() - INTERVAL '111 days' THEN 'premium'
+            ELSE 'available'
+          END as status
+        FROM ens_names en
+        LEFT JOIN listings l ON l.ens_name_id = en.id
+        WHERE LOWER(en.name) IN (${placeholders})
+        GROUP BY en.id
+      `;
+
+      const result = await pool.query(query, exportNames.map(n => n.toLowerCase()));
+
+      // Create a map for ordering
+      const dataMap = new Map<string, any>();
+      for (const row of result.rows) {
+        dataMap.set(row.name.toLowerCase(), row);
+      }
+
+      // Generate CSV
+      const csvStringifier = stringify({
+        header: true,
+        columns: CSV_HEADERS,
+      });
+
+      const csvChunks: string[] = [];
+      csvStringifier.on('data', (chunk: Buffer) => {
+        csvChunks.push(chunk.toString());
+      });
+
+      // Write data rows in order
+      for (const name of exportNames) {
+        const row = dataMap.get(name.toLowerCase());
+        if (row) {
+          csvStringifier.write([
+            row.id,
+            row.name,
+            row.token_id,
+            row.owner_address,
+            row.expiry_date ? row.expiry_date.toISOString() : '',
+            row.status,
+            row.list_price || '',
+            row.registration_date ? row.registration_date.toISOString() : '',
+            Array.isArray(row.clubs) ? row.clubs.join(',') : '',
+            row.view_count,
+          ]);
+        }
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        csvStringifier.on('finish', resolve);
+        csvStringifier.on('error', reject);
+        csvStringifier.end();
+      });
+
+      const csvContent = csvChunks.join('');
+
+      fastify.log.info(`Watchlist export complete: ${result.rows.length} rows, ${csvContent.length} bytes`);
+
+      reply.header('Content-Type', 'text/csv');
+      reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+      return reply.send(csvContent);
+    } catch (error: any) {
+      fastify.log.error('Error exporting watchlist:', error);
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'EXPORT_ERROR',
+          message: 'Failed to export watchlist',
         },
         meta: {
           timestamp: new Date().toISOString(),
