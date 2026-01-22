@@ -123,6 +123,18 @@ function hasOnlyStatuses(results: SearchResult[], allowedStatuses: NameStatus[])
 }
 
 /**
+ * Check which expected statuses are missing from results
+ * Used to verify that all expected statuses are actually returned
+ */
+function getMissingStatuses(results: SearchResult[], expectedStatuses: NameStatus[]): NameStatus[] {
+  const foundStatuses = new Set<NameStatus>();
+  for (const result of results) {
+    foundStatuses.add(getNameStatus(result.expiry_date));
+  }
+  return expectedStatuses.filter(status => !foundStatuses.has(status));
+}
+
+/**
  * Get names that don't match expected statuses (for debugging)
  */
 function getUnexpectedNames(
@@ -155,6 +167,14 @@ describe('Status Criteria Tests', () => {
         // All statuses should be allowed
         const unexpected = getUnexpectedNames(data!.results, allowedStatuses);
         expect(unexpected).toEqual([]);
+
+        // Verify that we're actually getting names from all expected statuses
+        // (This catches bugs where premium/available are incorrectly filtered out)
+        const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
+        if (missingStatuses.length > 0) {
+          console.warn(`WARNING: Explore Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn('This could indicate a bug or simply missing test data.');
+        }
 
         // Log status distribution for visibility
         console.log('Explore: Names tab status distribution:', statuses);
@@ -205,6 +225,13 @@ describe('Status Criteria Tests', () => {
 
         expect(unexpected).toEqual([]);
 
+        // Verify that we're actually getting names from all expected statuses
+        const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
+        if (missingStatuses.length > 0) {
+          console.warn(`WARNING: Categories Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn('This could indicate a bug or simply missing test data.');
+        }
+
         const statuses = analyzeStatuses(data!.results);
         console.log('Categories: Names tab status distribution:', statuses);
       });
@@ -244,8 +271,9 @@ describe('Status Criteria Tests', () => {
 
     describe('Individual Category Pages', () => {
       it('Individual Category: Names tab should include Registered, Grace, Premium, and Available', async () => {
-        // Using 999 club as example
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&filters[clubs][]=999`);
+        // Using prepunks club as example (has many names in different statuses)
+        // Use alphabetical sort and larger limit to get better status distribution
+        const { data } = await search(`limit=500&page=1&${BASE_FILTERS}&filters[clubs][]=prepunks&sortBy=alphabetical`);
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -253,17 +281,24 @@ describe('Status Criteria Tests', () => {
 
         expect(unexpected).toEqual([]);
 
+        // Verify that we're actually getting names from all expected statuses
+        const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
+        if (missingStatuses.length > 0) {
+          console.warn(`WARNING: Individual Category (prepunks) Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn('This could indicate a bug or simply missing test data.');
+        }
+
         const statuses = analyzeStatuses(data!.results);
-        console.log('Individual Category (999): Names tab status distribution:', statuses);
+        console.log('Individual Category (prepunks): Names tab status distribution:', statuses);
       });
 
       it('Individual Category: Premium tab should include ONLY Premium names', async () => {
         const { data } = await search(
-          `limit=100&page=1&${BASE_FILTERS}&filters[clubs][]=999&filters[status]=premium&sortBy=expiry_date&sortOrder=asc`
+          `limit=100&page=1&${BASE_FILTERS}&filters[clubs][]=prepunks&filters[status]=premium&sortBy=expiry_date&sortOrder=asc`
         );
 
         if (data?.results.length === 0) {
-          console.warn('No premium names in 999 club found in test data');
+          console.warn('No premium names in prepunks club found in test data');
           return;
         }
 
