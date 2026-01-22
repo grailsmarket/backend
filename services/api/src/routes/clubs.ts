@@ -18,6 +18,8 @@ const VALID_SORT_FIELDS = [
   'name',
   'premium_count',
   'available_count',
+  'premium_percent',
+  'available_percent',
 ] as const;
 
 // Valid classifications for filtering
@@ -98,9 +100,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         : '';
 
       // Build ORDER BY clause with numeric casting for volume/price fields
-      const orderByField = NUMERIC_SORT_FIELDS.includes(sortBy!)
-        ? `${sortBy}::numeric`
-        : sortBy;
+      // and computed expressions for percentage fields
+      let orderByField: string;
+      if (sortBy === 'premium_percent') {
+        orderByField = 'premium_percent';
+      } else if (sortBy === 'available_percent') {
+        orderByField = 'available_percent';
+      } else if (NUMERIC_SORT_FIELDS.includes(sortBy!)) {
+        orderByField = `${sortBy}::numeric`;
+      } else {
+        orderByField = sortBy!;
+      }
       const orderByClause = `ORDER BY ${orderByField} ${sortOrder} NULLS LAST, name ASC`;
 
       const query = `
@@ -120,6 +130,8 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           sales_volume_wei_1w,
           premium_count,
           available_count,
+          ROUND((premium_count::numeric / NULLIF(member_count, 0)) * 100, 2)::double precision AS premium_percent,
+          ROUND((available_count::numeric / NULLIF(member_count, 0)) * 100, 2)::double precision AS available_percent,
           classifications,
           last_floor_update,
           last_sales_update,
