@@ -120,7 +120,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -209,6 +209,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       showUnlisted,
       hasOffer,
       clubs,
+      excludeClubs,
       inAnyClub,
       resolvedOwnerAddress,
       status,
@@ -359,11 +360,30 @@ export async function searchRoutes(fastify: FastifyInstance) {
       let params: any[] = [];
       let paramCount = 1;
 
-      // Skip the default "exclude expired names" filter if user is explicitly filtering by status
+      // Determine when to apply the "exclude premium/available" filter (PostgreSQL path)
+      // This filter excludes names expired more than 90 days ago (premium and available statuses)
+      //
+      // By default, show ALL statuses (registered, grace, premium, available)
+      // Only apply the exclusion filter when:
+      // 1. owner filter is set (Profile Names tab should only show registered/grace)
+      // 2. sortBy=expiry_date (sorting by expiry doesn't make sense for expired names)
+      // 3. sortBy=price (expired names can't have active listings)
+      //
+      // Skip the filter when:
+      // - includeExpired is explicitly true
+      // - explicit expiration/status filters are set (user knows what they want)
       const pgHasExplicitStatusFilter = status !== undefined &&
         (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
       const pgHasExplicitExpirationFilter = pgHasExplicitStatusFilter;
-      if (includeExpired !== true && includeExpired !== 'true' && !pgHasExplicitExpirationFilter) {
+
+      // Only apply the default "exclude premium/available" filter for specific cases
+      const pgShouldExcludePremiumAvailable =
+        includeExpired !== true &&
+        includeExpired !== 'true' &&
+        !pgHasExplicitExpirationFilter &&
+        (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price');
+
+      if (pgShouldExcludePremiumAvailable) {
         whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
       }
 
@@ -549,6 +569,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
           params.push(clubs);
           paramCount++;
         }
+      }
+
+      // Exclude clubs filter - can be used standalone or with clubs='any'
+      // Excludes names that are in ANY of the specified clubs
+      if (excludeClubs && excludeClubs.length > 0) {
+        whereConditions.push(`(en.clubs IS NULL OR NOT (en.clubs && $${paramCount}::text[]))`);
+        params.push(excludeClubs);
+        paramCount++;
       }
 
       // Add inAnyClub filter

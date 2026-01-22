@@ -316,6 +316,41 @@ describe('Search API Filters', () => {
         expect(result.clubs?.length).toBeGreaterThan(0);
       }
     });
+
+    it('clubs[]=any with excludeClubs returns names in clubs except excluded ones', async () => {
+      const excludedClubs = ['bip_39', 'prepunks'];
+      const { data } = await search(
+        `filters[clubs][]=any&filters[excludeClubs][]=bip_39&filters[excludeClubs][]=prepunks&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        // Should be in at least one club
+        expect(result.clubs?.length).toBeGreaterThan(0);
+        // Should not be in any excluded club
+        for (const excludedClub of excludedClubs) {
+          expect(result.clubs).not.toContain(excludedClub);
+        }
+      }
+    });
+
+    it('excludeClubs by itself excludes names in those clubs (allows no-club names)', async () => {
+      const excludedClubs = ['999', '10k'];
+      const { data } = await search(
+        `filters[excludeClubs][]=999&filters[excludeClubs][]=10k&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      for (const result of data!.results) {
+        // Should not be in any excluded club (but can be in no clubs at all)
+        if (result.clubs && result.clubs.length > 0) {
+          for (const excludedClub of excludedClubs) {
+            expect(result.clubs).not.toContain(excludedClub);
+          }
+        }
+        // Names with no clubs are allowed
+      }
+    });
   });
 
   describe('Expiration Filters', () => {

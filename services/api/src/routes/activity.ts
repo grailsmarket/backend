@@ -101,7 +101,8 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
-          en.token_id
+          en.token_id,
+          en.clubs
         FROM activity_history ah
         JOIN ens_names en ON ah.ens_name_id = en.id
         WHERE ${whereClause}
@@ -221,7 +222,8 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
-          en.token_id
+          en.token_id,
+          en.clubs
         FROM activity_history ah
         JOIN ens_names en ON ah.ens_name_id = en.id
         WHERE ${whereClause}
@@ -365,7 +367,8 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
-          en.token_id
+          en.token_id,
+          en.clubs
         FROM activity_history ah
         JOIN ens_names en ON ah.ens_name_id = en.id
         ${whereClause}

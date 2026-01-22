@@ -54,6 +54,7 @@ export interface ESFilterOptions {
 
   // Club filters
   clubs?: string[];
+  excludeClubs?: string[];
   inAnyClub?: boolean | string;
 
   // Owner filter (resolved address)
@@ -126,6 +127,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     showUnlisted,
     hasOffer,
     clubs,
+    excludeClubs,
     inAnyClub,
     resolvedOwnerAddress,
     status,
@@ -153,8 +155,18 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     }
   });
 
-  // Skip the default "exclude expired names" filter if user is explicitly filtering
-  // by expiration state
+  // Determine when to apply the "exclude premium/available" filter
+  // This filter excludes names expired more than 90 days ago (premium and available statuses)
+  //
+  // By default, show ALL statuses (registered, grace, premium, available)
+  // Only apply the exclusion filter when:
+  // 1. owner filter is set (Profile Names tab should only show registered/grace)
+  // 2. sortBy=expiry_date (sorting by expiry doesn't make sense for expired names)
+  // 3. sortBy=price (expired names can't have active listings)
+  //
+  // Skip the filter when:
+  // - includeExpired is explicitly true
+  // - explicit expiration/status filters are set (user knows what they want)
   const hasExplicitStatusFilter = status !== undefined &&
     (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
   const hasExplicitExpirationFilter =
@@ -163,7 +175,14 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     isPremiumPeriod !== undefined ||
     hasExplicitStatusFilter;
 
-  if (includeExpired !== true && includeExpired !== 'true' && !hasExplicitExpirationFilter) {
+  // Only apply the default "exclude premium/available" filter for specific cases
+  const shouldExcludePremiumAvailable =
+    includeExpired !== true &&
+    includeExpired !== 'true' &&
+    !hasExplicitExpirationFilter &&
+    (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price');
+
+  if (shouldExcludePremiumAvailable) {
     filter.push({
       bool: {
         should: [
@@ -478,6 +497,12 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       // Regular club filter - match any of the specified clubs
       filter.push({ terms: { clubs: clubs } });
     }
+  }
+
+  // Exclude clubs filter - can be used standalone or with clubs='any'
+  // Excludes names that are in ANY of the specified clubs
+  if (excludeClubs && excludeClubs.length > 0) {
+    filter.push({ bool: { must_not: { terms: { clubs: excludeClubs } } } });
   }
 
   // inAnyClub filter
