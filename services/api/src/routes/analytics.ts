@@ -19,6 +19,7 @@ const SalesQuerySchema = z.object({
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
   limit: z.string().default('20'),
+  'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 const ListingsQuerySchema = z.object({
@@ -29,6 +30,7 @@ const ListingsQuerySchema = z.object({
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
   limit: z.string().default('20'),
+  'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 const OffersQuerySchema = z.object({
@@ -39,6 +41,7 @@ const OffersQuerySchema = z.object({
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.string().default('1'),
   limit: z.string().default('20'),
+  'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
@@ -459,17 +462,35 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 's.sale_price_wei::numeric' : 's.sale_date';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Build source conditions - different param numbers for data vs count query
-    let dataSourceCondition = '';
-    let countSourceCondition = '';
+    // Parse clubs filter
+    const rawClubs = query['clubs[]'];
+    const clubs: string[] = rawClubs
+      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
+      : [];
+
+    // Build filter conditions - different param numbers for data vs count query
+    const dataConditions: string[] = [];
+    const countConditions: string[] = [];
     const dataParams: any[] = [limit, offset];
     const countParams: any[] = [];
+    let dataParamNum = 3;
+    let countParamNum = 1;
+
     if (query.source) {
-      dataSourceCondition = 'AND s.source = $3';
+      dataConditions.push(`s.source = $${dataParamNum++}`);
       dataParams.push(query.source);
-      countSourceCondition = 'AND s.source = $1';
+      countConditions.push(`s.source = $${countParamNum++}`);
       countParams.push(query.source);
     }
+    if (clubs.length > 0) {
+      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+      dataParams.push(clubs);
+      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+      countParams.push(clubs);
+    }
+
+    const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
+    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([
@@ -477,11 +498,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             s.*,
             en.name,
-            en.token_id
+            en.token_id,
+            en.clubs
           FROM sales s
           JOIN ens_names en ON s.ens_name_id = en.id
           WHERE s.sale_date > NOW() - INTERVAL '${interval}'
-          ${dataSourceCondition}
+          ${dataFilterClause}
           ORDER BY ${orderByColumn} ${orderDirection}
           LIMIT $1 OFFSET $2`,
           dataParams
@@ -489,8 +511,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         pool.query(
           `SELECT COUNT(*) as count
           FROM sales s
+          JOIN ens_names en ON s.ens_name_id = en.id
           WHERE s.sale_date > NOW() - INTERVAL '${interval}'
-          ${countSourceCondition}`,
+          ${countFilterClause}`,
           countParams
         ),
       ]);
@@ -547,6 +570,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'l.price_wei::numeric' : 'l.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
+    // Parse clubs filter
+    const rawClubs = query['clubs[]'];
+    const clubs: string[] = rawClubs
+      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
+      : [];
+
     // Build filter conditions - different param numbers for data vs count query
     const dataConditions: string[] = [];
     const countConditions: string[] = [];
@@ -567,6 +596,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       countConditions.push(`l.source = $${countParamNum++}`);
       countParams.push(query.source);
     }
+    if (clubs.length > 0) {
+      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+      dataParams.push(clubs);
+      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+      countParams.push(clubs);
+    }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
     const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
@@ -577,7 +612,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             l.*,
             en.name,
-            en.token_id
+            en.token_id,
+            en.clubs
           FROM listings l
           JOIN ens_names en ON l.ens_name_id = en.id
           WHERE l.created_at > NOW() - INTERVAL '${interval}'
@@ -589,6 +625,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         pool.query(
           `SELECT COUNT(*) as count
           FROM listings l
+          JOIN ens_names en ON l.ens_name_id = en.id
           WHERE l.created_at > NOW() - INTERVAL '${interval}'
           ${countFilterClause}`,
           countParams
@@ -647,6 +684,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'o.offer_amount_wei::numeric' : 'o.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
+    // Parse clubs filter
+    const rawClubs = query['clubs[]'];
+    const clubs: string[] = rawClubs
+      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
+      : [];
+
     // Build filter conditions - different param numbers for data vs count query
     const dataConditions: string[] = [];
     const countConditions: string[] = [];
@@ -667,6 +710,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       countConditions.push(`o.source = $${countParamNum++}`);
       countParams.push(query.source);
     }
+    if (clubs.length > 0) {
+      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+      dataParams.push(clubs);
+      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+      countParams.push(clubs);
+    }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
     const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
@@ -677,7 +726,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             o.*,
             en.name,
-            en.token_id
+            en.token_id,
+            en.clubs
           FROM offers o
           JOIN ens_names en ON o.ens_name_id = en.id
           WHERE o.created_at > NOW() - INTERVAL '${interval}'
@@ -689,6 +739,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         pool.query(
           `SELECT COUNT(*) as count
           FROM offers o
+          JOIN ens_names en ON o.ens_name_id = en.id
           WHERE o.created_at > NOW() - INTERVAL '${interval}'
           ${countFilterClause}`,
           countParams
