@@ -28,7 +28,7 @@ function getTimeConfig(period: string): TimeConfig {
     '7d': '7 days',
     '30d': '30 days',
     '1y': '1 year',
-    'all': '100 years',
+    'all': '8 years',
   };
 
   return {
