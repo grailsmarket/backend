@@ -697,6 +697,13 @@ export function buildESSort(options: {
           missing: '_last'
         }
       });
+    } else if (sortBy === 'offer') {
+      sort.push({
+        'highest_offer': {
+          order,
+          missing: '_last'
+        }
+      });
     } else if (sortBy === 'watchers_count') {
       sort.push({
         [sortBy]: {
