@@ -25,7 +25,6 @@ import { poapRoutes } from './poap';
 import { legendsRoutes } from './legends';
 import { brokeredListingsRoutes } from './brokered-listings';
 import { chartsRoutes } from './charts';
-import { exportRoutes } from './export';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -36,7 +35,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   fastify.register(votesRoutes, { prefix: '/api/v1/votes' });
   fastify.register(searchRoutes, { prefix: '/api/v1/search' });
-  fastify.register(exportRoutes, { prefix: '/api/v1/export' });
   fastify.register(cartRoutes, { prefix: '/api/v1/cart' });
   fastify.register(poapRoutes, { prefix: '/api/v1/poap' });
   fastify.register(legendsRoutes, { prefix: '/api/v1/legends' });

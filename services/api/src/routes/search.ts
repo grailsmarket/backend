@@ -3,6 +3,7 @@ import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../s
 import { buildSearchResults, SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
+import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
 import { z } from 'zod';
 
 // Schema for bulk exact search request
@@ -52,17 +53,39 @@ export async function searchRoutes(fastify: FastifyInstance) {
   // Global search endpoint - searches all ENS names by default
   // Set showListings=true to limit results to only names with active listings
   // Set showUnlisted=true to limit results to only names WITHOUT active listings
+  // Set export=true to download results as CSV (requires authentication)
   fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
-    // Transform flat query params into nested structure (same as /names/search and /listings/search)
     const rawQuery = request.query as any;
+    const isExport = rawQuery.export === 'true' || rawQuery.export === true;
+
+    // Export mode requires authentication
+    if (isExport) {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required for export',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
+
+    // Transform flat query params into nested structure (same as /names/search and /listings/search)
+    // For export mode, allow higher limit (up to 10k) and always start at page 1
+    const requestedLimit = parseInt(rawQuery.limit || '20', 10);
     const transformedQuery: any = {
       q: rawQuery.q || '',
-      page: parseInt(rawQuery.page || '1', 10),
-      limit: parseInt(rawQuery.limit || '20', 10),
+      page: isExport ? 1 : parseInt(rawQuery.page || '1', 10),
+      limit: isExport ? Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS) : Math.min(requestedLimit, 100),
       sortBy: rawQuery.sortBy,
       sortOrder: rawQuery.sortOrder,
       filters: {},
     };
+    const filename = rawQuery.filename || 'ens-export';
 
     // Parse filters from bracket notation
     for (const key in rawQuery) {
@@ -276,6 +299,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       if (ensNames.length === 0) {
         fastify.log.info('No ES results found');
+
+        // Handle export mode - return empty CSV with headers
+        if (isExport) {
+          reply.header('Content-Type', 'text/csv');
+          reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+          return reply.send(CSV_HEADERS.join(',') + '\n');
+        }
+
         return reply.send({
           success: true,
           data: {
@@ -296,6 +327,15 @@ export async function searchRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // Handle export mode - use fast lightweight query instead of buildSearchResults
+      if (isExport) {
+        const exportRows = await fetchExportData(pool, ensNames);
+        const csvContent = await exportRowsToCSV(exportRows);
+        reply.header('Content-Type', 'text/csv');
+        reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+        return reply.send(csvContent);
+      }
+
       // Get user ID if authenticated
       const userId = request.user ? parseInt(request.user.sub) : undefined;
 
@@ -314,8 +354,6 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const pageLimit = parseInt(limit);
         const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
         const totalPages = Math.ceil(total / pageLimit);
-
-        fastify.log.info(`ES search pagination: page=${currentPage}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
 
         const response: APIResponse<{
           results: any[];
@@ -760,11 +798,22 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const totalPages = Math.ceil(total / limit);
         const currentPage = parseInt(page);
 
+        // Extract names from result
+        const ensNames = dataResult.rows.map((row: any) => row.name);
+
+        // Handle export mode - use fast lightweight query
+        if (isExport) {
+          const exportRows = await fetchExportData(pool, ensNames);
+          const csvContent = await exportRowsToCSV(exportRows);
+          reply.header('Content-Type', 'text/csv');
+          reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+          return reply.send(csvContent);
+        }
+
         // Get user ID if authenticated
         const userId = request.user ? parseInt(request.user.sub) : undefined;
 
-        // Extract names and build results using shared utility
-        const ensNames = dataResult.rows.map((row: any) => row.name);
+        // Build search results using shared utility
         const results = await buildSearchResults(ensNames, userId);
 
         fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(ensNames.slice(0, 5))}`);
