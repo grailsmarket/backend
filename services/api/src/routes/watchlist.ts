@@ -4,6 +4,7 @@ import { getPostgresPool, APIResponse, getElasticsearchClient } from '../../../s
 import { requireAuth } from '../middleware/auth';
 import { buildSearchResults } from '../utils/response-builder';
 import { buildESQuery } from '../utils/elasticsearch-filters';
+import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
 
 const AddToWatchlistSchema = z.object({
   ensName: z.string().min(1),
@@ -668,6 +669,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
   /**
    * GET /api/v1/watchlist/search
    * Search and filter user's watchlist using Elasticsearch
+   * Set export=true to download results as CSV
    */
   fastify.get('/search', { preHandler: requireAuth }, async (request, reply) => {
     try {
@@ -685,13 +687,17 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       }
 
       const userId = parseInt(request.user.sub);
+      const rawQuery = request.query as any;
+      const isExport = rawQuery.export === 'true' || rawQuery.export === true;
+      const filename = rawQuery.filename || 'watchlist-export';
 
       // Transform flat query params into nested structure (same as /names/search)
-      const rawQuery = request.query as any;
+      // For export mode, allow higher limit
+      const requestedLimit = parseInt(rawQuery.limit || '20', 10);
       const transformedQuery: any = {
         q: rawQuery.q,
-        page: rawQuery.page,
-        limit: rawQuery.limit,
+        page: isExport ? 1 : parseInt(rawQuery.page || '1', 10),
+        limit: isExport ? Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS) : Math.min(requestedLimit, 100),
         sortBy: rawQuery.sortBy,
         sortOrder: rawQuery.sortOrder,
         filters: {},
@@ -735,6 +741,12 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       if (watchlistResult.rows.length === 0) {
         // User has no watchlist items
+        if (isExport) {
+          reply.header('Content-Type', 'text/csv');
+          reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+          return reply.send(CSV_HEADERS.join(',') + '\n');
+        }
+
         return reply.send({
           success: true,
           data: {
@@ -811,6 +823,15 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       // Extract names from Elasticsearch results
       const resultNames = hits.map((hit: any) => hit._source.name);
 
+      // Handle export mode - use fast lightweight query
+      if (isExport) {
+        const exportRows = await fetchExportData(pool, resultNames);
+        const csvContent = await exportRowsToCSV(exportRows);
+        reply.header('Content-Type', 'text/csv');
+        reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+        return reply.send(csvContent);
+      }
+
       // Build results with watchlist metadata
       const results = await buildSearchResults(resultNames, userId);
 
@@ -854,6 +875,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       });
 
       const totalPages = Math.ceil(total / query.limit);
+
       const response: APIResponse = {
         success: true,
         data: {
