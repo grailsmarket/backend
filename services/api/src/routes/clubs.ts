@@ -166,6 +166,104 @@ export async function clubsRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Get aggregated holders across clubs (must be before /:clubName to avoid route conflict)
+  fastify.get('/holders', { preHandler: cacheHandler }, async (request, reply) => {
+    try {
+      const rawQuery = request.query as {
+        page?: string;
+        limit?: string;
+        sortOrder?: string;
+        'clubs[]'?: string | string[];
+      };
+
+      // Parse clubs array
+      let clubs: string[] = [];
+      const rawClubs = rawQuery['clubs[]'];
+      if (rawClubs) {
+        clubs = Array.isArray(rawClubs) ? rawClubs : [rawClubs];
+      }
+
+      const pageNum = Math.max(1, parseInt(rawQuery.page || '1'));
+      const limitNum = Math.min(100, Math.max(1, parseInt(rawQuery.limit || '20')));
+      const offset = (pageNum - 1) * limitNum;
+      const order = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+      // Build WHERE clause - if no clubs specified, match any club
+      const hasClubFilter = clubs.length > 0;
+      const clubFilter = hasClubFilter
+        ? 'clubs && $1::text[]'  // Array overlap with selected clubs
+        : 'clubs IS NOT NULL AND array_length(clubs, 1) > 0';  // Any club
+
+      // Get unique holder count (deduplicated across clubs)
+      const countQuery = `
+        SELECT COUNT(DISTINCT owner_address) as unique_holders
+        FROM ens_names
+        WHERE ${clubFilter}
+          AND owner_address IS NOT NULL
+      `;
+
+      // Get paginated holders with deduplicated name counts
+      const holdersQuery = `
+        SELECT
+          owner_address as address,
+          COUNT(DISTINCT id) as name_count
+        FROM ens_names
+        WHERE ${clubFilter}
+          AND owner_address IS NOT NULL
+        GROUP BY owner_address
+        ORDER BY name_count ${order}, owner_address ASC
+        LIMIT $${hasClubFilter ? 2 : 1} OFFSET $${hasClubFilter ? 3 : 2}
+      `;
+
+      // Build params based on whether clubs filter is present
+      const countParams = hasClubFilter ? [clubs] : [];
+      const holdersParams = hasClubFilter
+        ? [clubs, limitNum, offset]
+        : [limitNum, offset];
+
+      // If no clubs filter, get all club names for the response
+      const allClubsQuery = 'SELECT name FROM clubs ORDER BY name';
+
+      const [countResult, holdersResult, allClubsResult] = await Promise.all([
+        pool.query(countQuery, countParams),
+        pool.query(holdersQuery, holdersParams),
+        hasClubFilter ? Promise.resolve({ rows: [] }) : pool.query(allClubsQuery),
+      ]);
+
+      const uniqueHolders = parseInt(countResult.rows[0].unique_holders);
+      const responseClubs = hasClubFilter
+        ? clubs
+        : allClubsResult.rows.map(row => row.name);
+
+      return reply.send({
+        success: true,
+        data: {
+          clubs: responseClubs,
+          unique_holders: uniqueHolders,
+          holders: holdersResult.rows.map(row => ({
+            address: row.address,
+            name_count: parseInt(row.name_count),
+          })),
+        },
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: uniqueHolders,
+          pages: Math.ceil(uniqueHolders / limitNum),
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Failed to fetch club holders',
+      });
+    }
+  });
+
   // Get names in a specific club
   fastify.get('/:clubName', { preHandler: cacheHandler }, async (request, reply) => {
     const { clubName } = request.params as { clubName: string };
@@ -235,6 +333,87 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({
         success: false,
         error: 'Failed to fetch club names',
+      });
+    }
+  });
+
+  // Get holders for a specific club
+  fastify.get('/:clubName/holders', { preHandler: cacheHandler }, async (request, reply) => {
+    const { clubName } = request.params as { clubName: string };
+    const rawQuery = request.query as {
+      page?: string;
+      limit?: string;
+      sortOrder?: string;
+    };
+
+    try {
+      const pageNum = Math.max(1, parseInt(rawQuery.page || '1'));
+      const limitNum = Math.min(100, Math.max(1, parseInt(rawQuery.limit || '20')));
+      const offset = (pageNum - 1) * limitNum;
+      const order = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+      // Verify club exists
+      const clubCheck = await pool.query('SELECT name FROM clubs WHERE name = $1', [clubName]);
+      if (clubCheck.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Club not found',
+        });
+      }
+
+      // Get unique holder count
+      const countQuery = `
+        SELECT COUNT(DISTINCT owner_address) as unique_holders
+        FROM ens_names
+        WHERE $1 = ANY(clubs)
+          AND owner_address IS NOT NULL
+      `;
+
+      // Get paginated holders with name counts
+      const holdersQuery = `
+        SELECT
+          owner_address as address,
+          COUNT(*) as name_count
+        FROM ens_names
+        WHERE $1 = ANY(clubs)
+          AND owner_address IS NOT NULL
+        GROUP BY owner_address
+        ORDER BY name_count ${order}, owner_address ASC
+        LIMIT $2 OFFSET $3
+      `;
+
+      const [countResult, holdersResult] = await Promise.all([
+        pool.query(countQuery, [clubName]),
+        pool.query(holdersQuery, [clubName, limitNum, offset]),
+      ]);
+
+      const uniqueHolders = parseInt(countResult.rows[0].unique_holders);
+
+      return reply.send({
+        success: true,
+        data: {
+          clubs: [clubName],
+          unique_holders: uniqueHolders,
+          holders: holdersResult.rows.map(row => ({
+            address: row.address,
+            name_count: parseInt(row.name_count),
+          })),
+        },
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: uniqueHolders,
+          pages: Math.ceil(uniqueHolders / limitNum),
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Failed to fetch club holders',
       });
     }
   });
