@@ -36,6 +36,7 @@ interface SaleRecord {
   sale_date: string;
   name: string;
   token_id: string;
+  clubs: string[] | null;
 }
 
 interface ListingRecord {
@@ -47,6 +48,7 @@ interface ListingRecord {
   created_at: string;
   name: string;
   token_id: string;
+  clubs: string[] | null;
 }
 
 interface OfferRecord {
@@ -58,6 +60,7 @@ interface OfferRecord {
   created_at: string;
   name: string;
   token_id: string;
+  clubs: string[] | null;
 }
 
 async function fetchEndpoint<T>(path: string): Promise<T> {
@@ -204,6 +207,40 @@ describe('Analytics Endpoints', () => {
         const sale = result.data.results[0];
         expect(sale.name).toBeDefined();
         expect(sale.token_id).toBeDefined();
+      }
+    });
+
+    it('should include clubs array in results', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>('/analytics/sales?limit=5');
+
+      expect(result.success).toBe(true);
+      if (result.data.results.length > 0) {
+        const sale = result.data.results[0];
+        // clubs should be defined (can be null or array)
+        expect('clubs' in sale).toBe(true);
+      }
+    });
+
+    it('should filter by clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=999'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        expect(sale.clubs).toContain('999');
+      }
+    });
+
+    it('should filter by multiple clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=999&clubs[]=10k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
       }
     });
 
@@ -383,6 +420,41 @@ describe('Analytics Endpoints', () => {
         const listing = result.data.results[0];
         expect(listing.name).toBeDefined();
         expect(listing.token_id).toBeDefined();
+      }
+    });
+
+    it('should include clubs array in results', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?limit=5'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.data.results.length > 0) {
+        const listing = result.data.results[0];
+        expect('clubs' in listing).toBe(true);
+      }
+    });
+
+    it('should filter by clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?clubs[]=999'
+      );
+
+      expect(result.success).toBe(true);
+      for (const listing of result.data.results) {
+        expect(listing.clubs).toContain('999');
+      }
+    });
+
+    it('should filter by multiple clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?clubs[]=999&clubs[]=10k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const listing of result.data.results) {
+        const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
       }
     });
 
@@ -574,6 +646,41 @@ describe('Analytics Endpoints', () => {
         const offer = result.data.results[0];
         expect(offer.name).toBeDefined();
         expect(offer.token_id).toBeDefined();
+      }
+    });
+
+    it('should include clubs array in results', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?limit=5'
+      );
+
+      expect(result.success).toBe(true);
+      if (result.data.results.length > 0) {
+        const offer = result.data.results[0];
+        expect('clubs' in offer).toBe(true);
+      }
+    });
+
+    it('should filter by clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?clubs[]=999'
+      );
+
+      expect(result.success).toBe(true);
+      for (const offer of result.data.results) {
+        expect(offer.clubs).toContain('999');
+      }
+    });
+
+    it('should filter by multiple clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?clubs[]=999&clubs[]=10k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const offer of result.data.results) {
+        const hasMatchingClub = offer.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
       }
     });
 
