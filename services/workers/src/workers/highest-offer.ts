@@ -1,6 +1,7 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
+import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
 
 const pool = getPostgresPool();
 
@@ -47,6 +48,16 @@ async function updateHighestOffer(data: UpdateHighestOfferJob): Promise<void> {
         { ensNameId, name: result.rows[0].name, offerId, offerAmountWei },
         'Updated highest offer (new high)'
       );
+
+      // Sync to Elasticsearch to ensure search data is accurate
+      try {
+        const esSync = new ElasticsearchSync();
+        await esSync.updateENSNameOffers(ensNameId);
+        logger.debug({ ensNameId }, 'Synced highest offer to Elasticsearch');
+      } catch (esSyncError) {
+        // Log but don't fail the job - ES will eventually be consistent via WAL listener
+        logger.warn({ error: esSyncError, ensNameId }, 'Failed to sync highest offer to Elasticsearch');
+      }
     } else {
       logger.debug({ ensNameId, offerId }, 'Offer not higher than current highest, no update');
     }
@@ -117,6 +128,16 @@ async function recalculateHighestOffer(data: RecalculateHighestOfferJob): Promis
       );
 
       logger.info({ ensNameId }, 'Cleared highest offer (no active offers)');
+    }
+
+    // Sync to Elasticsearch to ensure search data is accurate
+    try {
+      const esSync = new ElasticsearchSync();
+      await esSync.updateENSNameOffers(ensNameId);
+      logger.debug({ ensNameId }, 'Synced highest offer to Elasticsearch');
+    } catch (esSyncError) {
+      // Log but don't fail the job - ES will eventually be consistent via WAL listener
+      logger.warn({ error: esSyncError, ensNameId }, 'Failed to sync highest offer to Elasticsearch');
     }
   } catch (error) {
     logger.error({ error, ensNameId }, 'Failed to recalculate highest offer');
