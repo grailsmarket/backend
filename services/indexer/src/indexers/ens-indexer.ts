@@ -668,6 +668,21 @@ export class ENSIndexer {
         const ensNameId = result.rows[0].id;
 
         try {
+          // Get the actual minter from the transaction's 'from' address
+          // The NameRegistered event's 'owner' may be the controller contract, not the actual user
+          let actualMinter = registrantAddress;
+          if (log.transactionHash) {
+            try {
+              const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+              if (tx && tx.from) {
+                actualMinter = tx.from.toLowerCase();
+                logger.debug(`Mint activity: using tx.from ${actualMinter} instead of event owner ${registrantAddress}`);
+              }
+            } catch (txError: any) {
+              logger.warn(`Could not fetch transaction for mint activity, using event owner: ${txError.message}`);
+            }
+          }
+
           await this.pool.query(
             `INSERT INTO activity_history (
               ens_name_id,
@@ -684,7 +699,7 @@ export class ENSIndexer {
             [
               ensNameId,
               'mint',
-              registrantAddress,
+              actualMinter,
               'blockchain',
               1,
               log.transactionHash || null,
@@ -693,7 +708,7 @@ export class ENSIndexer {
               registrationDate
             ]
           );
-          logger.debug(`Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}`);
+          logger.debug(`Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}, minter: ${actualMinter}`);
         } catch (activityError: any) {
           logger.error('Failed to create mint activity:', {
             error: activityError.message,
