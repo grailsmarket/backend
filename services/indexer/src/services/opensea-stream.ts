@@ -1191,7 +1191,7 @@ export class OpenSeaStreamListener {
         }
       }
 
-      await this.pool.query(offerQuery, [
+      const offerResult = await this.pool.query(offerQuery + ' RETURNING id', [
         ensNameId,
         bidderAddress.toLowerCase(),
         base_price,  // Use base_price instead of bid_amount
@@ -1202,6 +1202,25 @@ export class OpenSeaStreamListener {
       ]);
 
       logger.info(`Offer received for token ${tokenId} from ${bidderAddress}`);
+
+      // Publish highest offer update job
+      if (offerResult.rows.length > 0 && ensNameId && base_price) {
+        try {
+          const PgBoss = require('pg-boss');
+          const boss = new PgBoss({ connectionString: config.database.url });
+          await boss.start();
+          await boss.send('update-highest-offer', {
+            ensNameId,
+            offerId: offerResult.rows[0].id,
+            offerAmountWei: base_price,
+            currencyAddress: currencyAddress || '0x0000000000000000000000000000000000000000',
+          });
+          await boss.stop();
+          logger.debug(`Published update-highest-offer job for ENS name ${ensNameId}`);
+        } catch (queueError: any) {
+          logger.warn(`Failed to publish highest offer job: ${queueError.message}`);
+        }
+      }
     } catch (error: any) {
       logger.error(`Failed to handle item_received_bid: ${error.message}`);
       logger.debug('Full payload:', JSON.stringify(payload, null, 2));
