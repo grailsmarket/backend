@@ -1236,6 +1236,77 @@ describe('Search API Filters', () => {
         }
       }
     });
+
+    it('sortBy=offer&sortOrder=desc returns names ordered by highest offer first', async () => {
+      const { data } = await search('sortBy=offer&sortOrder=desc&filters[hasOffer]=true&limit=50');
+      // May have no names with offers
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      let prevOffer: bigint | null = null;
+
+      for (const result of data!.results) {
+        if (!result.highest_offer_wei) {
+          failures.push(`${result.name}: no highest_offer_wei`);
+          continue;
+        }
+        const currentOffer = BigInt(result.highest_offer_wei);
+        if (prevOffer !== null && currentOffer > prevOffer) {
+          failures.push(`${result.name}: offer ${currentOffer} > previous ${prevOffer} (should be descending)`);
+        }
+        prevOffer = currentOffer;
+      }
+
+      expect(failures, `Offer sort failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('sortBy=offer&sortOrder=asc returns names ordered by lowest offer first', async () => {
+      const { data } = await search('sortBy=offer&sortOrder=asc&filters[hasOffer]=true&limit=50');
+      // May have no names with offers
+      if (data?.results.length === 0) return;
+
+      const failures: string[] = [];
+      let prevOffer: bigint | null = null;
+
+      for (const result of data!.results) {
+        if (!result.highest_offer_wei) {
+          failures.push(`${result.name}: no highest_offer_wei`);
+          continue;
+        }
+        const currentOffer = BigInt(result.highest_offer_wei);
+        if (prevOffer !== null && currentOffer < prevOffer) {
+          failures.push(`${result.name}: offer ${currentOffer} < previous ${prevOffer} (should be ascending)`);
+        }
+        prevOffer = currentOffer;
+      }
+
+      expect(failures, `Offer sort failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('sortBy=offer without hasOffer filter places names without offers last (desc)', async () => {
+      const { data } = await search('sortBy=offer&sortOrder=desc&limit=50');
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      // Find the index where offers stop (first name without offer)
+      let firstNoOfferIndex = -1;
+      for (let i = 0; i < data!.results.length; i++) {
+        const hasOffer = data!.results[i].highest_offer_wei != null &&
+          BigInt(data!.results[i].highest_offer_wei!) > 0n;
+        if (!hasOffer) {
+          firstNoOfferIndex = i;
+          break;
+        }
+      }
+
+      // If we found names without offers, verify all subsequent names also have no offers
+      if (firstNoOfferIndex !== -1) {
+        for (let i = firstNoOfferIndex; i < data!.results.length; i++) {
+          const hasOffer = data!.results[i].highest_offer_wei != null &&
+            BigInt(data!.results[i].highest_offer_wei!) > 0n;
+          expect(hasOffer).toBe(false);
+        }
+      }
+    });
   });
 
   describe('Marketplace Filter', () => {
