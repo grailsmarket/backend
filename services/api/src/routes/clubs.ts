@@ -195,14 +195,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         : 'clubs IS NOT NULL AND array_length(clubs, 1) > 0';  // Any club
 
       // Get unique holder count (deduplicated across clubs)
+      // Exclude expired names (grace, premium, available status all have expiry_date < NOW())
       const countQuery = `
         SELECT COUNT(DISTINCT owner_address) as unique_holders
         FROM ens_names
         WHERE ${clubFilter}
           AND owner_address IS NOT NULL
+          AND expiry_date > NOW()
       `;
 
       // Get paginated holders with deduplicated name counts
+      // Exclude expired names (grace, premium, available status all have expiry_date < NOW())
       const holdersQuery = `
         SELECT
           owner_address as address,
@@ -210,6 +213,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE ${clubFilter}
           AND owner_address IS NOT NULL
+          AND expiry_date > NOW()
         GROUP BY owner_address
         ORDER BY name_count ${order}, owner_address ASC
         LIMIT $${hasClubFilter ? 2 : 1} OFFSET $${hasClubFilter ? 3 : 2}
@@ -362,14 +366,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       }
 
       // Get unique holder count
+      // Exclude expired names (grace, premium, available status all have expiry_date < NOW())
       const countQuery = `
         SELECT COUNT(DISTINCT owner_address) as unique_holders
         FROM ens_names
         WHERE $1 = ANY(clubs)
           AND owner_address IS NOT NULL
+          AND expiry_date > NOW()
       `;
 
       // Get paginated holders with name counts
+      // Exclude expired names (grace, premium, available status all have expiry_date < NOW())
       const holdersQuery = `
         SELECT
           owner_address as address,
@@ -377,6 +384,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE $1 = ANY(clubs)
           AND owner_address IS NOT NULL
+          AND expiry_date > NOW()
         GROUP BY owner_address
         ORDER BY name_count ${order}, owner_address ASC
         LIMIT $2 OFFSET $3
