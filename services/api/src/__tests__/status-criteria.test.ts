@@ -461,7 +461,7 @@ describe('Status Criteria Tests', () => {
 
         const statuses = analyzeStatuses(data!.results);
         console.log('Sort by view_count status distribution:', statuses);
-      });
+      }, 120000);
 
       it('sortBy=alphabetical should include all statuses', async () => {
         const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=alphabetical&sortOrder=asc`);

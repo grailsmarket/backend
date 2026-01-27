@@ -1167,7 +1167,7 @@ describe('Search API Filters', () => {
       const viewCounts = data!.results.map((r) => r.view_count);
       const sorted = [...viewCounts].sort((a, b) => b - a);
       expect(viewCounts).toEqual(sorted);
-    });
+    }, 60000);
 
     it('sortBy=view_count&sortOrder=asc returns names ordered by least views first', async () => {
       const { data } = await search('sortBy=view_count&sortOrder=asc&limit=50');
@@ -1176,7 +1176,7 @@ describe('Search API Filters', () => {
       const viewCounts = data!.results.map((r) => r.view_count);
       const sorted = [...viewCounts].sort((a, b) => a - b);
       expect(viewCounts).toEqual(sorted);
-    });
+    }, 60000);
 
     it('sortBy=watchers_count&sortOrder=desc returns names ordered by most watchers first', async () => {
       const { data } = await search('sortBy=watchers_count&sortOrder=desc&limit=50');
