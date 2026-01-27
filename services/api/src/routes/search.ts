@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../shared/src';
 import { buildSearchResults, SearchResult } from '../utils/response-builder';
-import { buildESFilters, buildESSort, calculateMinScore } from '../utils/elasticsearch-filters';
+import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
 import { z } from 'zod';
@@ -11,6 +11,92 @@ const BulkExactSearchSchema = z.object({
   terms: z.array(z.string().min(1)).min(1).max(10000),
   page: z.number().int().min(1).optional().default(1),
   limit: z.number().int().min(1).max(100).optional().default(20),
+});
+
+// Helper to properly parse boolean strings (unlike z.coerce.boolean which treats "false" as true)
+const booleanString = z.union([z.boolean(), z.string()]).optional();
+
+// Schema for bulk search with filters request
+const BulkFiltersSearchSchema = z.object({
+  // Bulk search terms (required)
+  terms: z.array(z.string().min(1)).min(1).max(10000),
+
+  // Pagination for final filtered results
+  page: z.number().int().min(1).optional().default(1),
+  limit: z.number().int().min(1).max(100).optional().default(20),
+
+  // Sorting
+  sortBy: z.enum([
+    'price', 'expiry_date', 'registration_date', 'last_sale_date',
+    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer'
+  ]).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
+
+  // Filters object (same structure as GET /search filters parameter)
+  filters: z.object({
+    // Price filters
+    minPrice: z.string().optional(),
+    maxPrice: z.string().optional(),
+    minOffer: z.string().optional(),
+    maxOffer: z.string().optional(),
+
+    // Length filters
+    minLength: z.coerce.number().optional(),
+    maxLength: z.coerce.number().optional(),
+
+    // Legacy character filters
+    hasNumbers: booleanString,
+    hasEmoji: booleanString,
+
+    // Tri-state character filters
+    digits: z.enum(['include', 'exclude', 'only']).optional(),
+    letters: z.enum(['include', 'exclude', 'only']).optional(),
+    emoji: z.enum(['include', 'exclude', 'only']).optional(),
+    repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
+
+    // String pattern filters
+    contains: z.string().optional(),
+    startsWith: z.string().optional(),
+    endsWith: z.string().optional(),
+    doesNotContain: z.string().optional(),
+    doesNotStartWith: z.string().optional(),
+    doesNotEndWith: z.string().optional(),
+
+    // Listing/market filters
+    listed: booleanString,
+    hasOffer: booleanString,
+    showListings: booleanString,
+    showUnlisted: booleanString,
+    marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
+
+    // Club filters
+    clubs: z.array(z.string()).optional(),
+    excludeClubs: z.array(z.string()).optional(),
+    inAnyClub: booleanString,
+
+    // Unified status filter
+    status: z.union([
+      z.enum(['registered', 'grace', 'premium', 'available', 'all']),
+      z.array(z.enum(['registered', 'grace', 'premium', 'available', 'all']))
+    ]).optional(),
+
+    // Legacy expiration filters
+    isExpired: booleanString,
+    isGracePeriod: booleanString,
+    isPremiumPeriod: booleanString,
+    expiringWithinDays: z.coerce.number().optional(),
+    includeExpired: booleanString,
+
+    // Sale history filters
+    hasSales: booleanString,
+    lastSoldAfter: z.string().optional(),
+    lastSoldBefore: z.string().optional(),
+    minDaysSinceLastSale: z.coerce.number().optional(),
+    maxDaysSinceLastSale: z.coerce.number().optional(),
+
+    // Owner filter
+    owner: z.string().optional(),
+  }).optional(),
 });
 
 // Placeholder result for terms not found in bulk exact search
@@ -1003,6 +1089,485 @@ export async function searchRoutes(fastify: FastifyInstance) {
         error: {
           code: 'SEARCH_ERROR',
           message: 'Bulk exact search failed',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  // Bulk search with filters endpoint - searches for exact matches with filter/sort support
+  // POST /api/v1/search/bulk-filters
+  // Unlike /bulk, this endpoint:
+  // - Applies filters during search (only returns names matching both terms AND filters)
+  // - Paginates the filtered results (not the input terms)
+  // - Does not return placeholder objects for not-found/filtered-out terms
+  fastify.post('/bulk-filters', { preHandler: optionalAuth }, async (request, reply) => {
+    try {
+      // Validate request body
+      const parseResult = BulkFiltersSearchSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request body',
+            details: parseResult.error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const { terms, page, limit, sortBy, sortOrder, filters = {} } = parseResult.data;
+
+      fastify.log.info(`Bulk filters search request: ${terms.length} terms, page ${page}, limit ${limit}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
+
+      // Normalize terms - add .eth suffix if not present
+      const normalizedTerms = terms.map(term => {
+        const lower = term.toLowerCase().trim();
+        return lower.endsWith('.eth') ? lower : `${lower}.eth`;
+      });
+
+      // Resolve owner filter if provided (can be address or ENS name)
+      let resolvedOwnerAddress: string | null = null;
+      if (filters.owner) {
+        const isAddress = /^0x[a-fA-F0-9]{40}$/.test(filters.owner);
+
+        if (isAddress) {
+          resolvedOwnerAddress = filters.owner.toLowerCase();
+          fastify.log.info(`Bulk filters owner filter: address="${resolvedOwnerAddress}"`);
+        } else {
+          try {
+            const resolveQuery = `
+              SELECT owner_address
+              FROM ens_names
+              WHERE LOWER(name) = LOWER($1)
+            `;
+            const resolveResult = await pool.query(resolveQuery, [filters.owner]);
+
+            if (resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address) {
+              resolvedOwnerAddress = resolveResult.rows[0].owner_address.toLowerCase();
+              fastify.log.info(`Bulk filters owner filter: ENS name="${filters.owner}" resolved to address="${resolvedOwnerAddress}"`);
+            } else {
+              fastify.log.warn(`Bulk filters owner filter: ENS name="${filters.owner}" not found, will return no results`);
+              resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
+            }
+          } catch (error: any) {
+            fastify.log.error(`Error resolving ENS name "${filters.owner}":`, error.message);
+            resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
+          }
+        }
+      }
+
+      // Check if PostgreSQL fallback is needed (for sorts/filters not in ES)
+      let usePostgresql = sortBy === 'watchers_count';
+      if (filters.marketplace && filters.marketplace !== 'all') {
+        usePostgresql = true;
+        fastify.log.info(`Bulk filters: Forcing PostgreSQL because marketplace filter="${filters.marketplace}"`);
+      }
+
+      // Try Elasticsearch first
+      if (!usePostgresql) {
+        try {
+          // Build ES query using shared utility with ensNames to restrict to input terms
+          const esQuery = buildESQuery({
+            page,
+            limit,
+            sortBy,
+            sortOrder,
+            ensNames: normalizedTerms, // KEY: restricts search to input terms only
+            // All supported filters
+            minPrice: filters.minPrice,
+            maxPrice: filters.maxPrice,
+            minOffer: filters.minOffer,
+            maxOffer: filters.maxOffer,
+            minLength: filters.minLength,
+            maxLength: filters.maxLength,
+            hasNumbers: filters.hasNumbers,
+            hasEmoji: filters.hasEmoji,
+            digits: filters.digits,
+            letters: filters.letters,
+            emoji: filters.emoji,
+            repeatingChars: filters.repeatingChars,
+            contains: filters.contains,
+            startsWith: filters.startsWith,
+            endsWith: filters.endsWith,
+            doesNotContain: filters.doesNotContain,
+            doesNotStartWith: filters.doesNotStartWith,
+            doesNotEndWith: filters.doesNotEndWith,
+            listed: filters.listed,
+            hasOffer: filters.hasOffer,
+            showListings: filters.showListings,
+            showUnlisted: filters.showUnlisted,
+            clubs: filters.clubs,
+            excludeClubs: filters.excludeClubs,
+            inAnyClub: filters.inAnyClub,
+            status: filters.status,
+            isExpired: filters.isExpired,
+            isGracePeriod: filters.isGracePeriod,
+            isPremiumPeriod: filters.isPremiumPeriod,
+            expiringWithinDays: filters.expiringWithinDays,
+            includeExpired: filters.includeExpired,
+            hasSales: filters.hasSales,
+            lastSoldAfter: filters.lastSoldAfter,
+            lastSoldBefore: filters.lastSoldBefore,
+            minDaysSinceLastSale: filters.minDaysSinceLastSale,
+            maxDaysSinceLastSale: filters.maxDaysSinceLastSale,
+            resolvedOwnerAddress,
+          });
+
+          const esResult = await es.search(esQuery);
+
+          // Extract names from ES results
+          const foundNames = esResult.hits.hits.map((hit: any) => hit._source.name);
+          const total = typeof esResult.hits.total === 'object'
+            ? esResult.hits.total.value
+            : (esResult.hits.total || 0);
+
+          fastify.log.info(`Bulk filters ES search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`);
+
+          // Handle empty results
+          if (foundNames.length === 0) {
+            return reply.send({
+              success: true,
+              data: {
+                results: [],
+                pagination: {
+                  page,
+                  limit,
+                  total: 0,
+                  totalPages: 0,
+                  hasNext: false,
+                  hasPrev: false,
+                },
+                stats: {
+                  inputTerms: terms.length,
+                  matchedTerms: 0,
+                },
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+                version: '1.0.0',
+              },
+            });
+          }
+
+          // Get user ID if authenticated
+          const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+          // Build enriched results
+          const results = await buildSearchResults(foundNames, userId);
+
+          // If ES returned names but PostgreSQL has none, fall back to PostgreSQL
+          if (results.length === 0 && foundNames.length > 0) {
+            fastify.log.warn(`Bulk filters: ES returned ${foundNames.length} names but PostgreSQL has none. Falling back to PostgreSQL.`);
+            usePostgresql = true;
+          } else {
+            const totalPages = Math.ceil(total / limit);
+
+            const response: APIResponse<{
+              results: SearchResult[];
+              pagination: any;
+              stats: any;
+            }> = {
+              success: true,
+              data: {
+                results,
+                pagination: {
+                  page,
+                  limit,
+                  total,
+                  totalPages,
+                  hasNext: page < totalPages,
+                  hasPrev: page > 1,
+                },
+                stats: {
+                  inputTerms: terms.length,
+                  matchedTerms: total,
+                },
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+                version: '1.0.0',
+              },
+            };
+
+            return reply.send(response);
+          }
+        } catch (error: any) {
+          fastify.log.warn('Bulk filters ES search failed, falling back to PostgreSQL:', error.message);
+          usePostgresql = true;
+        }
+      }
+
+      // PostgreSQL fallback
+      if (usePostgresql) {
+        // Build WHERE conditions
+        const whereConditions: string[] = [];
+        const params: any[] = [];
+        let paramCount = 1;
+
+        // Restrict to input terms
+        const termPlaceholders = normalizedTerms.map((_, i) => `$${paramCount + i}`).join(',');
+        whereConditions.push(`LOWER(en.name) IN (${termPlaceholders})`);
+        params.push(...normalizedTerms);
+        paramCount += normalizedTerms.length;
+
+        // Exclude placeholder names
+        whereConditions.push(`en.name NOT LIKE 'token-%'`);
+        whereConditions.push(`en.name NOT LIKE '[%'`);
+        whereConditions.push(`en.name NOT LIKE '%.%.eth'`);
+
+        // Listing filters
+        const hasMarketplaceFilter = filters.marketplace && filters.marketplace !== 'all';
+        const listingsOnly = filters.listed === 'true' || filters.listed === true ||
+                            filters.showListings === 'true' || filters.showListings === true ||
+                            hasMarketplaceFilter;
+        const unlistedOnly = filters.listed === 'false' || filters.listed === false ||
+                            filters.showUnlisted === 'true' || filters.showUnlisted === true;
+
+        if (listingsOnly) {
+          whereConditions.push(`l.status = 'active'`);
+        } else if (unlistedOnly) {
+          whereConditions.push(`(l.id IS NULL OR l.status != 'active')`);
+        }
+
+        // Marketplace filter
+        if (hasMarketplaceFilter) {
+          whereConditions.push(`l.source = $${paramCount}`);
+          params.push(filters.marketplace);
+          paramCount++;
+        }
+
+        // Price filters
+        if (filters.minPrice) {
+          whereConditions.push(`l.price_wei >= $${paramCount}`);
+          params.push(filters.minPrice);
+          paramCount++;
+        }
+        if (filters.maxPrice) {
+          whereConditions.push(`l.price_wei <= $${paramCount}`);
+          params.push(filters.maxPrice);
+          paramCount++;
+        }
+
+        // Length filters
+        if (filters.minLength) {
+          whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) >= $${paramCount}`);
+          params.push(filters.minLength);
+          paramCount++;
+        }
+        if (filters.maxLength) {
+          whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
+          params.push(filters.maxLength);
+          paramCount++;
+        }
+
+        // Character filters
+        if (filters.hasNumbers === 'true' || filters.hasNumbers === true) {
+          whereConditions.push(`en.name ~ '[0-9]'`);
+        } else if (filters.hasNumbers === 'false' || filters.hasNumbers === false) {
+          whereConditions.push(`en.name !~ '[0-9]'`);
+        }
+
+        if (filters.hasEmoji === 'true' || filters.hasEmoji === true) {
+          whereConditions.push(`en.has_emoji = true`);
+        } else if (filters.hasEmoji === 'false' || filters.hasEmoji === false) {
+          whereConditions.push(`en.has_emoji = false`);
+        }
+
+        // Club filters
+        if (filters.clubs && filters.clubs.length > 0) {
+          if (filters.clubs.includes('none')) {
+            whereConditions.push(`(en.clubs IS NULL OR en.clubs = '{}')`);
+          } else if (filters.clubs.includes('any')) {
+            whereConditions.push(`en.clubs IS NOT NULL AND en.clubs != '{}'`);
+          } else {
+            whereConditions.push(`en.clubs && $${paramCount}::text[]`);
+            params.push(filters.clubs);
+            paramCount++;
+          }
+        }
+
+        if (filters.inAnyClub === 'true' || filters.inAnyClub === true) {
+          whereConditions.push(`en.clubs IS NOT NULL AND en.clubs != '{}'`);
+        } else if (filters.inAnyClub === 'false' || filters.inAnyClub === false) {
+          whereConditions.push(`(en.clubs IS NULL OR en.clubs = '{}')`);
+        }
+
+        // Status/expiration filters
+        if (filters.status) {
+          const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
+          const statusConditions: string[] = [];
+          for (const s of statuses) {
+            if (s === 'registered') statusConditions.push(`en.expiry_date > NOW()`);
+            else if (s === 'grace') statusConditions.push(`(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`);
+            else if (s === 'premium') statusConditions.push(`(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`);
+            else if (s === 'available') statusConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+          }
+          if (statusConditions.length > 0) {
+            whereConditions.push(`(${statusConditions.join(' OR ')})`);
+          }
+        }
+
+        if (filters.isExpired === 'true' || filters.isExpired === true) {
+          whereConditions.push(`en.expiry_date <= NOW()`);
+        } else if (filters.isExpired === 'false' || filters.isExpired === false) {
+          whereConditions.push(`en.expiry_date > NOW()`);
+        }
+
+        if (filters.expiringWithinDays) {
+          whereConditions.push(`en.expiry_date > NOW() AND en.expiry_date <= NOW() + INTERVAL '${parseInt(String(filters.expiringWithinDays))} days'`);
+        }
+
+        // Owner filter
+        if (resolvedOwnerAddress) {
+          whereConditions.push(`LOWER(en.owner_address) = $${paramCount}`);
+          params.push(resolvedOwnerAddress);
+          paramCount++;
+        }
+
+        // Sale history filters
+        if (filters.hasSales === 'true' || filters.hasSales === true) {
+          whereConditions.push(`en.last_sale_date IS NOT NULL`);
+        } else if (filters.hasSales === 'false' || filters.hasSales === false) {
+          whereConditions.push(`en.last_sale_date IS NULL`);
+        }
+
+        // Build sort clause
+        let orderBy = 'en.name ASC';
+        if (sortBy) {
+          const order = sortOrder === 'asc' ? 'ASC' : 'DESC';
+          const nullsLast = sortOrder === 'asc' ? 'NULLS LAST' : 'NULLS FIRST';
+          switch (sortBy) {
+            case 'price':
+              orderBy = `l.price_wei ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'expiry_date':
+              orderBy = `en.expiry_date ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'registration_date':
+              orderBy = `en.registration_date ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'last_sale_date':
+              orderBy = `en.last_sale_date ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'character_count':
+              orderBy = `LENGTH(REPLACE(en.name, '.eth', '')) ${order}, en.name ASC`;
+              break;
+            case 'watchers_count':
+              orderBy = `watchers_count ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'alphabetical':
+              orderBy = `en.name ${order}`;
+              break;
+          }
+        }
+
+        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+        const offset = (page - 1) * limit;
+
+        // Count query
+        const countQuery = `
+          SELECT COUNT(DISTINCT en.id) as total
+          FROM ens_names en
+          LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+          ${whereClause}
+        `;
+
+        // Data query
+        const dataQuery = `
+          SELECT DISTINCT en.name,
+            (SELECT COUNT(*) FROM watchlist w WHERE w.ens_name_id = en.id) as watchers_count
+          FROM ens_names en
+          LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+          ${whereClause}
+          ORDER BY ${orderBy}
+          LIMIT $${paramCount} OFFSET $${paramCount + 1}
+        `;
+
+        const [countResult, dataResult] = await Promise.all([
+          pool.query(countQuery, params),
+          pool.query(dataQuery, [...params, limit, offset]),
+        ]);
+
+        const total = parseInt(countResult.rows[0].total);
+        const totalPages = Math.ceil(total / limit);
+        const foundNames = dataResult.rows.map((row: any) => row.name);
+
+        fastify.log.info(`Bulk filters PostgreSQL search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`);
+
+        // Handle empty results
+        if (foundNames.length === 0) {
+          return reply.send({
+            success: true,
+            data: {
+              results: [],
+              pagination: {
+                page,
+                limit,
+                total: 0,
+                totalPages: 0,
+                hasNext: false,
+                hasPrev: false,
+              },
+              stats: {
+                inputTerms: terms.length,
+                matchedTerms: 0,
+              },
+            },
+            meta: {
+              timestamp: new Date().toISOString(),
+              version: '1.0.0',
+            },
+          });
+        }
+
+        // Get user ID if authenticated
+        const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+        // Build enriched results
+        const results = await buildSearchResults(foundNames, userId);
+
+        const response: APIResponse<{
+          results: SearchResult[];
+          pagination: any;
+          stats: any;
+        }> = {
+          success: true,
+          data: {
+            results,
+            pagination: {
+              page,
+              limit,
+              total,
+              totalPages,
+              hasNext: page < totalPages,
+              hasPrev: page > 1,
+            },
+            stats: {
+              inputTerms: terms.length,
+              matchedTerms: total,
+            },
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+          },
+        };
+
+        return reply.send(response);
+      }
+    } catch (error: any) {
+      fastify.log.error({ error }, 'Bulk filters search failed');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'SEARCH_ERROR',
+          message: 'Bulk filters search failed',
         },
         meta: {
           timestamp: new Date().toISOString(),
