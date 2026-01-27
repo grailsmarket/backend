@@ -26,6 +26,7 @@ import { legendsRoutes } from './legends';
 import { brokeredListingsRoutes } from './brokered-listings';
 import { chartsRoutes } from './charts';
 import { subgraphRoutes } from './subgraph';
+import { leaderboardRoutes } from './leaderboard';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -48,6 +49,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
   fastify.register(clubsRoutes, { prefix: '/api/v1/clubs' });
+  fastify.register(leaderboardRoutes, { prefix: '/api/v1/leaderboard' });
   fastify.register(trendingRoutes, { prefix: '/api/v1/trending' });
   fastify.register(recommendationsRoutes, { prefix: '/api/v1/recommendations' });
   fastify.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
