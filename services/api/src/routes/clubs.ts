@@ -20,6 +20,8 @@ const VALID_SORT_FIELDS = [
   'available_count',
   'premium_percent',
   'available_percent',
+  'holders_count',
+  'holders_ratio',
 ] as const;
 
 // Valid classifications for filtering
@@ -83,14 +85,14 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       // Classification filter (array overlap)
       if (classifications.length > 0) {
-        whereConditions.push(`classifications && $${paramCount}::text[]`);
+        whereConditions.push(`c.classifications && $${paramCount}::text[]`);
         params.push(classifications);
         paramCount++;
       }
 
       // Search filter (wildcard on name and description)
       if (search) {
-        whereConditions.push(`(name ILIKE $${paramCount} OR description ILIKE $${paramCount})`);
+        whereConditions.push(`(c.name ILIKE $${paramCount} OR c.description ILIKE $${paramCount})`);
         params.push(`%${search}%`);
         paramCount++;
       }
@@ -100,12 +102,16 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         : '';
 
       // Build ORDER BY clause with numeric casting for volume/price fields
-      // and computed expressions for percentage fields
+      // and computed expressions for percentage/ratio fields
       let orderByField: string;
       if (sortBy === 'premium_percent') {
         orderByField = 'premium_percent';
       } else if (sortBy === 'available_percent') {
         orderByField = 'available_percent';
+      } else if (sortBy === 'holders_count') {
+        orderByField = 'holders_count';
+      } else if (sortBy === 'holders_ratio') {
+        orderByField = 'holders_ratio';
       } else if (NUMERIC_SORT_FIELDS.includes(sortBy!)) {
         orderByField = `${sortBy}::numeric`;
       } else {
@@ -115,29 +121,40 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       const query = `
         SELECT
-          name,
-          description,
-          member_count,
-          floor_price_wei,
-          floor_price_currency,
-          total_sales_count,
-          total_sales_volume_wei,
-          sales_count_1y,
-          sales_count_1mo,
-          sales_count_1w,
-          sales_volume_wei_1y,
-          sales_volume_wei_1mo,
-          sales_volume_wei_1w,
-          premium_count,
-          available_count,
-          ROUND((premium_count::numeric / NULLIF(member_count, 0)) * 100, 2)::double precision AS premium_percent,
-          ROUND((available_count::numeric / NULLIF(member_count, 0)) * 100, 2)::double precision AS available_percent,
-          classifications,
-          last_floor_update,
-          last_sales_update,
-          created_at,
-          updated_at
-        FROM clubs
+          c.name,
+          c.description,
+          c.member_count,
+          c.floor_price_wei,
+          c.floor_price_currency,
+          c.total_sales_count,
+          c.total_sales_volume_wei,
+          c.sales_count_1y,
+          c.sales_count_1mo,
+          c.sales_count_1w,
+          c.sales_volume_wei_1y,
+          c.sales_volume_wei_1mo,
+          c.sales_volume_wei_1w,
+          c.premium_count,
+          c.available_count,
+          ROUND((c.premium_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS premium_percent,
+          ROUND((c.available_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS available_percent,
+          c.classifications,
+          c.last_floor_update,
+          c.last_sales_update,
+          c.created_at,
+          c.updated_at,
+          COALESCE(h.holders_count, 0)::integer AS holders_count,
+          ROUND((COALESCE(h.holders_count, 0)::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS holders_ratio
+        FROM clubs c
+        LEFT JOIN (
+          SELECT
+            unnest(clubs) as club_name,
+            COUNT(DISTINCT owner_address) as holders_count
+          FROM ens_names
+          WHERE owner_address IS NOT NULL
+            AND expiry_date > NOW() - INTERVAL '90 days'
+          GROUP BY unnest(clubs)
+        ) h ON h.club_name = c.name
         ${whereClause}
         ${orderByClause}
       `;
