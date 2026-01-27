@@ -36,6 +36,8 @@ interface Club {
   last_sales_update: string | null;
   created_at: string;
   updated_at: string;
+  holders_count: number;
+  holders_ratio: number;
 }
 
 interface ClubsResponse {
@@ -713,6 +715,116 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       expect(mixed!.clubs.length).toBeGreaterThan(0);
       for (const club of mixed!.clubs) {
         expect(club.classifications).toContain('ethmojis');
+      }
+    });
+  });
+
+  describe('Holders Count and Ratio', () => {
+    it('all clubs have holders_count field', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      for (const club of data!.clubs) {
+        expect(club.holders_count).toBeDefined();
+        expect(typeof club.holders_count).toBe('number');
+        expect(club.holders_count).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('all clubs have holders_ratio field', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      for (const club of data!.clubs) {
+        expect(club.holders_ratio).toBeDefined();
+        expect(typeof club.holders_ratio).toBe('number');
+        expect(club.holders_ratio).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('holders_count is less than or equal to member_count', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const club of data!.clubs) {
+        if (club.holders_count > club.member_count) {
+          failures.push(
+            `${club.name}: holders_count (${club.holders_count}) > member_count (${club.member_count})`
+          );
+        }
+      }
+      expect(failures, `Holders count exceeded member count:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('holders_ratio is correctly calculated as (holders_count / member_count) * 100', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const club of data!.clubs) {
+        if (club.member_count === 0) continue; // Skip clubs with no members
+
+        const expectedRatio = Math.round((club.holders_count / club.member_count) * 100 * 100) / 100;
+        // Allow for small floating point differences
+        if (Math.abs(club.holders_ratio - expectedRatio) > 0.01) {
+          failures.push(
+            `${club.name}: holders_ratio (${club.holders_ratio}) != expected (${expectedRatio})`
+          );
+        }
+      }
+      expect(failures, `Holders ratio calculation errors:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('sortBy=holders_count&sortOrder=desc sorts by holders count descending', async () => {
+      const { data } = await getClubs('sortBy=holders_count&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.holders_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] >= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be >= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=holders_count&sortOrder=asc sorts by holders count ascending', async () => {
+      const { data } = await getClubs('sortBy=holders_count&sortOrder=asc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.holders_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] <= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be <= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=holders_ratio&sortOrder=desc sorts by holders ratio descending', async () => {
+      const { data } = await getClubs('sortBy=holders_ratio&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const ratios = data!.clubs.map((c) => c.holders_ratio);
+      for (let i = 1; i < ratios.length; i++) {
+        expect(
+          ratios[i - 1] >= ratios[i],
+          `${data!.clubs[i - 1].name} (${ratios[i - 1]}%) should be >= ${data!.clubs[i].name} (${ratios[i]}%)`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=holders_ratio&sortOrder=asc sorts by holders ratio ascending', async () => {
+      const { data } = await getClubs('sortBy=holders_ratio&sortOrder=asc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const ratios = data!.clubs.map((c) => c.holders_ratio);
+      for (let i = 1; i < ratios.length; i++) {
+        expect(
+          ratios[i - 1] <= ratios[i],
+          `${data!.clubs[i - 1].name} (${ratios[i - 1]}%) should be <= ${data!.clubs[i].name} (${ratios[i]}%)`
+        ).toBe(true);
       }
     });
   });
