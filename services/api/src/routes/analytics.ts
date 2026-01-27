@@ -483,10 +483,21 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       countParams.push(query.source);
     }
     if (clubs.length > 0) {
-      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
-      dataParams.push(clubs);
-      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
-      countParams.push(clubs);
+      if (clubs.includes('none')) {
+        // Names NOT in any club
+        dataConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+        countConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+      } else if (clubs.includes('any')) {
+        // Names in at least one club
+        dataConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+      } else {
+        // Specific clubs - array overlap
+        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataParams.push(clubs);
+        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countParams.push(clubs);
+      }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
@@ -597,10 +608,21 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       countParams.push(query.source);
     }
     if (clubs.length > 0) {
-      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
-      dataParams.push(clubs);
-      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
-      countParams.push(clubs);
+      if (clubs.includes('none')) {
+        // Names NOT in any club
+        dataConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+        countConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+      } else if (clubs.includes('any')) {
+        // Names in at least one club
+        dataConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+      } else {
+        // Specific clubs - array overlap
+        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataParams.push(clubs);
+        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countParams.push(clubs);
+      }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
@@ -711,10 +733,21 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       countParams.push(query.source);
     }
     if (clubs.length > 0) {
-      dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
-      dataParams.push(clubs);
-      countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
-      countParams.push(clubs);
+      if (clubs.includes('none')) {
+        // Names NOT in any club
+        dataConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+        countConditions.push(`(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`);
+      } else if (clubs.includes('any')) {
+        // Names in at least one club
+        dataConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+      } else {
+        // Specific clubs - array overlap
+        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataParams.push(clubs);
+        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countParams.push(clubs);
+      }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';

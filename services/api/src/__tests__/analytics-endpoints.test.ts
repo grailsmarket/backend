@@ -244,6 +244,31 @@ describe('Analytics Endpoints', () => {
       }
     });
 
+    it('should filter by clubs[]=any (names in at least one club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=any'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        expect(sale.clubs).toBeDefined();
+        expect(sale.clubs).not.toBeNull();
+        expect(sale.clubs!.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should filter by clubs[]=none (names not in any club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=none'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        const hasNoClubs = !sale.clubs || sale.clubs.length === 0;
+        expect(hasNoClubs).toBe(true);
+      }
+    });
+
     it('should filter by source=opensea', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
         '/analytics/sales?source=opensea'
@@ -455,6 +480,31 @@ describe('Analytics Endpoints', () => {
       for (const listing of result.data.results) {
         const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
+      }
+    });
+
+    it('should filter by clubs[]=any (names in at least one club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?clubs[]=any'
+      );
+
+      expect(result.success).toBe(true);
+      for (const listing of result.data.results) {
+        expect(listing.clubs).toBeDefined();
+        expect(listing.clubs).not.toBeNull();
+        expect(listing.clubs!.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should filter by clubs[]=none (names not in any club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?clubs[]=none'
+      );
+
+      expect(result.success).toBe(true);
+      for (const listing of result.data.results) {
+        const hasNoClubs = !listing.clubs || listing.clubs.length === 0;
+        expect(hasNoClubs).toBe(true);
       }
     });
 
@@ -681,6 +731,31 @@ describe('Analytics Endpoints', () => {
       for (const offer of result.data.results) {
         const hasMatchingClub = offer.clubs?.some(c => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
+      }
+    });
+
+    it('should filter by clubs[]=any (names in at least one club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?clubs[]=any'
+      );
+
+      expect(result.success).toBe(true);
+      for (const offer of result.data.results) {
+        expect(offer.clubs).toBeDefined();
+        expect(offer.clubs).not.toBeNull();
+        expect(offer.clubs!.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should filter by clubs[]=none (names not in any club)', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?clubs[]=none'
+      );
+
+      expect(result.success).toBe(true);
+      for (const offer of result.data.results) {
+        const hasNoClubs = !offer.clubs || offer.clubs.length === 0;
+        expect(hasNoClubs).toBe(true);
       }
     });
 
