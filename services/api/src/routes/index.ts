@@ -25,6 +25,7 @@ import { poapRoutes } from './poap';
 import { legendsRoutes } from './legends';
 import { brokeredListingsRoutes } from './brokered-listings';
 import { chartsRoutes } from './charts';
+import { subgraphRoutes } from './subgraph';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -52,5 +53,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
   fastify.register(chartsRoutes, { prefix: '/api/v1/charts' });
   fastify.register(userInsightsRoutes, { prefix: '/api/v1/user' });
+  fastify.register(subgraphRoutes, { prefix: '/api/v1/subgraph' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }
