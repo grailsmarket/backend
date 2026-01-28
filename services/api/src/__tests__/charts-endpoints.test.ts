@@ -103,6 +103,14 @@ describe('Chart Endpoints', () => {
       expect(result.data.club).toBe('any');
     });
 
+    it('should filter by no club (none)', async () => {
+      const result = await fetchEndpoint('/charts/sales?club=none');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
     it('should return data points with correct structure', async () => {
       const result = await fetchEndpoint('/charts/sales?period=7d');
 
@@ -194,6 +202,14 @@ describe('Chart Endpoints', () => {
       expect(result.data.club).toBe('any');
     });
 
+    it('should filter by no club (none)', async () => {
+      const result = await fetchEndpoint('/charts/volume?club=none');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
     it('should return dates in ascending order', async () => {
       const result = await fetchEndpoint('/charts/volume?period=7d');
 
@@ -247,6 +263,14 @@ describe('Chart Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.club).toBe('any');
+    });
+
+    it('should filter by no club (none)', async () => {
+      const result = await fetchEndpoint('/charts/listings?club=none');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should return data points with correct structure', async () => {
@@ -315,6 +339,14 @@ describe('Chart Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.club).toBe('any');
+    });
+
+    it('should filter by no club (none)', async () => {
+      const result = await fetchEndpoint('/charts/offers?club=none');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should return data points with correct structure', async () => {

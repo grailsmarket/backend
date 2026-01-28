@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
 
@@ -23,9 +23,9 @@ interface RecalculateHighestOfferJob {
 async function updateHighestOffer(data: UpdateHighestOfferJob): Promise<void> {
   const { ensNameId, offerId, offerAmountWei, currencyAddress } = data;
 
-  // Only track ETH offers for now
-  if (currencyAddress !== '0x0000000000000000000000000000000000000000') {
-    logger.debug({ ensNameId, currencyAddress }, 'Skipping non-ETH offer');
+  // Only track ETH/WETH offers (not USDC, DAI, etc.)
+  if (!isEthOrWeth(currencyAddress)) {
+    logger.debug({ ensNameId, currencyAddress }, 'Skipping non-ETH/WETH offer');
     return;
   }
 
