@@ -211,22 +211,31 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
 }
 
 /**
- * Recalculate premium and available name counts for all clubs
- * Premium: expired 90-111 days ago (in premium auction period)
- * Available: expired > 111 days ago (fully available for registration)
+ * Recalculate status counts for all clubs
+ * - registered_count: Names with expiry_date > NOW() (not expired)
+ * - grace_count: Names with expiry_date <= NOW() AND > NOW() - 90 days (in grace period)
+ * - premium_count: Names expired 90-111 days ago (in premium auction period)
+ * - available_count: Names expired > 111 days ago (fully available for registration)
+ * - listings_count: Names with active listings
  * This is done as a bulk update for efficiency since all clubs are updated together
  */
 async function recalculateStatusCounts(): Promise<void> {
-  logger.info('Recalculating premium/available counts for all clubs');
+  logger.info('Recalculating status counts for all clubs');
 
   try {
-    // Calculate counts for all clubs in a single query using unnest
-    // Then bulk update all clubs
+    // Calculate status counts for all clubs in a single query using unnest
     await pool.query(
       `
       WITH status_counts AS (
         SELECT
           unnest(clubs) as club_name,
+          COUNT(*) FILTER (
+            WHERE expiry_date > NOW()
+          ) as registered,
+          COUNT(*) FILTER (
+            WHERE expiry_date <= NOW()
+              AND expiry_date > NOW() - INTERVAL '90 days'
+          ) as grace,
           COUNT(*) FILTER (
             WHERE expiry_date <= NOW() - INTERVAL '90 days'
               AND expiry_date > NOW() - INTERVAL '111 days'
@@ -239,18 +248,58 @@ async function recalculateStatusCounts(): Promise<void> {
         GROUP BY unnest(clubs)
       )
       UPDATE clubs c
-      SET premium_count = COALESCE(sc.premium, 0),
+      SET registered_count = COALESCE(sc.registered, 0),
+          grace_count = COALESCE(sc.grace, 0),
+          premium_count = COALESCE(sc.premium, 0),
           available_count = COALESCE(sc.available, 0)
       FROM status_counts sc
       WHERE c.name = sc.club_name
       `
     );
 
-    // Also set counts to 0 for clubs with no premium/available names
+    // Calculate listings counts separately (requires join with listings table)
+    await pool.query(
+      `
+      WITH listings_counts AS (
+        SELECT
+          unnest(en.clubs) as club_name,
+          COUNT(*) as listings
+        FROM listings l
+        JOIN ens_names en ON l.ens_name_id = en.id
+        WHERE l.status = 'active'
+          AND en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0
+        GROUP BY unnest(en.clubs)
+      )
+      UPDATE clubs c
+      SET listings_count = COALESCE(lc.listings, 0)
+      FROM listings_counts lc
+      WHERE c.name = lc.club_name
+      `
+    );
+
+    // Set listings_count to 0 for clubs with no active listings
     await pool.query(
       `
       UPDATE clubs
-      SET premium_count = 0, available_count = 0
+      SET listings_count = 0
+      WHERE name NOT IN (
+        SELECT DISTINCT unnest(en.clubs)
+        FROM listings l
+        JOIN ens_names en ON l.ens_name_id = en.id
+        WHERE l.status = 'active'
+          AND en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0
+      )
+      `
+    );
+
+    // Set status counts to 0 for clubs with no names
+    await pool.query(
+      `
+      UPDATE clubs
+      SET registered_count = 0,
+          grace_count = 0,
+          premium_count = 0,
+          available_count = 0
       WHERE name NOT IN (
         SELECT DISTINCT unnest(clubs)
         FROM ens_names
@@ -259,7 +308,7 @@ async function recalculateStatusCounts(): Promise<void> {
       `
     );
 
-    logger.info('Successfully recalculated premium/available counts for all clubs');
+    logger.info('Successfully recalculated status counts for all clubs');
   } catch (error) {
     logger.error({ error }, 'Error recalculating status counts');
     throw error;
