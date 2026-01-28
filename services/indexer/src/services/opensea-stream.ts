@@ -88,10 +88,28 @@ export class OpenSeaStreamListener {
   /**
    * Checks if an event has already been processed and marks it as processed if not
    * Returns true if this is a duplicate event that should be skipped
+   *
+   * @param eventType - The type of event (e.g., 'item_transferred', 'item_listed')
+   * @param orderHash - The order hash (for marketplace events)
+   * @param nftId - The NFT identifier
+   * @param fromAddress - Optional: the 'from' address for transfer events
+   * @param toAddress - Optional: the 'to' address for transfer events
    */
-  private isDuplicateEvent(eventType: string, orderHash: string | null, nftId: string | null): boolean {
+  private isDuplicateEvent(
+    eventType: string,
+    orderHash: string | null,
+    nftId: string | null,
+    fromAddress?: string | null,
+    toAddress?: string | null
+  ): boolean {
     // Create a unique key for this event
-    const key = `${eventType}:${orderHash || 'no-hash'}:${nftId || 'no-nft'}`;
+    // For transfer events, include from/to addresses to distinguish multiple transfers
+    // in the same transaction (e.g., burn -> mint -> final transfer during premium registration)
+    let key = `${eventType}:${orderHash || 'no-hash'}:${nftId || 'no-nft'}`;
+
+    if (eventType === 'item_transferred' && (fromAddress || toAddress)) {
+      key += `:${fromAddress || 'unknown'}:${toAddress || 'unknown'}`;
+    }
 
     if (this.processedEvents.has(key)) {
       logger.debug(`Duplicate event detected, skipping: ${key}`);
@@ -259,10 +277,16 @@ export class OpenSeaStreamListener {
       const orderHash = eventData?.order_hash || null;
       const nftId = eventData?.item?.nft_id || null;
 
+      // For item_transferred events, extract from/to addresses to distinguish
+      // multiple transfers in the same transaction (e.g., during premium registration:
+      // burn old -> mint to controller -> transfer to registrant)
+      const fromAddress = eventData?.from_account?.address || null;
+      const toAddress = eventData?.to_account?.address || null;
+
       // Check for duplicate events (skip collection_offer as they don't have unique identifiers)
       // Note: item_metadata_updated events are filtered out earlier in the message handler
       if (message.event !== 'collection_offer') {
-        if (this.isDuplicateEvent(message.event, orderHash, nftId)) {
+        if (this.isDuplicateEvent(message.event, orderHash, nftId, fromAddress, toAddress)) {
           return;
         }
       }
