@@ -44,6 +44,25 @@ const OffersQuerySchema = z.object({
   'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
+/**
+ * Parse clubs filter, handling both array and comma-separated string formats
+ * Examples:
+ *   ["999", "10k"] -> ["999", "10k"]
+ *   "999,10k,prepunk" -> ["999", "10k", "prepunk"]
+ *   undefined -> []
+ */
+function parseClubsFilter(rawClubs: string | string[] | undefined): string[] {
+  if (!rawClubs) return [];
+
+  if (Array.isArray(rawClubs)) {
+    // Handle array - also split any comma-separated values within array elements
+    return rawClubs.flatMap(c => c.split(',').map(v => v.trim()).filter(v => v));
+  }
+
+  // Handle single string - split on comma
+  return rawClubs.split(',').map(c => c.trim()).filter(c => c);
+}
+
 export async function analyticsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
@@ -462,11 +481,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 's.sale_price_wei::numeric' : 's.sale_date';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Parse clubs filter
-    const rawClubs = query['clubs[]'];
-    const clubs: string[] = rawClubs
-      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
-      : [];
+    // Parse clubs filter (supports comma-separated values)
+    const clubs = parseClubsFilter(query['clubs[]']);
 
     // Build filter conditions - different param numbers for data vs count query
     const dataConditions: string[] = [];
@@ -581,11 +597,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'l.price_wei::numeric' : 'l.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Parse clubs filter
-    const rawClubs = query['clubs[]'];
-    const clubs: string[] = rawClubs
-      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
-      : [];
+    // Parse clubs filter (supports comma-separated values)
+    const clubs = parseClubsFilter(query['clubs[]']);
 
     // Build filter conditions - different param numbers for data vs count query
     const dataConditions: string[] = [];
@@ -706,11 +719,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     const orderByColumn = query.sortBy === 'price' ? 'o.offer_amount_wei::numeric' : 'o.created_at';
     const orderDirection = query.sortOrder.toUpperCase();
 
-    // Parse clubs filter
-    const rawClubs = query['clubs[]'];
-    const clubs: string[] = rawClubs
-      ? (Array.isArray(rawClubs) ? rawClubs : [rawClubs])
-      : [];
+    // Parse clubs filter (supports comma-separated values)
+    const clubs = parseClubsFilter(query['clubs[]']);
 
     // Build filter conditions - different param numbers for data vs count query
     const dataConditions: string[] = [];

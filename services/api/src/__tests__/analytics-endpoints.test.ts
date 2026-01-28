@@ -244,6 +244,30 @@ describe('Analytics Endpoints', () => {
       }
     });
 
+    it('should filter by comma-separated clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=999,10k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
+      }
+    });
+
+    it('should filter by comma-separated clubs[] with three clubs', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
+        '/analytics/sales?clubs[]=999,10k,100k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const sale of result.data.results) {
+        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k' || c === '100k');
+        expect(hasMatchingClub).toBe(true);
+      }
+    });
+
     it('should filter by clubs[]=any (names in at least one club)', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
         '/analytics/sales?clubs[]=any'
@@ -479,6 +503,18 @@ describe('Analytics Endpoints', () => {
       expect(result.success).toBe(true);
       for (const listing of result.data.results) {
         const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
+      }
+    });
+
+    it('should filter by comma-separated clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
+        '/analytics/listings?clubs[]=999,10k,100k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const listing of result.data.results) {
+        const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k' || c === '100k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -725,6 +761,18 @@ describe('Analytics Endpoints', () => {
     it('should filter by multiple clubs[]', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
         '/analytics/offers?clubs[]=999&clubs[]=10k'
+      );
+
+      expect(result.success).toBe(true);
+      for (const offer of result.data.results) {
+        const hasMatchingClub = offer.clubs?.some(c => c === '999' || c === '10k');
+        expect(hasMatchingClub).toBe(true);
+      }
+    });
+
+    it('should filter by comma-separated clubs[]', async () => {
+      const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
+        '/analytics/offers?clubs[]=999,10k'
       );
 
       expect(result.success).toBe(true);
