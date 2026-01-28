@@ -1,8 +1,12 @@
 /**
- * Import Sales CSV (Simple Format)
+ * Import Sales CSV (Simple Format) - OPTIMIZED
  *
  * Imports ENS sales data from a simplified CSV format with name-based lookup.
  * Disables triggers and manually creates activity_history records for performance.
+ *
+ * Optimizations:
+ * - Pre-loads all name→id mappings into cache before starting
+ * - Uses bulk multi-row INSERT statements
  *
  * Usage:
  *   npx tsx src/scripts/import-sales-simple.ts <csv-file> [options]
@@ -13,9 +17,9 @@
  *   --skip-rows=<n>       Skip first N data rows (for resuming)
  *
  * Example:
- *   npx tsx src/scripts/import-sales-simple.ts ../data/sales/ens-sales-simple-top3source.csv --dry-run
- *   npx tsx src/scripts/import-sales-simple.ts ../data/sales/ens-sales-simple-top3source.csv
- *   npx tsx src/scripts/import-sales-simple.ts ../data/sales/ens-sales-simple-top3source.csv --skip-rows=100000
+ *   npx tsx src/scripts/import-sales-simple.ts data/sales/ens-sales-simple-top3source.csv --dry-run
+ *   npx tsx src/scripts/import-sales-simple.ts data/sales/ens-sales-simple-top3source.csv
+ *   npx tsx src/scripts/import-sales-simple.ts data/sales/ens-sales-simple-top3source.csv --skip-rows=83000
  */
 
 import * as fs from 'fs';
@@ -54,8 +58,8 @@ interface ImportOptions {
   skipRows: number;
 }
 
-// Cache for name to ens_name_id lookups
-const nameIdCache = new Map<string, number | null>();
+// Cache for name to ens_name_id lookups (populated on-demand per batch)
+const nameIdCache = new Map<string, number>();
 
 // Source mapping: CSV source -> DB source
 const SOURCE_MAP: Record<string, string> = {
@@ -64,6 +68,30 @@ const SOURCE_MAP: Record<string, string> = {
   'x2y2.io': 'x2y2',
   'blur.io': 'blur',
 };
+
+/**
+ * Batch lookup ENS name IDs - only fetches names not already in cache
+ */
+async function batchLookupNames(names: string[]): Promise<void> {
+  // Filter to names not already in cache
+  const uncachedNames = names
+    .map((n) => n.toLowerCase())
+    .filter((n) => !nameIdCache.has(n));
+
+  if (uncachedNames.length === 0) return;
+
+  // Deduplicate
+  const uniqueNames = [...new Set(uncachedNames)];
+
+  const result = await pool.query(
+    'SELECT id, LOWER(name) as name FROM ens_names WHERE LOWER(name) = ANY($1)',
+    [uniqueNames]
+  );
+
+  for (const row of result.rows) {
+    nameIdCache.set(row.name, row.id);
+  }
+}
 
 /**
  * Map CSV source to valid DB source
@@ -77,24 +105,10 @@ function mapSource(csvSource: string): string {
 }
 
 /**
- * Look up ENS name ID from name
+ * Look up ENS name ID from cache
  */
-async function getEnsNameId(name: string): Promise<number | null> {
-  const normalizedName = name.toLowerCase();
-
-  // Check cache first
-  if (nameIdCache.has(normalizedName)) {
-    return nameIdCache.get(normalizedName)!;
-  }
-
-  const result = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = $1', [
-    normalizedName,
-  ]);
-
-  const ensNameId = result.rows.length > 0 ? result.rows[0].id : null;
-  nameIdCache.set(normalizedName, ensNameId);
-
-  return ensNameId;
+function getEnsNameId(name: string): number | undefined {
+  return nameIdCache.get(name.toLowerCase());
 }
 
 /**
@@ -132,8 +146,20 @@ function parseSaleDate(dateStr: string): Date {
   return new Date(cleaned);
 }
 
+interface PreparedRecord {
+  ensNameId: number;
+  sellerAddress: string;
+  buyerAddress: string;
+  currencyPrice: string;
+  currencyAddress: string;
+  txHash: string;
+  blockNumber: number;
+  source: string;
+  saleDate: Date;
+}
+
 /**
- * Import a batch of sales and create activity history
+ * Import a batch of sales and create activity history using bulk inserts
  */
 async function importBatch(
   records: CSVRow[],
@@ -142,18 +168,36 @@ async function importBatch(
 ): Promise<void> {
   if (records.length === 0) return;
 
-  if (dryRun) {
-    // In dry-run mode, just count and show sample
-    for (const record of records) {
-      const ensNameId = await getEnsNameId(record.name);
-      if (!ensNameId) {
-        stats.nameNotFound++;
-        continue;
-      }
-      stats.salesImported++;
-      stats.activitiesCreated += 2;
+  // Batch lookup all names in this batch (one query instead of N)
+  await batchLookupNames(records.map((r) => r.name));
+
+  // Pre-process records: resolve name IDs and filter out not-found
+  const prepared: PreparedRecord[] = [];
+  for (const record of records) {
+    const ensNameId = getEnsNameId(record.name);
+    if (!ensNameId) {
+      stats.nameNotFound++;
+      continue;
     }
-    if (stats.salesImported <= 5) {
+    prepared.push({
+      ensNameId,
+      sellerAddress: record.seller_address.toLowerCase(),
+      buyerAddress: record.buyer_address.toLowerCase(),
+      currencyPrice: record.currency_price,
+      currencyAddress: record.currency_address.toLowerCase(),
+      txHash: record.tx_hash.toLowerCase(),
+      blockNumber: parseInt(record.block_number),
+      source: mapSource(record.source),
+      saleDate: parseSaleDate(record.sale_date_dt),
+    });
+  }
+
+  if (prepared.length === 0) return;
+
+  if (dryRun) {
+    stats.salesImported += prepared.length;
+    stats.activitiesCreated += prepared.length * 2;
+    if (stats.rowsRead <= 1000) {
       console.log(`\n[DRY RUN] Sample record:`, JSON.stringify(records[0], null, 2));
     }
     return;
@@ -164,98 +208,104 @@ async function importBatch(
   try {
     await client.query('BEGIN');
 
-    for (const record of records) {
-      try {
-        const ensNameId = await getEnsNameId(record.name);
-        if (!ensNameId) {
-          stats.nameNotFound++;
-          continue;
-        }
+    // Build bulk INSERT for sales
+    const salesValues: any[] = [];
+    const salesPlaceholders: string[] = [];
+    let paramIndex = 1;
 
-        const source = mapSource(record.source);
-        const saleDate = parseSaleDate(record.sale_date_dt);
+    for (const rec of prepared) {
+      salesPlaceholders.push(
+        `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
+      );
+      salesValues.push(
+        rec.ensNameId,
+        rec.sellerAddress,
+        rec.buyerAddress,
+        rec.currencyPrice,
+        rec.currencyAddress,
+        rec.txHash,
+        rec.blockNumber,
+        rec.source,
+        rec.saleDate
+      );
+    }
 
-        // Insert sale with RETURNING to check if it was inserted
-        const saleResult = await client.query(
-          `INSERT INTO sales (
-            ens_name_id, seller_address, buyer_address, sale_price_wei,
-            currency_address, transaction_hash, block_number, source, sale_date
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
-          RETURNING id`,
-          [
-            ensNameId,
-            record.seller_address.toLowerCase(),
-            record.buyer_address.toLowerCase(),
-            record.currency_price,
-            record.currency_address.toLowerCase(),
-            record.tx_hash.toLowerCase(),
-            parseInt(record.block_number),
-            source,
-            saleDate,
-          ]
+    // Bulk insert sales, returning which ones were actually inserted
+    const salesResult = await client.query(
+      `INSERT INTO sales (
+        ens_name_id, seller_address, buyer_address, sale_price_wei,
+        currency_address, transaction_hash, block_number, source, sale_date
+      ) VALUES ${salesPlaceholders.join(', ')}
+      ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
+      RETURNING transaction_hash`,
+      salesValues
+    );
+
+    // Track which tx_hashes were actually inserted
+    const insertedTxHashes = new Set(salesResult.rows.map((r) => r.transaction_hash));
+    stats.salesImported += insertedTxHashes.size;
+    stats.duplicates += prepared.length - insertedTxHashes.size;
+
+    // Only create activities for newly inserted sales
+    const insertedRecords = prepared.filter((r) => insertedTxHashes.has(r.txHash));
+
+    if (insertedRecords.length > 0) {
+      // Build bulk INSERT for activity_history (2 records per sale: sold + bought)
+      const activityValues: any[] = [];
+      const activityPlaceholders: string[] = [];
+      paramIndex = 1;
+
+      for (const rec of insertedRecords) {
+        // 'sold' activity (seller perspective)
+        activityPlaceholders.push(
+          `($${paramIndex++}, 'sold', $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, 1, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, '{}', $${paramIndex++})`
+        );
+        activityValues.push(
+          rec.ensNameId,
+          rec.sellerAddress,
+          rec.buyerAddress,
+          rec.source,
+          rec.currencyPrice,
+          rec.currencyAddress,
+          rec.txHash,
+          rec.blockNumber,
+          rec.saleDate
         );
 
-        // Only create activity if sale was actually inserted (not duplicate)
-        if (saleResult.rows.length > 0) {
-          stats.salesImported++;
-
-          // Insert 'sold' activity (seller perspective)
-          await client.query(
-            `INSERT INTO activity_history (
-              ens_name_id, event_type, actor_address, counterparty_address,
-              platform, chain_id, price_wei, currency_address,
-              transaction_hash, block_number, metadata, created_at
-            ) VALUES ($1, 'sold', $2, $3, $4, 1, $5, $6, $7, $8, '{}', $9)`,
-            [
-              ensNameId,
-              record.seller_address.toLowerCase(),
-              record.buyer_address.toLowerCase(),
-              source,
-              record.currency_price,
-              record.currency_address.toLowerCase(),
-              record.tx_hash.toLowerCase(),
-              parseInt(record.block_number),
-              saleDate,
-            ]
-          );
-          stats.activitiesCreated++;
-
-          // Insert 'bought' activity (buyer perspective)
-          await client.query(
-            `INSERT INTO activity_history (
-              ens_name_id, event_type, actor_address, counterparty_address,
-              platform, chain_id, price_wei, currency_address,
-              transaction_hash, block_number, metadata, created_at
-            ) VALUES ($1, 'bought', $2, $3, $4, 1, $5, $6, $7, $8, '{}', $9)`,
-            [
-              ensNameId,
-              record.buyer_address.toLowerCase(),
-              record.seller_address.toLowerCase(),
-              source,
-              record.currency_price,
-              record.currency_address.toLowerCase(),
-              record.tx_hash.toLowerCase(),
-              parseInt(record.block_number),
-              saleDate,
-            ]
-          );
-          stats.activitiesCreated++;
-        } else {
-          stats.duplicates++;
-        }
-      } catch (error: any) {
-        stats.errors++;
-        if (!error.message?.includes('duplicate')) {
-          console.error(`Error processing ${record.name}:`, error.message);
-        }
+        // 'bought' activity (buyer perspective)
+        activityPlaceholders.push(
+          `($${paramIndex++}, 'bought', $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, 1, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, '{}', $${paramIndex++})`
+        );
+        activityValues.push(
+          rec.ensNameId,
+          rec.buyerAddress,
+          rec.sellerAddress,
+          rec.source,
+          rec.currencyPrice,
+          rec.currencyAddress,
+          rec.txHash,
+          rec.blockNumber,
+          rec.saleDate
+        );
       }
+
+      await client.query(
+        `INSERT INTO activity_history (
+          ens_name_id, event_type, actor_address, counterparty_address,
+          platform, chain_id, price_wei, currency_address,
+          transaction_hash, block_number, metadata, created_at
+        ) VALUES ${activityPlaceholders.join(', ')}`,
+        activityValues
+      );
+
+      stats.activitiesCreated += insertedRecords.length * 2;
     }
 
     await client.query('COMMIT');
-  } catch (error) {
+  } catch (error: any) {
     await client.query('ROLLBACK');
-    throw error;
+    stats.errors += prepared.length;
+    console.error(`Batch error:`, error.message);
   } finally {
     client.release();
   }
