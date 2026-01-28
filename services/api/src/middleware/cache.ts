@@ -114,3 +114,9 @@ export const longCacheHandler = withCache({ ttl: 60 });
  * Cache handler for very stable data (5 minutes)
  */
 export const veryLongCacheHandler = withCache({ ttl: 300 });
+
+/**
+ * Cache handler for leaderboard data (12 hours)
+ * Leaderboard queries are expensive and data changes slowly
+ */
+export const leaderboardCacheHandler = withCache({ ttl: 43200 });

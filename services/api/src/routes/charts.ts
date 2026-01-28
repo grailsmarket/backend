@@ -38,28 +38,50 @@ function getTimeConfig(period: string): TimeConfig {
   };
 }
 
-function buildClubCondition(club: string | undefined, paramNum: number): { condition: string; params: any[] } {
-  if (!club) {
+/**
+ * Parse club filter string into array, handling comma-separated values
+ * Examples:
+ *   "999" -> ["999"]
+ *   "999,10k,prepunk" -> ["999", "10k", "prepunk"]
+ *   undefined -> []
+ */
+function parseClubFilter(club: string | undefined): string[] {
+  if (!club) return [];
+  return club.split(',').map(c => c.trim()).filter(c => c);
+}
+
+function buildClubCondition(clubs: string[], paramNum: number): { condition: string; params: any[] } {
+  if (clubs.length === 0) {
     return { condition: '', params: [] };
   }
 
-  if (club === 'any') {
+  // Special values take precedence if included
+  if (clubs.includes('any')) {
     return {
       condition: 'AND array_length(en.clubs, 1) > 0',
       params: [],
     };
   }
 
-  if (club === 'none') {
+  if (clubs.includes('none')) {
     return {
       condition: 'AND (en.clubs IS NULL OR array_length(en.clubs, 1) = 0)',
       params: [],
     };
   }
 
+  // Single club: use = ANY for exact match
+  if (clubs.length === 1) {
+    return {
+      condition: `AND $${paramNum} = ANY(en.clubs)`,
+      params: [clubs[0]],
+    };
+  }
+
+  // Multiple clubs: use && for array overlap (matches any of the specified clubs)
   return {
-    condition: `AND $${paramNum} = ANY(en.clubs)`,
-    params: [club],
+    condition: `AND en.clubs && $${paramNum}::text[]`,
+    params: [clubs],
   };
 }
 
@@ -73,7 +95,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/sales', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubCondition = buildClubCondition(query.club, 1);
+    const clubs = parseClubFilter(query.club);
+    const clubCondition = buildClubCondition(clubs, 1);
 
     try {
       const result = await pool.query(
@@ -112,6 +135,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         data: {
           period: query.period,
           club: query.club || null,
+          clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
             total: row.total,
@@ -148,7 +172,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/volume', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubCondition = buildClubCondition(query.club, 3);
+    const clubs = parseClubFilter(query.club);
+    const clubCondition = buildClubCondition(clubs, 3);
 
     try {
       const result = await pool.query(
@@ -188,6 +213,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         data: {
           period: query.period,
           club: query.club || null,
+          clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
             total: row.total,
@@ -224,7 +250,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/listings', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubCondition = buildClubCondition(query.club, 1);
+    const clubs = parseClubFilter(query.club);
+    const clubCondition = buildClubCondition(clubs, 1);
 
     try {
       const result = await pool.query(
@@ -263,6 +290,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         data: {
           period: query.period,
           club: query.club || null,
+          clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
             total: row.total,
@@ -299,7 +327,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/offers', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubCondition = buildClubCondition(query.club, 1);
+    const clubs = parseClubFilter(query.club);
+    const clubCondition = buildClubCondition(clubs, 1);
 
     try {
       const result = await pool.query(
@@ -338,6 +367,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         data: {
           period: query.period,
           club: query.club || null,
+          clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
             total: row.total,

@@ -14,6 +14,7 @@ interface ChartResponse {
   data: {
     period: string;
     club: string | null;
+    clubs: string[] | null;
     points: ChartDataPoint[];
   };
   meta: {
@@ -108,6 +109,23 @@ describe('Chart Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
+    it('should filter by comma-separated clubs', async () => {
+      const result = await fetchEndpoint('/charts/sales?club=999,10k');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('999,10k');
+      expect(result.data.clubs).toEqual(['999', '10k']);
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
+    it('should filter by multiple comma-separated clubs with spaces', async () => {
+      const result = await fetchEndpoint('/charts/sales?club=999,%2010k,%20100k');
+
+      expect(result.success).toBe(true);
+      expect(result.data.clubs).toEqual(['999', '10k', '100k']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
@@ -210,6 +228,15 @@ describe('Chart Endpoints', () => {
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
+    it('should filter by comma-separated clubs', async () => {
+      const result = await fetchEndpoint('/charts/volume?club=999,10k');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('999,10k');
+      expect(result.data.clubs).toEqual(['999', '10k']);
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
     it('should return dates in ascending order', async () => {
       const result = await fetchEndpoint('/charts/volume?period=7d');
 
@@ -270,6 +297,15 @@ describe('Chart Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
+    it('should filter by comma-separated clubs', async () => {
+      const result = await fetchEndpoint('/charts/listings?club=999,10k,100k');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('999,10k,100k');
+      expect(result.data.clubs).toEqual(['999', '10k', '100k']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
@@ -346,6 +382,15 @@ describe('Chart Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.club).toBe('none');
+      expect(result.data.points).toBeInstanceOf(Array);
+    });
+
+    it('should filter by comma-separated clubs', async () => {
+      const result = await fetchEndpoint('/charts/offers?club=10k,prepunk');
+
+      expect(result.success).toBe(true);
+      expect(result.data.club).toBe('10k,prepunk');
+      expect(result.data.clubs).toEqual(['10k', 'prepunk']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
