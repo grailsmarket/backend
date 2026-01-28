@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { getPostgresPool } from '../../../shared/src';
-import { veryLongCacheHandler } from '../middleware/cache';
+import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
 const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names'] as const;
@@ -10,7 +10,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
 
   // Get user leaderboard - ranks users by ENS name holdings
   // GET /api/v1/leaderboard
-  fastify.get('/', { preHandler: veryLongCacheHandler }, async (request, reply) => {
+  fastify.get('/', { preHandler: leaderboardCacheHandler }, async (request, reply) => {
     try {
       const rawQuery = request.query as {
         page?: string;
