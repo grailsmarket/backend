@@ -31,6 +31,16 @@ interface Club {
   sales_volume_wei_1y: string;
   sales_volume_wei_1mo: string;
   sales_volume_wei_1w: string;
+  registered_count: number;
+  grace_count: number;
+  listings_count: number;
+  registered_percent: number;
+  grace_percent: number;
+  listings_percent: number;
+  premium_count: number;
+  available_count: number;
+  premium_percent: number;
+  available_percent: number;
   classifications: string[] | null;
   last_floor_update: string | null;
   last_sales_update: string | null;
@@ -825,6 +835,147 @@ describe('Clubs API Filters, Sorting, and Search', () => {
           ratios[i - 1] <= ratios[i],
           `${data!.clubs[i - 1].name} (${ratios[i - 1]}%) should be <= ${data!.clubs[i].name} (${ratios[i]}%)`
         ).toBe(true);
+      }
+    });
+  });
+
+  describe('Registered, Grace, and Listings Counts', () => {
+    it('all clubs have registered_count, grace_count, and listings_count fields', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      for (const club of data!.clubs) {
+        expect(club.registered_count).toBeDefined();
+        expect(typeof club.registered_count).toBe('number');
+        expect(club.registered_count).toBeGreaterThanOrEqual(0);
+
+        expect(club.grace_count).toBeDefined();
+        expect(typeof club.grace_count).toBe('number');
+        expect(club.grace_count).toBeGreaterThanOrEqual(0);
+
+        expect(club.listings_count).toBeDefined();
+        expect(typeof club.listings_count).toBe('number');
+        expect(club.listings_count).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('all clubs have registered_percent, grace_percent, and listings_percent fields', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      for (const club of data!.clubs) {
+        expect(club.registered_percent).toBeDefined();
+        expect(typeof club.registered_percent).toBe('number');
+        expect(club.registered_percent).toBeGreaterThanOrEqual(0);
+
+        expect(club.grace_percent).toBeDefined();
+        expect(typeof club.grace_percent).toBe('number');
+        expect(club.grace_percent).toBeGreaterThanOrEqual(0);
+
+        expect(club.listings_percent).toBeDefined();
+        expect(typeof club.listings_percent).toBe('number');
+        expect(club.listings_percent).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('registered_count + grace_count + premium_count + available_count equals member_count', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const club of data!.clubs) {
+        const total = club.registered_count + club.grace_count + club.premium_count + club.available_count;
+        if (total !== club.member_count) {
+          failures.push(
+            `${club.name}: sum (${total}) != member_count (${club.member_count})`
+          );
+        }
+      }
+      expect(failures, `Status counts don't add up to member_count:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('listings_count is less than or equal to member_count', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const club of data!.clubs) {
+        if (club.listings_count > club.member_count) {
+          failures.push(
+            `${club.name}: listings_count (${club.listings_count}) > member_count (${club.member_count})`
+          );
+        }
+      }
+      expect(failures, `Listings count exceeded member count:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('sortBy=registered_count&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=registered_count&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.registered_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(counts[i - 1] >= counts[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=registered_count&sortOrder=asc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=registered_count&sortOrder=asc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.registered_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(counts[i - 1] <= counts[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=grace_count&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=grace_count&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.grace_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(counts[i - 1] >= counts[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=listings_count&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=listings_count&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.listings_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(counts[i - 1] >= counts[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=registered_percent&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=registered_percent&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const percents = data!.clubs.map((c) => c.registered_percent);
+      for (let i = 1; i < percents.length; i++) {
+        expect(percents[i - 1] >= percents[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=grace_percent&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=grace_percent&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const percents = data!.clubs.map((c) => c.grace_percent);
+      for (let i = 1; i < percents.length; i++) {
+        expect(percents[i - 1] >= percents[i]).toBe(true);
+      }
+    });
+
+    it('sortBy=listings_percent&sortOrder=desc sorts correctly', async () => {
+      const { data } = await getClubs('sortBy=listings_percent&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const percents = data!.clubs.map((c) => c.listings_percent);
+      for (let i = 1; i < percents.length; i++) {
+        expect(percents[i - 1] >= percents[i]).toBe(true);
       }
     });
   });

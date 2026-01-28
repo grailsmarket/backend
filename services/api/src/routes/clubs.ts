@@ -16,6 +16,12 @@ const VALID_SORT_FIELDS = [
   'member_count',
   'floor_price_wei',
   'name',
+  'registered_count',
+  'grace_count',
+  'listings_count',
+  'registered_percent',
+  'grace_percent',
+  'listings_percent',
   'premium_count',
   'available_count',
   'premium_percent',
@@ -104,14 +110,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       // Build ORDER BY clause with numeric casting for volume/price fields
       // and computed expressions for percentage/ratio fields
       let orderByField: string;
-      if (sortBy === 'premium_percent') {
-        orderByField = 'premium_percent';
-      } else if (sortBy === 'available_percent') {
-        orderByField = 'available_percent';
-      } else if (sortBy === 'holders_count') {
-        orderByField = 'holders_count';
-      } else if (sortBy === 'holders_ratio') {
-        orderByField = 'holders_ratio';
+      const computedFields = [
+        'registered_percent',
+        'grace_percent',
+        'listings_percent',
+        'premium_percent',
+        'available_percent',
+        'holders_count',
+        'holders_ratio',
+      ];
+      if (computedFields.includes(sortBy!)) {
+        orderByField = sortBy!;
       } else if (NUMERIC_SORT_FIELDS.includes(sortBy!)) {
         orderByField = `${sortBy}::numeric`;
       } else {
@@ -134,6 +143,12 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           c.sales_volume_wei_1y,
           c.sales_volume_wei_1mo,
           c.sales_volume_wei_1w,
+          c.registered_count,
+          c.grace_count,
+          c.listings_count,
+          ROUND((c.registered_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS registered_percent,
+          ROUND((c.grace_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS grace_percent,
+          ROUND((c.listings_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS listings_percent,
           c.premium_count,
           c.available_count,
           ROUND((c.premium_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS premium_percent,
