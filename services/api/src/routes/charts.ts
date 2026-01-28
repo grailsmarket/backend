@@ -50,6 +50,13 @@ function buildClubCondition(club: string | undefined, paramNum: number): { condi
     };
   }
 
+  if (club === 'none') {
+    return {
+      condition: 'AND (en.clubs IS NULL OR array_length(en.clubs, 1) = 0)',
+      params: [],
+    };
+  }
+
   return {
     condition: `AND $${paramNum} = ANY(en.clubs)`,
     params: [club],
