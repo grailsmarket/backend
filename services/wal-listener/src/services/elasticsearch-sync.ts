@@ -115,6 +115,8 @@ export class ElasticsearchSync {
                 last_sale_date: { type: 'date' },
                 has_sales: { type: 'boolean' },
                 days_since_last_sale: { type: 'integer' },
+                // Private listing field
+                private_buyer_address: { type: 'keyword' },
               },
             },
             settings: {
@@ -192,6 +194,7 @@ export class ElasticsearchSync {
           l.currency_address as listing_currency_address,
           l.status as listing_status,
           l.created_at as listing_created_at,
+          l.private_buyer_address as listing_private_buyer_address,
           en.last_sale_date,
           en.last_sale_price,
           en.last_sale_currency,
@@ -273,6 +276,7 @@ export class ElasticsearchSync {
             l.currency_address as listing_currency_address,
             l.status as listing_status,
             l.created_at as listing_created_at,
+            l.private_buyer_address as listing_private_buyer_address,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
             en.last_sale_date,
             en.last_sale_price,
@@ -287,7 +291,7 @@ export class ElasticsearchSync {
             LIMIT 1
           ) l ON true
           LEFT JOIN offers o ON o.ens_name_id = en.id
-          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at
+          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.private_buyer_address
           ORDER BY en.id
           LIMIT $1 OFFSET $2
         `;
@@ -443,6 +447,8 @@ export class ElasticsearchSync {
       last_sale_date: saleHistoryState.lastSaleDate,
       has_sales: saleHistoryState.hasSales,
       days_since_last_sale: saleHistoryState.daysSinceLastSale,
+      // Private listing field
+      private_buyer_address: data.listing_private_buyer_address?.toLowerCase() || null,
     };
   }
 
