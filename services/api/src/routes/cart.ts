@@ -90,9 +90,11 @@ export async function cartRoutes(fastify: FastifyInstance) {
 
       // Extract ENS names for buildSearchResults
       const ensNames = cartResult.rows.map(row => row.name);
+      const userAddress = request.user?.address?.toLowerCase();
 
       // Use buildSearchResults to get enriched ENS data
-      const enrichedNames = await buildSearchResults(ensNames, userId);
+      // Pass userAddress to filter private listings (only show if user is the private buyer)
+      const enrichedNames = await buildSearchResults(ensNames, userId, userAddress);
 
       // Create a map of name -> enriched data
       const nameMap = new Map(enrichedNames.map(n => [n.name.toLowerCase(), n]));

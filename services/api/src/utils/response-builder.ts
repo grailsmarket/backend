@@ -66,10 +66,12 @@ export interface Listing {
  *
  * @param ensNames - Array of ENS name identifiers (either full names or just the name strings)
  * @param userId - Optional user ID to include user's vote in results
+ * @param userAddress - Optional user address to filter private listings (only shows private listings where user is the buyer)
  */
 export async function buildSearchResults(
   ensNames: string[],
-  userId?: number
+  userId?: number,
+  userAddress?: string
 ): Promise<SearchResult[]> {
   if (ensNames.length === 0) {
     return [];
@@ -149,7 +151,9 @@ export async function buildSearchResults(
         '[]'::json
       ) as listings
     FROM ens_names en
-    LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+    LEFT JOIN listings l ON l.ens_name_id = en.id
+      AND l.status = 'active'
+      AND (l.private_buyer_address IS NULL OR LOWER(l.private_buyer_address) = LOWER($${ensNames.length + (userId !== undefined ? 2 : 1)}))
     WHERE LOWER(en.name) IN (${placeholders})
     GROUP BY en.id
     ORDER BY CASE ${orderCases} END
@@ -159,6 +163,8 @@ export async function buildSearchResults(
   if (userId !== undefined) {
     queryParams.push(userId);
   }
+  // Add userAddress for private listing filter (use empty string if not provided to show only public listings)
+  queryParams.push(userAddress?.toLowerCase() || '');
 
   const result = await pool.query(query, queryParams);
 
@@ -207,8 +213,9 @@ export async function buildSearchResults(
  *
  * @param name - ENS name to fetch
  * @param userId - Optional user ID to include user's vote
+ * @param userAddress - Optional user address to filter private listings (only shows private listings where user is the buyer)
  */
-export async function buildNameResult(name: string, userId?: number): Promise<SearchResult | null> {
-  const results = await buildSearchResults([name], userId);
+export async function buildNameResult(name: string, userId?: number, userAddress?: string): Promise<SearchResult | null> {
+  const results = await buildSearchResults([name], userId, userAddress);
   return results.length > 0 ? results[0] : null;
 }

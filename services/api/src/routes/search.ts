@@ -426,11 +426,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
         return reply.send(csvContent);
       }
 
-      // Get user ID if authenticated
+      // Get user ID and address if authenticated
       const userId = request.user ? parseInt(request.user.sub) : undefined;
+      const userAddressForResults = request.user?.address?.toLowerCase();
 
       // Build search results using shared utility
-      const results = await buildSearchResults(ensNames, userId);
+      // Pass userAddress to filter private listings (only show if user is the private buyer)
+      const results = await buildSearchResults(ensNames, userId, userAddressForResults);
 
       fastify.log.info(`buildSearchResults returned ${results.length} results from ${ensNames.length} names`);
 
@@ -907,11 +909,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
           return reply.send(csvContent);
         }
 
-        // Get user ID if authenticated
+        // Get user ID and address if authenticated
         const userId = request.user ? parseInt(request.user.sub) : undefined;
+        const userAddressForResults = request.user?.address?.toLowerCase();
 
         // Build search results using shared utility
-        const results = await buildSearchResults(ensNames, userId);
+        // Pass userAddress to filter private listings (only show if user is the private buyer)
+        const results = await buildSearchResults(ensNames, userId, userAddressForResults);
 
         fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(ensNames.slice(0, 5))}`);
         if (sortBy === 'price') {
@@ -1045,12 +1049,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Create a set for quick lookup
       const foundNamesSet = new Set(foundNames);
 
-      // Get user ID if authenticated
+      // Get user ID and address if authenticated
       const userId = request.user ? parseInt(request.user.sub) : undefined;
+      const userAddressForResults = request.user?.address?.toLowerCase();
 
       // Build enriched results for found names
+      // Pass userAddress to filter private listings (only show if user is the private buyer)
       const enrichedResults = foundNames.length > 0
-        ? await buildSearchResults(foundNames, userId)
+        ? await buildSearchResults(foundNames, userId, userAddressForResults)
         : [];
 
       // Create a map of name -> enriched result for quick lookup
@@ -1267,11 +1273,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
             });
           }
 
-          // Get user ID if authenticated
+          // Get user ID and address if authenticated
           const userId = request.user ? parseInt(request.user.sub) : undefined;
+          const userAddressForResults = request.user?.address?.toLowerCase();
 
           // Build enriched results
-          const results = await buildSearchResults(foundNames, userId);
+          // Pass userAddress to filter private listings (only show if user is the private buyer)
+          const results = await buildSearchResults(foundNames, userId, userAddressForResults);
 
           // If ES returned names but PostgreSQL has none, fall back to PostgreSQL
           if (results.length === 0 && foundNames.length > 0) {
@@ -1545,11 +1553,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Get user ID if authenticated
+        // Get user ID and address if authenticated
         const userId = request.user ? parseInt(request.user.sub) : undefined;
+        const userAddressForResults = request.user?.address?.toLowerCase();
 
         // Build enriched results
-        const results = await buildSearchResults(foundNames, userId);
+        // Pass userAddress to filter private listings (only show if user is the private buyer)
+        const results = await buildSearchResults(foundNames, userId, userAddressForResults);
 
         const response: APIResponse<{
           results: SearchResult[];

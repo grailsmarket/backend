@@ -6,6 +6,7 @@ import {
   validateBrokeredListingFees,
 } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
+import { optionalAuth } from '../middleware/auth';
 
 const CreateBrokeredListingSchema = z.object({
   token_id: z.string(),
@@ -216,7 +217,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
 
   // GET /api/v1/brokered-listings/broker/:address - Get listings by broker address
   // Returns results in the standard search format with full ENS name data
-  fastify.get('/broker/:address', async (request, reply) => {
+  fastify.get('/broker/:address', { preHandler: optionalAuth }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const query = GetByBrokerQuerySchema.parse(request.query);
 
@@ -272,7 +273,10 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
     const ensNames = namesResult.rows.map((row: { name: string }) => row.name);
 
     // Use buildSearchResults for consistent response format
-    const results = ensNames.length > 0 ? await buildSearchResults(ensNames) : [];
+    // Pass userId and userAddress to filter private listings (only show if user is the private buyer)
+    const userId = request.user ? parseInt(request.user.sub) : undefined;
+    const userAddress = request.user?.address?.toLowerCase();
+    const results = ensNames.length > 0 ? await buildSearchResults(ensNames, userId, userAddress) : [];
 
     return reply.send({
       success: true,

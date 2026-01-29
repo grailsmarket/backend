@@ -72,7 +72,8 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add recommendation metrics
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -140,7 +141,8 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add recommendation metrics
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -207,7 +209,8 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add recommendation metrics
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -305,7 +308,8 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = sortedRecs.map(rec => rec.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add recommendation metrics
     const resultsWithMetrics = enrichedResults.map(name => {

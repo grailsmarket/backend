@@ -171,11 +171,13 @@ export async function namesRoutes(fastify: FastifyInstance) {
   fastify.get('/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
 
-    // Get user ID if authenticated
+    // Get user ID and address if authenticated
     const userId = request.user ? parseInt(request.user.sub) : undefined;
+    const userAddress = request.user?.address?.toLowerCase();
 
     // Use buildNameResult helper to get name with vote data
-    let nameResult = await buildNameResult(name, userId);
+    // Pass userAddress to filter private listings (only show if user is the private buyer)
+    let nameResult = await buildNameResult(name, userId, userAddress);
 
     // If name doesn't exist in database, try to fetch from The Graph
     if (!nameResult) {
@@ -299,7 +301,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
             fastify.log.info({ name, tokenId }, 'Successfully imported name from The Graph');
 
             // Query again to get full data with buildNameResult
-            nameResult = await buildNameResult(name, userId);
+            nameResult = await buildNameResult(name, userId, userAddress);
           }
         }
       } catch (error: any) {

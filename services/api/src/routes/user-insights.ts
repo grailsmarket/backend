@@ -46,7 +46,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add viewed_at timestamp to enriched results
     const resultsWithTimestamp = enrichedResults.map(name => {
@@ -114,7 +115,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add watchlist metadata to enriched results
     const resultsWithMetadata = enrichedResults.map(name => {
@@ -185,7 +187,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add vote metadata to enriched results
     const resultsWithVotes = enrichedResults.map(name => {
@@ -279,7 +282,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add offer metadata to enriched results
     const resultsWithOffers = enrichedResults.map(name => {
@@ -378,7 +382,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add sale metadata to enriched results
     const resultsWithSales = enrichedResults.map(name => {
@@ -477,7 +482,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = dataResult.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add sale metadata to enriched results
     const resultsWithSales = enrichedResults.map(name => {

@@ -834,7 +834,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       }
 
       // Build results with watchlist metadata
-      const results = await buildSearchResults(resultNames, userId);
+      // Pass userAddress to filter private listings (only show if user is the private buyer)
+      const userAddress = request.user?.address?.toLowerCase();
+      const results = await buildSearchResults(resultNames, userId, userAddress);
 
       // Fetch watchlist preferences for each result
       const watchlistPrefsResult = await pool.query(

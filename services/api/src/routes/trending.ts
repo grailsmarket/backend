@@ -37,7 +37,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -96,7 +97,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -156,7 +158,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -219,7 +222,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -282,7 +286,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
@@ -346,7 +351,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
 
     // Enrich with full name data
     const names = result.rows.map(row => row.name);
-    const enrichedResults = await buildSearchResults(names, userId);
+    const userAddress = request.user?.address?.toLowerCase();
+    const enrichedResults = await buildSearchResults(names, userId, userAddress);
 
     // Add trending metrics to enriched results
     const resultsWithMetrics = enrichedResults.map(name => {
