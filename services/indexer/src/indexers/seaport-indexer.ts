@@ -306,7 +306,27 @@ export class SeaportIndexer {
       if (isENSToken) {
         const tokenId = item.identifier.toString();
         const isWrapped = tokenAddress === ensNameWrapper;
-        const price = consideration[0]?.amount?.toString() || '0';
+
+        // Calculate total sale price by summing all ERC20/ETH consideration items
+        // (excluding the ENS token if it's somehow in consideration)
+        // Also determine the currency from the payment items
+        let totalPrice = BigInt(0);
+        let currencyAddress = '0x0000000000000000000000000000000000000000'; // Default to ETH
+
+        for (const consItem of consideration) {
+          const consToken = consItem.token?.toLowerCase() || '';
+          const isPaymentToken = consToken !== ensRegistrar && consToken !== ensNameWrapper;
+
+          if (isPaymentToken && consItem.amount) {
+            totalPrice += BigInt(consItem.amount.toString());
+            // Use the first payment token as the currency
+            if (currencyAddress === '0x0000000000000000000000000000000000000000' && consToken) {
+              currencyAddress = consToken;
+            }
+          }
+        }
+
+        const price = totalPrice.toString();
 
         if (isWrapped) {
           logger.info(`Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`);
@@ -370,6 +390,7 @@ export class SeaportIndexer {
                 sellerAddress: offerer.toLowerCase(),
                 buyerAddress: recipient.toLowerCase(),
                 salePriceWei: price,
+                currencyAddress,
                 listingId,
                 offerId,
                 transactionHash: log.transactionHash!,
