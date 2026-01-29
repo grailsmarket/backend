@@ -694,7 +694,7 @@ export class OpenSeaStreamListener {
             currencyAddress: eventData.payment_token?.address,
             listingId,
             offerId,
-            transactionHash: transaction?.transaction_hash || `opensea_${Date.now()}`,
+            transactionHash: transaction?.hash || `opensea_${Date.now()}`,
             blockNumber: transaction?.block_number || 0,
             orderHash: eventData.order_hash,
             orderData: eventData,
@@ -785,7 +785,7 @@ export class OpenSeaStreamListener {
 
         await this.pool.query(txQuery, [
           ensNameId,
-          transaction?.transaction_hash || `opensea_${Date.now()}`,
+          transaction?.hash || `opensea_${Date.now()}`,
           transaction?.block_number || 0,
           sellerAddress,
           buyerAddress,
