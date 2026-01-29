@@ -779,6 +779,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         sortBy: query.sortBy,
         sortOrder: query.sortOrder,
         ensNames: watchlistNames, // Restrict search to watchlist items only
+        userAddress: request.user?.address?.toLowerCase() || null,
         // All supported filters
         minPrice: filters.minPrice,
         maxPrice: filters.maxPrice,

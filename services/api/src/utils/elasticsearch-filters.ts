@@ -86,6 +86,9 @@ export interface ESFilterOptions {
   // Sort options
   sortBy?: string;
   sortOrder?: string;
+
+  // User address for private listing visibility
+  userAddress?: string | null;
 }
 
 export interface ESQueryResult {
@@ -143,6 +146,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     maxDaysSinceLastSale,
     ensNames,
     sortBy,
+    userAddress,
   } = options;
 
   // Exclude placeholder names from all searches
@@ -222,6 +226,18 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       }
     });
   }
+
+  // Private listing visibility filter
+  // Show if: not private OR user is the private buyer
+  filter.push({
+    bool: {
+      should: [
+        { bool: { must_not: { exists: { field: 'private_buyer_address' } } } },
+        { term: { 'private_buyer_address': userAddress?.toLowerCase() || '' } }
+      ],
+      minimum_should_match: 1
+    }
+  });
 
   // Filter by offer status
   if (hasOffer === 'true' || hasOffer === true) {

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, APIResponse, Listing } from '../../../shared/src';
+import { optionalAuth, requireAuth } from '../middleware/auth';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -9,6 +10,10 @@ const CreateListingSchema = z.object({
   currencyAddress: z.string().optional(),
   orderData: z.any(),
   expiresAt: z.string().optional(),
+  privateBuyerAddress: z.string()
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address')
+    .optional()
+    .nullable(),
 });
 
 const UpdateListingSchema = z.object({
@@ -42,10 +47,13 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // GET all listings with filtering and pagination
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
     const query = ListListingsQuerySchema.parse(request.query);
     fastify.log.info(`GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`);
     const offset = (query.page - 1) * query.limit;
+
+    // Get authenticated user address for visibility filtering
+    const userAddress = request.user?.address?.toLowerCase() || null;
 
     let whereConditions: string[] = [];
     let params: any[] = [];
@@ -54,6 +62,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
     whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+
+    // Visibility filter: show public listings OR user is the private buyer
+    whereConditions.push(`(l.private_buyer_address IS NULL OR LOWER(l.private_buyer_address) = $${paramCount})`);
+    params.push(userAddress || '');
+    paramCount++;
 
     // Always include status filter, default to active if not specified
     const statusFilter = query.status || 'active';
@@ -165,8 +178,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET listing by ENS name (returns all active listings for the name)
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
+
+    // Get authenticated user address for visibility filtering
+    const userAddress = request.user?.address?.toLowerCase() || null;
 
     const query = `
       SELECT
@@ -181,10 +197,11 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE LOWER(en.name) = LOWER($1)
       AND l.status = 'active'
+      AND (l.private_buyer_address IS NULL OR LOWER(l.private_buyer_address) = $2)
       ORDER BY l.created_at DESC
     `;
 
-    const result = await pool.query(query, [name]);
+    const result = await pool.query(query, [name, userAddress || '']);
 
     if (result.rows.length === 0) {
       return reply.status(404).send({
@@ -256,8 +273,78 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
+  // GET /api/v1/listings/private-for-me - Get private listings for authenticated user
+  fastify.get('/private-for-me', { preHandler: requireAuth }, async (request, reply) => {
+    const userAddress = request.user!.address.toLowerCase();
+    const query = ListListingsQuerySchema.parse(request.query);
+    const offset = (query.page - 1) * query.limit;
+
+    const countQuery = `
+      SELECT COUNT(*)
+      FROM listings l
+      JOIN ens_names en ON l.ens_name_id = en.id
+      WHERE LOWER(l.private_buyer_address) = $1
+      AND l.status = 'active'
+      AND (l.expires_at IS NULL OR l.expires_at > NOW())
+    `;
+
+    const dataQuery = `
+      SELECT
+        l.*,
+        en.name as ens_name,
+        en.token_id,
+        en.owner_address as current_owner,
+        en.expiry_date as name_expiry_date,
+        en.registration_date,
+        en.last_sale_date
+      FROM listings l
+      JOIN ens_names en ON l.ens_name_id = en.id
+      WHERE LOWER(l.private_buyer_address) = $1
+      AND l.status = 'active'
+      AND (l.expires_at IS NULL OR l.expires_at > NOW())
+      ORDER BY l.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+    const [countResult, dataResult] = await Promise.all([
+      pool.query(countQuery, [userAddress]),
+      pool.query(dataQuery, [userAddress, query.limit, offset]),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count);
+
+    return reply.send({
+      success: true,
+      data: {
+        listings: dataResult.rows,
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages: Math.ceil(total / query.limit),
+          hasNext: query.page < Math.ceil(total / query.limit),
+          hasPrev: query.page > 1,
+        },
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    });
+  });
+
   fastify.post('/', async (request, reply) => {
     const body = CreateListingSchema.parse(request.body);
+
+    // Validate: private buyer cannot be the seller
+    if (body.privateBuyerAddress &&
+        body.privateBuyerAddress.toLowerCase() === body.sellerAddress.toLowerCase()) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'SELF_PRIVATE_NOT_ALLOWED',
+          message: 'Cannot create private listing for yourself',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     const query = `
       INSERT INTO listings (
@@ -267,8 +354,9 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         currency_address,
         order_data,
         status,
-        expires_at
-      ) VALUES ($1, $2, $3, $4, $5, 'active', $6)
+        expires_at,
+        private_buyer_address
+      ) VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)
       RETURNING *
     `;
 
@@ -280,6 +368,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         body.currencyAddress?.toLowerCase() || '0x0000000000000000000000000000000000000000',
         JSON.stringify(body.orderData),
         body.expiresAt ? new Date(body.expiresAt) : null,
+        body.privateBuyerAddress?.toLowerCase() || null,
       ]);
 
       const listing = result.rows[0];

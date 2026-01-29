@@ -27,6 +27,10 @@ const SaveOrderSchema = z.object({
   traits: z.any().optional(),
   status: z.string().default('active'),
   source: z.string().default('grails'),
+  private_buyer_address: z.string()
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address')
+    .optional()
+    .nullable(),
 });
 
 // Schema for bulk listing creation
@@ -42,6 +46,10 @@ const BulkSaveOrderSchema = z.object({
     traits: z.any().optional(),
     status: z.string().default('active'),
     source: z.string().default('grails'),
+    private_buyer_address: z.string()
+      .regex(/^0x[a-fA-F0-9]{40}$/)
+      .optional()
+      .nullable(),
   })).min(1).max(500),
 });
 
@@ -187,6 +195,31 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           });
         }
 
+        // Validate: private listings only allowed for Grails source
+        if (body.private_buyer_address && body.source !== 'grails') {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'PRIVATE_LISTING_GRAILS_ONLY',
+              message: 'Private listings are only supported for Grails marketplace',
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Validate: private buyer cannot be the seller
+        if (body.private_buyer_address &&
+            body.private_buyer_address.toLowerCase() === body.seller_address?.toLowerCase()) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'SELF_PRIVATE_NOT_ALLOWED',
+              message: 'Cannot create private listing for yourself',
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
         // Insert listing
         const insertListingQuery = `
           INSERT INTO listings (
@@ -199,9 +232,10 @@ export async function ordersRoutes(fastify: FastifyInstance) {
             status,
             source,
             expires_at,
+            private_buyer_address,
             created_at,
             updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
           RETURNING *
         `;
 
@@ -215,6 +249,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           body.status,
           body.source,
           expiresAt,
+          body.private_buyer_address?.toLowerCase() || null,
         ]);
 
         return reply.status(201).send({
@@ -435,6 +470,31 @@ export async function ordersRoutes(fastify: FastifyInstance) {
               message: feeValidation.error || 'Invalid marketplace fee',
             },
           });
+        } else if (listing.private_buyer_address && listing.source !== 'grails') {
+          // Private listings only allowed for Grails source
+          results.push({
+            index: i,
+            token_id: listing.token_id,
+            order_hash: listing.order_hash,
+            status: 'failed',
+            error: {
+              code: 'PRIVATE_LISTING_GRAILS_ONLY',
+              message: 'Private listings are only supported for Grails marketplace',
+            },
+          });
+        } else if (listing.private_buyer_address &&
+                   listing.private_buyer_address.toLowerCase() === listing.seller_address.toLowerCase()) {
+          // Private buyer cannot be the seller
+          results.push({
+            index: i,
+            token_id: listing.token_id,
+            order_hash: listing.order_hash,
+            status: 'failed',
+            error: {
+              code: 'SELF_PRIVATE_NOT_ALLOWED',
+              message: 'Cannot create private listing for yourself',
+            },
+          });
         } else {
           // Parse expiry time from order data
           let expiresAt: Date | null = null;
@@ -651,7 +711,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
       for (const listing of listingsWithEns) {
         insertPlaceholders.push(
-          `($${insertParamIndex}, $${insertParamIndex + 1}, $${insertParamIndex + 2}, $${insertParamIndex + 3}, $${insertParamIndex + 4}, $${insertParamIndex + 5}, $${insertParamIndex + 6}, $${insertParamIndex + 7}, $${insertParamIndex + 8}, NOW(), NOW())`
+          `($${insertParamIndex}, $${insertParamIndex + 1}, $${insertParamIndex + 2}, $${insertParamIndex + 3}, $${insertParamIndex + 4}, $${insertParamIndex + 5}, $${insertParamIndex + 6}, $${insertParamIndex + 7}, $${insertParamIndex + 8}, $${insertParamIndex + 9}, NOW(), NOW())`
         );
         insertValues.push(
           listing.ensNameId,
@@ -662,17 +722,18 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           listing.order_data,
           listing.status,
           listing.source,
-          listing.expiresAt
+          listing.expiresAt,
+          listing.private_buyer_address?.toLowerCase() || null
         );
         listingsToInsertIndexes.push(listing.index);
-        insertParamIndex += 9;
+        insertParamIndex += 10;
       }
 
       const insertListingsQuery = `
         INSERT INTO listings (
           ens_name_id, seller_address, price_wei, currency_address,
           order_hash, order_data, status, source, expires_at,
-          created_at, updated_at
+          private_buyer_address, created_at, updated_at
         )
         VALUES ${insertPlaceholders.join(', ')}
         RETURNING id, order_hash

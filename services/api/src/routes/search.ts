@@ -292,6 +292,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       fastify.log.info('Forcing PostgreSQL because sortBy=clubs_count (not available in Elasticsearch)');
     }
 
+    // Get user address for ES visibility filtering
+    const esUserAddress = request.user?.address?.toLowerCase() || null;
+
     // Build Elasticsearch query using shared utility
     const { must, filter } = buildESFilters({
       q,
@@ -333,6 +336,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       minDaysSinceLastSale,
       maxDaysSinceLastSale,
       sortBy,
+      userAddress: esUserAddress,
     });
 
     const sort = buildESSort({
@@ -541,6 +545,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Only show names that don't have an active listing
         whereConditions.push(`(l.id IS NULL OR l.status != 'active')`);
       }
+
+      // Private listings visibility filter
+      // Show if: no listing OR not private OR user is the private buyer
+      const userAddress = request.user?.address?.toLowerCase() || null;
+      whereConditions.push(`(l.id IS NULL OR l.private_buyer_address IS NULL OR LOWER(l.private_buyer_address) = $${paramCount})`);
+      params.push(userAddress || '');
+      paramCount++;
 
       fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
 
@@ -1179,6 +1190,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
             sortBy,
             sortOrder,
             ensNames: normalizedTerms, // KEY: restricts search to input terms only
+            userAddress: request.user?.address?.toLowerCase() || null,
             // All supported filters
             minPrice: filters.minPrice,
             maxPrice: filters.maxPrice,
@@ -1436,6 +1448,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
         } else if (filters.hasSales === 'false' || filters.hasSales === false) {
           whereConditions.push(`en.last_sale_date IS NULL`);
         }
+
+        // Private listings visibility filter
+        // Show if: no listing OR not private OR user is the private buyer
+        const bulkUserAddress = request.user?.address?.toLowerCase() || null;
+        whereConditions.push(`(l.id IS NULL OR l.private_buyer_address IS NULL OR LOWER(l.private_buyer_address) = $${paramCount})`);
+        params.push(bulkUserAddress || '');
+        paramCount++;
 
         // Build sort clause
         let orderBy = 'en.name ASC';
