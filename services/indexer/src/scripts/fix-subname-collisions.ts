@@ -556,83 +556,108 @@ async function main() {
   }
 
   // Fix related data - examine order_data to determine correct ownership
+  // Query for ALL subnames that have related data and have a matching 2LD in the database
+  // This is independent of whether the subname was "fixed" in Stage 1
   console.log();
-  console.log('Analyzing related data for affected records...');
+  console.log('Analyzing related data for potential collision subnames...');
 
-  for (const affected of affectedWithRelatedData) {
-    const parts = affected.name.split('.');
-    if (parts.length <= 2) continue;
-
-    const twoLDName = `${parts[0]}.eth`;
-    const twoLDRecord = twoLDRecords.get(twoLDName);
-    if (!twoLDRecord) continue;
-
-    console.log(`  Checking related data for ${affected.name} vs ${twoLDName}...`);
-
-    // Check listings
-    const listings = await pool.query<RelatedRecord>(
-      `SELECT id, ens_name_id, order_data FROM listings WHERE ens_name_id = $1`,
-      [affected.id]
+  // Get the list of 2LD names we found in the database
+  const twoLDNames = Array.from(twoLDRecords.keys());
+  if (twoLDNames.length === 0) {
+    console.log('  No 2LDs found, skipping related data analysis');
+  } else {
+    // Query for subnames that:
+    // 1. Have the pattern "something.parent.eth" (3+ parts)
+    // 2. Have a first label that matches one of our 2LDs
+    // 3. Have related data (listings, offers, or sales)
+    const subnamesWithRelatedData = await pool.query<{ id: number; name: string }>(
+      `SELECT DISTINCT e.id, e.name
+       FROM ens_names e
+       WHERE e.name LIKE '%.%.eth'
+         AND (
+           EXISTS (SELECT 1 FROM listings l WHERE l.ens_name_id = e.id)
+           OR EXISTS (SELECT 1 FROM offers o WHERE o.ens_name_id = e.id)
+           OR EXISTS (SELECT 1 FROM sales s WHERE s.ens_name_id = e.id)
+         )`
     );
 
-    for (const listing of listings.rows) {
-      const tokenIdFromOrder = extractTokenIdFromOrderData(listing.order_data);
-      if (tokenIdFromOrder) {
-        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
-        if (correctName === twoLDName) {
-          console.log(`    LISTING ${listing.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
-          if (!DRY_RUN) {
-            await pool.query(
-              `UPDATE listings SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
-              [twoLDRecord.id, listing.id]
-            );
-            relatedDataFixedCount++;
+    console.log(`  Found ${subnamesWithRelatedData.rows.length} subnames with related data`);
+
+    for (const subname of subnamesWithRelatedData.rows) {
+      const parts = subname.name.split('.');
+      if (parts.length <= 2) continue;
+
+      const twoLDName = `${parts[0]}.eth`;
+      const twoLDRecord = twoLDRecords.get(twoLDName);
+      if (!twoLDRecord) continue; // This subname's first label doesn't match any 2LD in DB
+
+      console.log(`  Checking related data for ${subname.name} vs ${twoLDName}...`);
+
+      // Check listings
+      const listings = await pool.query<RelatedRecord>(
+        `SELECT id, ens_name_id, order_data FROM listings WHERE ens_name_id = $1`,
+        [subname.id]
+      );
+
+      for (const listing of listings.rows) {
+        const tokenIdFromOrder = extractTokenIdFromOrderData(listing.order_data);
+        if (tokenIdFromOrder) {
+          const correctName = determineNameForTokenId(tokenIdFromOrder, subname.name, twoLDName);
+          if (correctName === twoLDName) {
+            console.log(`    LISTING ${listing.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+            if (!DRY_RUN) {
+              await pool.query(
+                `UPDATE listings SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
+                [twoLDRecord.id, listing.id]
+              );
+              relatedDataFixedCount++;
+            }
           }
         }
       }
-    }
 
-    // Check offers
-    const offers = await pool.query<RelatedRecord>(
-      `SELECT id, ens_name_id, order_data FROM offers WHERE ens_name_id = $1`,
-      [affected.id]
-    );
+      // Check offers
+      const offers = await pool.query<RelatedRecord>(
+        `SELECT id, ens_name_id, order_data FROM offers WHERE ens_name_id = $1`,
+        [subname.id]
+      );
 
-    for (const offer of offers.rows) {
-      const tokenIdFromOrder = extractTokenIdFromOrderData(offer.order_data);
-      if (tokenIdFromOrder) {
-        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
-        if (correctName === twoLDName) {
-          console.log(`    OFFER ${offer.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
-          if (!DRY_RUN) {
-            await pool.query(
-              `UPDATE offers SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
-              [twoLDRecord.id, offer.id]
-            );
-            relatedDataFixedCount++;
+      for (const offer of offers.rows) {
+        const tokenIdFromOrder = extractTokenIdFromOrderData(offer.order_data);
+        if (tokenIdFromOrder) {
+          const correctName = determineNameForTokenId(tokenIdFromOrder, subname.name, twoLDName);
+          if (correctName === twoLDName) {
+            console.log(`    OFFER ${offer.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+            if (!DRY_RUN) {
+              await pool.query(
+                `UPDATE offers SET ens_name_id = $1 WHERE id = $2`,
+                [twoLDRecord.id, offer.id]
+              );
+              relatedDataFixedCount++;
+            }
           }
         }
       }
-    }
 
-    // Check sales
-    const sales = await pool.query<RelatedRecord>(
-      `SELECT id, ens_name_id, order_data FROM sales WHERE ens_name_id = $1`,
-      [affected.id]
-    );
+      // Check sales
+      const sales = await pool.query<RelatedRecord>(
+        `SELECT id, ens_name_id, order_data FROM sales WHERE ens_name_id = $1`,
+        [subname.id]
+      );
 
-    for (const sale of sales.rows) {
-      const tokenIdFromOrder = extractTokenIdFromOrderData(sale.order_data);
-      if (tokenIdFromOrder) {
-        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
-        if (correctName === twoLDName) {
-          console.log(`    SALE ${sale.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
-          if (!DRY_RUN) {
-            await pool.query(
-              `UPDATE sales SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
-              [twoLDRecord.id, sale.id]
-            );
-            relatedDataFixedCount++;
+      for (const sale of sales.rows) {
+        const tokenIdFromOrder = extractTokenIdFromOrderData(sale.order_data);
+        if (tokenIdFromOrder) {
+          const correctName = determineNameForTokenId(tokenIdFromOrder, subname.name, twoLDName);
+          if (correctName === twoLDName) {
+            console.log(`    SALE ${sale.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+            if (!DRY_RUN) {
+              await pool.query(
+                `UPDATE sales SET ens_name_id = $1 WHERE id = $2`,
+                [twoLDRecord.id, sale.id]
+              );
+              relatedDataFixedCount++;
+            }
           }
         }
       }
@@ -646,7 +671,6 @@ async function main() {
   console.log('='.repeat(70));
   console.log(`Subnames: ${subnames.length} checked, ${correctCount} correct, ${mismatchCount} mismatched, ${notFoundCount} not found`);
   console.log(`2LD collisions: ${twoLDMismatchCount}`);
-  console.log(`Records with related data: ${affectedWithRelatedData.length}`);
   if (!DRY_RUN) {
     console.log(`ENS names fixed: ${fixedCount}`);
     console.log(`Related data records reassigned: ${relatedDataFixedCount}`);
