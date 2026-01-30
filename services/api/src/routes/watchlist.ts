@@ -45,6 +45,14 @@ const SearchWatchlistQuerySchema = z.object({
     minLength: z.coerce.number().optional(),
     maxLength: z.coerce.number().optional(),
 
+    // Count filters (require PostgreSQL - not in ES index)
+    minWatchersCount: z.coerce.number().optional(),
+    maxWatchersCount: z.coerce.number().optional(),
+    minViewCount: z.coerce.number().optional(),
+    maxViewCount: z.coerce.number().optional(),
+    minClubsCount: z.coerce.number().optional(),
+    maxClubsCount: z.coerce.number().optional(),
+
     // Legacy character filters (use string to let buildESFilters handle 'true'/'false')
     hasNumbers: booleanString,
     hasEmoji: booleanString,
@@ -769,9 +777,12 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       const watchlistNames = watchlistResult.rows.map(row => row.name);
 
-      // Check if we need PostgreSQL fallback for sort fields not in Elasticsearch
-      const usePostgresql = query.sortBy === 'watchers_count' || query.sortBy === 'view_count' || query.sortBy === 'clubs_count';
+      // Check if we need PostgreSQL fallback for sort fields or filters not in Elasticsearch
       const filters = query.filters || {};
+      const usePostgresql = query.sortBy === 'watchers_count' || query.sortBy === 'view_count' || query.sortBy === 'clubs_count' ||
+        filters.minWatchersCount !== undefined || filters.maxWatchersCount !== undefined ||
+        filters.minViewCount !== undefined || filters.maxViewCount !== undefined ||
+        filters.minClubsCount !== undefined || filters.maxClubsCount !== undefined;
 
       let resultNames: string[] = [];
       let total = 0;
@@ -824,6 +835,42 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         if (filters.maxLength) {
           whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
           params.push(filters.maxLength);
+          paramCount++;
+        }
+
+        // Watchers count filters
+        if (filters.minWatchersCount !== undefined) {
+          whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
+          params.push(filters.minWatchersCount);
+          paramCount++;
+        }
+        if (filters.maxWatchersCount !== undefined) {
+          whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
+          params.push(filters.maxWatchersCount);
+          paramCount++;
+        }
+
+        // View count filters
+        if (filters.minViewCount !== undefined) {
+          whereConditions.push(`COALESCE(en.view_count, 0) >= $${paramCount}`);
+          params.push(filters.minViewCount);
+          paramCount++;
+        }
+        if (filters.maxViewCount !== undefined) {
+          whereConditions.push(`COALESCE(en.view_count, 0) <= $${paramCount}`);
+          params.push(filters.maxViewCount);
+          paramCount++;
+        }
+
+        // Clubs count filters
+        if (filters.minClubsCount !== undefined) {
+          whereConditions.push(`COALESCE(array_length(en.clubs, 1), 0) >= $${paramCount}`);
+          params.push(filters.minClubsCount);
+          paramCount++;
+        }
+        if (filters.maxClubsCount !== undefined) {
+          whereConditions.push(`COALESCE(array_length(en.clubs, 1), 0) <= $${paramCount}`);
+          params.push(filters.maxClubsCount);
           paramCount++;
         }
 

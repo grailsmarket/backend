@@ -53,6 +53,17 @@ function getLabel(name: string): string {
 const EMOJI_REGEX =
   /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FAFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
 
+// Helper to safely convert offer values to BigInt
+// JSON parsing can turn large numbers into floats, so we handle both string and number inputs
+function toBigInt(value: string | number): bigint {
+  if (typeof value === 'string') {
+    // Remove any decimal part if present (shouldn't be, but just in case)
+    return BigInt(value.split('.')[0]);
+  }
+  // For numbers, convert to string first to avoid float precision issues
+  return BigInt(Math.floor(value).toString());
+}
+
 describe('Search API Filters', () => {
   // Verify server is running before tests
   beforeAll(async () => {
@@ -246,6 +257,192 @@ describe('Search API Filters', () => {
         expect(label.length).toBeGreaterThanOrEqual(minLength);
         expect(label.length).toBeLessThanOrEqual(maxLength);
       }
+    });
+  });
+
+  describe('Count Filters', () => {
+    describe('Watchers Count Filters', () => {
+      it('minWatchersCount filters to names with at least N watchers', async () => {
+        const minWatchers = 1;
+        const { data } = await search(`filters[minWatchersCount]=${minWatchers}&limit=20`);
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          expect(result.watchers_count).toBeGreaterThanOrEqual(minWatchers);
+        }
+      });
+
+      it('maxWatchersCount filters to names with at most N watchers', async () => {
+        // Combine with minWatchersCount to narrow result set and speed up query
+        const minWatchers = 1;
+        const maxWatchers = 5;
+        const { data } = await search(
+          `filters[minWatchersCount]=${minWatchers}&filters[maxWatchersCount]=${maxWatchers}&limit=50`
+        );
+        // May have no names in this range
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.watchers_count).toBeLessThanOrEqual(maxWatchers);
+        }
+      }, 60000);
+
+      it('minWatchersCount + maxWatchersCount filters to range', async () => {
+        const minWatchers = 2;
+        const maxWatchers = 10;
+        const { data } = await search(
+          `filters[minWatchersCount]=${minWatchers}&filters[maxWatchersCount]=${maxWatchers}&limit=50`
+        );
+        // May have no names in this range
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.watchers_count).toBeGreaterThanOrEqual(minWatchers);
+          expect(result.watchers_count).toBeLessThanOrEqual(maxWatchers);
+        }
+      });
+    });
+
+    describe('View Count Filters', () => {
+      it('minViewCount filters to names with at least N views', async () => {
+        const minViews = 10;
+        const { data } = await search(`filters[minViewCount]=${minViews}&limit=50`);
+        // May have no names with this many views
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.view_count).toBeGreaterThanOrEqual(minViews);
+        }
+      });
+
+      it('maxViewCount filters to names with at most N views', async () => {
+        // Combine with minViewCount to narrow result set and speed up query
+        const minViews = 1;
+        const maxViews = 100;
+        const { data } = await search(
+          `filters[minViewCount]=${minViews}&filters[maxViewCount]=${maxViews}&limit=50`
+        );
+        // May have no names in this range
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.view_count).toBeLessThanOrEqual(maxViews);
+        }
+      }, 60000);
+
+      it('minViewCount + maxViewCount filters to range', async () => {
+        const minViews = 5;
+        const maxViews = 50;
+        const { data } = await search(
+          `filters[minViewCount]=${minViews}&filters[maxViewCount]=${maxViews}&limit=50`
+        );
+        // May have no names in this range
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.view_count).toBeGreaterThanOrEqual(minViews);
+          expect(result.view_count).toBeLessThanOrEqual(maxViews);
+        }
+      });
+    });
+
+    describe('Clubs Count Filters', () => {
+      it('minClubsCount filters to names in at least N clubs', async () => {
+        const minClubs = 1;
+        const { data } = await search(`filters[minClubsCount]=${minClubs}&limit=50`);
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          expect(result.clubs?.length ?? 0).toBeGreaterThanOrEqual(minClubs);
+        }
+      });
+
+      it('maxClubsCount=0 filters to names not in any club', async () => {
+        // Add startsWith filter to narrow result set and speed up query
+        // (maxClubsCount=0 alone returns 3M+ names)
+        const { data } = await search('filters[maxClubsCount]=0&filters[startsWith]=test&limit=50');
+        // May have no names matching both criteria
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.clubs?.length ?? 0).toBe(0);
+        }
+      }, 60000);
+
+      it('minClubsCount + maxClubsCount filters to exact count', async () => {
+        const exactCount = 1;
+        const { data } = await search(
+          `filters[minClubsCount]=${exactCount}&filters[maxClubsCount]=${exactCount}&limit=50`
+        );
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          expect(result.clubs?.length ?? 0).toBe(exactCount);
+        }
+      });
+
+      it('minClubsCount=2 filters to names in multiple clubs', async () => {
+        const { data } = await search('filters[minClubsCount]=2&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        for (const result of data!.results) {
+          expect(result.clubs?.length ?? 0).toBeGreaterThanOrEqual(2);
+        }
+      });
+    });
+
+    describe('Combined Count Filters', () => {
+      it('count filters combined with other filters', async () => {
+        // Names with at least 1 watcher, in at least 1 club
+        const { data } = await search(
+          'filters[minWatchersCount]=1&filters[minClubsCount]=1&limit=50'
+        );
+        // May have no names matching both criteria
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          expect(result.watchers_count).toBeGreaterThanOrEqual(1);
+          expect(result.clubs?.length ?? 0).toBeGreaterThanOrEqual(1);
+        }
+      });
+
+      it('count filters combined with length filters', async () => {
+        // Short names (3-4 chars) with at least 1 watcher
+        const { data } = await search(
+          'filters[minLength]=3&filters[maxLength]=4&filters[minWatchersCount]=1&limit=50'
+        );
+        // May have no names matching all criteria
+        if (data?.results.length === 0) return;
+
+        for (const result of data!.results) {
+          const label = getLabel(result.name);
+          expect(label.length).toBeGreaterThanOrEqual(3);
+          expect(label.length).toBeLessThanOrEqual(4);
+          expect(result.watchers_count).toBeGreaterThanOrEqual(1);
+        }
+      });
+
+      it('count filters combined with listing filter', async () => {
+        // Listed names with at least 1 view
+        const { data } = await search(
+          'filters[listed]=true&filters[minViewCount]=1&limit=50'
+        );
+        // May have no names matching both criteria
+        if (data?.results.length === 0) return;
+
+        const failures: string[] = [];
+        for (const result of data!.results) {
+          const hasActiveListing = result.listings?.some((l) => l.status === 'active');
+          if (!hasActiveListing) {
+            failures.push(`${result.name}: no active listing`);
+          }
+          if (result.view_count < 1) {
+            failures.push(`${result.name}: view_count ${result.view_count} < 1`);
+          }
+        }
+
+        expect(failures, `Combined filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      });
     });
   });
 
@@ -767,7 +964,7 @@ describe('Search API Filters', () => {
 
       for (const result of data!.results) {
         expect(result.highest_offer_wei).not.toBeNull();
-        expect(BigInt(result.highest_offer_wei!)).toBeGreaterThan(0n);
+        expect(toBigInt(result.highest_offer_wei!)).toBeGreaterThan(0n);
       }
     });
 
@@ -776,7 +973,7 @@ describe('Search API Filters', () => {
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const hasOffer = result.highest_offer_wei != null && BigInt(result.highest_offer_wei) > 0n;
+        const hasOffer = result.highest_offer_wei != null && toBigInt(result.highest_offer_wei!) > 0n;
         expect(hasOffer).toBe(false);
       }
     });
@@ -797,7 +994,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer < BigInt(minOffer)) {
           failures.push(`${result.name}: offer ${offer} < ${minOffer}`);
         }
@@ -820,7 +1017,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer (ES/DB drift)`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer > BigInt(maxOffer)) {
           failures.push(`${result.name}: offer ${offer} > ${maxOffer}`);
         }
@@ -844,7 +1041,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer < BigInt(minOffer) || offer > BigInt(maxOffer)) {
           failures.push(`${result.name}: offer ${offer} not in range [${minOffer}, ${maxOffer}]`);
         }
@@ -1250,7 +1447,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no highest_offer_wei`);
           continue;
         }
-        const currentOffer = BigInt(result.highest_offer_wei);
+        const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer > prevOffer) {
           failures.push(`${result.name}: offer ${currentOffer} > previous ${prevOffer} (should be descending)`);
         }
@@ -1273,7 +1470,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no highest_offer_wei`);
           continue;
         }
-        const currentOffer = BigInt(result.highest_offer_wei);
+        const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer < prevOffer) {
           failures.push(`${result.name}: offer ${currentOffer} < previous ${prevOffer} (should be ascending)`);
         }

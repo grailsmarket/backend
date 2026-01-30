@@ -23,6 +23,14 @@ export interface ESFilterOptions {
   minLength?: number | string;
   maxLength?: number | string;
 
+  // Count filters (require PostgreSQL - not in ES index)
+  minWatchersCount?: number | string;
+  maxWatchersCount?: number | string;
+  minViewCount?: number | string;
+  maxViewCount?: number | string;
+  minClubsCount?: number | string;
+  maxClubsCount?: number | string;
+
   // Legacy character filters
   hasEmoji?: boolean | string;
   hasNumbers?: boolean | string;
