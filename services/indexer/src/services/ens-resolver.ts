@@ -167,10 +167,13 @@ export class ENSResolver {
 
     try {
       // The tokenId could be either:
-      // 1. A labelhash (from Base Registrar events - unwrapped or the underlying NFT for wrapped names)
-      // 2. A namehash (from Name Wrapper - wrapped names as ERC-1155)
+      // 1. A namehash (from Name Wrapper - wrapped names as ERC-1155, or subnames)
+      // 2. A labelhash (from Base Registrar events - unwrapped 2LD .eth names)
       //
-      // We try labelhash first (more common for .eth 2LDs), then fall back to namehash (id) lookup.
+      // IMPORTANT: We try namehash FIRST because it's an exact match by domain ID.
+      // This prevents collisions where a subname like "9604.holer.eth" could incorrectly
+      // match "9604.eth" when querying by labelhash with parent=.eth filter.
+      // Labelhash is the fallback for unwrapped 2LD names.
       const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
       const tokenIdAsHex = '0x' + hexString;
 
@@ -184,10 +187,11 @@ export class ENSResolver {
         headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
       }
 
-      // First, try to find by labelhash (Base Registrar token ID format)
-      const labelhashQuery = `
-        query GetENSNameByLabelhash($labelhash: String!) {
-          domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
+      // First, try to find by namehash (domain ID) - this is an exact match
+      // Works for wrapped names, subnames, and any name identified by its namehash
+      const namehashQuery = `
+        query GetENSNameByNamehash($namehash: String!) {
+          domain(id: $namehash) {
             id
             name
             labelName
@@ -203,33 +207,39 @@ export class ENSResolver {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          query: labelhashQuery,
-          variables: { labelhash: tokenIdAsHex }
+          query: namehashQuery,
+          variables: { namehash: tokenIdAsHex }
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error: ${response.status} ${response.statusText}`);
+        logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
         return null;
       }
 
       let data = await response.json() as any;
 
       if (data.errors) {
-        logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
+        logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
         return null;
       }
 
-      let domains = data.data?.domains || [];
+      let domains: any[] = [];
 
-      // If no results from labelhash lookup, try namehash (id) lookup
-      // This handles Name Wrapper ERC-1155 token IDs which use namehash
+      // namehash query returns a single domain, not an array
+      if (data.data?.domain) {
+        domains = [data.data.domain];
+        logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
+      }
+
+      // If no results from namehash lookup, try labelhash lookup
+      // This handles unwrapped 2LD .eth names from the Base Registrar (ERC-721)
       if (domains.length === 0) {
-        logger.debug(`No results for labelhash ${tokenIdAsHex}, trying namehash (id) lookup`);
+        logger.debug(`No results for namehash ${tokenIdAsHex}, trying labelhash lookup`);
 
-        const namehashQuery = `
-          query GetENSNameByNamehash($namehash: String!) {
-            domain(id: $namehash) {
+        const labelhashQuery = `
+          query GetENSNameByLabelhash($labelhash: String!) {
+            domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
               id
               name
               labelName
@@ -245,28 +255,24 @@ export class ENSResolver {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            query: namehashQuery,
-            variables: { namehash: tokenIdAsHex }
+            query: labelhashQuery,
+            variables: { labelhash: tokenIdAsHex }
           }),
         });
 
         if (!response.ok) {
-          logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+          logger.error(`Graph API error: ${response.status} ${response.statusText}`);
           return null;
         }
 
         data = await response.json() as any;
 
         if (data.errors) {
-          logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
           return null;
         }
 
-        // namehash query returns a single domain, not an array
-        if (data.data?.domain) {
-          domains = [data.data.domain];
-          logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
-        }
+        domains = data.data?.domains || [];
       }
 
       if (domains.length > 0) {
@@ -296,10 +302,13 @@ export class ENSResolver {
   async resolveTokenIdToNameData(tokenId: string): Promise<ResolvedNameData | null> {
     try {
       // The tokenId could be either:
-      // 1. A labelhash (from Base Registrar events - unwrapped or the underlying NFT for wrapped names)
-      // 2. A namehash (from Name Wrapper - wrapped names as ERC-1155)
+      // 1. A namehash (from Name Wrapper - wrapped names as ERC-1155, or subnames)
+      // 2. A labelhash (from Base Registrar events - unwrapped 2LD .eth names)
       //
-      // We try labelhash first (more common for .eth 2LDs), then fall back to namehash (id) lookup.
+      // IMPORTANT: We try namehash FIRST because it's an exact match by domain ID.
+      // This prevents collisions where a subname like "9604.holer.eth" could incorrectly
+      // match "9604.eth" when querying by labelhash with parent=.eth filter.
+      // Labelhash is the fallback for unwrapped 2LD names.
       // See: https://docs.ens.domains/dapp-developer-guide/ens-as-nft
 
       const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
@@ -315,11 +324,11 @@ export class ENSResolver {
         headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
       }
 
-      // First, try to find by labelhash (Base Registrar token ID format)
-      // This works for both unwrapped names and the underlying NFT of wrapped names
-      const labelhashQuery = `
-        query GetENSNameByLabelhash($labelhash: String!) {
-          domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
+      // First, try to find by namehash (domain ID) - this is an exact match
+      // Works for wrapped names, subnames, and any name identified by its namehash
+      const namehashQuery = `
+        query GetENSNameByNamehash($namehash: String!) {
+          domain(id: $namehash) {
             id
             name
             labelName
@@ -352,33 +361,39 @@ export class ENSResolver {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          query: labelhashQuery,
-          variables: { labelhash: tokenIdAsHex }
+          query: namehashQuery,
+          variables: { namehash: tokenIdAsHex }
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error: ${response.status} ${response.statusText}`);
+        logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
         return null;
       }
 
       let data = await response.json() as any;
 
       if (data.errors) {
-        logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
+        logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
         return null;
       }
 
-      let domains = data.data?.domains || [];
+      let domains: any[] = [];
 
-      // If no results from labelhash lookup, try namehash (id) lookup
-      // This handles Name Wrapper ERC-1155 token IDs which use namehash
+      // namehash query returns a single domain, not an array
+      if (data.data?.domain) {
+        domains = [data.data.domain];
+        logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
+      }
+
+      // If no results from namehash lookup, try labelhash lookup
+      // This handles unwrapped 2LD .eth names from the Base Registrar (ERC-721)
       if (domains.length === 0) {
-        logger.debug(`No results for labelhash ${tokenIdAsHex}, trying namehash (id) lookup`);
+        logger.debug(`No results for namehash ${tokenIdAsHex}, trying labelhash lookup`);
 
-        const namehashQuery = `
-          query GetENSNameByNamehash($namehash: String!) {
-            domain(id: $namehash) {
+        const labelhashQuery = `
+          query GetENSNameByLabelhash($labelhash: String!) {
+            domains(where: { labelhash: $labelhash, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
               id
               name
               labelName
@@ -411,28 +426,24 @@ export class ENSResolver {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            query: namehashQuery,
-            variables: { namehash: tokenIdAsHex }
+            query: labelhashQuery,
+            variables: { labelhash: tokenIdAsHex }
           }),
         });
 
         if (!response.ok) {
-          logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+          logger.error(`Graph API error: ${response.status} ${response.statusText}`);
           return null;
         }
 
         data = await response.json() as any;
 
         if (data.errors) {
-          logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
           return null;
         }
 
-        // namehash query returns a single domain, not an array
-        if (data.data?.domain) {
-          domains = [data.data.domain];
-          logger.debug(`Found domain via namehash lookup: ${data.data.domain.name}`);
-        }
+        domains = data.data?.domains || [];
       }
 
       if (domains.length > 0) {
@@ -567,15 +578,26 @@ export class ENSResolver {
     }
 
     try {
-      // Convert all token IDs to labelhashes with proper padding
-      const labelhashes = uncached.map(id => {
+      // Convert all token IDs to hex with proper padding
+      const hexIds = uncached.map(id => {
         const hexString = BigInt(id).toString(16).padStart(64, '0');
         return '0x' + hexString;
       });
 
-      const query = `
-        query GetENSNames($labelhashes: [String!]!) {
-          domains(where: { labelhash_in: $labelhashes, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
+      const headers: any = {
+        'Content-Type': 'application/json',
+      };
+
+      if (config.theGraph.apiKey) {
+        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+      }
+
+      // IMPORTANT: Try namehash (id) lookup FIRST to prevent subname collisions.
+      // This is an exact match by domain ID, which correctly handles subnames
+      // like "9604.holer.eth" without incorrectly matching "9604.eth".
+      const namehashQuery = `
+        query GetENSNamesByNamehash($namehashes: [String!]!) {
+          domains(where: { id_in: $namehashes }) {
             id
             name
             labelName
@@ -587,25 +609,17 @@ export class ENSResolver {
         }
       `;
 
-      const headers: any = {
-        'Content-Type': 'application/json',
-      };
-
-      if (config.theGraph.apiKey) {
-        headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
-      }
-
-      const response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await fetch(config.theGraph.ensSubgraphUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          query,
-          variables: { labelhashes }
+          query: namehashQuery,
+          variables: { namehashes: hexIds }
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error: ${response.status} ${response.statusText}`);
+        logger.error(`Graph API error on namehash batch: ${response.status} ${response.statusText}`);
         // Return nulls for uncached items
         for (const tokenId of uncached) {
           results.set(tokenId, null);
@@ -613,10 +627,10 @@ export class ENSResolver {
         return results;
       }
 
-      const data = await response.json() as any;
+      let data = await response.json() as any;
 
       if (data.errors) {
-        logger.error(`Graph batch query errors: ${JSON.stringify(data.errors, null, 2)}`);
+        logger.error(`Graph namehash batch query errors: ${JSON.stringify(data.errors, null, 2)}`);
         // Return nulls for uncached items
         for (const tokenId of uncached) {
           results.set(tokenId, null);
@@ -624,35 +638,117 @@ export class ENSResolver {
         return results;
       }
 
-      const domains = data.data?.domains || [];
+      let domains = data.data?.domains || [];
 
-      // Create a map of labelhash to domain
-      const domainMap = new Map<string, any>();
+      // Create a map of namehash (id) to domain
+      const namehashDomainMap = new Map<string, any>();
       for (const domain of domains) {
-        if (domain.labelhash) {
-          domainMap.set(domain.labelhash.toLowerCase(), domain);
+        if (domain.id) {
+          namehashDomainMap.set(domain.id.toLowerCase(), domain);
         }
       }
 
-      // Process results - map back to original token IDs
-      for (const tokenId of uncached) {
-        const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
-        const labelhash = ('0x' + hexString).toLowerCase();
-        const domain = domainMap.get(labelhash);
+      // Track which token IDs were NOT found by namehash lookup
+      const notFoundByNamehash: string[] = [];
+      const notFoundHexIds: string[] = [];
+
+      for (let i = 0; i < uncached.length; i++) {
+        const tokenId = uncached[i];
+        const hexId = hexIds[i].toLowerCase();
+        const domain = namehashDomainMap.get(hexId);
 
         if (domain) {
           const rawName = domain.name || domain.labelName;
           if (rawName) {
-            // Normalize the name per ENSIP-15
             const name = safeNormalize(rawName);
             this.cache.set(tokenId, name);
             results.set(tokenId, name);
-            logger.debug(`Resolved token ${tokenId} to name: ${name}`);
+            logger.debug(`Resolved token ${tokenId} to name via namehash: ${name}`);
           } else {
             results.set(tokenId, null);
           }
         } else {
-          results.set(tokenId, null);
+          notFoundByNamehash.push(tokenId);
+          notFoundHexIds.push(hexIds[i]);
+        }
+      }
+
+      // Fall back to labelhash lookup for items not found by namehash
+      // This handles unwrapped 2LD .eth names from the Base Registrar
+      if (notFoundByNamehash.length > 0) {
+        logger.debug(`${notFoundByNamehash.length} items not found by namehash, trying labelhash lookup`);
+
+        const labelhashQuery = `
+          query GetENSNames($labelhashes: [String!]!) {
+            domains(where: { labelhash_in: $labelhashes, parent: "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae" }) {
+              id
+              name
+              labelName
+              labelhash
+              registration {
+                expiryDate
+              }
+            }
+          }
+        `;
+
+        response = await fetch(config.theGraph.ensSubgraphUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            query: labelhashQuery,
+            variables: { labelhashes: notFoundHexIds }
+          }),
+        });
+
+        if (!response.ok) {
+          logger.error(`Graph API error on labelhash batch: ${response.status} ${response.statusText}`);
+          // Return nulls for remaining items
+          for (const tokenId of notFoundByNamehash) {
+            results.set(tokenId, null);
+          }
+          return results;
+        }
+
+        data = await response.json() as any;
+
+        if (data.errors) {
+          logger.error(`Graph labelhash batch query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          for (const tokenId of notFoundByNamehash) {
+            results.set(tokenId, null);
+          }
+          return results;
+        }
+
+        domains = data.data?.domains || [];
+
+        // Create a map of labelhash to domain
+        const labelhashDomainMap = new Map<string, any>();
+        for (const domain of domains) {
+          if (domain.labelhash) {
+            labelhashDomainMap.set(domain.labelhash.toLowerCase(), domain);
+          }
+        }
+
+        // Process remaining results
+        for (let i = 0; i < notFoundByNamehash.length; i++) {
+          const tokenId = notFoundByNamehash[i];
+          const labelhash = notFoundHexIds[i].toLowerCase();
+          const domain = labelhashDomainMap.get(labelhash);
+
+          if (domain) {
+            const rawName = domain.name || domain.labelName;
+            if (rawName) {
+              const name = safeNormalize(rawName);
+              this.cache.set(tokenId, name);
+              results.set(tokenId, name);
+              logger.debug(`Resolved token ${tokenId} to name via labelhash: ${name}`);
+            } else {
+              results.set(tokenId, null);
+            }
+          } else {
+            results.set(tokenId, null);
+          }
         }
       }
 
