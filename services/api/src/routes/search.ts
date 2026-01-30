@@ -44,6 +44,14 @@ const BulkFiltersSearchSchema = z.object({
     minLength: z.coerce.number().optional(),
     maxLength: z.coerce.number().optional(),
 
+    // Count filters (require PostgreSQL - not in ES index)
+    minWatchersCount: z.coerce.number().optional(),
+    maxWatchersCount: z.coerce.number().optional(),
+    minViewCount: z.coerce.number().optional(),
+    maxViewCount: z.coerce.number().optional(),
+    minClubsCount: z.coerce.number().optional(),
+    maxClubsCount: z.coerce.number().optional(),
+
     // Legacy character filters
     hasNumbers: booleanString,
     hasEmoji: booleanString,
@@ -229,7 +237,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -273,6 +281,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
     let usePostgresql = sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count';
+
+    // Force PostgreSQL for count filters since these fields are not in ES index
+    if (minWatchersCount !== undefined || maxWatchersCount !== undefined ||
+        minViewCount !== undefined || maxViewCount !== undefined ||
+        minClubsCount !== undefined || maxClubsCount !== undefined) {
+      usePostgresql = true;
+      fastify.log.info('Forcing PostgreSQL because count filters are used (not available in Elasticsearch)');
+    }
 
     // Force PostgreSQL for marketplace filter since 'source' is not in ES index
     if (marketplace && marketplace !== 'all') {
@@ -614,6 +630,42 @@ export async function searchRoutes(fastify: FastifyInstance) {
       if (maxLength) {
         whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
         params.push(parseInt(maxLength));
+        paramCount++;
+      }
+
+      // Add watchers count filters
+      if (minWatchersCount !== undefined) {
+        whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
+        params.push(parseInt(String(minWatchersCount)));
+        paramCount++;
+      }
+      if (maxWatchersCount !== undefined) {
+        whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
+        params.push(parseInt(String(maxWatchersCount)));
+        paramCount++;
+      }
+
+      // Add view count filters
+      if (minViewCount !== undefined) {
+        whereConditions.push(`COALESCE(en.view_count, 0) >= $${paramCount}`);
+        params.push(parseInt(String(minViewCount)));
+        paramCount++;
+      }
+      if (maxViewCount !== undefined) {
+        whereConditions.push(`COALESCE(en.view_count, 0) <= $${paramCount}`);
+        params.push(parseInt(String(maxViewCount)));
+        paramCount++;
+      }
+
+      // Add clubs count filters
+      if (minClubsCount !== undefined) {
+        whereConditions.push(`COALESCE(array_length(en.clubs, 1), 0) >= $${paramCount}`);
+        params.push(parseInt(String(minClubsCount)));
+        paramCount++;
+      }
+      if (maxClubsCount !== undefined) {
+        whereConditions.push(`COALESCE(array_length(en.clubs, 1), 0) <= $${paramCount}`);
+        params.push(parseInt(String(maxClubsCount)));
         paramCount++;
       }
 
