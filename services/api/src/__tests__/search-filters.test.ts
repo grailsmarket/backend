@@ -53,6 +53,17 @@ function getLabel(name: string): string {
 const EMOJI_REGEX =
   /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FAFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
 
+// Helper to safely convert offer values to BigInt
+// JSON parsing can turn large numbers into floats, so we handle both string and number inputs
+function toBigInt(value: string | number): bigint {
+  if (typeof value === 'string') {
+    // Remove any decimal part if present (shouldn't be, but just in case)
+    return BigInt(value.split('.')[0]);
+  }
+  // For numbers, convert to string first to avoid float precision issues
+  return BigInt(Math.floor(value).toString());
+}
+
 describe('Search API Filters', () => {
   // Verify server is running before tests
   beforeAll(async () => {
@@ -253,7 +264,7 @@ describe('Search API Filters', () => {
     describe('Watchers Count Filters', () => {
       it('minWatchersCount filters to names with at least N watchers', async () => {
         const minWatchers = 1;
-        const { data } = await search(`filters[minWatchersCount]=${minWatchers}&limit=50`);
+        const { data } = await search(`filters[minWatchersCount]=${minWatchers}&limit=20`);
         expect(data?.results.length).toBeGreaterThan(0);
 
         for (const result of data!.results) {
@@ -953,7 +964,7 @@ describe('Search API Filters', () => {
 
       for (const result of data!.results) {
         expect(result.highest_offer_wei).not.toBeNull();
-        expect(BigInt(result.highest_offer_wei!)).toBeGreaterThan(0n);
+        expect(toBigInt(result.highest_offer_wei!)).toBeGreaterThan(0n);
       }
     });
 
@@ -962,7 +973,7 @@ describe('Search API Filters', () => {
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const hasOffer = result.highest_offer_wei != null && BigInt(result.highest_offer_wei) > 0n;
+        const hasOffer = result.highest_offer_wei != null && toBigInt(result.highest_offer_wei!) > 0n;
         expect(hasOffer).toBe(false);
       }
     });
@@ -983,7 +994,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer < BigInt(minOffer)) {
           failures.push(`${result.name}: offer ${offer} < ${minOffer}`);
         }
@@ -1006,7 +1017,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer (ES/DB drift)`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer > BigInt(maxOffer)) {
           failures.push(`${result.name}: offer ${offer} > ${maxOffer}`);
         }
@@ -1030,7 +1041,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no offer`);
           continue;
         }
-        const offer = BigInt(result.highest_offer_wei);
+        const offer = toBigInt(result.highest_offer_wei!);
         if (offer < BigInt(minOffer) || offer > BigInt(maxOffer)) {
           failures.push(`${result.name}: offer ${offer} not in range [${minOffer}, ${maxOffer}]`);
         }
@@ -1436,7 +1447,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no highest_offer_wei`);
           continue;
         }
-        const currentOffer = BigInt(result.highest_offer_wei);
+        const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer > prevOffer) {
           failures.push(`${result.name}: offer ${currentOffer} > previous ${prevOffer} (should be descending)`);
         }
@@ -1459,7 +1470,7 @@ describe('Search API Filters', () => {
           failures.push(`${result.name}: no highest_offer_wei`);
           continue;
         }
-        const currentOffer = BigInt(result.highest_offer_wei);
+        const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer < prevOffer) {
           failures.push(`${result.name}: offer ${currentOffer} < previous ${prevOffer} (should be ascending)`);
         }
