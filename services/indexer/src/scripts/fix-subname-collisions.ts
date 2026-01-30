@@ -43,6 +43,12 @@ interface RelatedDataCounts {
   activity: number;
 }
 
+interface RelatedRecord {
+  id: number;
+  ens_name_id: number;
+  order_data: any;
+}
+
 function hexToDecimal(hex: string): string {
   const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
   return BigInt('0x' + cleanHex).toString(10);
@@ -110,6 +116,80 @@ async function queryGraphByNamehash(nameToQuery: string): Promise<GraphDomain | 
 }
 
 /**
+ * Batch query The Graph for multiple domains by namehash
+ */
+async function queryGraphByNamehashBatch(names: string[]): Promise<Map<string, GraphDomain>> {
+  const results = new Map<string, GraphDomain>();
+  if (names.length === 0) return results;
+
+  const namehashes = names.map(name => {
+    const hash = namehash(name);
+    const hexString = BigInt(hash).toString(16).padStart(64, '0');
+    return '0x' + hexString;
+  });
+
+  const query = `
+    query GetDomainsByNamehash($namehashes: [String!]!) {
+      domains(where: { id_in: $namehashes }) {
+        id
+        name
+        labelName
+        labelhash
+        owner {
+          id
+        }
+        registrant {
+          id
+        }
+        wrappedOwner {
+          id
+        }
+        registration {
+          expiryDate
+          registrationDate
+        }
+      }
+    }
+  `;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (config.theGraph?.apiKey) {
+    headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+  }
+
+  try {
+    const response = await fetch(ENS_SUBGRAPH_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query,
+        variables: { namehashes }
+      }),
+    });
+
+    if (!response.ok) {
+      return results;
+    }
+
+    const data = await response.json() as { data?: { domains?: GraphDomain[] } };
+    const domains = data.data?.domains || [];
+
+    for (const domain of domains) {
+      if (domain.name) {
+        results.set(domain.name.toLowerCase(), domain);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return results;
+}
+
+/**
  * Get owner from Graph domain using same logic as ens-resolver:
  * - If registrant === NAME_WRAPPER_ADDRESS → use wrappedOwner
  * - If registrant !== NAME_WRAPPER_ADDRESS → use registrant
@@ -119,15 +199,12 @@ function getOwnerFromGraphDomain(domain: GraphDomain): string | null {
   if (domain.registrant?.id) {
     const registrant = domain.registrant.id.toLowerCase();
     if (registrant === NAME_WRAPPER_ADDRESS) {
-      // Wrapped name: use wrappedOwner
       return domain.wrappedOwner?.id?.toLowerCase() || null;
     } else {
-      // Unwrapped name: use registrant
       return registrant;
     }
   }
 
-  // No registrant (subnames don't have registrant) - use wrappedOwner
   if (domain.wrappedOwner?.id) {
     return domain.wrappedOwner.id.toLowerCase();
   }
@@ -136,14 +213,9 @@ function getOwnerFromGraphDomain(domain: GraphDomain): string | null {
 }
 
 /**
- * Get correct token_id using same logic as ens-resolver:
- * - If owner === NAME_WRAPPER_ADDRESS and not expired → use namehash (domain.id)
- * - Otherwise → use labelhash
- *
- * For subnames: always use namehash (they can't be in Base Registrar)
+ * Get correct token_id using same logic as ens-resolver
  */
 function getCorrectTokenId(domain: GraphDomain, inputTokenId: string, isSubname: boolean): string {
-  // Subnames always use namehash
   if (isSubname) {
     return hexToDecimal(domain.id);
   }
@@ -151,7 +223,6 @@ function getCorrectTokenId(domain: GraphDomain, inputTokenId: string, isSubname:
   const ownerAddr = domain.owner?.id?.toLowerCase();
   const isOwnedByWrapper = ownerAddr === NAME_WRAPPER_ADDRESS;
 
-  // Check if expired using registration.expiryDate
   let isExpired = false;
   if (domain.registration?.expiryDate) {
     try {
@@ -163,17 +234,12 @@ function getCorrectTokenId(domain: GraphDomain, inputTokenId: string, isSubname:
   }
 
   if (isOwnedByWrapper && !isExpired) {
-    // Wrapped, non-expired: use domain.id (namehash)
     return hexToDecimal(domain.id);
   } else {
-    // Unwrapped or expired: use labelhash (input tokenId)
     return inputTokenId;
   }
 }
 
-/**
- * Get expiry date from Graph domain
- */
 function getExpiryDate(domain: GraphDomain): Date | null {
   if (domain.registration?.expiryDate) {
     try {
@@ -200,14 +266,46 @@ function computeLabelhashTokenId(name: string): string | null {
   return BigInt(hash).toString(10);
 }
 
-function isSubname(name: string): boolean {
-  const dotCount = (name.match(/\./g) || []).length;
-  return dotCount > 1;
+/**
+ * Extract token_id from order_data (OpenSea payload)
+ */
+function extractTokenIdFromOrderData(orderData: any): string | null {
+  try {
+    // OpenSea order_data has item.nft_id like "ethereum/0x.../tokenId"
+    const nftId = orderData?.item?.nft_id || orderData?.payload?.item?.nft_id;
+    if (nftId) {
+      const tokenId = nftId.split('/').pop();
+      if (tokenId) return tokenId;
+    }
+
+    // Also check protocol_data for Seaport orders
+    const offerItem = orderData?.protocol_data?.parameters?.offer?.[0];
+    if (offerItem?.identifierOrCriteria) {
+      return offerItem.identifierOrCriteria;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 /**
- * Check for related data that might be affected by the collision
+ * Determine which name a token_id belongs to by checking if it matches namehash or labelhash
  */
+function determineNameForTokenId(tokenId: string, subnameName: string, twoLDName: string): string | null {
+  const subnameNamehash = computeNamehashTokenId(subnameName);
+  const twoLDLabelhash = computeLabelhashTokenId(twoLDName);
+  const twoLDNamehash = computeNamehashTokenId(twoLDName);
+
+  if (tokenId === subnameNamehash) {
+    return subnameName;
+  }
+  if (tokenId === twoLDLabelhash || tokenId === twoLDNamehash) {
+    return twoLDName;
+  }
+  return null;
+}
+
 async function getRelatedDataCounts(pool: any, ensNameId: number): Promise<RelatedDataCounts> {
   const [listings, offers, sales, activity] = await Promise.all([
     pool.query('SELECT COUNT(*) FROM listings WHERE ens_name_id = $1', [ensNameId]),
@@ -250,12 +348,28 @@ async function main() {
   console.log(`Found ${subnames.length} subnames`);
   console.log();
 
+  // Build map of potential 2LD collisions (first label -> subname records)
+  const twoLDToSubnames = new Map<string, NameRecord[]>();
+  for (const record of subnames) {
+    const parts = record.name.split('.');
+    if (parts.length > 2) {
+      const twoLD = `${parts[0]}.eth`;
+      if (!twoLDToSubnames.has(twoLD)) {
+        twoLDToSubnames.set(twoLD, []);
+      }
+      twoLDToSubnames.get(twoLD)!.push(record);
+    }
+  }
+
   let correctCount = 0;
   let mismatchCount = 0;
   let notFoundCount = 0;
   let fixedCount = 0;
+  let relatedDataFixedCount = 0;
   const affectedWithRelatedData: Array<{ name: string; id: number; counts: RelatedDataCounts }> = [];
 
+  // Process subnames
+  console.log('Processing subnames...');
   for (let i = 0; i < subnames.length; i++) {
     const record = subnames[i];
     const { id, token_id, name, owner_address, expiry_date } = record;
@@ -271,7 +385,6 @@ async function main() {
       continue;
     }
 
-    // Query Graph by namehash
     const graphDomain = await queryGraphByNamehash(normalizedName);
 
     if (!graphDomain) {
@@ -280,7 +393,6 @@ async function main() {
       continue;
     }
 
-    // Get correct values using resolver logic
     const correctTokenId = getCorrectTokenId(graphDomain, token_id, true);
     const graphOwner = getOwnerFromGraphDomain(graphDomain);
     const graphExpiry = getExpiryDate(graphDomain);
@@ -295,7 +407,6 @@ async function main() {
       issues.push(`owner: ${owner_address} -> ${graphOwner}`);
     }
 
-    // Check expiry date (allow 1 day tolerance for timestamp differences)
     if (graphExpiry) {
       const dbExpiryTime = expiry_date ? expiry_date.getTime() : 0;
       const graphExpiryTime = graphExpiry.getTime();
@@ -310,7 +421,6 @@ async function main() {
       console.log(`  MISMATCH: ${name}`);
       issues.forEach(iss => console.log(`    ${iss}`));
 
-      // Check for related data that might be affected
       const relatedCounts = await getRelatedDataCounts(pool, id);
       const hasRelatedData = relatedCounts.listings > 0 || relatedCounts.offers > 0 ||
                              relatedCounts.sales > 0 || relatedCounts.activity > 0;
@@ -322,11 +432,37 @@ async function main() {
 
       if (!DRY_RUN) {
         const newOwner = graphOwner || owner_address;
-        await pool.query(
-          `UPDATE ens_names SET token_id = $1, owner_address = $2, expiry_date = $3, updated_at = NOW() WHERE id = $4`,
-          [correctTokenId, newOwner.toLowerCase(), graphExpiry, id]
+
+        // Check if a record with the correct token_id already exists
+        const existingWithTokenId = await pool.query(
+          `SELECT id, name FROM ens_names WHERE token_id = $1 AND id != $2`,
+          [correctTokenId, id]
         );
-        console.log(`    FIXED`);
+
+        if (existingWithTokenId.rows.length > 0) {
+          // Record with correct token_id exists - merge data to it and delete this duplicate
+          const correctRecord = existingWithTokenId.rows[0];
+          console.log(`    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`);
+          console.log(`    Moving related data from id=${id} to id=${correctRecord.id} and deleting duplicate...`);
+
+          // Move related data to the correct record
+          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+
+          // Delete the duplicate record
+          await pool.query(`DELETE FROM ens_names WHERE id = $1`, [id]);
+          console.log(`    MERGED & DELETED duplicate`);
+        } else {
+          // No duplicate - safe to update
+          await pool.query(
+            `UPDATE ens_names SET token_id = $1, owner_address = $2, expiry_date = $3, updated_at = NOW() WHERE id = $4`,
+            [correctTokenId, newOwner.toLowerCase(), graphExpiry, id]
+          );
+          console.log(`    FIXED`);
+        }
         fixedCount++;
       }
     } else {
@@ -338,77 +474,182 @@ async function main() {
     }
   }
 
-  // Check for 2LD collisions
+  // Check for 2LD collisions - batch query
   console.log();
-  console.log('Checking 2LD collisions...');
+  console.log('Checking 2LD collisions (batched)...');
 
-  const potentialCollisions = new Set<string>();
-  for (const record of subnames) {
-    const parts = record.name.split('.');
-    if (parts.length > 2) {
-      potentialCollisions.add(`${parts[0]}.eth`);
+  const potential2LDs = Array.from(twoLDToSubnames.keys());
+  console.log(`  ${potential2LDs.length} potential 2LDs to check`);
+
+  // Batch query DB for all potential 2LDs
+  const twoLDRecordsResult = await pool.query<NameRecord>(
+    `SELECT id, token_id, name, owner_address, expiry_date
+     FROM ens_names
+     WHERE name = ANY($1)`,
+    [potential2LDs]
+  );
+
+  const twoLDRecords = new Map<string, NameRecord>();
+  for (const row of twoLDRecordsResult.rows) {
+    twoLDRecords.set(row.name, row);
+  }
+
+  console.log(`  ${twoLDRecords.size} 2LDs exist in database`);
+
+  // Batch query Graph for existing 2LDs
+  const existingTwoLDs = Array.from(twoLDRecords.keys());
+  const BATCH_SIZE = 100;
+  const graphResults = new Map<string, GraphDomain>();
+
+  for (let i = 0; i < existingTwoLDs.length; i += BATCH_SIZE) {
+    const batch = existingTwoLDs.slice(i, i + BATCH_SIZE);
+    console.log(`  Querying Graph batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(existingTwoLDs.length / BATCH_SIZE)}...`);
+    const batchResults = await queryGraphByNamehashBatch(batch);
+    for (const [name, domain] of batchResults) {
+      graphResults.set(name, domain);
     }
+    await new Promise(r => setTimeout(r, 100));
   }
 
   let twoLDMismatchCount = 0;
 
-  for (const twoLDName of potentialCollisions) {
-    const res = await pool.query<NameRecord>(
-      'SELECT id, token_id, name FROM ens_names WHERE name = $1',
-      [twoLDName]
-    );
-
-    if (res.rows.length === 0) continue;
-
-    const dbRecord = res.rows[0];
-
-    // Query Graph for this 2LD
-    const graphDomain = await queryGraphByNamehash(twoLDName);
+  for (const [twoLDName, dbRecord] of twoLDRecords) {
+    const graphDomain = graphResults.get(twoLDName.toLowerCase());
     if (!graphDomain) continue;
 
-    // Get correct token_id using resolver logic (not a subname)
     const correctTokenId = getCorrectTokenId(graphDomain, dbRecord.token_id, false);
-
-    // Also compute labelhash for comparison
-    const labelhashTokenId = computeLabelhashTokenId(twoLDName);
 
     if (dbRecord.token_id !== correctTokenId) {
       console.log(`  2LD COLLISION: ${twoLDName}`);
-      console.log(`    token_id: ${dbRecord.token_id}`);
-      console.log(`    correct:  ${correctTokenId}`);
+      console.log(`    token_id: ${dbRecord.token_id} -> ${correctTokenId}`);
       twoLDMismatchCount++;
 
       if (!DRY_RUN) {
-        await pool.query(
-          `UPDATE ens_names SET token_id = $1, updated_at = NOW() WHERE id = $2`,
+        // Check if a record with the correct token_id already exists
+        const existingWithTokenId = await pool.query(
+          `SELECT id, name FROM ens_names WHERE token_id = $1 AND id != $2`,
           [correctTokenId, dbRecord.id]
         );
-        console.log(`    FIXED`);
+
+        if (existingWithTokenId.rows.length > 0) {
+          const correctRecord = existingWithTokenId.rows[0];
+          console.log(`    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`);
+          console.log(`    Moving related data and deleting duplicate...`);
+
+          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+
+          await pool.query(`DELETE FROM ens_names WHERE id = $1`, [dbRecord.id]);
+          console.log(`    MERGED & DELETED duplicate`);
+        } else {
+          await pool.query(
+            `UPDATE ens_names SET token_id = $1, updated_at = NOW() WHERE id = $2`,
+            [correctTokenId, dbRecord.id]
+          );
+          console.log(`    FIXED`);
+        }
+      }
+    }
+  }
+
+  // Fix related data - examine order_data to determine correct ownership
+  console.log();
+  console.log('Analyzing related data for affected records...');
+
+  for (const affected of affectedWithRelatedData) {
+    const parts = affected.name.split('.');
+    if (parts.length <= 2) continue;
+
+    const twoLDName = `${parts[0]}.eth`;
+    const twoLDRecord = twoLDRecords.get(twoLDName);
+    if (!twoLDRecord) continue;
+
+    console.log(`  Checking related data for ${affected.name} vs ${twoLDName}...`);
+
+    // Check listings
+    const listings = await pool.query<RelatedRecord>(
+      `SELECT id, ens_name_id, order_data FROM listings WHERE ens_name_id = $1`,
+      [affected.id]
+    );
+
+    for (const listing of listings.rows) {
+      const tokenIdFromOrder = extractTokenIdFromOrderData(listing.order_data);
+      if (tokenIdFromOrder) {
+        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
+        if (correctName === twoLDName) {
+          console.log(`    LISTING ${listing.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+          if (!DRY_RUN) {
+            await pool.query(
+              `UPDATE listings SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
+              [twoLDRecord.id, listing.id]
+            );
+            relatedDataFixedCount++;
+          }
+        }
       }
     }
 
-    await new Promise(r => setTimeout(r, 50));
+    // Check offers
+    const offers = await pool.query<RelatedRecord>(
+      `SELECT id, ens_name_id, order_data FROM offers WHERE ens_name_id = $1`,
+      [affected.id]
+    );
+
+    for (const offer of offers.rows) {
+      const tokenIdFromOrder = extractTokenIdFromOrderData(offer.order_data);
+      if (tokenIdFromOrder) {
+        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
+        if (correctName === twoLDName) {
+          console.log(`    OFFER ${offer.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+          if (!DRY_RUN) {
+            await pool.query(
+              `UPDATE offers SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
+              [twoLDRecord.id, offer.id]
+            );
+            relatedDataFixedCount++;
+          }
+        }
+      }
+    }
+
+    // Check sales
+    const sales = await pool.query<RelatedRecord>(
+      `SELECT id, ens_name_id, order_data FROM sales WHERE ens_name_id = $1`,
+      [affected.id]
+    );
+
+    for (const sale of sales.rows) {
+      const tokenIdFromOrder = extractTokenIdFromOrderData(sale.order_data);
+      if (tokenIdFromOrder) {
+        const correctName = determineNameForTokenId(tokenIdFromOrder, affected.name, twoLDName);
+        if (correctName === twoLDName) {
+          console.log(`    SALE ${sale.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+          if (!DRY_RUN) {
+            await pool.query(
+              `UPDATE sales SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
+              [twoLDRecord.id, sale.id]
+            );
+            relatedDataFixedCount++;
+          }
+        }
+      }
+    }
   }
 
+  // Summary
   console.log();
   console.log('='.repeat(70));
   console.log('Summary');
   console.log('='.repeat(70));
   console.log(`Subnames: ${subnames.length} checked, ${correctCount} correct, ${mismatchCount} mismatched, ${notFoundCount} not found`);
   console.log(`2LD collisions: ${twoLDMismatchCount}`);
-  if (!DRY_RUN) console.log(`Fixed: ${fixedCount}`);
-
-  if (affectedWithRelatedData.length > 0) {
-    console.log();
-    console.log('='.repeat(70));
-    console.log(`WARNING: ${affectedWithRelatedData.length} affected records have related data that may need review:`);
-    console.log('='.repeat(70));
-    for (const item of affectedWithRelatedData) {
-      console.log(`  ${item.name} (id=${item.id}): ${item.counts.listings}L ${item.counts.offers}O ${item.counts.sales}S ${item.counts.activity}A`);
-    }
-    console.log();
-    console.log('Related data (listings/offers/sales/activity) may be pointing to the wrong name.');
-    console.log('Review order_data in these records to determine which name they actually belong to.');
+  console.log(`Records with related data: ${affectedWithRelatedData.length}`);
+  if (!DRY_RUN) {
+    console.log(`ENS names fixed: ${fixedCount}`);
+    console.log(`Related data records reassigned: ${relatedDataFixedCount}`);
   }
   if (DRY_RUN) console.log('DRY RUN - no changes made');
 
