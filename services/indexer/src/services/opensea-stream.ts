@@ -193,7 +193,14 @@ export class OpenSeaStreamListener {
 
           // This is an actual OpenSea event
           logger.info(`Received OpenSea event: ${message.event} for topic: ${message.topic}`);
-          this.handlePhoenixEvent(message);
+          this.handlePhoenixEvent(message).catch(err => {
+            logger.error({
+              event: message.event,
+              error: err?.message || String(err),
+              stack: err?.stack,
+              code: err?.code,
+            }, `Error handling OpenSea event ${message.event}`);
+          });
         }
       } catch (error: any) {
         logger.error(`Failed to parse OpenSea message: ${error.message}`);
