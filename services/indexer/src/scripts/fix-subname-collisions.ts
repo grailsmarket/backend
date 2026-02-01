@@ -215,13 +215,15 @@ function getOwnerFromGraphDomain(domain: GraphDomain): string | null {
 /**
  * Get correct token_id using same logic as ens-resolver
  */
-function getCorrectTokenId(domain: GraphDomain, inputTokenId: string, isSubname: boolean): string {
+function getCorrectTokenId(domain: GraphDomain, name: string, isSubname: boolean): string {
   if (isSubname) {
+    // Subnames always use namehash
     return hexToDecimal(domain.id);
   }
 
-  const ownerAddr = domain.owner?.id?.toLowerCase();
-  const isOwnedByWrapper = ownerAddr === NAME_WRAPPER_ADDRESS;
+  // For 2LDs, check registrant to determine if wrapped
+  const registrantAddr = domain.registrant?.id?.toLowerCase();
+  const isWrapped = registrantAddr === NAME_WRAPPER_ADDRESS;
 
   let isExpired = false;
   if (domain.registration?.expiryDate) {
@@ -233,10 +235,14 @@ function getCorrectTokenId(domain: GraphDomain, inputTokenId: string, isSubname:
     }
   }
 
-  if (isOwnedByWrapper && !isExpired) {
+  if (isWrapped && !isExpired) {
+    // Wrapped: use namehash
     return hexToDecimal(domain.id);
   } else {
-    return inputTokenId;
+    // Unwrapped: use labelhash of the label
+    const label = name.replace(/\.eth$/, '');
+    const labelHashHex = labelhash(label);
+    return hexToDecimal(labelHashHex);
   }
 }
 
@@ -393,7 +399,7 @@ async function main() {
       continue;
     }
 
-    const correctTokenId = getCorrectTokenId(graphDomain, token_id, true);
+    const correctTokenId = getCorrectTokenId(graphDomain, name, true);
     const graphOwner = getOwnerFromGraphDomain(graphDomain);
     const graphExpiry = getExpiryDate(graphDomain);
 
@@ -512,17 +518,39 @@ async function main() {
   }
 
   let twoLDMismatchCount = 0;
+  let twoLDFixedCount = 0;
 
   for (const [twoLDName, dbRecord] of twoLDRecords) {
     const graphDomain = graphResults.get(twoLDName.toLowerCase());
     if (!graphDomain) continue;
 
-    const correctTokenId = getCorrectTokenId(graphDomain, dbRecord.token_id, false);
+    const correctTokenId = getCorrectTokenId(graphDomain, twoLDName, false);
+    const graphOwner = getOwnerFromGraphDomain(graphDomain);
+    const graphExpiry = getExpiryDate(graphDomain);
+
+    const issues: string[] = [];
 
     if (dbRecord.token_id !== correctTokenId) {
-      console.log(`  2LD COLLISION: ${twoLDName}`);
-      console.log(`    token_id: ${dbRecord.token_id} -> ${correctTokenId}`);
+      issues.push(`token_id: ${dbRecord.token_id} -> ${correctTokenId}`);
+    }
+
+    if (graphOwner && dbRecord.owner_address.toLowerCase() !== graphOwner.toLowerCase()) {
+      issues.push(`owner: ${dbRecord.owner_address} -> ${graphOwner}`);
+    }
+
+    if (graphExpiry) {
+      const dbExpiryTime = dbRecord.expiry_date ? dbRecord.expiry_date.getTime() : 0;
+      const graphExpiryTime = graphExpiry.getTime();
+      const dayInMs = 24 * 60 * 60 * 1000;
+      if (Math.abs(dbExpiryTime - graphExpiryTime) > dayInMs) {
+        issues.push(`expiry: ${dbRecord.expiry_date?.toISOString() || 'null'} -> ${graphExpiry.toISOString()}`);
+      }
+    }
+
+    if (issues.length > 0) {
       twoLDMismatchCount++;
+      console.log(`  2LD MISMATCH: ${twoLDName}`);
+      issues.forEach(iss => console.log(`    ${iss}`));
 
       if (!DRY_RUN) {
         // Check if a record with the correct token_id already exists
@@ -544,12 +572,15 @@ async function main() {
 
           await pool.query(`DELETE FROM ens_names WHERE id = $1`, [dbRecord.id]);
           console.log(`    MERGED & DELETED duplicate`);
+          twoLDFixedCount++;
         } else {
+          const newOwner = graphOwner || dbRecord.owner_address;
           await pool.query(
-            `UPDATE ens_names SET token_id = $1, updated_at = NOW() WHERE id = $2`,
-            [correctTokenId, dbRecord.id]
+            `UPDATE ens_names SET token_id = $1, owner_address = $2, expiry_date = $3, updated_at = NOW() WHERE id = $4`,
+            [correctTokenId, newOwner, graphExpiry, dbRecord.id]
           );
           console.log(`    FIXED`);
+          twoLDFixedCount++;
         }
       }
     }
@@ -670,9 +701,10 @@ async function main() {
   console.log('Summary');
   console.log('='.repeat(70));
   console.log(`Subnames: ${subnames.length} checked, ${correctCount} correct, ${mismatchCount} mismatched, ${notFoundCount} not found`);
-  console.log(`2LD collisions: ${twoLDMismatchCount}`);
+  console.log(`2LD mismatches: ${twoLDMismatchCount}`);
   if (!DRY_RUN) {
-    console.log(`ENS names fixed: ${fixedCount}`);
+    console.log(`Subnames fixed: ${fixedCount}`);
+    console.log(`2LDs fixed: ${twoLDFixedCount}`);
     console.log(`Related data records reassigned: ${relatedDataFixedCount}`);
   }
   if (DRY_RUN) console.log('DRY RUN - no changes made');

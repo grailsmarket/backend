@@ -91,12 +91,17 @@ async function start() {
   });
 
   process.on('uncaughtException', (error) => {
-    logger.error('Uncaught exception:', error);
+    logger.error({ err: error, stack: error.stack }, 'Uncaught exception');
     process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
-    logger.error('Unhandled rejection at:', promise, 'reason:', reason);
+  process.on('unhandledRejection', (reason: any, promise) => {
+    logger.error({
+      reason: reason?.message || String(reason),
+      stack: reason?.stack,
+      code: reason?.code,
+      detail: reason?.detail,
+    }, 'Unhandled rejection');
     process.exit(1);
   });
 }

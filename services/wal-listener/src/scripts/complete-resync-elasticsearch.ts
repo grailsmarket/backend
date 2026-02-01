@@ -369,7 +369,7 @@ async function completeResync() {
     console.log('Starting bulk indexing...\n');
 
     let processed = 0;
-    let offset = 3128000;
+    let offset = 0;
 
     // Process batches with limited concurrency
     while (offset < totalRows) {
