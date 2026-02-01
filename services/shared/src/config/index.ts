@@ -12,7 +12,10 @@ dotenv.config(); // Also try default location
 const ConfigSchema = z.object({
   database: z.object({
     url: z.string().default('postgresql://localhost:5432/grails'),
-    maxConnections: z.number().default(20),
+    // Reduced from 20 to 10 to prevent connection exhaustion with multiple services
+    // Each service also uses pg-boss which has its own pool. Total connections:
+    // (10 app + 3-10 pg-boss) * 4 services = ~60-80 connections (within PostgreSQL default of 100)
+    maxConnections: z.number().default(10),
     ssl: z.boolean().default(false),
   }),
   elasticsearch: z.object({

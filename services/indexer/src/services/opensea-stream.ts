@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
+import { safePublishJob, QUEUE_NAMES } from '../queue';
 
 // Name Wrapper contract address - never store this as owner
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -528,18 +529,15 @@ export class OpenSeaStreamListener {
         const isExpired = expiryDate && new Date(expiryDate) < new Date();
 
         if (clubs.length > 0 && base_price && !isPlaceholder && !isSubname && !isExpired) {
-          const PgBoss = require('pg-boss');
-          const boss = new PgBoss({ connectionString: config.database.url });
-          await boss.start();
-
-          await boss.send('update-club-floor-price', {
+          const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
             clubNames: clubs,
             eventType: 'create',
             listingPrice: base_price,
-          });
+          }, 'item_listed');
 
-          await boss.stop();
-          logger.info({ ensNameId, clubs, listingPrice: base_price }, 'Published club floor price update (OpenSea listing)');
+          if (published) {
+            logger.info({ ensNameId, clubs, listingPrice: base_price }, 'Published club floor price update (OpenSea listing)');
+          }
         } else if (clubs.length > 0 && (isPlaceholder || isSubname || isExpired)) {
           logger.debug({ ensNameId, name, isPlaceholder, isSubname, isExpired }, 'Skipping floor price update for invalid name');
         }
@@ -721,18 +719,13 @@ export class OpenSeaStreamListener {
           if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
             const currencyAddress = eventData.payment_token?.address || '0x0000000000000000000000000000000000000000';
             if (isEthOrWeth(currencyAddress)) {
-              try {
-                const PgBoss = require('pg-boss');
-                const boss = new PgBoss({ connectionString: config.database.url });
-                await boss.start();
-                await boss.send('update-club-sales-stats', {
-                  clubNames: sale.clubs,
-                  salePriceWei: sale_price || '0',
-                });
-                await boss.stop();
+              const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
+                clubNames: sale.clubs,
+                salePriceWei: sale_price || '0',
+              }, 'item_sold');
+
+              if (published) {
                 logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
-              } catch (queueError: any) {
-                logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
               }
             }
           }
@@ -812,17 +805,14 @@ export class OpenSeaStreamListener {
         const clubs = clubsResult.rows[0]?.clubs || [];
 
         if (clubs.length > 0) {
-          const PgBoss = require('pg-boss');
-          const boss = new PgBoss({ connectionString: config.database.url });
-          await boss.start();
-
-          await boss.send('update-club-floor-price', {
+          const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
             clubNames: clubs,
             eventType: 'delete', // Triggers full recalculation since listing is no longer active
-          });
+          }, 'item_sold');
 
-          await boss.stop();
-          logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea sale)');
+          if (published) {
+            logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea sale)');
+          }
         }
       } catch (queueError: any) {
         logger.error({ error: queueError.message, ensNameId }, 'Failed to publish club floor price recalculation');
@@ -982,17 +972,14 @@ export class OpenSeaStreamListener {
           const clubs = clubsResult.rows[0]?.clubs || [];
 
           if (clubs.length > 0) {
-            const PgBoss = require('pg-boss');
-            const boss = new PgBoss({ connectionString: config.database.url });
-            await boss.start();
-
-            await boss.send('update-club-floor-price', {
+            const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
               clubNames: clubs,
               eventType: 'delete', // Triggers full recalculation since listing is no longer active
-            });
+            }, 'item_cancelled');
 
-            await boss.stop();
-            logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea cancellation)');
+            if (published) {
+              logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea cancellation)');
+            }
           }
         } catch (queueError: any) {
           logger.error({ error: queueError.message, ensNameId }, 'Failed to publish club floor price recalculation');
@@ -1236,20 +1223,15 @@ export class OpenSeaStreamListener {
 
       // Publish highest offer update job
       if (offerResult.rows.length > 0 && ensNameId && base_price) {
-        try {
-          const PgBoss = require('pg-boss');
-          const boss = new PgBoss({ connectionString: config.database.url });
-          await boss.start();
-          await boss.send('update-highest-offer', {
-            ensNameId,
-            offerId: offerResult.rows[0].id,
-            offerAmountWei: base_price,
-            currencyAddress: currencyAddress || '0x0000000000000000000000000000000000000000',
-          });
-          await boss.stop();
+        const published = await safePublishJob(QUEUE_NAMES.UPDATE_HIGHEST_OFFER, {
+          ensNameId,
+          offerId: offerResult.rows[0].id,
+          offerAmountWei: base_price,
+          currencyAddress: currencyAddress || '0x0000000000000000000000000000000000000000',
+        }, 'item_received_bid');
+
+        if (published) {
           logger.debug(`Published update-highest-offer job for ENS name ${ensNameId}`);
-        } catch (queueError: any) {
-          logger.warn(`Failed to publish highest offer job: ${queueError.message}`);
         }
       }
     } catch (error: any) {
