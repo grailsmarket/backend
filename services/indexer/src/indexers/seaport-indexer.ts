@@ -11,6 +11,7 @@ import PQueue from 'p-queue';
 import { config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
+import { safePublishJob, QUEUE_NAMES } from '../queue';
 
 // Define Seaport ABI with proper event definitions
 const SEAPORT_ABI = parseAbi([
@@ -409,18 +410,13 @@ export class SeaportIndexer {
 
               // Publish club sales stats job if sale has clubs (ETH only)
               if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
-                try {
-                  const PgBoss = require('pg-boss');
-                  const boss = new PgBoss({ connectionString: config.database.url });
-                  await boss.start();
-                  await boss.send('update-club-sales-stats', {
-                    clubNames: sale.clubs,
-                    salePriceWei: price,
-                  });
-                  await boss.stop();
+                const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
+                  clubNames: sale.clubs,
+                  salePriceWei: price,
+                }, 'seaport_order_fulfilled');
+
+                if (published) {
                   logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
-                } catch (queueError: any) {
-                  logger.error(`Failed to publish club sales stats job: ${queueError.message}`);
                 }
               }
             } catch (error: any) {

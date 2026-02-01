@@ -96,12 +96,28 @@ async function start() {
   });
 
   process.on('unhandledRejection', (reason: any, promise) => {
+    const errorCode = reason?.code;
+    const errorMessage = reason?.message || String(reason);
+
     logger.error({
-      reason: reason?.message || String(reason),
+      reason: errorMessage,
       stack: reason?.stack,
-      code: reason?.code,
+      code: errorCode,
       detail: reason?.detail,
     }, 'Unhandled rejection');
+
+    // Don't exit on transient database connection errors (53300 = too many clients)
+    // These are recoverable and the connection pool will retry
+    const isTransientDbError = errorCode === '53300' ||
+      errorMessage?.includes('too many clients') ||
+      errorMessage?.includes('connection pool');
+
+    if (isTransientDbError) {
+      logger.warn('Transient database connection error detected, continuing operation');
+      return;
+    }
+
+    // Exit on truly fatal errors
     process.exit(1);
   });
 }
