@@ -12,7 +12,7 @@ import { config, getPostgresPool, BlockchainEvent, hasEmoji } from '../../../sha
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
-// Define ENS ABI with proper event definitions
+// Define ENS ABI with proper event definitions (Base Registrar - ERC-721)
 const ENS_ABI = parseAbi([
   'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
   'event NameRegistered(uint256 indexed id, address indexed owner, uint256 expires)',
@@ -20,10 +20,21 @@ const ENS_ABI = parseAbi([
   'event NameMigrated(uint256 indexed id, address indexed owner, uint256 expires)',
 ]);
 
+// Name Wrapper ABI (ERC-1155 for wrapped names)
+const NAME_WRAPPER_ABI = parseAbi([
+  'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
+  'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
+]);
+
 const ENS_EVENTS = {
   Transfer: ENS_ABI[0],
   NameRegistered: ENS_ABI[1],
   NameRenewed: ENS_ABI[2],
+} as const;
+
+const NAME_WRAPPER_EVENTS = {
+  TransferSingle: NAME_WRAPPER_ABI[0],
+  TransferBatch: NAME_WRAPPER_ABI[1],
 } as const;
 
 export class ENSIndexer {
@@ -98,15 +109,31 @@ export class ENSIndexer {
   private async indexBlockRange(fromBlock: bigint, toBlock: bigint) {
     logger.info(`Indexing ENS events from block ${fromBlock} to ${toBlock}`);
 
-    const logs = await this.client.getLogs({
+    // Fetch logs from Base Registrar (ERC-721)
+    const registrarLogs = await this.client.getLogs({
       address: config.blockchain.ensRegistrarAddress as `0x${string}`,
       fromBlock,
       toBlock,
     });
 
-    for (const log of logs) {
+    // Fetch logs from Name Wrapper (ERC-1155) for wrapped name transfers
+    const nameWrapperLogs = await this.client.getLogs({
+      address: config.blockchain.ensNameWrapperAddress as `0x${string}`,
+      fromBlock,
+      toBlock,
+    });
+
+    // Process Base Registrar logs
+    for (const log of registrarLogs) {
       await this.queue.add(async () => {
         await this.processLog(log);
+      });
+    }
+
+    // Process Name Wrapper logs
+    for (const log of nameWrapperLogs) {
+      await this.queue.add(async () => {
+        await this.processNameWrapperLog(log);
       });
     }
 
@@ -159,6 +186,207 @@ export class ENSIndexer {
         transactionHash: log.transactionHash,
         topics: log.topics?.slice(0, 2), // Just first 2 topics for brevity
       });
+    }
+  }
+
+  private async processNameWrapperLog(log: Log) {
+    try {
+      let eventName: string | undefined;
+      let decodedLog: any;
+
+      // Try to decode the log against Name Wrapper events
+      for (const [name, event] of Object.entries(NAME_WRAPPER_EVENTS)) {
+        try {
+          decodedLog = decodeEventLog({
+            abi: [event],
+            data: log.data,
+            topics: log.topics as any,
+          });
+          eventName = name;
+          break;
+        } catch {
+          continue;
+        }
+      }
+
+      if (!eventName || !decodedLog) {
+        // This is not one of our tracked events, skip it
+        return;
+      }
+
+      logger.debug(`Processing Name Wrapper ${eventName} event at block ${log.blockNumber}`);
+
+      if (eventName === 'TransferSingle') {
+        await this.handleNameWrapperTransferSingle(decodedLog.args, log);
+      } else if (eventName === 'TransferBatch') {
+        await this.handleNameWrapperTransferBatch(decodedLog.args, log);
+      }
+    } catch (error: any) {
+      logger.error(`Error processing Name Wrapper log at block ${log.blockNumber}:`, {
+        error: error.message,
+        code: error.code,
+        transactionHash: log.transactionHash,
+      });
+    }
+  }
+
+  private async handleNameWrapperTransferSingle(args: any, log: Log) {
+    const { from, to, id: tokenId } = args;
+    const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+    const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+    const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
+
+    // Skip mint events (from zero address) - these are handled when wrapping via Base Registrar
+    if (from.toLowerCase() === ZERO_ADDRESS) {
+      logger.debug(`Name Wrapper mint event for token ${tokenIdStr}, skipping (handled by Base Registrar)`);
+      return;
+    }
+
+    // Skip burn events (to zero address) - these are handled when unwrapping via Base Registrar
+    if (to.toLowerCase() === ZERO_ADDRESS) {
+      logger.debug(`Name Wrapper burn event for token ${tokenIdStr}, skipping (handled by Base Registrar)`);
+      return;
+    }
+
+    logger.info(`Name Wrapper transfer: token ${tokenIdStr} from ${from} to ${to}`);
+
+    let ensNameId: number | null = null;
+
+    try {
+      // Resolve the namehash token ID to get the name
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+
+      if (!resolvedData || !resolvedData.name) {
+        logger.warn(`Could not resolve Name Wrapper transfer token ${tokenIdStr}, skipping`);
+        return;
+      }
+
+      const nameToStore = resolvedData.name;
+      const newOwner = to.toLowerCase();
+
+      // Verify the new owner from the contract (authoritative source)
+      const contractOwner = await this.resolver.getWrappedNameOwner(nameToStore);
+      const ownerToStore = contractOwner || newOwner;
+
+      // Safety check: never store Name Wrapper as owner
+      if (ownerToStore === NAME_WRAPPER_ADDRESS) {
+        logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore}, skipping`);
+        return;
+      }
+
+      logger.info(`Name Wrapper transfer for ${nameToStore}: updating owner to ${ownerToStore}`);
+
+      // Update ownership - use name to find the record (handles both wrapped token_id and labelhash token_id)
+      const result = await this.pool.query(
+        `UPDATE ens_names SET
+          owner_address = $1,
+          last_transfer_date = NOW(),
+          updated_at = NOW()
+        WHERE name = $2
+        RETURNING id`,
+        [ownerToStore, nameToStore]
+      );
+
+      if (result.rows.length > 0) {
+        ensNameId = result.rows[0].id;
+        logger.info(`Updated ownership for wrapped name ${nameToStore} to ${ownerToStore}`);
+      } else {
+        // Name doesn't exist yet - create it with the namehash token_id
+        const attributes = this.calculateNameAttributes(nameToStore);
+        const insertResult = await this.pool.query(
+          `INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
+          VALUES ($1, $2, $3, NOW(), $4, $5)
+          ON CONFLICT (token_id) DO UPDATE SET
+            owner_address = EXCLUDED.owner_address,
+            last_transfer_date = NOW(),
+            updated_at = NOW()
+          RETURNING id`,
+          [tokenIdStr, nameToStore, ownerToStore, attributes.has_numbers, attributes.has_emoji]
+        );
+
+        if (insertResult.rows.length > 0) {
+          ensNameId = insertResult.rows[0].id;
+          logger.info(`Created new record for wrapped name ${nameToStore} with owner ${ownerToStore}`);
+        }
+      }
+    } catch (error: any) {
+      logger.error('Failed to process Name Wrapper TransferSingle:', {
+        error: error.message,
+        tokenId: tokenIdStr,
+        from,
+        to
+      });
+      throw error;
+    }
+
+    // Publish ownership update job to queue
+    if (ensNameId) {
+      try {
+        const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+        const boss = await getQueueClient();
+
+        await boss.send(QUEUE_NAMES.UPDATE_OWNERSHIP, {
+          ensNameId,
+          newOwner: to.toLowerCase(),
+          blockNumber: Number(log.blockNumber),
+          transactionHash: log.transactionHash || '',
+        });
+
+        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: to }, 'Published ownership update job for wrapped name transfer');
+      } catch (queueError: any) {
+        logger.error({
+          errorMessage: queueError?.message || String(queueError),
+          errorStack: queueError?.stack,
+          ensNameId
+        }, 'Failed to publish ownership update job for wrapped name transfer');
+      }
+    }
+
+    // Record the transfer transaction
+    try {
+      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+
+      const txQuery = `
+        INSERT INTO transactions (
+          ens_name_id, transaction_hash, block_number,
+          from_address, to_address, transaction_type, timestamp
+        )
+        SELECT id, $2, $3, $4, $5, 'transfer', $6
+        FROM ens_names
+        WHERE name = $1
+        ON CONFLICT (transaction_hash) DO NOTHING
+      `;
+
+      // Use the resolved name to find the record
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+      if (resolvedData?.name) {
+        await this.pool.query(txQuery, [
+          resolvedData.name,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          from.toLowerCase(),
+          to.toLowerCase(),
+          new Date(Number(block.timestamp) * 1000),
+        ]);
+      }
+    } catch (error: any) {
+      logger.error('Failed to insert wrapped transfer transaction:', {
+        error: error.message,
+        tokenId: tokenIdStr,
+        transactionHash: log.transactionHash
+      });
+    }
+  }
+
+  private async handleNameWrapperTransferBatch(args: any, log: Log) {
+    const { from, to, ids } = args;
+
+    // Process each token in the batch as a single transfer
+    for (const tokenId of ids) {
+      await this.handleNameWrapperTransferSingle(
+        { from, to, id: tokenId },
+        log
+      );
     }
   }
 
