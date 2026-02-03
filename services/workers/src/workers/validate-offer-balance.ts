@@ -13,7 +13,9 @@ import {
   Currency,
   ZERO_ADDRESS,
   WETH_ADDRESS,
-  USDC_ADDRESS
+  USDC_ADDRESS,
+  OPENSEA_CONDUIT_ADDRESS,
+  MARKETPLACE_CONDUIT_ADDRESS
 } from './types';
 
 const pool = getPostgresPool();
@@ -37,6 +39,7 @@ async function fetchOffer(offerId: number): Promise<OfferWithBalance | null> {
       o.currency_address,
       o.status,
       o.ens_name_id,
+      o.source,
       en.name
     FROM offers o
     JOIN ens_names en ON en.id = o.ens_name_id
@@ -86,6 +89,34 @@ async function getTokenBalance(tokenAddress: string, holderAddress: string): Pro
   );
 
   return await tokenContract.balanceOf(holderAddress);
+}
+
+/**
+ * Get ERC20 token allowance
+ */
+async function getTokenAllowance(tokenAddress: string, owner: string, spender: string): Promise<bigint> {
+  if (!provider) {
+    throw new Error('Provider not initialized. Call initializeProvider() first.');
+  }
+
+  const tokenContract = new ethers.Contract(
+    tokenAddress,
+    ['function allowance(address owner, address spender) view returns (uint256)'],
+    provider
+  );
+
+  return await tokenContract.allowance(owner, spender);
+}
+
+/**
+ * Get the appropriate conduit address based on offer source
+ */
+function getConduitAddress(source: string | undefined): string {
+  if (source === 'opensea') {
+    return OPENSEA_CONDUIT_ADDRESS;
+  }
+  // Default for 'grails' and other sources
+  return MARKETPLACE_CONDUIT_ADDRESS;
 }
 
 /**
@@ -145,7 +176,30 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
       };
     }
 
-    // 5. All checks passed - offer is funded
+    // 5. Check allowance for ERC20 tokens (WETH, USDC)
+    if (currency !== 'ETH') {
+      const conduitAddress = getConduitAddress(offer.source);
+      const allowance = await getTokenAllowance(
+        offer.currency_address,
+        offer.buyer_address,
+        conduitAddress
+      );
+
+      if (allowance < required) {
+        return {
+          isValid: false,
+          reason: `insufficient_${currency.toLowerCase()}_allowance`,
+          checkedAt: new Date(),
+          details: {
+            currentAllowance: allowance.toString(),
+            requiredAllowance: required.toString(),
+            currency
+          }
+        };
+      }
+    }
+
+    // 6. All checks passed - offer is funded
     return {
       isValid: true,
       checkedAt: new Date()

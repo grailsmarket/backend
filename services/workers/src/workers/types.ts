@@ -11,6 +11,8 @@ export interface ValidationResult {
     expectedOwner?: string;
     currentBalance?: string;
     requiredBalance?: string;
+    currentAllowance?: string;
+    requiredAllowance?: string;
     currency?: Currency;
   };
 }
@@ -41,6 +43,7 @@ export interface OfferWithBalance {
   status: string;
   ens_name_id: number;
   name?: string;
+  source?: string;
 }
 
 export type Currency = 'ETH' | 'WETH' | 'USDC' | 'UNKNOWN';
@@ -50,3 +53,8 @@ export const WETH_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 export const USDC_ADDRESS = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 export const ENS_REGISTRAR_ADDRESS = '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85';
 export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
+
+// Conduit addresses for token approvals
+export const OPENSEA_CONDUIT_ADDRESS = '0x1E0049783F008A0085193E00003D00cd54003c71';
+export const MARKETPLACE_CONDUIT_ADDRESS = '0x73E9cD721a79C208E2F944910c27196307a2a05D';
+export const SEAPORT_ADDRESS = '0x0000000000000068F116a894984e2DB1123eB395';
