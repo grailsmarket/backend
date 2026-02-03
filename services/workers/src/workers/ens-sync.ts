@@ -82,15 +82,22 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
       const pool = getPostgresPool();
 
       try {
-        // Get all ENS names with active listings
+        // Get ENS names with active listings, offers, recent views, or on watchlists
         const result = await pool.query(`
           SELECT DISTINCT en.id, en.token_id
           FROM ens_names en
-          JOIN listings l ON l.ens_name_id = en.id
-          WHERE l.status = 'active'
+          WHERE
+            -- Active listings
+            EXISTS (SELECT 1 FROM listings l WHERE l.ens_name_id = en.id AND l.status = 'active')
+            -- Active offers
+            OR EXISTS (SELECT 1 FROM offers o WHERE o.ens_name_id = en.id AND o.status = 'active')
+            -- Recently viewed (last 7 days)
+            OR EXISTS (SELECT 1 FROM name_views nv WHERE nv.ens_name_id = en.id AND nv.viewed_at > NOW() - INTERVAL '7 days')
+            -- On any watchlist
+            OR EXISTS (SELECT 1 FROM watchlist w WHERE w.ens_name_id = en.id)
         `);
 
-        logger.info({ count: result.rows.length }, 'Scheduling ENS sync jobs for active listings');
+        logger.info({ count: result.rows.length }, 'Scheduling ENS sync jobs (listings, offers, views, watchlist)');
 
         // Publish individual sync jobs
         const jobs = result.rows.map((row) => ({
@@ -115,4 +122,61 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
   );
 
   logger.info('Daily ENS sync scheduler registered (runs at 2 AM daily)');
+}
+
+/**
+ * Register the weekly metadata backfill scheduler
+ * Runs every Sunday at 3 AM to catch up names with empty metadata
+ */
+export async function registerMetadataBackfillScheduler(boss: PgBoss): Promise<void> {
+  // Schedule the recurring weekly job
+  await boss.schedule(
+    QUEUE_NAMES.SCHEDULE_METADATA_BACKFILL,
+    '0 3 * * 0' // 3 AM every Sunday
+  );
+
+  // Register the worker to schedule individual sync jobs
+  await boss.work(
+    QUEUE_NAMES.SCHEDULE_METADATA_BACKFILL,
+    async () => {
+      logger.info('Running weekly metadata backfill scheduler');
+
+      const pool = getPostgresPool();
+
+      try {
+        // Get names with empty metadata (limit to prevent overwhelming)
+        const result = await pool.query(`
+          SELECT id, token_id
+          FROM ens_names
+          WHERE metadata = '{}'::jsonb
+            AND token_id IS NOT NULL
+          ORDER BY updated_at ASC
+          LIMIT 5000
+        `);
+
+        logger.info({ count: result.rows.length }, 'Scheduling metadata backfill jobs for names with empty metadata');
+
+        // Publish individual sync jobs
+        const jobs = result.rows.map((row) => ({
+          name: QUEUE_NAMES.SYNC_ENS_DATA,
+          data: {
+            ensNameId: row.id,
+            nameHash: row.token_id,
+            priority: 'normal' as const,
+          },
+        }));
+
+        // Batch publish jobs (pg-boss can handle this efficiently)
+        if (jobs.length > 0) {
+          await boss.insert(jobs);
+          logger.info({ jobsScheduled: jobs.length }, 'Metadata backfill jobs scheduled');
+        }
+      } catch (error) {
+        logger.error({ error }, 'Error scheduling metadata backfill');
+        throw error;
+      }
+    }
+  );
+
+  logger.info('Metadata backfill scheduler registered (runs at 3 AM every Sunday)');
 }
