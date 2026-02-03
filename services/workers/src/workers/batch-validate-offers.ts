@@ -14,7 +14,9 @@ import {
   ZERO_ADDRESS,
   WETH_ADDRESS,
   USDC_ADDRESS,
-  MULTICALL3_ADDRESS
+  MULTICALL3_ADDRESS,
+  OPENSEA_CONDUIT_ADDRESS,
+  MARKETPLACE_CONDUIT_ADDRESS
 } from './types';
 
 const pool = getPostgresPool();
@@ -31,8 +33,9 @@ const MULTICALL3_ABI = [
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)'
 ];
 
-// ERC20 balanceOf selector
+// ERC20 function selectors
 const BALANCE_OF_SELECTOR = '0x70a08231'; // balanceOf(address)
+const ALLOWANCE_SELECTOR = '0xdd62ed3e'; // allowance(address,address)
 
 /**
  * Determine currency type from address
@@ -67,6 +70,7 @@ async function fetchOffers(offerIds: number[]): Promise<OfferWithBalance[]> {
       o.currency_address,
       o.status,
       o.ens_name_id,
+      o.source,
       en.name
     FROM offers o
     JOIN ens_names en ON en.id = o.ens_name_id
@@ -81,6 +85,24 @@ async function fetchOffers(offerIds: number[]): Promise<OfferWithBalance[]> {
  */
 function encodeBalanceOf(address: string): string {
   return BALANCE_OF_SELECTOR + address.slice(2).padStart(64, '0');
+}
+
+/**
+ * Encode allowance(owner, spender) call data
+ */
+function encodeAllowance(owner: string, spender: string): string {
+  return ALLOWANCE_SELECTOR + owner.slice(2).padStart(64, '0') + spender.slice(2).padStart(64, '0');
+}
+
+/**
+ * Get the appropriate conduit address based on offer source
+ */
+function getConduitAddress(source: string | undefined): string {
+  if (source === 'opensea') {
+    return OPENSEA_CONDUIT_ADDRESS;
+  }
+  // Default for 'grails' and other sources
+  return MARKETPLACE_CONDUIT_ADDRESS;
 }
 
 /**
@@ -191,7 +213,7 @@ async function batchValidateETHOffers(offers: OfferWithBalance[]): Promise<Map<n
 }
 
 /**
- * Batch validate ERC20 token balances using Multicall3
+ * Batch validate ERC20 token balances and allowances using Multicall3
  */
 async function batchValidateTokenOffers(
   tokenAddress: string,
@@ -211,28 +233,87 @@ async function batchValidateTokenOffers(
   try {
     const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
 
-    // Build balanceOf calls for each buyer address
-    const calls = offers.map(offer => ({
-      target: tokenAddress,
-      allowFailure: true,
-      callData: encodeBalanceOf(offer.buyer_address)
-    }));
+    // Build paired calls: [balanceOf, allowance, balanceOf, allowance, ...]
+    const calls = offers.flatMap(offer => {
+      const conduitAddress = getConduitAddress(offer.source);
+      return [
+        {
+          target: tokenAddress,
+          allowFailure: true,
+          callData: encodeBalanceOf(offer.buyer_address)
+        },
+        {
+          target: tokenAddress,
+          allowFailure: true,
+          callData: encodeAllowance(offer.buyer_address, conduitAddress)
+        }
+      ];
+    });
 
     // Execute multicall
     const responses = await multicall.aggregate3.staticCall(calls);
 
-    // Process results
+    // Process results in pairs
     offers.forEach((offer, index) => {
-      if (responses[index].success) {
-        const balance = decodeBalance(responses[index].returnData);
-        results.set(offer.id, validateBalanceResult(balance, offer.offer_amount_wei, currency));
-      } else {
+      const balanceResult = responses[index * 2];
+      const allowanceResult = responses[index * 2 + 1];
+      const required = BigInt(offer.offer_amount_wei);
+
+      // Check balance first
+      if (!balanceResult.success) {
         results.set(offer.id, {
           isValid: false,
           reason: 'balance_check_failed',
           checkedAt: new Date()
         });
+        return;
       }
+
+      const balance = decodeBalance(balanceResult.returnData);
+      if (balance < required) {
+        results.set(offer.id, {
+          isValid: false,
+          reason: `insufficient_${currency.toLowerCase()}`,
+          checkedAt: new Date(),
+          details: {
+            currentBalance: balance.toString(),
+            requiredBalance: required.toString(),
+            currency
+          }
+        });
+        return;
+      }
+
+      // Check allowance
+      if (!allowanceResult.success) {
+        results.set(offer.id, {
+          isValid: false,
+          reason: 'allowance_check_failed',
+          checkedAt: new Date()
+        });
+        return;
+      }
+
+      const allowance = decodeBalance(allowanceResult.returnData);
+      if (allowance < required) {
+        results.set(offer.id, {
+          isValid: false,
+          reason: `insufficient_${currency.toLowerCase()}_allowance`,
+          checkedAt: new Date(),
+          details: {
+            currentAllowance: allowance.toString(),
+            requiredAllowance: required.toString(),
+            currency
+          }
+        });
+        return;
+      }
+
+      // Both balance and allowance are sufficient
+      results.set(offer.id, {
+        isValid: true,
+        checkedAt: new Date()
+      });
     });
 
   } catch (error: any) {
