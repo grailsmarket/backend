@@ -1,6 +1,6 @@
 import { getQueueClient, closeQueueClient } from './queue';
 import { registerExpiryWorker, registerBatchExpiryWorker } from './workers/expiry';
-import { registerEnsSyncWorker, registerDailyEnsSyncScheduler } from './workers/ens-sync';
+import { registerEnsSyncWorker, registerDailyEnsSyncScheduler, registerMetadataBackfillScheduler } from './workers/ens-sync';
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
 import { registerNotificationWorker } from './workers/notifications';
@@ -28,6 +28,7 @@ async function start() {
     await registerBatchExpiryWorker(boss);
     await registerEnsSyncWorker(boss);
     await registerDailyEnsSyncScheduler(boss);
+    await registerMetadataBackfillScheduler(boss);
     await registerBatchNameResolutionWorker(boss);
     await registerOwnershipWorker(boss);
     await registerNotificationWorker(boss);

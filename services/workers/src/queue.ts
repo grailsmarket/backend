@@ -95,6 +95,7 @@ export const QUEUE_NAMES = {
   BATCH_EXPIRE_ORDERS: 'batch-expire-orders',
   SYNC_ENS_DATA: 'sync-ens-data',
   SCHEDULE_DAILY_ENS_SYNC: 'schedule-daily-ens-sync',
+  SCHEDULE_METADATA_BACKFILL: 'schedule-metadata-backfill',
   BATCH_RESOLVE_NAMES: 'batch-resolve-names',
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
