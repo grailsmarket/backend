@@ -360,6 +360,59 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Get metadata for a specific ENS name
+  fastify.get('/:name/metadata', async (request, reply) => {
+    const { name } = request.params as { name: string };
+
+    // Query name with metadata_updated_at
+    const result = await pool.query(
+      `SELECT id, name, metadata, metadata_updated_at
+       FROM ens_names
+       WHERE LOWER(name) = LOWER($1)`,
+      [name]
+    );
+
+    if (result.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'NAME_NOT_FOUND',
+          message: `ENS name "${name}" not found`,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    const row = result.rows[0];
+    let metadata = row.metadata || {};
+
+    // Check if metadata needs refresh (synchronous - fetches from Graph if stale)
+    const { refreshed, metadata: freshMetadata } = await ensureMetadataFresh(
+      row.id,
+      row.name,
+      row.metadata_updated_at
+    );
+
+    if (refreshed) {
+      metadata = { ...metadata, ...freshMetadata };
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        name: row.name,
+        metadata,
+        refreshed,
+      },
+      meta: {
+        timestamp: new Date().toISOString(),
+        version: '1.0.0',
+      },
+    });
+  });
+
   // Legacy endpoint - keeping for backwards compatibility
   fastify.get('/:name/legacy', { preHandler: cacheHandler }, async (request, reply) => {
     const { name } = request.params as { name: string };
