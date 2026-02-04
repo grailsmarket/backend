@@ -7,6 +7,7 @@ import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
+import { ensureMetadataFresh } from '../services/ens-metadata';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -273,9 +274,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
                 expiry_date,
                 registration_date,
                 metadata,
+                metadata_updated_at,
                 created_at,
                 updated_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+              ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
               ON CONFLICT (token_id)
               DO UPDATE SET
                 name = EXCLUDED.name,
@@ -283,6 +285,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
                 expiry_date = EXCLUDED.expiry_date,
                 registration_date = EXCLUDED.registration_date,
                 metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+                metadata_updated_at = NOW(),
                 updated_at = NOW()
               RETURNING id
             `;
@@ -318,6 +321,19 @@ export async function namesRoutes(fastify: FastifyInstance) {
           timestamp: new Date().toISOString(),
         },
       });
+    }
+
+    // Check if metadata needs refresh (synchronous - fetches from Graph if stale)
+    const { refreshed, metadata: freshMetadata } = await ensureMetadataFresh(
+      nameResult.id,
+      nameResult.name,
+      nameResult.metadata_updated_at
+    );
+
+    if (refreshed) {
+      // Merge fresh metadata into result
+      nameResult.metadata = { ...nameResult.metadata, ...freshMetadata };
+      nameResult.metadata_updated_at = new Date();
     }
 
     const response: APIResponse = {

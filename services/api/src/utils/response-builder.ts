@@ -14,6 +14,7 @@ export interface SearchResult {
   registration_date: Date | null;
   last_sale_date: Date | null;
   metadata: any;
+  metadata_updated_at: Date | null;  // When metadata was last fetched from The Graph
   clubs: string[] | null;
   has_numbers: boolean;
   has_emoji: boolean;
@@ -95,6 +96,7 @@ export async function buildSearchResults(
       en.registration_date,
       en.last_sale_date,
       en.metadata,
+      en.metadata_updated_at,
       en.clubs,
       en.has_numbers,
       en.has_emoji,
@@ -176,6 +178,7 @@ export async function buildSearchResults(
       last_sale_currency: row.last_sale_currency,
       last_sale_price_usd: row.last_sale_price_usd ? parseFloat(row.last_sale_price_usd) : null,
       metadata: row.metadata,
+      metadata_updated_at: row.metadata_updated_at,
       clubs: row.clubs,
       has_numbers: row.has_numbers,
       has_emoji: row.has_emoji,
