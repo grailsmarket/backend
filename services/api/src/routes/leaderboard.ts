@@ -3,7 +3,7 @@ import { getPostgresPool } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
-const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names'] as const;
+const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold'] as const;
 
 export async function leaderboardRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -88,17 +88,38 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             WHERE e.expiry_date > NOW() - INTERVAL '90 days'
               AND e.clubs IS NOT NULL
             GROUP BY e.owner_address
+          ),
+          listing_stats AS (
+            SELECT
+              LOWER(l.seller_address) as owner_address,
+              COUNT(*) as names_listed
+            FROM listings l
+            INNER JOIN filtered_owners fo ON LOWER(l.seller_address) = fo.owner_address
+            WHERE l.status = 'active'
+            GROUP BY LOWER(l.seller_address)
+          ),
+          sales_stats AS (
+            SELECT
+              LOWER(s.seller_address) as owner_address,
+              COUNT(*) as names_sold
+            FROM sales s
+            INNER JOIN filtered_owners fo ON LOWER(s.seller_address) = fo.owner_address
+            GROUP BY LOWER(s.seller_address)
           )
           SELECT
             s.owner_address as address,
             s.names_owned::int,
             s.names_in_clubs::int,
             s.expired_names::int,
-            COALESCE(c.clubs, ARRAY[]::text[]) as clubs
+            COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
+            COALESCE(ls.names_listed, 0)::int as names_listed,
+            COALESCE(ss.names_sold, 0)::int as names_sold
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
+          LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
+          LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
           WHERE s.names_owned > 0
-          ORDER BY s.${sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
+          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $2 OFFSET $3
         `;
         dataParams = [clubs, limitNum, offset];
@@ -140,17 +161,36 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
                 AND array_length(clubs, 1) > 0
             ) unnested
             GROUP BY owner_address
+          ),
+          listing_stats AS (
+            SELECT
+              LOWER(seller_address) as owner_address,
+              COUNT(*) as names_listed
+            FROM listings
+            WHERE status = 'active'
+            GROUP BY LOWER(seller_address)
+          ),
+          sales_stats AS (
+            SELECT
+              LOWER(seller_address) as owner_address,
+              COUNT(*) as names_sold
+            FROM sales
+            GROUP BY LOWER(seller_address)
           )
           SELECT
             s.owner_address as address,
             s.names_owned::int,
             s.names_in_clubs::int,
             s.expired_names::int,
-            COALESCE(c.clubs, ARRAY[]::text[]) as clubs
+            COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
+            COALESCE(ls.names_listed, 0)::int as names_listed,
+            COALESCE(ss.names_sold, 0)::int as names_sold
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
+          LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
+          LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
           WHERE s.names_owned > 0
-          ORDER BY s.${sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
+          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $1 OFFSET $2
         `;
         dataParams = [limitNum, offset];
@@ -172,6 +212,8 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             names_owned: row.names_owned,
             names_in_clubs: row.names_in_clubs,
             expired_names: row.expired_names,
+            names_listed: row.names_listed,
+            names_sold: row.names_sold,
             clubs: row.clubs,
           })),
         },
