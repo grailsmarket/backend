@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { getPostgresPool, APIResponse, config } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { getQueueClient } from '../queue';
+import { fetchBalances } from '../services/balances';
 
 const UpdateProfileSchema = z.object({
   email: z.string().email().optional(),
@@ -109,6 +110,59 @@ export async function usersRoutes(fastify: FastifyInstance) {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Failed to fetch badges',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /api/v1/users/:address/balances
+   * Get token balances for an address (ETH, WETH, USDC, ENS)
+   */
+  fastify.get('/:address/balances', async (request, reply) => {
+    try {
+      const { address } = AddressParamsSchema.parse(request.params);
+
+      const balances = await fetchBalances(address);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          address: address.toLowerCase(),
+          balances,
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error({ error, address: (request.params as any)?.address }, 'Error fetching balances');
+
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid address format',
+            details: error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch balances',
         },
         meta: {
           timestamp: new Date().toISOString(),
