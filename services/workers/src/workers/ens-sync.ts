@@ -38,6 +38,7 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
           `UPDATE ens_names
            SET metadata = $1,
                resolver_address = $2,
+               metadata_updated_at = NOW(),
                updated_at = NOW()
            WHERE id = $3
            RETURNING id, name`,

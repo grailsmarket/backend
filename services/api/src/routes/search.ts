@@ -120,6 +120,7 @@ function createNotFoundResult(name: string): SearchResult {
     registration_date: null,
     last_sale_date: null,
     metadata: {},
+    metadata_updated_at: null,
     clubs: [],
     has_numbers: false,
     has_emoji: false,
