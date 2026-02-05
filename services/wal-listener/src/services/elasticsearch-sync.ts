@@ -115,6 +115,8 @@ export class ElasticsearchSync {
                 last_sale_date: { type: 'date' },
                 has_sales: { type: 'boolean' },
                 days_since_last_sale: { type: 'integer' },
+                // Wrapper desync status
+                is_desynced: { type: 'boolean' },
               },
             },
             settings: {
@@ -443,6 +445,8 @@ export class ElasticsearchSync {
       last_sale_date: saleHistoryState.lastSaleDate,
       has_sales: saleHistoryState.hasSales,
       days_since_last_sale: saleHistoryState.daysSinceLastSale,
+      // Wrapper desync status
+      is_desynced: data.is_desynced || false,
     };
   }
 

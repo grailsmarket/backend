@@ -114,7 +114,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
         en.registration_date,
-        en.last_sale_date
+        en.last_sale_date,
+        en.is_desynced
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       ${whereClause}
@@ -176,7 +177,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
         en.registration_date,
-        en.last_sale_date
+        en.last_sale_date,
+        en.is_desynced
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE LOWER(en.name) = LOWER($1)
@@ -223,7 +225,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.owner_address as current_owner,
         en.expiry_date as name_expiry_date,
         en.registration_date,
-        en.last_sale_date
+        en.last_sale_date,
+        en.is_desynced
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
       WHERE l.id = $1
