@@ -43,7 +43,9 @@
     "fix-duplicate-names:dry": "npm run build && node dist/wal-listener/src/scripts/fix-duplicate-names.js --dry-run",
     "find-desynced-wrapped": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names.js",
     "find-desynced-wrapped:save": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names.js --save",
-    "find-desynced-wrapped:verbose": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names.js --verbose"
+    "find-desynced-wrapped:verbose": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names.js --verbose",
+    "find-desynced-graph": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names-graph.js",
+    "find-desynced-graph:save": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names-graph.js --save"
   },
   "dependencies": {
     "pg-boss": "^9.0.3",
