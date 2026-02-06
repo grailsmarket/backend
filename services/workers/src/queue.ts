@@ -69,6 +69,7 @@ export interface ExpireOrdersJob {
 export interface SyncEnsDataJob {
   ensNameId: number;
   nameHash: string;
+  name: string;
   priority: 'high' | 'normal';
 }
 

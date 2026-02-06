@@ -23,15 +23,15 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 1,
     },
     async (job) => {
-      const { ensNameId, nameHash, priority } = job.data;
+      const { ensNameId, nameHash, name, priority } = job.data;
 
-      logger.info({ ensNameId, nameHash, priority }, 'Syncing ENS metadata');
+      logger.info({ ensNameId, name, priority }, 'Syncing ENS metadata');
 
       const pool = getPostgresPool();
 
       try {
-        // Fetch metadata from blockchain
-        const metadata = await fetchENSMetadata(nameHash);
+        // Fetch metadata from The Graph using the ENS name
+        const metadata = await fetchENSMetadata(name);
 
         // Update database
         const result = await pool.query(
@@ -47,14 +47,14 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
 
         if (result.rows.length > 0) {
           logger.info(
-            { ensNameId, name: result.rows[0].name, metadata },
+            { ensNameId, name: result.rows[0].name, metadataKeys: Object.keys(metadata) },
             'ENS metadata synced successfully'
           );
         } else {
           logger.warn({ ensNameId }, 'ENS name not found in database');
         }
       } catch (error) {
-        logger.error({ error, ensNameId, nameHash }, 'Error syncing ENS metadata');
+        logger.error({ error, ensNameId, name }, 'Error syncing ENS metadata');
         throw error; // Will trigger pg-boss retry
       }
     }
@@ -85,7 +85,7 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
       try {
         // Get ENS names with active listings, offers, recent views, or on watchlists
         const result = await pool.query(`
-          SELECT DISTINCT en.id, en.token_id
+          SELECT DISTINCT en.id, en.token_id, en.name
           FROM ens_names en
           WHERE
             -- Active listings
@@ -106,6 +106,7 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
           data: {
             ensNameId: row.id,
             nameHash: row.token_id,
+            name: row.name,
             priority: 'normal' as const,
           },
         }));
@@ -145,17 +146,20 @@ export async function registerMetadataBackfillScheduler(boss: PgBoss): Promise<v
       const pool = getPostgresPool();
 
       try {
-        // Get names with empty metadata (limit to prevent overwhelming)
+        // Get names with empty metadata or only resolver address (limit to prevent overwhelming)
         const result = await pool.query(`
-          SELECT id, token_id
+          SELECT id, token_id, name
           FROM ens_names
-          WHERE metadata = '{}'::jsonb
+          WHERE (metadata = '{}'::jsonb
+                 OR metadata = '{"resolverAddress": "0x0000000000000000000000000000000000000000"}'::jsonb
+                 OR (jsonb_object_keys(metadata) IS NULL))
             AND token_id IS NOT NULL
+            AND name IS NOT NULL
           ORDER BY updated_at ASC
           LIMIT 5000
         `);
 
-        logger.info({ count: result.rows.length }, 'Scheduling metadata backfill jobs for names with empty metadata');
+        logger.info({ count: result.rows.length }, 'Scheduling metadata backfill jobs for names with empty/incomplete metadata');
 
         // Publish individual sync jobs
         const jobs = result.rows.map((row) => ({
@@ -163,6 +167,7 @@ export async function registerMetadataBackfillScheduler(boss: PgBoss): Promise<v
           data: {
             ensNameId: row.id,
             nameHash: row.token_id,
+            name: row.name,
             priority: 'normal' as const,
           },
         }));
