@@ -11,7 +11,6 @@ import { registerHighestOfferWorker } from './workers/highest-offer';
 import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-analytics';
 import { registerValidationWorkers, registerValidationSchedulers } from './workers/validation';
 import { registerReconcileOpenseaWorker } from './workers/reconcile-opensea';
-import { registerWrapperSyncWorker, registerWrapperSyncScheduler } from './workers/validate-wrapper-sync';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -48,10 +47,6 @@ async function start() {
 
     // Register OpenSea reconciliation worker
     await registerReconcileOpenseaWorker(boss);
-
-    // Register wrapper sync validation worker and scheduler
-    await registerWrapperSyncWorker(boss);
-    await registerWrapperSyncScheduler(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

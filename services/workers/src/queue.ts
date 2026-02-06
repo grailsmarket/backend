@@ -100,6 +100,4 @@ export const QUEUE_NAMES = {
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
   RECONCILE_OPENSEA: 'reconcile-opensea',
-  VALIDATE_WRAPPER_SYNC: 'validate-wrapper-sync',
-  PERIODIC_WRAPPER_SYNC_VALIDATION: 'periodic-wrapper-sync-validation',
 } as const;
