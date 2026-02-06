@@ -468,6 +468,179 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   };
 
   /**
+   * GET /analytics/registrations
+   * Get registration statistics for a time period
+   */
+  fastify.get('/registrations', async (request, reply) => {
+    const query = TimeRangeSchema.parse(request.query);
+
+    const periodMap: Record<string, string> = {
+      '24h': '24 hours',
+      '7d': '7 days',
+      '30d': '30 days',
+      '90d': '90 days',
+      'all': '100 years',
+    };
+    const interval = periodMap[query.period];
+
+    try {
+      const [statsResult, byLengthResult] = await Promise.all([
+        // Overall registration statistics
+        pool.query(
+          `SELECT
+            COUNT(*) as registration_count,
+            SUM(base_cost_wei::numeric) as total_base_cost_wei,
+            SUM(premium_wei::numeric) as total_premium_wei,
+            SUM(total_cost_wei::numeric) as total_cost_wei,
+            AVG(base_cost_wei::numeric) as avg_base_cost_wei,
+            AVG(premium_wei::numeric) as avg_premium_wei,
+            AVG(total_cost_wei::numeric) as avg_cost_wei,
+            COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_registrations,
+            COUNT(DISTINCT registrant_address) as unique_registrants
+          FROM registrations
+          WHERE registration_date > NOW() - INTERVAL '${interval}'`
+        ),
+
+        // Breakdown by name length
+        pool.query(
+          `SELECT
+            name_length,
+            COUNT(*) as count,
+            SUM(total_cost_wei::numeric) as total_cost_wei,
+            AVG(total_cost_wei::numeric) as avg_cost_wei,
+            AVG(base_cost_wei::numeric) as avg_base_cost_wei,
+            AVG(premium_wei::numeric) as avg_premium_wei
+          FROM registrations
+          WHERE registration_date > NOW() - INTERVAL '${interval}'
+          GROUP BY name_length
+          ORDER BY name_length ASC`
+        ),
+      ]);
+
+      const stats = statsResult.rows[0];
+      const byLength = byLengthResult.rows;
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          period: query.period,
+          summary: {
+            registration_count: parseInt(stats.registration_count || '0'),
+            total_base_cost_wei: stats.total_base_cost_wei || '0',
+            total_premium_wei: stats.total_premium_wei || '0',
+            total_cost_wei: stats.total_cost_wei || '0',
+            avg_base_cost_wei: stats.avg_base_cost_wei || '0',
+            avg_premium_wei: stats.avg_premium_wei || '0',
+            avg_cost_wei: stats.avg_cost_wei || '0',
+            premium_registrations: parseInt(stats.premium_registrations || '0'),
+            unique_registrants: parseInt(stats.unique_registrants || '0'),
+          },
+          by_length: byLength.map(row => ({
+            name_length: row.name_length,
+            count: parseInt(row.count),
+            total_cost_wei: row.total_cost_wei || '0',
+            avg_cost_wei: row.avg_cost_wei || '0',
+            avg_base_cost_wei: row.avg_base_cost_wei || '0',
+            avg_premium_wei: row.avg_premium_wei || '0',
+          })),
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch registration analytics',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /analytics/registrations/by-length
+   * Get detailed registration cost breakdown by name length
+   */
+  fastify.get('/registrations/by-length', async (request, reply) => {
+    const query = TimeRangeSchema.parse(request.query);
+
+    const periodMap: Record<string, string> = {
+      '24h': '24 hours',
+      '7d': '7 days',
+      '30d': '30 days',
+      '90d': '90 days',
+      'all': '100 years',
+    };
+    const interval = periodMap[query.period];
+
+    try {
+      const result = await pool.query(
+        `SELECT
+          name_length,
+          COUNT(*) as count,
+          SUM(total_cost_wei::numeric) as total_cost_wei,
+          AVG(total_cost_wei::numeric) as avg_cost_wei,
+          AVG(base_cost_wei::numeric) as avg_base_cost_wei,
+          AVG(premium_wei::numeric) as avg_premium_wei,
+          MIN(total_cost_wei::numeric) as min_cost_wei,
+          MAX(total_cost_wei::numeric) as max_cost_wei,
+          COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_count,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_cost_wei::numeric) as median_cost_wei
+        FROM registrations
+        WHERE registration_date > NOW() - INTERVAL '${interval}'
+        GROUP BY name_length
+        ORDER BY name_length ASC`
+      );
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          period: query.period,
+          breakdown: result.rows.map(row => ({
+            name_length: row.name_length,
+            count: parseInt(row.count),
+            total_cost_wei: row.total_cost_wei || '0',
+            avg_cost_wei: row.avg_cost_wei || '0',
+            avg_base_cost_wei: row.avg_base_cost_wei || '0',
+            avg_premium_wei: row.avg_premium_wei || '0',
+            min_cost_wei: row.min_cost_wei || '0',
+            max_cost_wei: row.max_cost_wei || '0',
+            median_cost_wei: row.median_cost_wei || '0',
+            premium_count: parseInt(row.premium_count || '0'),
+          })),
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch registration breakdown',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
    * GET /analytics/sales
    * Get sales records with filtering, sorting, and pagination
    */
