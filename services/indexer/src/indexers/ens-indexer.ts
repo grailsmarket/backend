@@ -20,6 +20,11 @@ const ENS_ABI = parseAbi([
   'event NameMigrated(uint256 indexed id, address indexed owner, uint256 expires)',
 ]);
 
+// ENS ETH Registrar Controller ABI - has cost data in NameRegistered event
+const ENS_CONTROLLER_ABI = parseAbi([
+  'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
+]);
+
 // Name Wrapper ABI (ERC-1155 for wrapped names)
 const NAME_WRAPPER_ABI = parseAbi([
   'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
@@ -30,6 +35,10 @@ const ENS_EVENTS = {
   Transfer: ENS_ABI[0],
   NameRegistered: ENS_ABI[1],
   NameRenewed: ENS_ABI[2],
+} as const;
+
+const ENS_CONTROLLER_EVENTS = {
+  NameRegistered: ENS_CONTROLLER_ABI[0],
 } as const;
 
 const NAME_WRAPPER_EVENTS = {
@@ -123,6 +132,13 @@ export class ENSIndexer {
       toBlock,
     });
 
+    // Fetch logs from ENS Controller for registration cost data
+    const controllerLogs = await this.client.getLogs({
+      address: config.blockchain.ensControllerAddress as `0x${string}`,
+      fromBlock,
+      toBlock,
+    });
+
     // Process Base Registrar logs
     for (const log of registrarLogs) {
       await this.queue.add(async () => {
@@ -134,6 +150,13 @@ export class ENSIndexer {
     for (const log of nameWrapperLogs) {
       await this.queue.add(async () => {
         await this.processNameWrapperLog(log);
+      });
+    }
+
+    // Process Controller logs (registration costs)
+    for (const log of controllerLogs) {
+      await this.queue.add(async () => {
+        await this.processControllerLog(log);
       });
     }
 
@@ -387,6 +410,148 @@ export class ENSIndexer {
         { from, to, id: tokenId },
         log
       );
+    }
+  }
+
+  private async processControllerLog(log: Log) {
+    try {
+      let decodedLog: any;
+
+      // Try to decode as Controller NameRegistered event
+      try {
+        decodedLog = decodeEventLog({
+          abi: [ENS_CONTROLLER_EVENTS.NameRegistered],
+          data: log.data,
+          topics: log.topics as any,
+        });
+      } catch {
+        // Not a NameRegistered event from the Controller, skip
+        return;
+      }
+
+      if (!decodedLog) {
+        return;
+      }
+
+      logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber}`);
+      await this.handleControllerNameRegistered(decodedLog.args, log);
+    } catch (error: any) {
+      logger.error(`Error processing Controller log at block ${log.blockNumber}:`, {
+        error: error.message,
+        code: error.code,
+        transactionHash: log.transactionHash,
+      });
+    }
+  }
+
+  private async handleControllerNameRegistered(args: any, log: Log) {
+    const { name, label, owner, baseCost, premium, expires } = args;
+
+    // Convert BigInt values to strings for storage
+    const baseCostWei = typeof baseCost === 'bigint' ? baseCost.toString() : String(baseCost);
+    const premiumWei = typeof premium === 'bigint' ? premium.toString() : String(premium);
+    const totalCostWei = (BigInt(baseCostWei) + BigInt(premiumWei)).toString();
+
+    // Calculate name length (excluding .eth suffix)
+    const nameLength = name.length;
+
+    // Get the actual registrant (transaction sender) - they may differ from owner
+    let registrantAddress = owner.toLowerCase();
+    if (log.transactionHash) {
+      try {
+        const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+        if (tx && tx.from) {
+          registrantAddress = tx.from.toLowerCase();
+        }
+      } catch (txError: any) {
+        logger.warn(`Could not fetch transaction for Controller event, using owner as registrant: ${txError.message}`);
+      }
+    }
+
+    const fullName = `${name}.eth`;
+    const expiryDate = new Date(Number(expires) * 1000);
+
+    // Get block timestamp for registration date
+    let registrationDate: Date;
+    try {
+      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      registrationDate = new Date(Number(block.timestamp) * 1000);
+    } catch (blockError: any) {
+      logger.warn(`Could not fetch block for registration date, using current time: ${blockError.message}`);
+      registrationDate = new Date();
+    }
+
+    try {
+      // Find the ens_name_id for this name
+      const ensNameResult = await this.pool.query(
+        'SELECT id FROM ens_names WHERE name = $1',
+        [fullName]
+      );
+
+      if (ensNameResult.rows.length === 0) {
+        // Name not yet in database - this can happen if Controller event is processed
+        // before Base Registrar event. Log and skip - we'll catch it on next sync.
+        logger.debug(`Controller NameRegistered: name ${fullName} not yet in ens_names, will retry later`);
+        return;
+      }
+
+      const ensNameId = ensNameResult.rows[0].id;
+
+      // Insert registration record with cost data
+      await this.pool.query(
+        `INSERT INTO registrations (
+          ens_name_id, registrant_address, owner_address,
+          base_cost_wei, premium_wei, total_cost_wei,
+          name_length, transaction_hash, block_number,
+          registration_date, expiry_date, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
+          base_cost_wei = EXCLUDED.base_cost_wei,
+          premium_wei = EXCLUDED.premium_wei,
+          total_cost_wei = EXCLUDED.total_cost_wei`,
+        [
+          ensNameId,
+          registrantAddress,
+          owner.toLowerCase(),
+          baseCostWei,
+          premiumWei,
+          totalCostWei,
+          nameLength,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          registrationDate,
+          expiryDate,
+          JSON.stringify({ label: label })
+        ]
+      );
+
+      logger.info(`Recorded registration cost for ${fullName}: base=${baseCostWei}, premium=${premiumWei}, total=${totalCostWei}`);
+
+      // Update the mint activity record with cost metadata if it exists
+      await this.pool.query(
+        `UPDATE activity_history
+         SET metadata = metadata || $1::jsonb
+         WHERE ens_name_id = $2
+           AND event_type = 'mint'
+           AND transaction_hash = $3`,
+        [
+          JSON.stringify({
+            base_cost_wei: baseCostWei,
+            premium_wei: premiumWei,
+            total_cost_wei: totalCostWei,
+          }),
+          ensNameId,
+          log.transactionHash
+        ]
+      );
+
+    } catch (error: any) {
+      logger.error('Failed to record registration cost:', {
+        error: error.message,
+        name: fullName,
+        transactionHash: log.transactionHash
+      });
+      throw error;
     }
   }
 
