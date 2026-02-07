@@ -5,7 +5,7 @@
  * One-time script to fix ENS names that have incomplete metadata
  * (only resolverAddress: zero address). This will:
  * 1. Find all names with broken metadata state
- * 2. Fetch fresh metadata from The Graph for each
+ * 2. Fetch fresh metadata from The Graph in batches
  * 3. Update the database directly
  *
  * Usage:
@@ -13,13 +13,13 @@
  *
  * Options:
  *   --dry-run              Preview changes without updating database
- *   --batch-size=50        Number of names to fetch per database query (default: 50)
- *   --rate-limit=100       Delay between Graph requests in ms (default: 100)
+ *   --batch-size=100       Number of names to process per batch (default: 100)
+ *   --rate-limit=500       Delay between Graph batch requests in ms (default: 500)
  *   --help                 Show this help message
  *
  * Examples:
  *   npx tsx src/scripts/backfill-metadata.ts --dry-run
- *   npx tsx src/scripts/backfill-metadata.ts --batch-size=100 --rate-limit=50
+ *   npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
  */
 
 import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
@@ -48,6 +48,12 @@ interface Options {
   rateLimit: number;
 }
 
+interface NameRow {
+  id: number;
+  name: string;
+  token_id: string;
+}
+
 /**
  * Parse command line arguments
  */
@@ -63,21 +69,21 @@ Usage:
 
 Options:
   --dry-run              Preview changes without updating database
-  --batch-size=50        Number of names to fetch per database query (default: 50)
-  --rate-limit=100       Delay between Graph requests in ms (default: 100)
+  --batch-size=100       Number of names to process per batch (default: 100)
+  --rate-limit=500       Delay between Graph batch requests in ms (default: 500)
   --help                 Show this help message
 
 Examples:
   npx tsx src/scripts/backfill-metadata.ts --dry-run
-  npx tsx src/scripts/backfill-metadata.ts --batch-size=100 --rate-limit=50
+  npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
 `);
     process.exit(0);
   }
 
   const options: Options = {
     dryRun: args.includes('--dry-run'),
-    batchSize: 50,
-    rateLimit: 100,
+    batchSize: 100,
+    rateLimit: 500,
   };
 
   // Parse --batch-size=N
@@ -102,12 +108,20 @@ Examples:
 }
 
 /**
- * Fetch metadata from The Graph for a single ENS name
+ * Fetch metadata from The Graph for multiple ENS names in a single request
  */
-async function fetchMetadataFromGraph(name: string): Promise<GraphMetadata> {
+async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string, GraphMetadata>> {
+  const results = new Map<string, GraphMetadata>();
+
+  if (names.length === 0) {
+    return results;
+  }
+
+  // The Graph supports querying multiple domains with name_in
   const query = `
-    query GetDomain($name: String!) {
-      domains(where: { name: $name }) {
+    query GetDomains($names: [String!]!) {
+      domains(where: { name_in: $names }) {
+        name
         resolver {
           address
           texts
@@ -133,7 +147,7 @@ async function fetchMetadataFromGraph(name: string): Promise<GraphMetadata> {
     headers,
     body: JSON.stringify({
       query,
-      variables: { name: name.toLowerCase() },
+      variables: { names: names.map(n => n.toLowerCase()) },
     }),
   });
 
@@ -147,26 +161,28 @@ async function fetchMetadataFromGraph(name: string): Promise<GraphMetadata> {
     throw new Error(`Graph query error: ${JSON.stringify(json.errors)}`);
   }
 
-  const domain = json.data?.domains?.[0];
+  const domains = json.data?.domains || [];
 
-  if (!domain?.resolver) {
-    return { resolverAddress: ZERO_ADDRESS };
-  }
+  // Build a map of name -> metadata
+  for (const domain of domains) {
+    if (!domain.name) continue;
 
-  // Build metadata object from text records
-  const metadata: GraphMetadata = {
-    resolverAddress: domain.resolver.address || ZERO_ADDRESS,
-  };
+    const metadata: GraphMetadata = {
+      resolverAddress: domain.resolver?.address || ZERO_ADDRESS,
+    };
 
-  if (domain.resolver.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
-    for (const record of domain.resolver.textChangeds) {
-      if (record.key && record.value) {
-        metadata[record.key] = record.value;
+    if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
+      for (const record of domain.resolver.textChangeds) {
+        if (record.key && record.value) {
+          metadata[record.key] = record.value;
+        }
       }
     }
+
+    results.set(domain.name.toLowerCase(), metadata);
   }
 
-  return metadata;
+  return results;
 }
 
 /**
@@ -190,7 +206,7 @@ async function main() {
 
   console.log('\nStarting metadata backfill...');
   console.log(`  Batch size: ${options.batchSize}`);
-  console.log(`  Rate limit: ${options.rateLimit}ms`);
+  console.log(`  Rate limit: ${options.rateLimit}ms between batches`);
 
   if (options.dryRun) {
     console.log('\n⚠️  DRY RUN MODE - No changes will be made\n');
@@ -235,51 +251,68 @@ async function main() {
         break;
       }
 
-      for (const row of batchResult.rows) {
-        lastId = row.id;
-        stats.processed++;
+      const rows: NameRow[] = batchResult.rows;
+      const names = rows.map(r => r.name);
+      lastId = rows[rows.length - 1].id;
 
-        try {
-          const metadata = await fetchMetadataFromGraph(row.name);
+      try {
+        // Fetch metadata for entire batch from The Graph
+        const metadataMap = await fetchMetadataBatchFromGraph(names);
+
+        // Process each row with the fetched metadata
+        for (const row of rows) {
+          stats.processed++;
+          const metadata = metadataMap.get(row.name.toLowerCase());
 
           // Check if we got meaningful data (more than just resolverAddress)
-          const metadataKeys = Object.keys(metadata).filter(k => k !== 'resolverAddress');
+          const metadataKeys = metadata
+            ? Object.keys(metadata).filter(k => k !== 'resolverAddress')
+            : [];
           const hasTextRecords = metadataKeys.length > 0;
-          const hasValidResolver = metadata.resolverAddress !== ZERO_ADDRESS;
 
-          if (hasTextRecords || hasValidResolver) {
+          if (hasTextRecords ) {
+            // Has real metadata - update with the fetched data
             if (!options.dryRun) {
               await pool.query(`
                 UPDATE ens_names
                 SET metadata = $1,
-                    resolver_address = $2,
                     metadata_updated_at = NOW(),
                     updated_at = NOW()
-                WHERE id = $3
-              `, [JSON.stringify(metadata), metadata.resolverAddress || null, row.id]);
+                WHERE id = $2
+              `, [JSON.stringify(metadata), row.id]);
             }
 
             stats.updated++;
             console.log(`  ✓ ${row.name} (${metadataKeys.length} text records)`);
           } else {
+            // No data found - clean up by setting metadata to empty object
+            if (!options.dryRun) {
+              await pool.query(`
+                UPDATE ens_names
+                SET metadata = '{}'::jsonb,
+                    metadata_updated_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = $1
+              `, [row.id]);
+            }
+
             stats.noDataFound++;
-            // Only log at debug level for names with no data
           }
-        } catch (error: any) {
-          stats.errors++;
-          console.log(`  ✗ ${row.name} - ${error.message}`);
         }
+      } catch (error: any) {
+        // If batch fails, count all as errors
+        stats.errors += rows.length;
+        stats.processed += rows.length;
+        console.log(`  ✗ Batch failed: ${error.message}`);
+      }
 
-        // Rate limiting
-        if (options.rateLimit > 0) {
-          await sleep(options.rateLimit);
-        }
+      // Progress update
+      const percent = Math.round((stats.processed / stats.totalNames) * 100);
+      console.log(`\nProgress: ${stats.processed}/${stats.totalNames} (${percent}%) - Updated: ${stats.updated}, No data: ${stats.noDataFound}, Errors: ${stats.errors}\n`);
 
-        // Progress update every 100 names
-        if (stats.processed % 100 === 0) {
-          const percent = Math.round((stats.processed / stats.totalNames) * 100);
-          console.log(`\nProgress: ${stats.processed}/${stats.totalNames} (${percent}%) - Updated: ${stats.updated}, No data: ${stats.noDataFound}, Errors: ${stats.errors}\n`);
-        }
+      // Rate limiting between batches
+      if (options.rateLimit > 0 && stats.processed < stats.totalNames) {
+        await sleep(options.rateLimit);
       }
     }
 
