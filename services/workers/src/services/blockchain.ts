@@ -33,90 +33,85 @@ const ENS_RESOLVER_ABI = [
 ];
 
 export interface ENSMetadata {
-  avatar?: string;
-  description?: string;
-  url?: string;
-  twitter?: string;
-  github?: string;
-  email?: string;
-  discord?: string;
-  telegram?: string;
+  [key: string]: string | undefined;
   resolverAddress?: string;
 }
 
 /**
- * Fetch ENS metadata from blockchain
+ * Fetch ENS metadata from The Graph
+ * Queries the ENS subgraph for text records, which is more reliable than
+ * direct blockchain queries since The Graph maintains historical data.
  */
-export async function fetchENSMetadata(nameHash: string): Promise<ENSMetadata> {
-  const provider = getBlockchainProvider();
-
+export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
   try {
-    // Convert decimal token_id to bytes32 hex format if needed
-    const bytes32Hash = nameHash.startsWith('0x')
-      ? nameHash
-      : ethers.toBeHex(BigInt(nameHash), 32);
+    const query = `
+      query GetDomain($name: String!) {
+        domains(where: { name: $name }) {
+          resolver {
+            address
+            texts
+            textChangeds {
+              key
+              value
+            }
+          }
+        }
+      }
+    `;
 
-    // Get resolver address from ENS registry
-    const ENS_REGISTRY_ADDRESS = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
-    const ensRegistry = new ethers.Contract(
-      ENS_REGISTRY_ADDRESS,
-      ENS_REGISTRY_ABI,
-      provider
-    );
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
 
-    const resolverAddress = await ensRegistry.resolver(bytes32Hash);
+    if (config.theGraph?.apiKey) {
+      headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+    }
 
-    // If no resolver set, return empty metadata
-    if (resolverAddress === ethers.ZeroAddress) {
-      logger.debug({ nameHash }, 'No resolver set for ENS name');
+    const response = await fetch(config.theGraph.ensSubgraphUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query,
+        variables: { name: name.toLowerCase() },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Graph request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const json: any = await response.json();
+
+    if (json.errors) {
+      throw new Error(`Graph query error: ${JSON.stringify(json.errors)}`);
+    }
+
+    const domain = json.data?.domains?.[0];
+
+    if (!domain?.resolver) {
+      logger.debug({ name }, 'No resolver found in Graph for ENS name');
       return { resolverAddress: ethers.ZeroAddress };
     }
 
-    // Query text records from resolver
-    const resolver = new ethers.Contract(
-      resolverAddress,
-      ENS_RESOLVER_ABI,
-      provider
-    );
-
-    // Fetch common text records in parallel
-    const [avatar, description, url, twitter, github, email, discord, telegram] = await Promise.allSettled([
-      resolver.text(bytes32Hash, 'avatar').catch(() => ''),
-      resolver.text(bytes32Hash, 'description').catch(() => ''),
-      resolver.text(bytes32Hash, 'url').catch(() => ''),
-      resolver.text(bytes32Hash, 'com.twitter').catch(() => ''),
-      resolver.text(bytes32Hash, 'com.github').catch(() => ''),
-      resolver.text(bytes32Hash, 'email').catch(() => ''),
-      resolver.text(bytes32Hash, 'com.discord').catch(() => ''),
-      resolver.text(bytes32Hash, 'org.telegram').catch(() => ''),
-    ]);
-
+    // Build metadata object from text records
+    // textChangeds contains all historical changes, we want the latest value for each key
     const metadata: ENSMetadata = {
-      resolverAddress,
+      resolverAddress: domain.resolver.address || ethers.ZeroAddress,
     };
 
-    // Helper to extract fulfilled values
-    const getValue = (result: PromiseSettledResult<string>): string | undefined => {
-      if (result.status === 'fulfilled' && result.value) {
-        return result.value;
+    if (domain.resolver.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
+      for (const record of domain.resolver.textChangeds) {
+        if (record.key && record.value) {
+          metadata[record.key] = record.value;
+        }
       }
-      return undefined;
-    };
+    }
 
-    metadata.avatar = getValue(avatar);
-    metadata.description = getValue(description);
-    metadata.url = getValue(url);
-    metadata.twitter = getValue(twitter);
-    metadata.github = getValue(github);
-    metadata.email = getValue(email);
-    metadata.discord = getValue(discord);
-    metadata.telegram = getValue(telegram);
-
-    logger.debug({ nameHash, metadata }, 'Fetched ENS metadata');
+    logger.debug({ name, keys: Object.keys(metadata) }, 'Fetched ENS metadata from Graph');
 
     return metadata;
   } catch (error) {
-    logger.error({ error, nameHash }, 'Error fetching ENS metadata');
+    logger.error({ error, name }, 'Error fetching ENS metadata from Graph');
     throw error;
   }
 }

@@ -321,6 +321,85 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GET /charts/registrations
+   * Get registration volume and cost over time
+   */
+  fastify.get('/registrations', async (request, reply) => {
+    const query = ChartQuerySchema.parse(request.query);
+    const timeConfig = getTimeConfig(query.period);
+
+    try {
+      const result = await pool.query(
+        `WITH time_series AS (
+          SELECT generate_series(
+            DATE_TRUNC('${timeConfig.truncUnit}', NOW() - INTERVAL '${timeConfig.interval}'),
+            DATE_TRUNC('${timeConfig.truncUnit}', NOW()),
+            '${timeConfig.seriesInterval}'::interval
+          ) AS date
+        ),
+        registration_data AS (
+          SELECT
+            DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date) as date,
+            COUNT(*) as count,
+            SUM(r.total_cost_wei::numeric) as total_cost_wei,
+            AVG(r.total_cost_wei::numeric) as avg_cost_wei,
+            SUM(r.base_cost_wei::numeric) as total_base_cost_wei,
+            SUM(r.premium_wei::numeric) as total_premium_wei,
+            COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count
+          FROM registrations r
+          WHERE r.registration_date > NOW() - INTERVAL '${timeConfig.interval}'
+          GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date)
+        )
+        SELECT
+          ts.date,
+          COALESCE(rd.count, 0)::int as count,
+          COALESCE(rd.total_cost_wei, 0)::text as total_cost_wei,
+          COALESCE(rd.avg_cost_wei, 0)::text as avg_cost_wei,
+          COALESCE(rd.total_base_cost_wei, 0)::text as total_base_cost_wei,
+          COALESCE(rd.total_premium_wei, 0)::text as total_premium_wei,
+          COALESCE(rd.premium_count, 0)::int as premium_count
+        FROM time_series ts
+        LEFT JOIN registration_data rd ON ts.date = rd.date
+        ORDER BY ts.date ASC`
+      );
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          period: query.period,
+          points: result.rows.map(row => ({
+            date: row.date.toISOString(),
+            count: row.count,
+            total_cost_wei: row.total_cost_wei,
+            avg_cost_wei: row.avg_cost_wei,
+            total_base_cost_wei: row.total_base_cost_wei,
+            total_premium_wei: row.total_premium_wei,
+            premium_count: row.premium_count,
+          })),
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch registrations chart data',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
    * GET /charts/offers
    * Get count of offers created per time bucket with source breakdown
    */

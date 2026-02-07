@@ -301,14 +301,15 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
         // 2. Trigger immediate ENS metadata sync
         const ensNameResult = await pool.query(
-          'SELECT token_id FROM ens_names WHERE id = $1',
+          'SELECT token_id, name FROM ens_names WHERE id = $1',
           [body.ensNameId]
         );
 
-        if (ensNameResult.rows.length > 0) {
+        if (ensNameResult.rows.length > 0 && ensNameResult.rows[0].name) {
           await boss.send(QUEUE_NAMES.SYNC_ENS_DATA, {
             ensNameId: body.ensNameId,
             nameHash: ensNameResult.rows[0].token_id,
+            name: ensNameResult.rows[0].name,
             priority: 'high',
           });
           fastify.log.info({ ensNameId: body.ensNameId }, 'Scheduled ENS sync job');
