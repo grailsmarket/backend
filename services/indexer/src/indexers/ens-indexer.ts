@@ -132,9 +132,9 @@ export class ENSIndexer {
       toBlock,
     });
 
-    // Fetch logs from ENS Controller for registration cost data
+    // Fetch logs from ENS Controllers for registration cost data (supports multiple controllers)
     const controllerLogs = await this.client.getLogs({
-      address: config.blockchain.ensControllerAddress as `0x${string}`,
+      address: config.blockchain.ensControllerAddresses as `0x${string}`[],
       fromBlock,
       toBlock,
     });

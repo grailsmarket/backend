@@ -306,7 +306,7 @@ async function validateEnsData(options: {
         AND name NOT LIKE '%.%.eth'
         AND name NOT LIKE '[%].eth'
         AND name LIKE '%.eth'
-    AND registrant = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'
+    AND owner_address = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'
       ORDER BY id
       LIMIT $1 OFFSET $2
     `;
