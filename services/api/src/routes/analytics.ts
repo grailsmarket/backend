@@ -44,6 +44,15 @@ const OffersQuerySchema = z.object({
   'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
+const RegistrationsQuerySchema = z.object({
+  period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
+  sortBy: z.enum(['cost', 'date', 'length']).default('date'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  page: z.string().default('1'),
+  limit: z.string().default('20'),
+  'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
+});
+
 /**
  * Parse clubs filter, handling both array and comma-separated string formats
  * Examples:
@@ -469,56 +478,178 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /analytics/registrations
-   * Get registration statistics for a time period
+   * Get registration statistics for a time period with filtering, sorting, and pagination
    */
   fastify.get('/registrations', async (request, reply) => {
-    const query = TimeRangeSchema.parse(request.query);
+    const query = RegistrationsQuerySchema.parse(request.query);
+    const interval = periodToInterval(query.period);
+    const page = parseInt(query.page);
+    const limit = Math.min(parseInt(query.limit), 100);
+    const offset = (page - 1) * limit;
 
-    const periodMap: Record<string, string> = {
-      '24h': '24 hours',
-      '7d': '7 days',
-      '30d': '30 days',
-      '90d': '90 days',
-      'all': '100 years',
+    // Sort column mapping
+    const sortColumnMap: Record<string, string> = {
+      cost: 'r.total_cost_wei::numeric',
+      date: 'r.registration_date',
+      length: 'r.name_length',
     };
-    const interval = periodMap[query.period];
+    const orderByColumn = sortColumnMap[query.sortBy];
+    const orderDirection = query.sortOrder.toUpperCase();
+
+    // Parse clubs filter
+    const clubs = parseClubsFilter(query['clubs[]']);
+
+    // Build filter conditions for summary/by_length queries (no limit/offset params)
+    const summaryConditions: string[] = [];
+    const summaryParams: any[] = [];
+    let summaryParamNum = 1;
+
+    // Build filter conditions for data query (has limit/offset as $1 and $2)
+    const dataConditions: string[] = [];
+    const dataParams: any[] = [limit, offset];
+    let dataParamNum = 3;
+
+    // Build filter conditions for count query (no limit/offset params)
+    const countConditions: string[] = [];
+    const countParams: any[] = [];
+    let countParamNum = 1;
+
+    if (clubs.length > 0) {
+      if (clubs.includes('none')) {
+        // Names NOT in any club
+        const noClubCondition = `(en.clubs IS NULL OR array_length(en.clubs, 1) = 0)`;
+        summaryConditions.push(noClubCondition);
+        dataConditions.push(noClubCondition);
+        countConditions.push(noClubCondition);
+      } else if (clubs.includes('any')) {
+        // Names in at least one club
+        const anyClubCondition = `en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`;
+        summaryConditions.push(anyClubCondition);
+        dataConditions.push(anyClubCondition);
+        countConditions.push(anyClubCondition);
+      } else {
+        // Specific clubs - array overlap
+        summaryConditions.push(`en.clubs && $${summaryParamNum++}::text[]`);
+        summaryParams.push(clubs);
+        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataParams.push(clubs);
+        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countParams.push(clubs);
+      }
+    }
+
+    const summaryFilterClause = summaryConditions.length > 0 ? 'AND ' + summaryConditions.join(' AND ') : '';
+    const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
+    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
+
+    // Determine if we need JOIN for club filtering
+    const needsJoin = clubs.length > 0;
 
     try {
-      const [statsResult, byLengthResult] = await Promise.all([
+      const [statsResult, byLengthResult, dataResult, countResult] = await Promise.all([
         // Overall registration statistics
         pool.query(
-          `SELECT
-            COUNT(*) as registration_count,
-            SUM(base_cost_wei::numeric) as total_base_cost_wei,
-            SUM(premium_wei::numeric) as total_premium_wei,
-            SUM(total_cost_wei::numeric) as total_cost_wei,
-            AVG(base_cost_wei::numeric) as avg_base_cost_wei,
-            AVG(premium_wei::numeric) as avg_premium_wei,
-            AVG(total_cost_wei::numeric) as avg_cost_wei,
-            COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_registrations,
-            COUNT(DISTINCT registrant_address) as unique_registrants
-          FROM registrations
-          WHERE registration_date > NOW() - INTERVAL '${interval}'`
+          needsJoin
+            ? `SELECT
+                COUNT(*) as registration_count,
+                SUM(r.base_cost_wei::numeric) as total_base_cost_wei,
+                SUM(r.premium_wei::numeric) as total_premium_wei,
+                SUM(r.total_cost_wei::numeric) as total_cost_wei,
+                AVG(r.base_cost_wei::numeric) as avg_base_cost_wei,
+                AVG(r.premium_wei::numeric) as avg_premium_wei,
+                AVG(r.total_cost_wei::numeric) as avg_cost_wei,
+                COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_registrations,
+                COUNT(DISTINCT r.registrant_address) as unique_registrants
+              FROM registrations r
+              JOIN ens_names en ON r.ens_name_id = en.id
+              WHERE r.registration_date > NOW() - INTERVAL '${interval}'
+              ${summaryFilterClause}`
+            : `SELECT
+                COUNT(*) as registration_count,
+                SUM(base_cost_wei::numeric) as total_base_cost_wei,
+                SUM(premium_wei::numeric) as total_premium_wei,
+                SUM(total_cost_wei::numeric) as total_cost_wei,
+                AVG(base_cost_wei::numeric) as avg_base_cost_wei,
+                AVG(premium_wei::numeric) as avg_premium_wei,
+                AVG(total_cost_wei::numeric) as avg_cost_wei,
+                COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_registrations,
+                COUNT(DISTINCT registrant_address) as unique_registrants
+              FROM registrations
+              WHERE registration_date > NOW() - INTERVAL '${interval}'`,
+          summaryParams
         ),
 
         // Breakdown by name length
         pool.query(
+          needsJoin
+            ? `SELECT
+                r.name_length,
+                COUNT(*) as count,
+                SUM(r.total_cost_wei::numeric) as total_cost_wei,
+                AVG(r.total_cost_wei::numeric) as avg_cost_wei,
+                AVG(r.base_cost_wei::numeric) as avg_base_cost_wei,
+                AVG(r.premium_wei::numeric) as avg_premium_wei
+              FROM registrations r
+              JOIN ens_names en ON r.ens_name_id = en.id
+              WHERE r.registration_date > NOW() - INTERVAL '${interval}'
+              ${summaryFilterClause}
+              GROUP BY r.name_length
+              ORDER BY r.name_length ASC`
+            : `SELECT
+                name_length,
+                COUNT(*) as count,
+                SUM(total_cost_wei::numeric) as total_cost_wei,
+                AVG(total_cost_wei::numeric) as avg_cost_wei,
+                AVG(base_cost_wei::numeric) as avg_base_cost_wei,
+                AVG(premium_wei::numeric) as avg_premium_wei
+              FROM registrations
+              WHERE registration_date > NOW() - INTERVAL '${interval}'
+              GROUP BY name_length
+              ORDER BY name_length ASC`,
+          summaryParams
+        ),
+
+        // Paginated individual records
+        pool.query(
           `SELECT
-            name_length,
-            COUNT(*) as count,
-            SUM(total_cost_wei::numeric) as total_cost_wei,
-            AVG(total_cost_wei::numeric) as avg_cost_wei,
-            AVG(base_cost_wei::numeric) as avg_base_cost_wei,
-            AVG(premium_wei::numeric) as avg_premium_wei
-          FROM registrations
-          WHERE registration_date > NOW() - INTERVAL '${interval}'
-          GROUP BY name_length
-          ORDER BY name_length ASC`
+            r.id,
+            en.name,
+            r.registrant_address,
+            en.owner_address,
+            r.base_cost_wei,
+            r.premium_wei,
+            r.total_cost_wei,
+            r.name_length,
+            r.registration_date,
+            en.clubs
+          FROM registrations r
+          JOIN ens_names en ON r.ens_name_id = en.id
+          WHERE r.registration_date > NOW() - INTERVAL '${interval}'
+          ${dataFilterClause}
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT $1 OFFSET $2`,
+          dataParams
+        ),
+
+        // Total count for pagination
+        pool.query(
+          needsJoin
+            ? `SELECT COUNT(*) as count
+              FROM registrations r
+              JOIN ens_names en ON r.ens_name_id = en.id
+              WHERE r.registration_date > NOW() - INTERVAL '${interval}'
+              ${countFilterClause}`
+            : `SELECT COUNT(*) as count
+              FROM registrations
+              WHERE registration_date > NOW() - INTERVAL '${interval}'`,
+          countParams
         ),
       ]);
 
       const stats = statsResult.rows[0];
       const byLength = byLengthResult.rows;
+      const total = parseInt(countResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
 
       const response: APIResponse = {
         success: true,
@@ -543,6 +674,26 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             avg_base_cost_wei: row.avg_base_cost_wei || '0',
             avg_premium_wei: row.avg_premium_wei || '0',
           })),
+          results: dataResult.rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            registrant_address: row.registrant_address,
+            owner_address: row.owner_address,
+            base_cost_wei: row.base_cost_wei,
+            premium_wei: row.premium_wei,
+            total_cost_wei: row.total_cost_wei,
+            name_length: row.name_length,
+            registration_date: row.registration_date,
+            clubs: row.clubs || [],
+          })),
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),

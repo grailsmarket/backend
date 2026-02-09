@@ -327,6 +327,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/registrations', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
+    const clubs = parseClubFilter(query.club);
+    const clubCondition = buildClubCondition(clubs, 1);
 
     try {
       const result = await pool.query(
@@ -347,7 +349,9 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             SUM(r.premium_wei::numeric) as total_premium_wei,
             COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count
           FROM registrations r
+          JOIN ens_names en ON r.ens_name_id = en.id
           WHERE r.registration_date > NOW() - INTERVAL '${timeConfig.interval}'
+          ${clubCondition.condition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date)
         )
         SELECT
@@ -360,13 +364,16 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           COALESCE(rd.premium_count, 0)::int as premium_count
         FROM time_series ts
         LEFT JOIN registration_data rd ON ts.date = rd.date
-        ORDER BY ts.date ASC`
+        ORDER BY ts.date ASC`,
+        clubCondition.params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
+          club: query.club || null,
+          clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
             count: row.count,
