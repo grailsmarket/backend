@@ -20,10 +20,17 @@ const ENS_ABI = parseAbi([
   'event NameMigrated(uint256 indexed id, address indexed owner, uint256 expires)',
 ]);
 
-// ENS ETH Registrar Controller ABI - has cost data in NameRegistered event
-const ENS_CONTROLLER_ABI = parseAbi([
-  'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
-]);
+// ENS Controller ABIs - different controllers have different event signatures
+const ENS_CONTROLLER_ABIS = {
+  // Original controller (deployed May 2022)
+  original: parseAbi([
+    'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
+  ]),
+  // ETH Registrar Controller 2 (has referrer param)
+  v2: parseAbi([
+    'event NameRegistered(string label, bytes32 indexed labelhash, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires, bytes32 referrer)',
+  ]),
+};
 
 // Name Wrapper ABI (ERC-1155 for wrapped names)
 const NAME_WRAPPER_ABI = parseAbi([
@@ -38,7 +45,8 @@ const ENS_EVENTS = {
 } as const;
 
 const ENS_CONTROLLER_EVENTS = {
-  NameRegistered: ENS_CONTROLLER_ABI[0],
+  NameRegisteredOriginal: ENS_CONTROLLER_ABIS.original[0],
+  NameRegisteredV2: ENS_CONTROLLER_ABIS.v2[0],
 } as const;
 
 const NAME_WRAPPER_EVENTS = {
@@ -416,25 +424,36 @@ export class ENSIndexer {
   private async processControllerLog(log: Log) {
     try {
       let decodedLog: any;
+      let isV2 = false;
 
-      // Try to decode as Controller NameRegistered event
+      // Try to decode as Original Controller NameRegistered event
       try {
         decodedLog = decodeEventLog({
-          abi: [ENS_CONTROLLER_EVENTS.NameRegistered],
+          abi: [ENS_CONTROLLER_EVENTS.NameRegisteredOriginal],
           data: log.data,
           topics: log.topics as any,
         });
       } catch {
-        // Not a NameRegistered event from the Controller, skip
-        return;
+        // Try V2 Controller NameRegistered event (has referrer param)
+        try {
+          decodedLog = decodeEventLog({
+            abi: [ENS_CONTROLLER_EVENTS.NameRegisteredV2],
+            data: log.data,
+            topics: log.topics as any,
+          });
+          isV2 = true;
+        } catch {
+          // Not a NameRegistered event from any known Controller, skip
+          return;
+        }
       }
 
       if (!decodedLog) {
         return;
       }
 
-      logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber}`);
-      await this.handleControllerNameRegistered(decodedLog.args, log);
+      logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber} (${isV2 ? 'V2' : 'Original'})`);
+      await this.handleControllerNameRegistered(decodedLog.args, log, isV2);
     } catch (error: any) {
       logger.error(`Error processing Controller log at block ${log.blockNumber}:`, {
         error: error.message,
@@ -444,8 +463,12 @@ export class ENSIndexer {
     }
   }
 
-  private async handleControllerNameRegistered(args: any, log: Log) {
-    const { name, label, owner, baseCost, premium, expires } = args;
+  private async handleControllerNameRegistered(args: any, log: Log, isV2: boolean = false) {
+    // V2 controller uses 'label' for the name string and 'labelhash' for the hash
+    // Original controller uses 'name' for the name string and 'label' for the hash
+    const name = isV2 ? args.label : args.name;
+    const labelHash = isV2 ? args.labelhash : args.label;
+    const { owner, baseCost, premium, expires } = args;
 
     // Convert BigInt values to strings for storage
     const baseCostWei = typeof baseCost === 'bigint' ? baseCost.toString() : String(baseCost);
@@ -521,7 +544,7 @@ export class ENSIndexer {
           log.blockNumber?.toString(),
           registrationDate,
           expiryDate,
-          JSON.stringify({ label: label })
+          JSON.stringify({ label: labelHash })
         ]
       );
 
