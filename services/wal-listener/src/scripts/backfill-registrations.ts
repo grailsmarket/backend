@@ -41,15 +41,23 @@ import { getPostgresPool, closeAllConnections, config } from '../../../shared/sr
 import { createPublicClient, http, parseAbi, decodeEventLog, type Log } from 'viem';
 import { mainnet } from 'viem/chains';
 
-// ENS Controller contracts that emit NameRegistered events with cost data
-const ENS_CONTROLLER_ADDRESSES = [
-  '0x253553366Da8546fC250F225fe3d25d0C782303b', // Original controller (deployed May 2022)
-  '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
+// ENS Controller contracts - each has a different event signature
+const ENS_CONTROLLERS = [
+  {
+    address: '0x253553366Da8546fC250F225fe3d25d0C782303b' as const, // Original controller (deployed May 2022)
+    name: 'Original Controller',
+    abi: parseAbi([
+      'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
+    ]),
+  },
+  {
+    address: '0x59e16fccd424cc24e280be16e11bcd56fb0ce547' as const, // ETH Registrar Controller 2
+    name: 'ETH Registrar Controller 2',
+    abi: parseAbi([
+      'event NameRegistered(string label, bytes32 indexed labelhash, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires, bytes32 referrer)',
+    ]),
+  },
 ] as const;
-
-const ENS_CONTROLLER_ABI = parseAbi([
-  'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
-]);
 
 // Controller deployment block (May 2022)
 const DEFAULT_START_BLOCK = 14836000n;
@@ -131,9 +139,9 @@ async function backfillRegistrations(options: Options) {
     console.log(`Batch size:    ${options.batchSize} blocks per RPC call`);
     console.log(`Concurrency:   ${options.concurrency} parallel requests`);
     console.log(`Verbose:       ${options.verbose ? 'YES' : 'NO'}`);
-    console.log(`Contracts:     ${ENS_CONTROLLER_ADDRESSES.length} ENS controllers`);
-    ENS_CONTROLLER_ADDRESSES.forEach((addr, i) => {
-      console.log(`               ${i + 1}. ${addr}`);
+    console.log(`Contracts:     ${ENS_CONTROLLERS.length} ENS controllers`);
+    ENS_CONTROLLERS.forEach((ctrl, i) => {
+      console.log(`               ${i + 1}. ${ctrl.address} (${ctrl.name})`);
     });
     console.log('');
 
@@ -191,24 +199,36 @@ async function backfillRegistrations(options: Options) {
       }
 
       try {
-        // Fetch NameRegistered logs for this block range from all controller contracts
-        const logs = await client.getLogs({
-          address: ENS_CONTROLLER_ADDRESSES as unknown as `0x${string}`[],
-          event: ENS_CONTROLLER_ABI[0],
-          fromBlock: currentBlock,
-          toBlock: actualEndBlock,
-        });
+        // Fetch NameRegistered logs from each controller (each has different event signature)
+        const allLogs: { log: Log; controller: typeof ENS_CONTROLLERS[number] }[] = [];
 
-        if (options.verbose && logs.length > 0) {
-          console.log(`  Found ${logs.length} NameRegistered events`);
+        for (const controller of ENS_CONTROLLERS) {
+          const logs = await client.getLogs({
+            address: controller.address,
+            event: controller.abi[0],
+            fromBlock: currentBlock,
+            toBlock: actualEndBlock,
+          });
+
+          if (options.verbose && logs.length > 0) {
+            console.log(`  Found ${logs.length} events from ${controller.name}`);
+          }
+
+          for (const log of logs) {
+            allLogs.push({ log, controller });
+          }
         }
 
-        stats.eventsFound += logs.length;
+        if (options.verbose && allLogs.length > 0) {
+          console.log(`  Total: ${allLogs.length} NameRegistered events`);
+        }
 
-        // Process each log
-        for (const log of logs) {
+        stats.eventsFound += allLogs.length;
+
+        // Process each log with its controller context
+        for (const { log, controller } of allLogs) {
           try {
-            await processLog(log, pool, client, stats, missingNamesList, options);
+            await processLog(log, controller, pool, client, stats, missingNamesList, options);
           } catch (logError: any) {
             stats.errors++;
             if (options.verbose) {
@@ -306,27 +326,32 @@ async function backfillRegistrations(options: Options) {
 
 async function processLog(
   log: Log,
+  controller: typeof ENS_CONTROLLERS[number],
   pool: ReturnType<typeof getPostgresPool>,
   client: ReturnType<typeof createPublicClient>,
   stats: Stats,
   missingNamesList: MissingName[],
   options: Options
 ) {
-  // Decode the event
+  // Decode the event using the controller's specific ABI
   const decodedLog = decodeEventLog({
-    abi: ENS_CONTROLLER_ABI,
+    abi: controller.abi,
     data: log.data,
     topics: log.topics as any,
   });
 
-  const { name, label, owner, baseCost, premium, expires } = decodedLog.args as {
-    name: string;
-    label: `0x${string}`;
-    owner: `0x${string}`;
-    baseCost: bigint;
-    premium: bigint;
-    expires: bigint;
-  };
+  // Both controllers emit similar data, just with different param names:
+  // - Original: name, label, owner, baseCost, premium, expires
+  // - Controller 2: label (as name), labelhash, owner, baseCost, premium, expires, referrer
+  const args = decodedLog.args as Record<string, any>;
+
+  // Get the name - it's called 'name' in original controller, 'label' in controller 2
+  const name: string = args.name ?? args.label;
+  const labelHash: `0x${string}` = args.label ?? args.labelhash;
+  const owner: `0x${string}` = args.owner;
+  const baseCost: bigint = args.baseCost;
+  const premium: bigint = args.premium;
+  const expires: bigint = args.expires;
 
   // Convert costs to string (wei precision)
   const baseCostWei = baseCost.toString();
@@ -442,7 +467,7 @@ async function processLog(
         blockNumber.toString(),
         registrationDate,
         expiryDate,
-        JSON.stringify({ label: label }),
+        JSON.stringify({ label: labelHash }),
       ]
     );
 
