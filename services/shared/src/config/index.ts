@@ -26,7 +26,10 @@ const ConfigSchema = z.object({
     rpcUrl: z.string(),
     chainId: z.number().default(1),
     ensRegistrarAddress: z.string().default('0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85'),
-    ensControllerAddress: z.string().default('0x253553366Da8546fC250F225fe3d25d0C782303b'),
+    ensControllerAddresses: z.array(z.string()).default([
+      '0x253553366Da8546fC250F225fe3d25d0C782303b', // Original controller (deployed May 2022)
+      '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
+    ]),
     ensNameWrapperAddress: z.string().default('0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401'),
     seaportAddress: z.string().default('0x0000000000000068F116a894984e2DB1123eB395'),
     startBlock: z.number().optional(),
@@ -94,7 +97,7 @@ const rawConfig = {
     rpcUrl: process.env.RPC_URL || '',
     chainId: parseInt(process.env.CHAIN_ID || '1'),
     ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
-    ensControllerAddress: process.env.ENS_CONTROLLER_ADDRESS,
+    ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(','),
     ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS,
     seaportAddress: process.env.SEAPORT_ADDRESS,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
@@ -157,6 +160,17 @@ export const CURRENCY_ADDRESSES = {
   ETH: '0x0000000000000000000000000000000000000000',
   WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
 } as const;
+
+// ENS Controller addresses (for NameRegistered events with cost data)
+export const ENS_CONTROLLER_ADDRESSES = {
+  ORIGINAL: '0x253553366Da8546fC250F225fe3d25d0C782303b',      // Deployed May 2022
+  CONTROLLER_V2: '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2
+} as const;
+
+// Helper to get all ENS controller addresses as array
+export function getEnsControllerAddresses(): string[] {
+  return config.blockchain.ensControllerAddresses;
+}
 
 // Helper to check if currency is ETH or WETH
 export function isEthOrWeth(currencyAddress: string | null | undefined): boolean {

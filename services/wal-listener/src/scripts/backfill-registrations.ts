@@ -4,12 +4,14 @@
  * Backfill Historical Registrations Script
  *
  * This script backfills historical ENS registration data by querying on-chain
- * NameRegistered events from the ENS Controller contract and loading them
+ * NameRegistered events from ENS Controller contracts and loading them
  * into the `registrations` table.
  *
- * The ENS Controller contract (0x253553366Da8546fC250F225fe3d25d0C782303b) was
- * deployed in May 2022 and emits NameRegistered events with cost data (baseCost,
- * premium, expires).
+ * Supported ENS Controller contracts:
+ * - 0x253553366Da8546fC250F225fe3d25d0C782303b (Original, deployed May 2022)
+ * - 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 (ETH Registrar Controller 2)
+ *
+ * Both emit NameRegistered events with cost data (baseCost, premium, expires).
  *
  * Usage:
  *   Build first: cd services/wal-listener && npm run build
@@ -39,8 +41,11 @@ import { getPostgresPool, closeAllConnections, config } from '../../../shared/sr
 import { createPublicClient, http, parseAbi, decodeEventLog, type Log } from 'viem';
 import { mainnet } from 'viem/chains';
 
-// ENS Controller contract (deployed May 2022 with cost data)
-const ENS_CONTROLLER_ADDRESS = '0x253553366Da8546fC250F225fe3d25d0C782303b';
+// ENS Controller contracts that emit NameRegistered events with cost data
+const ENS_CONTROLLER_ADDRESSES = [
+  '0x253553366Da8546fC250F225fe3d25d0C782303b', // Original controller (deployed May 2022)
+  '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
+] as const;
 
 const ENS_CONTROLLER_ABI = parseAbi([
   'event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires)',
@@ -126,6 +131,10 @@ async function backfillRegistrations(options: Options) {
     console.log(`Batch size:    ${options.batchSize} blocks per RPC call`);
     console.log(`Concurrency:   ${options.concurrency} parallel requests`);
     console.log(`Verbose:       ${options.verbose ? 'YES' : 'NO'}`);
+    console.log(`Contracts:     ${ENS_CONTROLLER_ADDRESSES.length} ENS controllers`);
+    ENS_CONTROLLER_ADDRESSES.forEach((addr, i) => {
+      console.log(`               ${i + 1}. ${addr}`);
+    });
     console.log('');
 
     // Determine start block
@@ -182,9 +191,9 @@ async function backfillRegistrations(options: Options) {
       }
 
       try {
-        // Fetch NameRegistered logs for this block range
+        // Fetch NameRegistered logs for this block range from all controller contracts
         const logs = await client.getLogs({
-          address: ENS_CONTROLLER_ADDRESS as `0x${string}`,
+          address: ENS_CONTROLLER_ADDRESSES as unknown as `0x${string}`[],
           event: ENS_CONTROLLER_ABI[0],
           fromBlock: currentBlock,
           toBlock: actualEndBlock,
