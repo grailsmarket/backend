@@ -3,6 +3,58 @@ import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
 
+interface FreshMetadataResult {
+  metadata: Record<string, string>;
+  source: 'graph';
+}
+
+/**
+ * Always fetch fresh metadata from The Graph, bypassing cache.
+ * Database sync happens asynchronously to avoid slowing down the response.
+ *
+ * @param ensNameId - Database ID of the ENS name
+ * @param name - Full ENS name (e.g., "vitalik.eth")
+ * @returns Object with metadata from The Graph
+ */
+export async function fetchFreshMetadata(
+  ensNameId: number,
+  name: string
+): Promise<FreshMetadataResult> {
+  logger.info({ name, ensNameId }, 'Fetching fresh metadata from Graph (bypassing cache)');
+
+  const metadata = await fetchMetadataFromGraph(name);
+
+  // Sync to database asynchronously - fire and forget
+  syncMetadataToDatabase(ensNameId, name, metadata).catch((error) => {
+    logger.error({ error, name, ensNameId }, 'Async metadata sync failed');
+  });
+
+  return { metadata, source: 'graph' };
+}
+
+/**
+ * Sync metadata to database in the background
+ */
+async function syncMetadataToDatabase(
+  ensNameId: number,
+  name: string,
+  metadata: Record<string, string>
+): Promise<void> {
+  const pool = getPostgresPool();
+
+  await pool.query(
+    `UPDATE ens_names
+     SET metadata = $1, metadata_updated_at = NOW()
+     WHERE id = $2`,
+    [JSON.stringify(metadata), ensNameId]
+  );
+
+  logger.debug(
+    { name, ensNameId, keys: Object.keys(metadata) },
+    'Async metadata sync completed'
+  );
+}
+
 interface MetadataRefreshResult {
   refreshed: boolean;
   metadata: Record<string, string>;
