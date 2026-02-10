@@ -553,7 +553,8 @@ export class ENSIndexer {
       // Update the mint activity record with cost metadata if it exists
       await this.pool.query(
         `UPDATE activity_history
-         SET metadata = metadata || $1::jsonb
+         SET metadata = metadata || $1::jsonb,
+             price_wei = $4
          WHERE ens_name_id = $2
            AND event_type = 'mint'
            AND transaction_hash = $3`,
@@ -564,7 +565,8 @@ export class ENSIndexer {
             total_cost_wei: totalCostWei,
           }),
           ensNameId,
-          log.transactionHash
+          log.transactionHash,
+          totalCostWei
         ]
       );
 
