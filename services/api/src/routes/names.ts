@@ -7,7 +7,7 @@ import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
-import { ensureMetadataFresh } from '../services/ens-metadata';
+import { ensureMetadataFresh, fetchFreshMetadata } from '../services/ens-metadata';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -361,12 +361,13 @@ export async function namesRoutes(fastify: FastifyInstance) {
   });
 
   // Get metadata for a specific ENS name
+  // Always fetches fresh data from The Graph, database sync happens async
   fastify.get('/:name/metadata', async (request, reply) => {
     const { name } = request.params as { name: string };
 
-    // Query name with metadata_updated_at
+    // Query name to get ID
     const result = await pool.query(
-      `SELECT id, name, metadata, metadata_updated_at
+      `SELECT id, name
        FROM ens_names
        WHERE LOWER(name) = LOWER($1)`,
       [name]
@@ -386,25 +387,17 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
 
     const row = result.rows[0];
-    let metadata = row.metadata || {};
 
-    // Check if metadata needs refresh (synchronous - fetches from Graph if stale)
-    const { refreshed, metadata: freshMetadata } = await ensureMetadataFresh(
-      row.id,
-      row.name,
-      row.metadata_updated_at
-    );
-
-    if (refreshed) {
-      metadata = { ...metadata, ...freshMetadata };
-    }
+    // Always fetch fresh metadata from The Graph
+    // Database sync happens asynchronously to not slow down the response
+    const { metadata, source } = await fetchFreshMetadata(row.id, row.name);
 
     return reply.send({
       success: true,
       data: {
         name: row.name,
         metadata,
-        refreshed,
+        source,
       },
       meta: {
         timestamp: new Date().toISOString(),
