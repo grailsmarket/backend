@@ -1,0 +1,67 @@
+{
+  "name": "@grails/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Grails ENS Marketplace API",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs && npm run build:types",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:types": "tsc -p tsconfig.types.json",
+    "dev": "tsc -p tsconfig.esm.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "siwe": "^2.3.2",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "eslint": "^8.56.0",
+    "msw": "^2.0.0",
+    "typedoc": "^0.25.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  },
+  "keywords": [
+    "ens",
+    "ethereum",
+    "marketplace",
+    "nft",
+    "seaport",
+    "grails"
+  ],
+  "author": "Grails",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grails/sdk"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
