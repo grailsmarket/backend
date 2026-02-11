@@ -1,10 +1,15 @@
-import { getPostgresPool, config } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, AddressRecord } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
 
+export interface EnsMetadata {
+  [key: string]: string | AddressRecord[] | undefined;
+  chains?: AddressRecord[];
+}
+
 interface FreshMetadataResult {
-  metadata: Record<string, string>;
+  metadata: EnsMetadata;
   source: 'graph';
 }
 
@@ -38,7 +43,7 @@ export async function fetchFreshMetadata(
 async function syncMetadataToDatabase(
   ensNameId: number,
   name: string,
-  metadata: Record<string, string>
+  metadata: EnsMetadata
 ): Promise<void> {
   const pool = getPostgresPool();
 
@@ -57,7 +62,7 @@ async function syncMetadataToDatabase(
 
 interface MetadataRefreshResult {
   refreshed: boolean;
-  metadata: Record<string, string>;
+  metadata: EnsMetadata;
 }
 
 /**
@@ -108,12 +113,12 @@ export async function ensureMetadataFresh(
 }
 
 /**
- * Fetch text records from The Graph ENS subgraph
+ * Fetch text records and address records from The Graph ENS subgraph
  *
  * @param name - Full ENS name (e.g., "vitalik.eth")
- * @returns Object mapping text record keys to values
+ * @returns Object with text records and chains array for address records
  */
-async function fetchMetadataFromGraph(name: string): Promise<Record<string, string>> {
+async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
   const query = `
     query GetDomain($name: String!) {
       domains(where: { name: $name }) {
@@ -122,6 +127,14 @@ async function fetchMetadataFromGraph(name: string): Promise<Record<string, stri
           textChangeds {
             key
             value
+          }
+          addr {
+            id
+          }
+          coinTypes
+          multicoinAddrChangeds {
+            coinType
+            addr
           }
         }
       }
@@ -156,17 +169,29 @@ async function fetchMetadataFromGraph(name: string): Promise<Record<string, stri
   }
 
   const domain = json.data?.domains?.[0];
-
-  if (!domain?.resolver?.textChangeds) {
-    return {};
-  }
+  const metadata: EnsMetadata = {};
 
   // Build metadata object from text records
-  // textChangeds contains all historical changes, we want the latest value for each key
-  const metadata: Record<string, string> = {};
-  for (const record of domain.resolver.textChangeds) {
-    if (record.key && record.value) {
-      metadata[record.key] = record.value;
+  // textChangeds contains all historical changes in order, we want the latest value for each key
+  // If a record's most recent value is null/empty, it means the user unset it
+  if (domain?.resolver?.textChangeds) {
+    for (const record of domain.resolver.textChangeds) {
+      if (record.key) {
+        if (record.value) {
+          metadata[record.key] = record.value;
+        } else {
+          // Value is null/empty - record was unset, remove it
+          delete metadata[record.key];
+        }
+      }
+    }
+  }
+
+  // Process address records (multicoinAddrChangeds)
+  if (domain?.resolver?.multicoinAddrChangeds) {
+    const chains = processAddressRecords(domain.resolver.multicoinAddrChangeds);
+    if (chains.length > 0) {
+      metadata.chains = chains;
     }
   }
 

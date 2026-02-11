@@ -1,4 +1,14 @@
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, AddressRecord } from '../../../shared/src';
+
+/**
+ * Metadata structure for ENS names
+ * Contains text records and multichain address records
+ */
+export interface EnsNameMetadata {
+  [key: string]: string | AddressRecord[] | undefined;
+  /** Array of multichain address records (ENSIP-9/ENSIP-11) */
+  chains?: AddressRecord[];
+}
 
 /**
  * Standard search result format
@@ -13,7 +23,7 @@ export interface SearchResult {
   expiry_date: Date | null;
   registration_date: Date | null;
   last_sale_date: Date | null;
-  metadata: any;
+  metadata: EnsNameMetadata | null;
   metadata_updated_at: Date | null;  // When metadata was last fetched from The Graph
   clubs: string[] | null;
   has_numbers: boolean;
