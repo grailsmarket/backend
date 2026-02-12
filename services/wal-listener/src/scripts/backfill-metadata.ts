@@ -22,7 +22,7 @@
  *   npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
  */
 
-import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, config, processAddressRecords, AddressRecord } from '../../../shared/src';
 
 const pool = getPostgresPool();
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -38,8 +38,9 @@ interface Stats {
 }
 
 interface GraphMetadata {
-  [key: string]: string | undefined;
+  [key: string]: string | AddressRecord[] | undefined;
   resolverAddress?: string;
+  chains?: AddressRecord[];
 }
 
 interface Options {
@@ -129,6 +130,14 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
             key
             value
           }
+          addr {
+            id
+          }
+          coinTypes
+          multicoinAddrChangeds {
+            coinType
+            addr
+          }
         }
       }
     }
@@ -171,11 +180,25 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
       resolverAddress: domain.resolver?.address || ZERO_ADDRESS,
     };
 
+    // Process text records - if a record's most recent value is null/empty, it means the user unset it
     if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
       for (const record of domain.resolver.textChangeds) {
-        if (record.key && record.value) {
-          metadata[record.key] = record.value;
+        if (record.key) {
+          if (record.value) {
+            metadata[record.key] = record.value;
+          } else {
+            // Value is null/empty - record was unset, remove it
+            delete metadata[record.key];
+          }
         }
+      }
+    }
+
+    // Process address records (multicoinAddrChangeds)
+    if (domain.resolver?.multicoinAddrChangeds) {
+      const chains = processAddressRecords(domain.resolver.multicoinAddrChangeds);
+      if (chains.length > 0) {
+        metadata.chains = chains;
       }
     }
 
@@ -266,11 +289,12 @@ async function main() {
 
           // Check if we got meaningful data (more than just resolverAddress)
           const metadataKeys = metadata
-            ? Object.keys(metadata).filter(k => k !== 'resolverAddress')
+            ? Object.keys(metadata).filter(k => k !== 'resolverAddress' && k !== 'chains')
             : [];
           const hasTextRecords = metadataKeys.length > 0;
+          const hasAddressRecords = metadata?.chains && metadata.chains.length > 0;
 
-          if (hasTextRecords ) {
+          if (hasTextRecords || hasAddressRecords) {
             // Has real metadata - update with the fetched data
             if (!options.dryRun) {
               await pool.query(`
@@ -283,7 +307,8 @@ async function main() {
             }
 
             stats.updated++;
-            console.log(`  ✓ ${row.name} (${metadataKeys.length} text records)`);
+            const addressCount = metadata?.chains?.length || 0;
+            console.log(`  ✓ ${row.name} (${metadataKeys.length} text records, ${addressCount} address records)`);
           } else {
             // No data found - clean up by setting metadata to empty object
             if (!options.dryRun) {
