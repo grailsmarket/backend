@@ -238,7 +238,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -277,7 +277,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
     }
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, inAnyClub=${inAnyClub}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}`);
+    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, inAnyClub=${inAnyClub}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}, uniqueSeller=${uniqueSeller}`);
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
@@ -295,6 +295,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
     if (marketplace && marketplace !== 'all') {
       usePostgresql = true;
       fastify.log.info(`Forcing PostgreSQL because marketplace filter="${marketplace}" (source not in Elasticsearch)`);
+    }
+
+    // Force PostgreSQL for uniqueSeller filter - requires CTE with ROW_NUMBER()
+    const uniqueSellerEnabled = uniqueSeller === 'true' || uniqueSeller === true;
+    if (uniqueSellerEnabled) {
+      usePostgresql = true;
+      fastify.log.info('Forcing PostgreSQL because uniqueSeller filter is enabled');
     }
 
     if (usePostgresql && sortBy === 'watchers_count') {
@@ -868,16 +875,29 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
 
       // Build queries based on showListings - get the ENS names
-      const countQuery = listingsOnly ? `
-        SELECT COUNT(DISTINCT en.id)
-        FROM listings l
-        JOIN ens_names en ON l.ens_name_id = en.id
-        WHERE ${whereClause}
-      ` : `
-        SELECT COUNT(*)
-        FROM ens_names en
-        WHERE ${whereClause}
-      `;
+      // When uniqueSeller is enabled, count unique sellers instead of unique names
+      let countQuery: string;
+      if (uniqueSellerEnabled && listingsOnly) {
+        countQuery = `
+          SELECT COUNT(DISTINCT l.seller_address)
+          FROM listings l
+          JOIN ens_names en ON l.ens_name_id = en.id
+          WHERE ${whereClause}
+        `;
+      } else if (listingsOnly) {
+        countQuery = `
+          SELECT COUNT(DISTINCT en.id)
+          FROM listings l
+          JOIN ens_names en ON l.ens_name_id = en.id
+          WHERE ${whereClause}
+        `;
+      } else {
+        countQuery = `
+          SELECT COUNT(*)
+          FROM ens_names en
+          WHERE ${whereClause}
+        `;
+      }
 
       // Build SELECT clause - need to include sort column when using DISTINCT
       // PostgreSQL requires ORDER BY columns to be in SELECT list when using DISTINCT
@@ -909,21 +929,46 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'DISTINCT en.name, l.created_at';
       }
 
-      const dataQuery = listingsOnly ? `
-        SELECT ${selectClause}
-        FROM listings l
-        JOIN ens_names en ON l.ens_name_id = en.id
-        WHERE ${whereClause}
-        ${orderByClause}
-        LIMIT $${paramCount} OFFSET $${paramCount + 1}
-      ` : `
-        SELECT ${selectClause}
-        FROM ens_names en
-        ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
-        WHERE ${whereClause}
-        ${orderByClause}
-        LIMIT $${paramCount} OFFSET $${paramCount + 1}
-      `;
+      // Build data query - use CTE with ROW_NUMBER() when uniqueSeller is enabled
+      let dataQuery: string;
+      if (uniqueSellerEnabled && listingsOnly) {
+        // When uniqueSeller is enabled, get only the most recent listing per seller
+        // Using ROW_NUMBER() to rank listings per seller, then filter to rn=1
+        dataQuery = `
+          WITH ranked_listings AS (
+            SELECT en.name, l.seller_address, l.created_at, l.price_wei,
+                   en.expiry_date, en.registration_date, en.last_sale_date, en.last_sale_price_usd,
+                   en.view_count, en.highest_offer_wei, en.clubs, en.id as ens_name_id,
+                   ROW_NUMBER() OVER (PARTITION BY l.seller_address ORDER BY l.created_at DESC) as rn
+            FROM listings l
+            JOIN ens_names en ON l.ens_name_id = en.id
+            WHERE ${whereClause}
+          )
+          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : ', created_at'}
+          FROM ranked_listings
+          WHERE rn = 1
+          ${orderByClause.replace(/en\./g, '').replace(/l\./g, '')}
+          LIMIT $${paramCount} OFFSET $${paramCount + 1}
+        `;
+      } else if (listingsOnly) {
+        dataQuery = `
+          SELECT ${selectClause}
+          FROM listings l
+          JOIN ens_names en ON l.ens_name_id = en.id
+          WHERE ${whereClause}
+          ${orderByClause}
+          LIMIT $${paramCount} OFFSET $${paramCount + 1}
+        `;
+      } else {
+        dataQuery = `
+          SELECT ${selectClause}
+          FROM ens_names en
+          ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
+          WHERE ${whereClause}
+          ${orderByClause}
+          LIMIT $${paramCount} OFFSET $${paramCount + 1}
+        `;
+      }
 
       params.push(limit, from);
 
