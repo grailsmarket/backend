@@ -1,13 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, ENSName, config } from '../../../shared/src';
+import { getPostgresPool, APIResponse, ENSName, config, processAddressRecords } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
-import { ensureMetadataFresh, fetchFreshMetadata } from '../services/ens-metadata';
+import { ensureMetadataFresh, fetchFreshMetadata, EnsMetadata } from '../services/ens-metadata';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -212,6 +212,14 @@ export async function namesRoutes(fastify: FastifyInstance) {
                       key
                       value
                     }
+                    addr {
+                      id
+                    }
+                    coinTypes
+                    multicoinAddrChangeds {
+                      coinType
+                      addr
+                    }
                   }
                   registration {
                     expiryDate
@@ -235,12 +243,26 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
           if (tokenId) {
             // Process text records - keep the last value for each key
-            const textRecords: Record<string, string> = {};
+            // If a record's most recent value is null/empty, it means the user unset it
+            const metadata: EnsMetadata = {};
             if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
               for (const record of domain.resolver.textChangeds) {
-                if (record.key && record.value) {
-                  textRecords[record.key] = record.value;
+                if (record.key) {
+                  if (record.value) {
+                    metadata[record.key] = record.value;
+                  } else {
+                    // Value is null/empty - record was unset, remove it
+                    delete metadata[record.key];
+                  }
                 }
+              }
+            }
+
+            // Process address records (multicoinAddrChangeds)
+            if (domain.resolver?.multicoinAddrChangeds) {
+              const chains = processAddressRecords(domain.resolver.multicoinAddrChangeds);
+              if (chains.length > 0) {
+                metadata.chains = chains;
               }
             }
 
@@ -296,7 +318,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
               ownerAddress,
               expiryDate,
               registrationDate,
-              JSON.stringify(textRecords),
+              JSON.stringify(metadata),
             ]);
 
             fastify.log.info({ name, tokenId }, 'Successfully imported name from The Graph');

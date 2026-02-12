@@ -1,7 +1,7 @@
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { namehash, labelhash } from 'viem/ens';
-import { config, safeNormalize, isPlaceholderName } from '../../../shared/src';
+import { config, safeNormalize, isPlaceholderName, processAddressRecords, AddressRecord } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -52,6 +52,7 @@ interface ResolvedNameData {
   registrantAddress: string | null;
   registrationDate: Date | null;
   textRecords: Record<string, string>;
+  addressRecords: AddressRecord[];
   /** Whether the name from The Graph was already in normalized form.
    *  If false, this is a "bad" registration (e.g., 'Vitalik.eth' with capital V)
    *  that should NOT be used to update ownership of the legitimate normalized name. */
@@ -352,6 +353,14 @@ export class ENSResolver {
                 value
                 key
               }
+              addr {
+                id
+              }
+              coinTypes
+              multicoinAddrChangeds {
+                coinType
+                addr
+              }
             }
           }
         }
@@ -416,6 +425,14 @@ export class ENSResolver {
                 textChangeds {
                   value
                   key
+                }
+                addr {
+                  id
+                }
+                coinTypes
+                multicoinAddrChangeds {
+                  coinType
+                  addr
                 }
               }
             }
@@ -507,14 +524,23 @@ export class ENSResolver {
           }
 
           // Process text records - keep the last value for each key
+          // If a record's most recent value is null/empty, it means the user unset it
           const textRecords: Record<string, string> = {};
           if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
             for (const record of domain.resolver.textChangeds) {
-              if (record.key && record.value) {
-                textRecords[record.key] = record.value;
+              if (record.key) {
+                if (record.value) {
+                  textRecords[record.key] = record.value;
+                } else {
+                  // Value is null/empty - record was unset, remove it
+                  delete textRecords[record.key];
+                }
               }
             }
           }
+
+          // Process address records (multicoinAddrChangeds)
+          const addressRecords = processAddressRecords(domain.resolver?.multicoinAddrChangeds);
 
           // Calculate correct token_id based on wrapped/expired status
           // Logic: if owned by Name Wrapper and not expired, use domain.id; otherwise use labelhash
@@ -545,8 +571,8 @@ export class ENSResolver {
             logger.debug(`Name ${name} is ${isExpired ? 'expired' : 'unwrapped'} - using labelhash: ${correctTokenId}`);
           }
 
-          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, isNormalized: ${isNormalized}`);
-          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords, isNormalized, originalName };
+          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, address records: ${addressRecords.length}, isNormalized: ${isNormalized}`);
+          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords, addressRecords, isNormalized, originalName };
         }
       }
 
