@@ -1,11 +1,12 @@
-import { getPostgresPool, config, processAddressRecords, AddressRecord } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, AddressRecord, processContenthash, ContenthashRecord } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
 
 export interface EnsMetadata {
-  [key: string]: string | AddressRecord[] | undefined;
+  [key: string]: string | AddressRecord[] | ContenthashRecord | undefined;
   chains?: AddressRecord[];
+  contenthash?: ContenthashRecord;
 }
 
 interface FreshMetadataResult {
@@ -136,6 +137,10 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
             coinType
             addr
           }
+          contentHash
+          contenthashChangeds {
+            hash
+          }
         }
       }
     }
@@ -193,6 +198,15 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
     if (chains.length > 0) {
       metadata.chains = chains;
     }
+  }
+
+  // Process contenthash
+  const contenthash = processContenthash(
+    domain?.resolver?.contenthashChangeds,
+    domain?.resolver?.contentHash
+  );
+  if (contenthash) {
+    metadata.contenthash = contenthash;
   }
 
   return metadata;
