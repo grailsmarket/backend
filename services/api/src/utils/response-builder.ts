@@ -1,13 +1,15 @@
-import { getPostgresPool, AddressRecord } from '../../../shared/src';
+import { getPostgresPool, AddressRecord, ContenthashRecord } from '../../../shared/src';
 
 /**
  * Metadata structure for ENS names
- * Contains text records and multichain address records
+ * Contains text records, multichain address records, and contenthash
  */
 export interface EnsNameMetadata {
-  [key: string]: string | AddressRecord[] | undefined;
+  [key: string]: string | AddressRecord[] | ContenthashRecord | undefined;
   /** Array of multichain address records (ENSIP-9/ENSIP-11) */
   chains?: AddressRecord[];
+  /** Contenthash record (ENSIP-7) - IPFS, Swarm, Onion, etc. */
+  contenthash?: ContenthashRecord;
 }
 
 /**
