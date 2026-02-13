@@ -7,3 +7,4 @@ export * from './services/fees';
 export * from './utils/ens-normalize';
 export * from './utils/emoji';
 export * from './utils/address-decoder';
+export * from './utils/contenthash-decoder';
