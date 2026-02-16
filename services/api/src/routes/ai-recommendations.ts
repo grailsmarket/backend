@@ -10,10 +10,6 @@ const AiRecommendationsParamsSchema = z.object({
   name: z.string().min(1),
 });
 
-const AiRecommendationsQuerySchema = z.object({
-  categories: z.string().optional(),
-});
-
 export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
@@ -21,16 +17,13 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
    * GET /ai-recommendations/:name
    *
    * Returns AI-generated similar name suggestions for an ENS label.
-   * Checks DB cache first; on miss, calls OpenAI inline and caches the result.
-   *
-   * Query params:
-   *   - categories (optional): comma-separated club/category names for context
+   * Checks DB cache first; on miss, looks up the name's clubs for context,
+   * calls OpenAI inline, and caches the result.
    *
    * Response: { success: true, data: { suggestions: string[] } }
    */
   fastify.get('/:name', async (request, reply) => {
     const params = AiRecommendationsParamsSchema.parse(request.params);
-    const query = AiRecommendationsQuerySchema.parse(request.query);
 
     // Strip .eth suffix if present and normalize
     const baseName = params.name.replace(/\.eth$/i, '').toLowerCase().trim();
@@ -48,11 +41,6 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
       };
       return reply.status(400).send(response);
     }
-
-    // Parse optional categories
-    const categories = query.categories
-      ? query.categories.split(',').map((c) => c.trim()).filter(Boolean)
-      : [];
 
     try {
       // Check DB cache first
@@ -74,7 +62,15 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
         return reply.header('X-Cache', 'HIT').send(response);
       }
 
-      // Cache miss — call OpenAI inline
+      // Cache miss — look up clubs for OpenAI context
+      const nameRow = await pool.query(
+        `SELECT COALESCE(clubs, ARRAY[]::text[]) AS clubs
+         FROM ens_names WHERE name = $1`,
+        [`${baseName}.eth`]
+      );
+      const categories: string[] = nameRow.rows.length > 0 ? nameRow.rows[0].clubs : [];
+
+      // Call OpenAI inline
       const suggestions = await generateSimilarNames(baseName, categories);
 
       if (!suggestions || suggestions.length === 0) {
