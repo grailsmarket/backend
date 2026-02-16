@@ -114,7 +114,24 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     max_output_tokens: 1000,
     store: true,
     reasoning: { effort: 'none' },
-    text: { format: { type: 'text' }, verbosity: 'low' },
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'similar_names',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            names: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+          },
+          required: ['names'],
+          additionalProperties: false,
+        },
+      },
+    },
   });
 
   let lastError: Error | null = null;
@@ -180,13 +197,18 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     const text = messageItem.content?.find((c: { type: string }) => c.type === 'output_text')?.text;
     if (!text) throw new Error('No text in OpenAI response');
 
-    const rawSuggestions = text
-      .split(/[\n,]+/)
-      .map((s: string) => s.trim().replace(/^\d+[.):\-\s]+/, '').trim())
-      .filter((s: string) => s.length > 0);
+    // Parse structured JSON response: { "names": ["adam", "aaron", ...] }
+    let rawNames: string[];
+    try {
+      const parsed = JSON.parse(text);
+      rawNames = Array.isArray(parsed.names) ? parsed.names : [];
+    } catch {
+      throw new Error(`Invalid JSON in OpenAI response: ${text.slice(0, 200)}`);
+    }
 
     const validSuggestions: string[] = [];
-    for (const raw of rawSuggestions) {
+    for (const raw of rawNames) {
+      if (typeof raw !== 'string') continue;
       const normalized = tryNormalizeName(raw);
       if (normalized && normalized !== name && !validSuggestions.includes(normalized)) {
         validSuggestions.push(normalized);

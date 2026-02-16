@@ -105,8 +105,22 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       effort: 'none',
     },
     text: {
-      format: { type: 'text' },
-      verbosity: 'low',
+      format: {
+        type: 'json_schema',
+        name: 'similar_names',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            names: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+          },
+          required: ['names'],
+          additionalProperties: false,
+        },
+      },
     },
   });
 
@@ -176,15 +190,20 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       throw new Error('No text in OpenAI response');
     }
 
-    // Parse the response - split by newlines or commas, strip leading list numbers (e.g. "1.", "2)", "3 ")
-    const rawSuggestions = text
-      .split(/[\n,]+/)
-      .map((s: string) => s.trim().replace(/^\d+[.):\-\s]+/, '').trim())
-      .filter((s: string) => s.length > 0);
+    // Parse structured JSON response: { "names": ["adam", "aaron", ...] }
+    let rawNames: string[];
+    try {
+      const parsed = JSON.parse(text);
+      rawNames = Array.isArray(parsed.names) ? parsed.names : [];
+    } catch {
+      console.error('[openai] Failed to parse JSON response:', text);
+      throw new Error('Invalid JSON in OpenAI response');
+    }
 
     // Normalize and validate each suggestion
     const validSuggestions: string[] = [];
-    for (const raw of rawSuggestions) {
+    for (const raw of rawNames) {
+      if (typeof raw !== 'string') continue;
       const normalized = tryNormalizeName(raw);
       if (normalized && normalized !== name && !validSuggestions.includes(normalized)) {
         validSuggestions.push(normalized);
