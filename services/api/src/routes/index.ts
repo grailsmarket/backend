@@ -28,6 +28,7 @@ import { chartsRoutes } from './charts';
 import { subgraphRoutes } from './subgraph';
 import { leaderboardRoutes } from './leaderboard';
 import { ensRolesRoutes } from './ens-roles';
+import { aiRecommendationsRoutes } from './ai-recommendations';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -58,5 +59,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(userInsightsRoutes, { prefix: '/api/v1/user' });
   fastify.register(subgraphRoutes, { prefix: '/api/v1/subgraph' });
   fastify.register(ensRolesRoutes, { prefix: '/api/v1/ens-roles' });
+  fastify.register(aiRecommendationsRoutes, { prefix: '/api/v1/ai-recommendations' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }

@@ -1,0 +1,129 @@
+import { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
+
+/** Cache TTL: 60 days in milliseconds */
+const CACHE_TTL_DAYS = 60;
+
+const AiRecommendationsParamsSchema = z.object({
+  name: z.string().min(1),
+});
+
+const AiRecommendationsQuerySchema = z.object({
+  categories: z.string().optional(),
+});
+
+export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
+  const pool = getPostgresPool();
+
+  /**
+   * GET /ai-recommendations/:name
+   *
+   * Returns AI-generated similar name suggestions for an ENS label.
+   * Checks DB cache first; on miss, calls OpenAI inline and caches the result.
+   *
+   * Query params:
+   *   - categories (optional): comma-separated club/category names for context
+   *
+   * Response: { success: true, data: { suggestions: string[] } }
+   */
+  fastify.get('/:name', async (request, reply) => {
+    const params = AiRecommendationsParamsSchema.parse(request.params);
+    const query = AiRecommendationsQuerySchema.parse(request.query);
+
+    // Strip .eth suffix if present and normalize
+    const baseName = params.name.replace(/\.eth$/i, '').toLowerCase().trim();
+
+    if (!baseName) {
+      const response: APIResponse = {
+        success: false,
+        error: {
+          code: 'INVALID_NAME',
+          message: 'Invalid name parameter',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      };
+      return reply.status(400).send(response);
+    }
+
+    // Parse optional categories
+    const categories = query.categories
+      ? query.categories.split(',').map((c) => c.trim()).filter(Boolean)
+      : [];
+
+    try {
+      // Check DB cache first
+      const cached = await pool.query(
+        `SELECT recommendations FROM ai_recommendations
+         WHERE name = $1 AND expires_at > NOW()`,
+        [baseName]
+      );
+
+      if (cached.rows.length > 0) {
+        const suggestions = cached.rows[0].recommendations as string[];
+        const response: APIResponse = {
+          success: true,
+          data: { suggestions },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        return reply.header('X-Cache', 'HIT').send(response);
+      }
+
+      // Cache miss — call OpenAI inline
+      const suggestions = await generateSimilarNames(baseName, categories);
+
+      if (!suggestions || suggestions.length === 0) {
+        // OpenAI failed or returned nothing — return empty (don't cache failures)
+        const response: APIResponse = {
+          success: true,
+          data: { suggestions: [] },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        return reply.header('X-Cache', 'MISS').send(response);
+      }
+
+      // UPSERT to DB cache
+      const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+      await pool.query(
+        `INSERT INTO ai_recommendations (name, recommendations, model, expires_at, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (name)
+         DO UPDATE SET
+           recommendations = EXCLUDED.recommendations,
+           model = EXCLUDED.model,
+           expires_at = EXCLUDED.expires_at,
+           updated_at = NOW()`,
+        [baseName, JSON.stringify(suggestions), OPENAI_MODEL_NAME, expiresAt]
+      );
+
+      const response: APIResponse = {
+        success: true,
+        data: { suggestions },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      };
+      return reply.header('X-Cache', 'MISS').send(response);
+    } catch (error) {
+      console.error(`[ai-recommendations] Error for "${baseName}":`, error);
+      const response: APIResponse = {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch AI recommendations',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      };
+      return reply.status(500).send(response);
+    }
+  });
+}
