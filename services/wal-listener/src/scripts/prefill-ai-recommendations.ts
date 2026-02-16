@@ -44,7 +44,7 @@ Rules (strict!):
 No spaces in any result
 If input is single word → results = single words only
 Digits-only input → all results digits, same length, similar pattern
-PG-13 only
+PG-13 only! no bad words!
 results must not contain "."
 Emojis-only input → output emojis-only; if input repeats, results repeat too
 If input implies a category/theme → stay on-theme
@@ -134,8 +134,6 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     },
   });
 
-  let lastError: Error | null = null;
-
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const response = await fetch(OPENAI_API_URL, {
       method: 'POST',
@@ -191,6 +189,10 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       throw new Error(`OpenAI response status: ${data.status} — ${JSON.stringify(data.error)}`);
     }
 
+    if (data.status === 'incomplete') {
+      console.warn(`\n  ⚠ OpenAI response incomplete for "${name}", attempting to extract partial content`);
+    }
+
     const messageItem = data.output?.find((item: { type: string }) => item.type === 'message');
     if (!messageItem) throw new Error('No message item in OpenAI response');
 
@@ -201,6 +203,9 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     let rawNames: string[];
     try {
       const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.names)) {
+        console.warn(`  ⚠ Response JSON for "${name}" missing "names" array:`, text.slice(0, 200));
+      }
       rawNames = Array.isArray(parsed.names) ? parsed.names : [];
     } catch {
       throw new Error(`Invalid JSON in OpenAI response: ${text.slice(0, 200)}`);
@@ -216,10 +221,14 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       }
     }
 
+    if (rawNames.length > 0 && validSuggestions.length === 0) {
+      console.warn(`  ⚠ All ${rawNames.length} suggestions for "${name}" failed normalization`);
+    }
+
     return validSuggestions;
   }
 
-  throw lastError ?? new Error('Max retries exceeded');
+  throw new Error('Max retries exceeded');
 }
 
 // ─── Main ────────────────────────────────────────────────────────

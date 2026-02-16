@@ -10,7 +10,7 @@ Rules (strict!):
 No spaces in any result
 If input is single word → results = single words only
 Digits-only input → all results digits, same length, similar pattern
-PG-13 only
+PG-13 only! no bad words!
 results must not contain "."
 Emojis-only input → output emojis-only; if input repeats, results repeat too
 If input implies a category/theme → stay on-theme
@@ -75,13 +75,17 @@ function parseResetHeader(value: string | null): number | null {
 }
 
 /**
- * Call the OpenAI Responses API to generate similar name suggestions.
- * Retries up to MAX_RETRIES times on 429 (rate limit) errors with exponential backoff.
+ * Call the OpenAI Responses API to generate similar ENS name suggestions.
+ *
+ * Uses json_schema structured output for reliable parsing. Retries up to
+ * MAX_RETRIES times on 429 (rate limit) and 5xx (server) errors with
+ * exponential backoff. Respects x-ratelimit-reset-requests header when available.
  *
  * @param apiKey - OpenAI API key
- * @param name - ENS label (no .eth suffix)
- * @param categories - Optional category/club names for context
- * @returns Array of validated name suggestions, or throws on failure
+ * @param name - ENS label (no .eth suffix), e.g. "vitalik"
+ * @param categories - Optional category/club names for prompt context, e.g. ["999", "10k"]
+ * @returns Array of normalized, deduplicated name suggestions (up to 10)
+ * @throws On non-retryable HTTP errors or after exhausting retries
  */
 async function callOpenAI(apiKey: string, name: string, categories?: string[]): Promise<string[]> {
   // Filter out excluded categories
@@ -194,9 +198,12 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     let rawNames: string[];
     try {
       const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.names)) {
+        console.warn('[openai] Response JSON missing "names" array:', text.slice(0, 500));
+      }
       rawNames = Array.isArray(parsed.names) ? parsed.names : [];
     } catch {
-      console.error('[openai] Failed to parse JSON response:', text);
+      console.error('[openai] Failed to parse JSON response:', text.slice(0, 500));
       throw new Error('Invalid JSON in OpenAI response');
     }
 
@@ -209,6 +216,10 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
         validSuggestions.push(normalized);
         if (validSuggestions.length >= 10) break;
       }
+    }
+
+    if (rawNames.length > 0 && validSuggestions.length === 0) {
+      console.warn(`[openai] All ${rawNames.length} suggestions for "${name}" failed normalization`);
     }
 
     return validSuggestions;
