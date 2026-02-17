@@ -8,9 +8,9 @@
 import { getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
 import {
-  ValidationResult,
-  OfferWithBalance,
-  Currency,
+  type ValidationResult,
+  type OfferWithBalance,
+  type Currency,
   ZERO_ADDRESS,
   WETH_ADDRESS,
   USDC_ADDRESS,

@@ -6,7 +6,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
-import { ValidationResult } from './types';
+import type { ValidationResult } from './types';
 
 const pool = getPostgresPool();
 

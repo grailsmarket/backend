@@ -1,4 +1,4 @@
-import { Job } from 'pg-boss';
+import type { Job } from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
