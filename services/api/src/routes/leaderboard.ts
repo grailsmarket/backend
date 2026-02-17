@@ -3,7 +3,7 @@ import { getPostgresPool } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
-const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold'] as const;
+const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold', 'sales_volume'] as const;
 
 export async function leaderboardRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -101,7 +101,8 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
           sales_stats AS (
             SELECT
               LOWER(s.seller_address) as owner_address,
-              COUNT(*) as names_sold
+              COUNT(*) as names_sold,
+              COALESCE(SUM(s.sale_price_wei::numeric), 0) as sales_volume
             FROM sales s
             INNER JOIN filtered_owners fo ON LOWER(s.seller_address) = fo.owner_address
             GROUP BY LOWER(s.seller_address)
@@ -113,13 +114,14 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             s.expired_names::int,
             COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
             COALESCE(ls.names_listed, 0)::int as names_listed,
-            COALESCE(ss.names_sold, 0)::int as names_sold
+            COALESCE(ss.names_sold, 0)::int as names_sold,
+            COALESCE(ss.sales_volume, 0)::text as sales_volume
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
           LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
           LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
           WHERE s.names_owned > 0
-          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
+          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : sortBy === 'sales_volume' ? 'COALESCE(ss.sales_volume, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $2 OFFSET $3
         `;
         dataParams = [clubs, limitNum, offset];
@@ -173,7 +175,8 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
           sales_stats AS (
             SELECT
               LOWER(seller_address) as owner_address,
-              COUNT(*) as names_sold
+              COUNT(*) as names_sold,
+              COALESCE(SUM(sale_price_wei::numeric), 0) as sales_volume
             FROM sales
             GROUP BY LOWER(seller_address)
           )
@@ -184,13 +187,14 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             s.expired_names::int,
             COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
             COALESCE(ls.names_listed, 0)::int as names_listed,
-            COALESCE(ss.names_sold, 0)::int as names_sold
+            COALESCE(ss.names_sold, 0)::int as names_sold,
+            COALESCE(ss.sales_volume, 0)::text as sales_volume
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
           LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
           LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
           WHERE s.names_owned > 0
-          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
+          ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : sortBy === 'sales_volume' ? 'COALESCE(ss.sales_volume, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $1 OFFSET $2
         `;
         dataParams = [limitNum, offset];
@@ -214,6 +218,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             expired_names: row.expired_names,
             names_listed: row.names_listed,
             names_sold: row.names_sold,
+            sales_volume: row.sales_volume,
             clubs: row.clubs,
           })),
         },
