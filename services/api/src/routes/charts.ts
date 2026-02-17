@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
 
 const ChartQuerySchema = z.object({
   period: z.enum(['1d', '7d', '30d', '1y', 'all']).default('7d'),

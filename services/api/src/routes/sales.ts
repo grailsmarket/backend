@@ -1,7 +1,7 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import {
   getPostgresPool,
-  APIResponse,
+  type APIResponse,
   getSalesByName,
   getSalesByAddress,
   getRecentSales,

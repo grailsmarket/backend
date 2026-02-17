@@ -1,4 +1,4 @@
-import { getPostgresPool, AddressRecord, ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
 
 /**
  * Metadata structure for ENS names

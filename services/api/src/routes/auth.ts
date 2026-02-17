@@ -1,9 +1,9 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { SiweMessage } from 'siwe';
 import { verifyMessage } from 'viem';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { generateToken, requireAuth } from '../middleware/auth';
 
 const NonceQuerySchema = z.object({

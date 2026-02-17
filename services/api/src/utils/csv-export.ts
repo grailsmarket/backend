@@ -1,5 +1,5 @@
 import { stringify } from 'csv-stringify';
-import { SearchResult, Listing } from './response-builder';
+import type { SearchResult, Listing } from './response-builder';
 import { Pool } from 'pg';
 
 export const MAX_EXPORT_ROWS = 10000;

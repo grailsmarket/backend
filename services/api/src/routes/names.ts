@@ -1,13 +1,13 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, ENSName, config, processAddressRecords } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type ENSName, config, processAddressRecords } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
-import { ensureMetadataFresh, fetchFreshMetadata, EnsMetadata } from '../services/ens-metadata';
+import { ensureMetadataFresh, fetchFreshMetadata, type EnsMetadata } from '../services/ens-metadata';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';

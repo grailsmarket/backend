@@ -1,5 +1,5 @@
-import { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
-import { APIResponse } from '../../../shared/src';
+import type { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
+import type { APIResponse } from '../../../shared/src';
 
 export async function errorHandler(
   error: FastifyError,

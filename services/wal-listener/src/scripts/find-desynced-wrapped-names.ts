@@ -1,5 +1,5 @@
 import { getPostgresPool, config } from '../../../shared/src';
-import { createPublicClient, http, namehash, parseAbi, PublicClient } from 'viem';
+import { createPublicClient, http, namehash, parseAbi, type PublicClient } from 'viem';
 import { mainnet } from 'viem/chains';
 import { keccak256, toHex } from 'viem';
 

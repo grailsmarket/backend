@@ -9,7 +9,7 @@ import {
   parseAbiParameters
 } from 'viem';
 import { mainnet } from 'viem/chains';
-import { config, SeaportOrder, ItemType, OrderType } from '../../../shared/src';
+import { config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
 
 const publicClient = createPublicClient({
   chain: mainnet,

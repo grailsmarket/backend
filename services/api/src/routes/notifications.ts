@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 
 const NotificationQuerySchema = z.object({
