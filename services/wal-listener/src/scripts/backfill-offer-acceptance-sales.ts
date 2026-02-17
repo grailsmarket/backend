@@ -526,12 +526,45 @@ async function processOrderFulfilled(
     const ensNameId = ensNameResult.rows[0].id;
     const currentLastSaleDate: Date | null = ensNameResult.rows[0].last_sale_date;
 
+    // Determine sale source from matching listing or offer in our database
+    let saleSource = 'opensea'; // Default fallback
+    let listingId: number | undefined;
+    let offerId: number | undefined;
+
+    // Check for a matching listing by order_hash
+    const listingResult = await pool.query(
+      'SELECT id, source FROM listings WHERE order_hash = $1 ORDER BY created_at DESC LIMIT 1',
+      [orderHash]
+    );
+
+    if (listingResult.rows.length > 0) {
+      listingId = listingResult.rows[0].id;
+      saleSource = listingResult.rows[0].source;
+      if (options.verbose) {
+        console.log(`    Matched listing id=${listingId} source=${saleSource}`);
+      }
+    } else {
+      // Check for a matching offer by order_hash
+      const offerResult = await pool.query(
+        'SELECT id, source FROM offers WHERE order_hash = $1 ORDER BY created_at DESC LIMIT 1',
+        [orderHash]
+      );
+
+      if (offerResult.rows.length > 0) {
+        offerId = offerResult.rows[0].id;
+        saleSource = offerResult.rows[0].source;
+        if (options.verbose) {
+          console.log(`    Matched offer id=${offerId} source=${saleSource}`);
+        }
+      }
+    }
+
     // Get sale date from block timestamp
     const saleDate = await getBlockTimestamp(client, log.blockNumber!);
 
     if (options.verbose) {
       const priceEth = (Number(totalPrice) / 1e18).toFixed(4);
-      console.log(`    Creating sale: ${ensName} for ${priceEth} ETH/WETH (${saleDate.toISOString()})`);
+      console.log(`    Creating sale: ${ensName} for ${priceEth} ETH/WETH source=${saleSource} (${saleDate.toISOString()})`);
     }
 
     if (options.dryRun) {
@@ -547,6 +580,8 @@ async function processOrderFulfilled(
         buyerAddress,
         salePriceWei: priceWei,
         currencyAddress,
+        listingId,
+        offerId,
         transactionHash: log.transactionHash!,
         blockNumber: Number(log.blockNumber),
         orderHash,
@@ -554,7 +589,7 @@ async function processOrderFulfilled(
           offer: serializeBigInts(offer),
           consideration: serializeBigInts(consideration),
         },
-        source: 'opensea',
+        source: saleSource,
         saleDate,
       });
 
