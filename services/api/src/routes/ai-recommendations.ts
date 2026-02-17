@@ -4,9 +4,12 @@ import { getPostgresPool, APIResponse, normalizeEnsName } from '../../../shared/
 import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
 import { cacheHandler } from '../middleware/cache';
 import { optionalAuth } from '../middleware/auth';
+import { generateCacheKey, setCachedResponse } from '../utils/redis';
 
-/** Cache TTL: 60 days in milliseconds */
+/** Cache TTL in days */
 const CACHE_TTL_DAYS = 60;
+/** Short TTL for negative (name-not-found) cache entries */
+const NEGATIVE_CACHE_TTL_SECONDS = 300;
 
 const AiRecommendationsParamsSchema = z.object({
   name: z.string().min(1).max(40),
@@ -20,7 +23,7 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
    *
    * Returns AI-generated similar name suggestions for an ENS label.
    * Cached results are public. Generating fresh results requires auth.
-   * Rate limited to 15 req/min per IP.
+   * Rate limited to 60 req/min per IP.
    * Checks DB cache first; on miss, looks up the name's clubs for context,
    * calls OpenAI inline, and caches the result.
    *
@@ -28,7 +31,7 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/:name', {
     preHandler: [optionalAuth, cacheHandler],
-    config: { rateLimit: { max: 15, timeWindow: 60_000 } },
+    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
   }, async (request, reply) => {
     const params = AiRecommendationsParamsSchema.parse(request.params);
 
@@ -74,7 +77,13 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
       );
 
       if (cached.rows.length > 0) {
-        const suggestions = cached.rows[0].recommendations as string[];
+        // Two-tier cache behavior:
+        // - Redis layer (cacheHandler): 15s
+        // - Postgres layer (ai_recommendations): 60 days
+        const raw = cached.rows[0].recommendations;
+        const suggestions = Array.isArray(raw) && raw.every((s) => typeof s === 'string')
+          ? raw
+          : [];
         const response: APIResponse = {
           success: true,
           data: { suggestions },
@@ -87,6 +96,7 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
 
       // Cache miss: only authenticated users can generate new recommendations
       if (!request.user) {
+        request.log.debug({ name: baseName }, 'AI recommendations cache miss, auth required');
         const response: APIResponse = {
           success: false,
           error: {
@@ -116,6 +126,11 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
             timestamp: new Date().toISOString(),
           },
         };
+
+        // Cache negative result briefly to reduce repeated DB lookups for unknown names.
+        const cacheKey = generateCacheKey(request.url, request.query as Record<string, unknown>);
+        await setCachedResponse(cacheKey, response, NEGATIVE_CACHE_TTL_SECONDS);
+
         return reply.send(response);
       }
 
@@ -159,7 +174,6 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
       };
       return reply.header('X-Cache', 'MISS').send(response);
     } catch (error) {
-      console.error(`[ai-recommendations] Error for "${baseName}":`, error);
       const response: APIResponse = {
         success: false,
         error: {
@@ -170,6 +184,7 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
           timestamp: new Date().toISOString(),
         },
       };
+      request.log.error({ err: error, name: baseName }, 'AI recommendations failed');
       return reply.status(500).send(response);
     }
   });

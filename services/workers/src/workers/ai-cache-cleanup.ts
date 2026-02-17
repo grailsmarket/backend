@@ -17,18 +17,23 @@ export async function registerAiCacheCleanupWorker(boss: PgBoss) {
     async (job) => {
       logger.info({ jobId: job.id }, 'Starting AI recommendations cache cleanup');
 
-      const pool = getPostgresPool();
-      const result = await pool.query(
-        `DELETE FROM ai_recommendations WHERE expires_at < NOW()`
-      );
+      try {
+        const pool = getPostgresPool();
+        const result = await pool.query(
+          `DELETE FROM ai_recommendations WHERE expires_at < NOW()`
+        );
 
-      const deletedCount = result.rowCount ?? 0;
-      logger.info(
-        { jobId: job.id, deletedCount },
-        'AI recommendations cache cleanup completed'
-      );
+        const deletedCount = result.rowCount ?? 0;
+        logger.info(
+          { jobId: job.id, deletedCount },
+          'AI recommendations cache cleanup completed'
+        );
 
-      return { success: true, deletedCount };
+        return { success: true, deletedCount };
+      } catch (error) {
+        logger.error({ jobId: job.id, err: error }, 'AI recommendations cache cleanup failed');
+        throw error;
+      }
     }
   );
 

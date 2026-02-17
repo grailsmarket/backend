@@ -57,6 +57,7 @@ const EXCLUDED_CATEGORIES = [
   'prepunk_10k',
   'prepunk_1k',
   'prepunk_digits',
+  'social_handles',
 ];
 
 // ─── OpenAI helpers (self-contained, mirrors api/src/services/openai.ts) ─────

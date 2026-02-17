@@ -24,6 +24,7 @@ const EXCLUDED_CATEGORIES = [
   'prepunk_10k',
   'prepunk_1k',
   'prepunk_digits',
+  // Social-handle club labels are noisy for ENS-like recommendation intent.
   'social_handles',
 ];
 
