@@ -62,7 +62,7 @@ const EXCLUDED_CATEGORIES = [
 // ─── OpenAI helpers (self-contained, mirrors api/src/services/openai.ts) ─────
 
 function tryNormalizeName(name: string): string | null {
-  let cleaned = name.replaceAll(' ', '').trim().toLowerCase();
+  let cleaned = name.replaceAll(' ', '').replaceAll('_', '').trim().toLowerCase();
   cleaned = cleaned.replaceAll('.', '');
   if (cleaned.length < 3) return null;
 
@@ -311,7 +311,6 @@ async function main() {
     let generated = 0;
     let skipped = 0;
     let failed = 0;
-    const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
 
     for (const nameRow of names) {
       try {
@@ -328,7 +327,8 @@ async function main() {
           continue;
         }
 
-        // UPSERT to database
+        // UPSERT to database (compute expiry per-row to avoid thundering herd)
+        const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
         await pool.query(
           `INSERT INTO ai_recommendations (name, recommendations, model, expires_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW())

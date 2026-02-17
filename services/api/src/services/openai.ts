@@ -33,10 +33,8 @@ const EXCLUDED_CATEGORIES = [
  * Ported from frontend route.ts tryNormalizeName().
  */
 function tryNormalizeName(name: string): string | null {
-  // Step 1: Basic cleanup - remove spaces, trim, lowercase
-  let cleaned = name.replaceAll(' ', '').trim().toLowerCase();
-
-  // Step 2: Remove any dots (not allowed in our suggestions)
+  // Step 1: Basic cleanup - remove spaces, underscores, dots; trim, lowercase
+  let cleaned = name.replaceAll(' ', '').replaceAll('_', '').trim().toLowerCase();
   cleaned = cleaned.replaceAll('.', '');
 
   // Step 3: Skip empty or too short/long

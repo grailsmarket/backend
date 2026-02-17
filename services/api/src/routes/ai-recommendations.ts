@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { normalize } from 'viem/ens';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
 
@@ -7,7 +8,7 @@ import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
 const CACHE_TTL_DAYS = 60;
 
 const AiRecommendationsParamsSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).max(40),
 });
 
 export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
@@ -25,15 +26,31 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
   fastify.get('/:name', async (request, reply) => {
     const params = AiRecommendationsParamsSchema.parse(request.params);
 
-    // Strip .eth suffix if present and normalize
-    const baseName = params.name.replace(/\.eth$/i, '').toLowerCase().trim();
-
-    if (!baseName) {
+    // Strip .eth suffix, then ENS-normalize to canonical form
+    let baseName: string;
+    try {
+      const stripped = params.name.replace(/\.eth$/i, '').trim();
+      baseName = normalize(stripped);
+    } catch {
       const response: APIResponse = {
         success: false,
         error: {
           code: 'INVALID_NAME',
-          message: 'Invalid name parameter',
+          message: 'Invalid ENS name',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      };
+      return reply.status(400).send(response);
+    }
+
+    if (!baseName || baseName.length < 3) {
+      const response: APIResponse = {
+        success: false,
+        error: {
+          code: 'INVALID_NAME',
+          message: 'Name must be at least 3 characters',
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -62,13 +79,26 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
         return reply.header('X-Cache', 'HIT').send(response);
       }
 
-      // Cache miss — look up clubs for OpenAI context
+      // Cache miss — name must exist in ens_names to prevent abuse
       const nameRow = await pool.query(
         `SELECT COALESCE(clubs, ARRAY[]::text[]) AS clubs
          FROM ens_names WHERE name = $1`,
         [`${baseName}.eth`]
       );
-      const categories: string[] = nameRow.rows.length > 0 ? nameRow.rows[0].clubs : [];
+
+      if (nameRow.rows.length === 0) {
+        // Name not in DB — return empty, don't call OpenAI
+        const response: APIResponse = {
+          success: true,
+          data: { suggestions: [] },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        return reply.send(response);
+      }
+
+      const categories: string[] = nameRow.rows[0].clubs;
 
       // Call OpenAI inline
       const suggestions = await generateSimilarNames(baseName, categories);

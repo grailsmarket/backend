@@ -34,4 +34,4 @@ COMMENT ON TABLE ai_recommendations IS 'Caches AI-generated similar name suggest
 COMMENT ON COLUMN ai_recommendations.name IS 'ENS label only (no .eth suffix), e.g. vitalik';
 COMMENT ON COLUMN ai_recommendations.recommendations IS 'JSON array of recommended name labels, e.g. ["adam","aaron"]';
 COMMENT ON COLUMN ai_recommendations.model IS 'OpenAI model name used for generation, e.g. gpt-5.2-2025-12-11';
-COMMENT ON COLUMN ai_recommendations.expires_at IS 'Cache expiry timestamp (7 days from generation)';
+COMMENT ON COLUMN ai_recommendations.expires_at IS 'Cache expiry timestamp (60 days from generation)';
