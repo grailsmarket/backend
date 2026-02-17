@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { normalize } from 'viem/ens';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import { getPostgresPool, APIResponse, normalizeEnsName } from '../../../shared/src';
 import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
 import { cacheHandler } from '../middleware/cache';
 import { optionalAuth } from '../middleware/auth';
@@ -33,12 +32,12 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const params = AiRecommendationsParamsSchema.parse(request.params);
 
-    // Strip .eth suffix, then ENS-normalize to canonical form
-    let baseName: string;
-    try {
-      const stripped = params.name.replace(/\.eth$/i, '').trim();
-      baseName = normalize(stripped);
-    } catch {
+    // Strip .eth suffix, then ENS-normalize to canonical form via shared helper
+    const stripped = params.name.replace(/\.eth$/i, '').trim();
+    const normalizedResult = normalizeEnsName(stripped);
+    const baseName = normalizedResult.normalized;
+
+    if (!baseName) {
       const response: APIResponse = {
         success: false,
         error: {
