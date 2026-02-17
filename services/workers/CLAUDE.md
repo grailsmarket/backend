@@ -109,6 +109,16 @@ Refreshes materialized views for trending and analytics data.
 - `top_sales` - Recent high-value sales
 - `hot_names` - Names with recent activity
 
+#### 9. **AI Cache Cleanup Worker** (`ai-cache-cleanup.ts`)
+Deletes expired rows from `ai_recommendations` to keep the cache table compact over time.
+
+**Queue**: `cleanup-ai-recommendations`
+**Cron**: `0 3 * * 0` (weekly, Sunday 3 AM UTC)
+
+**Actions**:
+- Deletes rows where `expires_at < NOW()`
+- Logs count of deleted rows for observability
+
 ### Validation Workers (`src/workers/validation/`)
 
 These workers validate on-chain state to ensure listings and offers are still fulfillable.
@@ -261,6 +271,7 @@ await registerPriceSyncWorker(boss);
 await registerClubStatsWorker(boss);
 await registerHighestOfferWorker(boss);
 await registerRefreshAnalyticsWorker(boss);
+await registerAiCacheCleanupWorker(boss);
 
 // Validation workers
 await registerListingOwnershipValidator(boss);

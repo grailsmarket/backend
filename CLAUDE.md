@@ -60,7 +60,7 @@ A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates l
 ### 4. Workers Service (`/services/workers`)
 **Purpose**: Background job processing for async operations
 **Key Features**:
-- pg-boss PostgreSQL-based job queue (11 workers)
+- pg-boss PostgreSQL-based job queue (12 workers)
 - Order expiration and ENS metadata sync
 - Listing/offer validation against blockchain state
 - Club stats, price feeds, and analytics refresh
@@ -100,6 +100,12 @@ offers (
 opensea_events (
   id, event_type, order_hash, chain,
   event_data, processed, created_at
+)
+
+-- AI recommendation cache (backend-generated similar names)
+ai_recommendations (
+ id, name, recommendations, model,
+ expires_at, created_at, updated_at
 )
 ```
 

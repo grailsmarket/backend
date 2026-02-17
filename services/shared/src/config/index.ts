@@ -81,6 +81,9 @@ const ConfigSchema = z.object({
   broker: z.object({
     minFeeBasisPoints: z.number().min(0).max(10000).default(100), // Default 1% minimum
   }),
+  openai: z.object({
+    apiKey: z.string().optional(),
+  }),
 });
 
 const rawConfig = {
@@ -150,6 +153,9 @@ const rawConfig = {
   },
   broker: {
     minFeeBasisPoints: parseInt(process.env.BROKER_MIN_FEE_BASIS_POINTS || '100'),
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
   },
 };
 
