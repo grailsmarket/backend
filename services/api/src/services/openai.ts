@@ -164,7 +164,7 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       throw lastError;
     }
 
-    const data = await response.json();
+    const data: any = await response.json();
     const t2 = performance.now();
     console.log(
       `[openai] generateSimilarNames("${name}") fetch: ${(t1 - t0).toFixed(0)}ms | parse: ${(t2 - t1).toFixed(0)}ms | reasoning_tokens: ${data.usage?.output_tokens_details?.reasoning_tokens ?? '?'} | output_tokens: ${data.usage?.output_tokens ?? '?'}`
