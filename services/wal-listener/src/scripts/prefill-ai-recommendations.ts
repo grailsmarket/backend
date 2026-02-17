@@ -40,7 +40,7 @@ const DEFAULT_LIMIT = 500;
 
 const SYSTEM_PROMPT = `given an input string, return exactly 10 results that are related and likely to be similarly or more common/well-known than the input.
 Rules (strict!):
-3–16 chars per result
+3-16 chars per result
 No spaces in any result
 If input is single word → results = single words only
 Digits-only input → all results digits, same length, similar pattern
@@ -184,7 +184,7 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
       }
     }
 
-    const data = await response.json();
+    const data: any = await response.json();
 
     if (data.status !== 'completed' && data.status !== 'incomplete') {
       throw new Error(`OpenAI response status: ${data.status} — ${JSON.stringify(data.error)}`);
