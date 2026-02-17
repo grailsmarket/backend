@@ -224,24 +224,48 @@ export class SeaportIndexer {
     const { orderHash, offerer, recipient, offer, consideration } = args;
 
     // Check if this is an ENS order (either Base Registrar or Name Wrapper)
+    // Must check BOTH offer and consideration arrays:
+    //   - Listing fulfillment: ENS token is in `offer` (seller offers ENS, buyer pays)
+    //   - Offer acceptance: ENS token is in `consideration` (buyer offered WETH, seller fulfills with ENS)
     const ensRegistrar = config.blockchain.ensRegistrarAddress.toLowerCase();
     const ensNameWrapper = config.blockchain.ensNameWrapperAddress.toLowerCase();
-    const isENSOrder = offer && offer.some((item: any) =>
-      item.token && (
-        item.token.toLowerCase() === ensRegistrar ||
-        item.token.toLowerCase() === ensNameWrapper
-      )
+
+    const isENSToken = (token: string) =>
+      token.toLowerCase() === ensRegistrar || token.toLowerCase() === ensNameWrapper;
+
+    const ensInOffer = offer && offer.some((item: any) =>
+      item.token && isENSToken(item.token)
     );
 
-    if (!isENSOrder) {
+    const ensInConsideration = consideration && consideration.some((item: any) =>
+      item.token && isENSToken(item.token)
+    );
+
+    if (!ensInOffer && !ensInConsideration) {
       // Not an ENS order, skip silently
       return;
     }
+
+    // Determine order type:
+    //   - Listing fulfillment: ENS in offer, offerer=seller, recipient=buyer
+    //   - Offer acceptance: ENS in consideration, offerer=buyer (made the offer), recipient=seller (fulfilled it)
+    const isOfferAcceptance = !ensInOffer && ensInConsideration;
+
+    // Extract ENS items and payment items from the correct arrays
+    const ensItems = isOfferAcceptance ? consideration : offer;
+    const paymentItems = isOfferAcceptance ? offer : consideration;
+
+    // Determine correct buyer/seller based on order type
+    const sellerAddress = isOfferAcceptance ? recipient : offerer;
+    const buyerAddress = isOfferAcceptance ? offerer : recipient;
 
     logger.debug('Processing ENS OrderFulfilled event:', {
       orderHash,
       offerer,
       recipient,
+      isOfferAcceptance,
+      sellerAddress,
+      buyerAddress,
       blockNumber: log.blockNumber,
       transactionHash: log.transactionHash
     });
@@ -301,183 +325,188 @@ export class SeaportIndexer {
     // Record the sale transaction
     const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
 
-    for (const item of offer) {
+    for (const item of ensItems) {
       const tokenAddress = item.token.toLowerCase();
-      const isENSToken = tokenAddress === ensRegistrar || tokenAddress === ensNameWrapper;
-      if (isENSToken) {
-        const tokenId = item.identifier.toString();
-        const isWrapped = tokenAddress === ensNameWrapper;
+      if (!isENSToken(tokenAddress)) {
+        continue;
+      }
 
-        // Calculate total sale price by summing all ERC20/ETH consideration items
-        // (excluding the ENS token if it's somehow in consideration)
-        // Also determine the currency from the payment items
-        let totalPrice = BigInt(0);
-        let currencyAddress = '0x0000000000000000000000000000000000000000'; // Default to ETH
+      const tokenId = item.identifier.toString();
+      const isWrapped = tokenAddress === ensNameWrapper;
 
-        for (const consItem of consideration) {
-          const consToken = consItem.token?.toLowerCase() || '';
-          const isPaymentToken = consToken !== ensRegistrar && consToken !== ensNameWrapper;
+      // Calculate total sale price from payment items
+      // For listing fulfillment: sum ERC20/ETH from consideration (excluding ENS tokens)
+      // For offer acceptance: sum ERC20/ETH from offer (the buyer's payment)
+      let totalPrice = BigInt(0);
+      let currencyAddress = '0x0000000000000000000000000000000000000000'; // Default to ETH
 
-          if (isPaymentToken && consItem.amount) {
-            totalPrice += BigInt(consItem.amount.toString());
-            // Use the first payment token as the currency
-            if (currencyAddress === '0x0000000000000000000000000000000000000000' && consToken) {
-              currencyAddress = consToken;
-            }
+      for (const payItem of paymentItems) {
+        const payToken = payItem.token?.toLowerCase() || '';
+        const isPaymentToken = !isENSToken(payToken);
+
+        if (isPaymentToken && payItem.amount) {
+          totalPrice += BigInt(payItem.amount.toString());
+          // Use the first payment token as the currency
+          if (currencyAddress === '0x0000000000000000000000000000000000000000' && payToken) {
+            currencyAddress = payToken;
           }
         }
+      }
 
-        const price = totalPrice.toString();
+      const price = totalPrice.toString();
 
-        if (isWrapped) {
-          logger.info(`Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`);
-        }
+      if (isWrapped) {
+        logger.info(`Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`);
+      }
 
-        try {
-          // Try to resolve the actual ENS name
-          const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
-          const nameToStore = resolvedData?.name || `token-${tokenId}`;
-          const expiryDate = resolvedData?.expiryDate || null;
-          const resolvedOwner = resolvedData?.ownerAddress || null;
-          const registrationDate = resolvedData?.registrationDate || null;
-          const textRecords = resolvedData?.textRecords || {};
+      if (isOfferAcceptance) {
+        logger.info(`Processing offer acceptance sale: tokenId=${tokenId}, seller=${sellerAddress}, buyer=${buyerAddress}, price=${price}, tx=${log.transactionHash}`);
+      }
 
-          // Use resolved owner if available, otherwise use recipient
-          const ownerAddress = (resolvedOwner || recipient).toLowerCase();
+      try {
+        // Try to resolve the actual ENS name
+        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+        const nameToStore = resolvedData?.name || `token-${tokenId}`;
+        const expiryDate = resolvedData?.expiryDate || null;
+        const resolvedOwner = resolvedData?.ownerAddress || null;
+        const registrationDate = resolvedData?.registrationDate || null;
+        const textRecords = resolvedData?.textRecords || {};
 
-          // First ensure the ENS name exists in the database
-          const upsertQuery = `
-            INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
-            ON CONFLICT (token_id) DO UPDATE
-            SET
-              owner_address = EXCLUDED.owner_address,
-              name = CASE
-                WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
-                ELSE ens_names.name
-              END,
-              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
-              registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-              metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
-              updated_at = NOW()
-            RETURNING id
-          `;
+        // Use resolved owner if available, otherwise use buyer (new owner after sale)
+        const ownerAddress = (resolvedOwner || buyerAddress).toLowerCase();
 
-          const nameResult = await this.pool.query(upsertQuery, [
-            tokenId,
-            nameToStore,
-            ownerAddress,
-            expiryDate,
-            registrationDate,
-            JSON.stringify(textRecords)
-          ]);
+        // First ensure the ENS name exists in the database
+        const upsertQuery = `
+          INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
+          ON CONFLICT (token_id) DO UPDATE
+          SET
+            owner_address = EXCLUDED.owner_address,
+            name = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+              ELSE ens_names.name
+            END,
+            expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+            registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+            metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+            updated_at = NOW()
+          RETURNING id
+        `;
 
-          const ensNameId = nameResult.rows[0].id;
+        const nameResult = await this.pool.query(upsertQuery, [
+          tokenId,
+          nameToStore,
+          ownerAddress,
+          expiryDate,
+          registrationDate,
+          JSON.stringify(textRecords)
+        ]);
 
-          logger.debug(`Seaport sale for ENS ${nameToStore} (token ${tokenId})`);
+        const ensNameId = nameResult.rows[0].id;
 
-          const saleDate = new Date(Number(block.timestamp) * 1000);
+        logger.debug(`Seaport sale for ENS ${nameToStore} (token ${tokenId})`);
 
-          // Create a sale record if no sale exists yet for this order_hash or transaction_hash
-          // This allows the Seaport indexer to act as a backup when OpenSea Stream misses events
-          const saleAlreadyExists = existingSaleResult.rows.length > 0;
+        const saleDate = new Date(Number(block.timestamp) * 1000);
 
-          if (!saleAlreadyExists) {
-            // Record sale in sales table - use listing/offer source or default to 'opensea'
-            const saleSource = listingSource || offerSource || 'opensea';
-            try {
-              const sale = await createSale({
-                ensNameId,
-                sellerAddress: offerer.toLowerCase(),
-                buyerAddress: recipient.toLowerCase(),
+        // Create a sale record if no sale exists yet for this order_hash or transaction_hash
+        // This allows the Seaport indexer to act as a backup when OpenSea Stream misses events
+        const saleAlreadyExists = existingSaleResult.rows.length > 0;
+
+        if (!saleAlreadyExists) {
+          // Record sale in sales table - use listing/offer source or default to 'opensea'
+          const saleSource = listingSource || offerSource || 'opensea';
+          try {
+            const sale = await createSale({
+              ensNameId,
+              sellerAddress: sellerAddress.toLowerCase(),
+              buyerAddress: buyerAddress.toLowerCase(),
+              salePriceWei: price,
+              currencyAddress,
+              listingId,
+              offerId,
+              transactionHash: log.transactionHash!,
+              blockNumber: Number(log.blockNumber),
+              orderHash,
+              orderData: {
+                offer: this.serializeBigInts(offer),
+                consideration: this.serializeBigInts(consideration),
+                zone: args.zone,
+              },
+              source: saleSource,
+              saleDate,
+            });
+
+            logger.info(`Sale created in sales table for token ${tokenId} (source: ${saleSource}, offerAcceptance: ${isOfferAcceptance})`);
+
+            // Publish club sales stats job if sale has clubs (ETH only)
+            if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
+              const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
+                clubNames: sale.clubs,
                 salePriceWei: price,
-                currencyAddress,
-                listingId,
-                offerId,
-                transactionHash: log.transactionHash!,
-                blockNumber: Number(log.blockNumber),
-                orderHash,
-                orderData: {
-                  offer: this.serializeBigInts(offer),
-                  consideration: this.serializeBigInts(consideration),
-                  zone: args.zone,
-                },
-                source: saleSource,
-                saleDate,
-              });
+              }, 'seaport_order_fulfilled');
 
-              logger.info(`Sale created in sales table for token ${tokenId} (source: ${saleSource})`);
-
-              // Publish club sales stats job if sale has clubs (ETH only)
-              if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
-                const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
-                  clubNames: sale.clubs,
-                  salePriceWei: price,
-                }, 'seaport_order_fulfilled');
-
-                if (published) {
-                  logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
-                }
+              if (published) {
+                logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
               }
-            } catch (error: any) {
-              logger.error(`Failed to create sale record: ${error.message}`);
-              // Don't fail the entire handler if sale recording fails
             }
-          } else {
-            logger.debug(`Skipping sale creation for ${nameToStore} - sale already exists for order_hash ${orderHash} or tx ${log.transactionHash}`);
+          } catch (error: any) {
+            logger.error(`Failed to create sale record: ${error.message}`);
+            // Don't fail the entire handler if sale recording fails
           }
-
-          // Cancel all other active listings for this ENS name
-          // After a sale, ownership has transferred, so all other listings from the seller are invalid
-          const cancelOtherListingsQuery = `
-            UPDATE listings
-            SET status = 'cancelled',
-                updated_at = NOW()
-            WHERE ens_name_id = $1
-              AND status = 'active'
-              AND order_hash IS DISTINCT FROM $2
-            RETURNING id, source
-          `;
-
-          const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [ensNameId, orderHash]);
-
-          if (cancelledListings.rows.length > 0) {
-            logger.info(`Cancelled ${cancelledListings.rows.length} other active listings for ENS ${nameToStore} after sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`);
-          }
-
-          // Insert the transaction
-          const txQuery = `
-            INSERT INTO transactions (
-              ens_name_id, transaction_hash, block_number,
-              from_address, to_address, price_wei,
-              transaction_type, timestamp
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
-            ON CONFLICT (transaction_hash) DO NOTHING
-          `;
-
-          await this.pool.query(txQuery, [
-            ensNameId,
-            log.transactionHash,
-            log.blockNumber?.toString(),
-            offerer.toLowerCase(),
-            recipient.toLowerCase(),
-            price,
-            saleDate,
-          ]);
-
-          // Update ENS owner
-          const updateOwnerQuery = `
-            UPDATE ens_names
-            SET owner_address = $1, last_transfer_date = NOW(), updated_at = NOW()
-            WHERE token_id = $2
-          `;
-
-          await this.pool.query(updateOwnerQuery, [recipient.toLowerCase(), tokenId]);
-        } catch (err: any) {
-          logger.error(`Failed to process Seaport sale for token ${tokenId}: ${err.message}`);
-          throw err; // Re-throw to be caught by outer handler
+        } else {
+          logger.debug(`Skipping sale creation for ${nameToStore} - sale already exists for order_hash ${orderHash} or tx ${log.transactionHash}`);
         }
+
+        // Cancel all other active listings for this ENS name
+        // After a sale, ownership has transferred, so all other listings from the seller are invalid
+        const cancelOtherListingsQuery = `
+          UPDATE listings
+          SET status = 'cancelled',
+              updated_at = NOW()
+          WHERE ens_name_id = $1
+            AND status = 'active'
+            AND order_hash IS DISTINCT FROM $2
+          RETURNING id, source
+        `;
+
+        const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [ensNameId, orderHash]);
+
+        if (cancelledListings.rows.length > 0) {
+          logger.info(`Cancelled ${cancelledListings.rows.length} other active listings for ENS ${nameToStore} after sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`);
+        }
+
+        // Insert the transaction
+        const txQuery = `
+          INSERT INTO transactions (
+            ens_name_id, transaction_hash, block_number,
+            from_address, to_address, price_wei,
+            transaction_type, timestamp
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
+          ON CONFLICT (transaction_hash) DO NOTHING
+        `;
+
+        await this.pool.query(txQuery, [
+          ensNameId,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          sellerAddress.toLowerCase(),
+          buyerAddress.toLowerCase(),
+          price,
+          saleDate,
+        ]);
+
+        // Update ENS owner to the buyer
+        const updateOwnerQuery = `
+          UPDATE ens_names
+          SET owner_address = $1, last_transfer_date = NOW(), updated_at = NOW()
+          WHERE token_id = $2
+        `;
+
+        await this.pool.query(updateOwnerQuery, [buyerAddress.toLowerCase(), tokenId]);
+      } catch (err: any) {
+        logger.error(`Failed to process Seaport sale for token ${tokenId}: ${err.message}`);
+        throw err; // Re-throw to be caught by outer handler
       }
     }
   }
