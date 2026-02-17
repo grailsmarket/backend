@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient } from '../../../shared/src';
 
 export async function healthRoutes(fastify: FastifyInstance) {

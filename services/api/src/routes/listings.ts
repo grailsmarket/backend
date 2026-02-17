@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, Listing } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),

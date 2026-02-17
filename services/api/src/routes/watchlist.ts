@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, getElasticsearchClient } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, getElasticsearchClient } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { buildSearchResults } from '../utils/response-builder';
 import { buildESQuery } from '../utils/elasticsearch-filters';

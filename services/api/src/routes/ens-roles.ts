@@ -1,15 +1,15 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { APIResponse } from '../../../shared/src';
+import type { APIResponse } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 import {
   getNameRoles,
   getManageableNames,
   canUpdateRecords,
-  EnsRoles,
-  CanManageResult,
+  type EnsRoles,
+  type CanManageResult,
 } from '../services/ens-roles';
-import { buildSearchResults, SearchResult } from '../utils/response-builder';
+import { buildSearchResults, type SearchResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 
 const NameParamsSchema = z.object({

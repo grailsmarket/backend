@@ -22,7 +22,7 @@
  *   npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
  */
 
-import { getPostgresPool, closeAllConnections, config, processAddressRecords, AddressRecord } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, config, processAddressRecords, type AddressRecord } from '../../../shared/src';
 
 const pool = getPostgresPool();
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

@@ -1,5 +1,5 @@
-import { FastifyInstance } from 'fastify';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import type { FastifyInstance } from 'fastify';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 
 export async function poapRoutes(fastify: FastifyInstance) {

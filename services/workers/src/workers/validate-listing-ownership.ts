@@ -8,8 +8,8 @@
 import { getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
 import {
-  ValidationResult,
-  ListingWithOwner,
+  type ValidationResult,
+  type ListingWithOwner,
   ENS_REGISTRAR_ADDRESS
 } from './types';
 

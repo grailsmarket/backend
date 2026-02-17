@@ -2,13 +2,13 @@ import {
   createPublicClient,
   http,
   decodeEventLog,
-  Log,
-  PublicClient,
+  type Log,
+  type PublicClient,
   parseAbi,
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, BlockchainEvent, hasEmoji } from '../../../shared/src';
+import { config, getPostgresPool, type BlockchainEvent, hasEmoji } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 

@@ -1,5 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 import { mutelistService } from '../services/mutelist';
 

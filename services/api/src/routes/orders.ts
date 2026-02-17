@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, SeaportOrder, validateFeeInOrder } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 
 const CreateOrderSchema = z.object({

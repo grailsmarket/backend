@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords, AddressRecord, processContenthash, ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;

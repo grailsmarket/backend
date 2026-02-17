@@ -2,8 +2,8 @@ import {
   createPublicClient,
   http,
   decodeEventLog,
-  Log,
-  PublicClient,
+  type Log,
+  type PublicClient,
   parseAbi,
 } from 'viem';
 import { mainnet } from 'viem/chains';

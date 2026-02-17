@@ -1,5 +1,5 @@
-import { FastifyInstance } from 'fastify';
-import { getPostgresPool, APIResponse, config } from '../../../shared/src';
+import type { FastifyInstance } from 'fastify';
+import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
 import { ethers } from 'ethers';
 
 export async function profilesRoutes(fastify: FastifyInstance) {

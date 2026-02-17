@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { config, getPostgresPool } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';

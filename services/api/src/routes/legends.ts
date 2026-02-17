@@ -1,5 +1,5 @@
-import { FastifyInstance } from 'fastify';
-import { getPostgresPool, APIResponse } from '../../../shared/src';
+import type { FastifyInstance } from 'fastify';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 
 export async function legendsRoutes(fastify: FastifyInstance) {

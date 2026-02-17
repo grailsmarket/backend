@@ -1,7 +1,7 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
-import { QUEUE_NAMES, SyncEnsDataJob } from '../queue';
+import { QUEUE_NAMES, type SyncEnsDataJob } from '../queue';
 import { fetchENSMetadata } from '../services/blockchain';
 
 /**

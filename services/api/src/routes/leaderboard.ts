@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { getPostgresPool } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 

@@ -1,6 +1,6 @@
-import { FastifyInstance } from 'fastify';
-import { getPostgresPool, getElasticsearchClient, APIResponse } from '../../../shared/src';
-import { buildSearchResults, SearchResult } from '../utils/response-builder';
+import type { FastifyInstance } from 'fastify';
+import { getPostgresPool, getElasticsearchClient, type APIResponse } from '../../../shared/src';
+import { buildSearchResults, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';

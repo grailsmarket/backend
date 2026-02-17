@@ -1,7 +1,7 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
-import { getPostgresPool, APIResponse, config } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { getQueueClient } from '../queue';
 import { fetchBalances } from '../services/balances';
