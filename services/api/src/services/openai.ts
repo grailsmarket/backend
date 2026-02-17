@@ -24,6 +24,7 @@ const EXCLUDED_CATEGORIES = [
   'prepunk_10k',
   'prepunk_1k',
   'prepunk_digits',
+  'social_handles',
 ];
 
 /**
