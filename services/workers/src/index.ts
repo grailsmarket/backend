@@ -11,6 +11,7 @@ import { registerHighestOfferWorker } from './workers/highest-offer';
 import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-analytics';
 import { registerValidationWorkers, registerValidationSchedulers } from './workers/validation';
 import { registerReconcileOpenseaWorker } from './workers/reconcile-opensea';
+import { registerAiCacheCleanupWorker } from './workers/ai-cache-cleanup';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -47,6 +48,9 @@ async function start() {
 
     // Register OpenSea reconciliation worker
     await registerReconcileOpenseaWorker(boss);
+
+    // Register AI recommendations cache cleanup worker
+    await registerAiCacheCleanupWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

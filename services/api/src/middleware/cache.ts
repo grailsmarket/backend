@@ -78,8 +78,10 @@ export function withCache(options: CacheOptions = {}) {
         });
       }
 
-      // Set cache header
-      reply.header('X-Cache', 'MISS');
+      // Set cache header unless route handler already set it (e.g. DB cache HIT).
+      if (!reply.hasHeader('X-Cache')) {
+        reply.header('X-Cache', 'MISS');
+      }
 
       // Call original send
       return originalSend(payload);

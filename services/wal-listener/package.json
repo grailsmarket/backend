@@ -15,6 +15,7 @@
     "backfill-attributes": "npx tsx src/scripts/backfill-name-attributes.ts",
     "backfill-club-stats": "npx tsx src/scripts/backfill-club-stats.ts",
     "backfill-highest-offers": "npx tsx src/scripts/backfill-highest-offers.ts",
+    "prefill-ai-recommendations": "npx tsx src/scripts/prefill-ai-recommendations.ts",
     "backfill-mint-events": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js",
     "backfill-mint-events:dry": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --dry-run",
     "backfill-mint-events:resume": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --resume",

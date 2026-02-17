@@ -38,6 +38,7 @@ src/
     trending.ts         # Trending names endpoints
     analytics.ts        # Market analytics endpoints
     recommendations.ts  # Personalized recommendations
+    ai-recommendations.ts # AI similar-name suggestions (cached + auth-gated generation)
     user-insights.ts    # User activity history
     cart.ts             # Shopping cart endpoints
     legends.ts          # ENS Legends endpoints
@@ -48,6 +49,7 @@ src/
   services/
     seaport.ts          # Seaport order creation/validation
     opensea.ts          # OpenSea API client
+    openai.ts           # OpenAI similar-name generation service
     search.ts           # Elasticsearch query builder
     activity-notifier.ts # Real-time activity broadcasts
     name-views.ts       # View tracking service
@@ -205,6 +207,11 @@ Query parameters: `period` (24h, 7d, 30d, 90d, all)
 | GET | `/recommendations/based-on-votes` | Yes | Based on voting patterns |
 | GET | `/recommendations/for-you` | Yes | Personalized combined recommendations |
 
+### AI Recommendations
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/ai-recommendations/:name` | Optional (cached) / Yes (generation) | Returns cached AI suggestions to everyone; cache misses require auth and may generate + cache new suggestions |
+
 ### User Insights (Auth Required)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -353,6 +360,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `legends` | ENS Legend mint records |
 | `poap_links` | POAP claim links |
 | `mutelist` | Addresses to filter from activity broadcasts |
+| `ai_recommendations` | Cached AI similar-name suggestions (label, recommendations JSONB, model, expires_at) |
 
 ## Environment Variables
 
@@ -382,6 +390,9 @@ SEAPORT_ADDRESS=0x0000000000000068F116a894984e2DB1123eB395
 # OpenSea
 OPENSEA_API_KEY=your_opensea_api_key
 OPENSEA_STREAM_URL=wss://stream.openseabeta.com/socket/websocket
+
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key
 
 # Elasticsearch
 ELASTICSEARCH_URL=http://localhost:9200
