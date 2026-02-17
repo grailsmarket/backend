@@ -7,11 +7,11 @@
 
 import { getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
-import {
+import type {
   ValidationResult,
   ListingWithOwner,
-  ENS_REGISTRAR_ADDRESS
 } from './types';
+import { ENS_REGISTRAR_ADDRESS } from './types';
 
 const pool = getPostgresPool();
 

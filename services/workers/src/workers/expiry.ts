@@ -1,7 +1,7 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
-import { QUEUE_NAMES, ExpireOrdersJob } from '../queue';
+import { QUEUE_NAMES, type ExpireOrdersJob } from '../queue';
 import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
 
 /**

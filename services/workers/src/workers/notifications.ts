@@ -1,7 +1,7 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
-import { QUEUE_NAMES, SendNotificationJob } from '../queue';
+import { QUEUE_NAMES, type SendNotificationJob } from '../queue';
 import {
   sendEmail,
   buildNewListingEmail,

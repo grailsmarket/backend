@@ -1,7 +1,7 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
-import { QUEUE_NAMES, UpdateOwnershipJob } from '../queue';
+import { QUEUE_NAMES, type UpdateOwnershipJob } from '../queue';
 
 /**
  * Ownership Update Worker

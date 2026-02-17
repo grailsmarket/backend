@@ -7,10 +7,12 @@
 
 import { getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
-import {
+import type {
   ValidationResult,
   OfferWithBalance,
   Currency,
+} from './types';
+import {
   ZERO_ADDRESS,
   WETH_ADDRESS,
   USDC_ADDRESS,
