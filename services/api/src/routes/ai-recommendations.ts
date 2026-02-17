@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { normalize } from 'viem/ens';
 import { getPostgresPool, APIResponse } from '../../../shared/src';
 import { generateSimilarNames, OPENAI_MODEL_NAME } from '../services/openai';
+import { cacheHandler } from '../middleware/cache';
+import { optionalAuth } from '../middleware/auth';
 
 /** Cache TTL: 60 days in milliseconds */
 const CACHE_TTL_DAYS = 60;
@@ -18,12 +20,17 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
    * GET /ai-recommendations/:name
    *
    * Returns AI-generated similar name suggestions for an ENS label.
+   * Cached results are public. Generating fresh results requires auth.
+   * Rate limited to 15 req/min per IP.
    * Checks DB cache first; on miss, looks up the name's clubs for context,
    * calls OpenAI inline, and caches the result.
    *
    * Response: { success: true, data: { suggestions: string[] } }
    */
-  fastify.get('/:name', async (request, reply) => {
+  fastify.get('/:name', {
+    preHandler: [optionalAuth, cacheHandler],
+    config: { rateLimit: { max: 15, timeWindow: 60_000 } },
+  }, async (request, reply) => {
     const params = AiRecommendationsParamsSchema.parse(request.params);
 
     // Strip .eth suffix, then ENS-normalize to canonical form
@@ -77,6 +84,21 @@ export async function aiRecommendationsRoutes(fastify: FastifyInstance) {
           },
         };
         return reply.header('X-Cache', 'HIT').send(response);
+      }
+
+      // Cache miss: only authenticated users can generate new recommendations
+      if (!request.user) {
+        const response: APIResponse = {
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Log in to generate new AI recommendations',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        return reply.status(401).send(response);
       }
 
       // Cache miss — name must exist in ens_names to prevent abuse
