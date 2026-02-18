@@ -37,8 +37,11 @@ export async function fetchFreshMetadata(
     });
 
     return { metadata, source: 'graph' };
-  } catch (error) {
-    logger.error({ error, name, ensNameId }, 'Failed to fetch fresh metadata from Graph, falling back to cached');
+  } catch (error: any) {
+    logger.error(
+      { error: error?.message, cause: error?.cause?.message || error?.cause, url: config.theGraph.ensSubgraphUrl, name, ensNameId },
+      'Failed to fetch fresh metadata from Graph, falling back to cached'
+    );
 
     // Fall back to cached metadata from the database
     const pool = getPostgresPool();
