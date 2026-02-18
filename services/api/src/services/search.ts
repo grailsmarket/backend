@@ -23,7 +23,7 @@ interface SearchQuery {
     minDaysSinceLastSale?: number;
     maxDaysSinceLastSale?: number;
   };
-  sortBy?: 'price' | 'expiry_date' | 'registration_date' | 'last_sale_date' | 'last_sale_price' | 'character_count' | 'watchers_count' | 'offer';
+  sortBy?: 'price' | 'expiry_date' | 'registration_date' | 'creation_date' | 'last_sale_date' | 'last_sale_price' | 'character_count' | 'watchers_count' | 'offer';
   sortOrder?: 'asc' | 'desc';
 }
 

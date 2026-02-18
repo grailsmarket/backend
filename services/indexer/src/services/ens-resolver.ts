@@ -51,6 +51,7 @@ interface ResolvedNameData {
   ownerAddress: string | null;
   registrantAddress: string | null;
   registrationDate: Date | null;
+  creationDate: Date | null;
   textRecords: Record<string, string>;
   addressRecords: AddressRecord[];
   /** Whether the name from The Graph was already in normalized form.
@@ -338,6 +339,7 @@ export class ENSResolver {
               id
             }
             expiryDate
+            createdAt
             registrant {
               id
             }
@@ -411,6 +413,7 @@ export class ENSResolver {
                 id
               }
               expiryDate
+              createdAt
               registrant {
                 id
               }
@@ -503,6 +506,16 @@ export class ENSResolver {
             }
           }
 
+          // Parse creation date if available (first-ever registration date)
+          let creationDate: Date | null = null;
+          if (domain.createdAt) {
+            try {
+              creationDate = new Date(parseInt(domain.createdAt) * 1000);
+            } catch (e) {
+              logger.warn(`Failed to parse creation date for ${name}: ${domain.createdAt}`);
+            }
+          }
+
           // Get owner address based on registrant
           // If registrant is NameWrapper, use wrappedOwner; otherwise use registrant
           let ownerAddress: string | null = null;
@@ -572,7 +585,7 @@ export class ENSResolver {
           }
 
           logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, address records: ${addressRecords.length}, isNormalized: ${isNormalized}`);
-          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, textRecords, addressRecords, isNormalized, originalName };
+          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, creationDate, textRecords, addressRecords, isNormalized, originalName };
         }
       }
 

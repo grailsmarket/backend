@@ -388,6 +388,7 @@ export class OpenSeaStreamListener {
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
+      let creationDate: Date | null = null;
       let textRecords: Record<string, string> = {};
       let correctTokenId = tokenId; // Default to OpenSea's token_id
       let isNormalizedRegistration = true; // Assume normalized unless proven otherwise
@@ -407,6 +408,7 @@ export class OpenSeaStreamListener {
         expiryDate = resolvedData.expiryDate;
         resolvedOwner = resolvedData.ownerAddress;
         registrationDate = resolvedData.registrationDate;
+        creationDate = resolvedData.creationDate;
         textRecords = resolvedData.textRecords;
         isNormalizedRegistration = resolvedData.isNormalized;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
@@ -419,7 +421,7 @@ export class OpenSeaStreamListener {
 
       // Use maker address as the owner (they are listing their own item)
       const ownerAddress = maker.address.toLowerCase();
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords);
+      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords, creationDate);
 
       // Create or update listing
       // First, cancel any existing active OpenSea listings for this ENS name and seller
@@ -581,6 +583,7 @@ export class OpenSeaStreamListener {
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
+      let creationDate: Date | null = null;
       let textRecords: Record<string, string> = {};
       let correctTokenId = tokenId; // Default to OpenSea's token_id
 
@@ -599,6 +602,7 @@ export class OpenSeaStreamListener {
         expiryDate = resolvedData.expiryDate;
         resolvedOwner = resolvedData.ownerAddress;
         registrationDate = resolvedData.registrationDate;
+        creationDate = resolvedData.creationDate;
         textRecords = resolvedData.textRecords;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
       } else if (!nameToStore || nameToStore.startsWith('#') || !nameToStore.endsWith('.eth')) {
@@ -637,7 +641,7 @@ export class OpenSeaStreamListener {
         ownerAddress = sellerAddress || '0x0000000000000000000000000000000000000000';
       }
 
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords);
+      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
 
       // Find the listing that's being sold and get its source
       let listingId: number | undefined;
@@ -1406,7 +1410,8 @@ export class OpenSeaStreamListener {
     includeTransferDate = false,
     expiryDate: Date | null = null,
     registrationDate: Date | null = null,
-    textRecords: Record<string, string> = {}
+    textRecords: Record<string, string> = {},
+    creationDate: Date | null = null
   ): Promise<number> {
     // Normalize owner address to lowercase
     const normalizedOwner = ownerAddress.toLowerCase();
@@ -1414,8 +1419,8 @@ export class OpenSeaStreamListener {
     try {
       // Use INSERT ... ON CONFLICT to avoid race conditions
       const upsertQuery = includeTransferDate ? `
-        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, expiry_date, registration_date, metadata, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), $4, $5, $6, NOW(), NOW())
+        INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, expiry_date, registration_date, creation_date, metadata, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), $4, $5, $7, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
@@ -1425,12 +1430,13 @@ export class OpenSeaStreamListener {
           last_transfer_date = NOW(),
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+          creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
           metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
           updated_at = NOW()
         RETURNING id
       ` : `
-        INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, creation_date, metadata, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $7, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
@@ -1439,6 +1445,7 @@ export class OpenSeaStreamListener {
           END,
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+          creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
           metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
           updated_at = NOW()
         RETURNING id
@@ -1450,7 +1457,8 @@ export class OpenSeaStreamListener {
         normalizedOwner,
         expiryDate,
         registrationDate,
-        JSON.stringify(textRecords)
+        JSON.stringify(textRecords),
+        creationDate
       ]);
       return result.rows[0].id;
     } catch (error: any) {
@@ -1466,6 +1474,7 @@ export class OpenSeaStreamListener {
             last_transfer_date = NOW(),
             expiry_date = COALESCE($3, expiry_date),
             registration_date = COALESCE($4, registration_date),
+            creation_date = COALESCE($6, creation_date),
             metadata = COALESCE($5, metadata),
             updated_at = NOW()
           WHERE name = $1
@@ -1475,6 +1484,7 @@ export class OpenSeaStreamListener {
             owner_address = $2,
             expiry_date = COALESCE($3, expiry_date),
             registration_date = COALESCE($4, registration_date),
+            creation_date = COALESCE($6, creation_date),
             metadata = COALESCE($5, metadata),
             updated_at = NOW()
           WHERE name = $1
@@ -1486,7 +1496,8 @@ export class OpenSeaStreamListener {
           normalizedOwner,
           expiryDate,
           registrationDate,
-          JSON.stringify(textRecords)
+          JSON.stringify(textRecords),
+          creationDate
         ]);
 
         if (updateResult.rows.length > 0) {

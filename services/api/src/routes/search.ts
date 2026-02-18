@@ -27,7 +27,7 @@ const BulkFiltersSearchSchema = z.object({
 
   // Sorting
   sortBy: z.enum([
-    'price', 'expiry_date', 'registration_date', 'last_sale_date',
+    'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
     'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer'
   ]).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
@@ -118,6 +118,7 @@ function createNotFoundResult(name: string): SearchResult {
     owner: '',
     expiry_date: null,
     registration_date: null,
+    creation_date: null,
     last_sale_date: null,
     metadata: {},
     metadata_updated_at: null,
@@ -858,6 +859,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
         orderByClause = `ORDER BY en.expiry_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'registration_date') {
         orderByClause = `ORDER BY en.registration_date ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'creation_date') {
+        orderByClause = `ORDER BY en.creation_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'last_sale_date') {
         orderByClause = `ORDER BY en.last_sale_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'character_count') {
@@ -912,6 +915,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'DISTINCT en.name, en.expiry_date';
       } else if (sortBy === 'registration_date') {
         selectClause = 'DISTINCT en.name, en.registration_date';
+      } else if (sortBy === 'creation_date') {
+        selectClause = 'DISTINCT en.name, en.creation_date';
       } else if (sortBy === 'last_sale_date') {
         selectClause = 'DISTINCT en.name, en.last_sale_date';
       } else if (sortBy === 'character_count') {
@@ -937,14 +942,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
         dataQuery = `
           WITH ranked_listings AS (
             SELECT en.name, l.seller_address, l.created_at, l.price_wei,
-                   en.expiry_date, en.registration_date, en.last_sale_date, en.last_sale_price_usd,
+                   en.expiry_date, en.registration_date, en.creation_date, en.last_sale_date, en.last_sale_price_usd,
                    en.view_count, en.highest_offer_wei, en.clubs, en.id as ens_name_id,
                    ROW_NUMBER() OVER (PARTITION BY l.seller_address ORDER BY l.created_at DESC) as rn
             FROM listings l
             JOIN ens_names en ON l.ens_name_id = en.id
             WHERE ${whereClause}
           )
-          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : ', created_at'}
+          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : ', created_at'}
           FROM ranked_listings
           WHERE rn = 1
           ${orderByClause.replace(/en\./g, '').replace(/l\./g, '')}
@@ -1549,6 +1554,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
               break;
             case 'registration_date':
               orderBy = `en.registration_date ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'creation_date':
+              orderBy = `en.creation_date ${order} ${nullsLast}, en.name ASC`;
               break;
             case 'last_sale_date':
               orderBy = `en.last_sale_date ${order} ${nullsLast}, en.name ASC`;

@@ -46,6 +46,7 @@ export interface ENSName {
   owner: string | null;
   expiry_date: string | null;
   registration_date: string | null;
+  creation_date: string | null;
   last_sale_date: string | null;
   last_sale_price: string | null;
   last_sale_currency: string | null;

@@ -24,6 +24,7 @@ export interface SearchResult {
   owner: string;
   expiry_date: Date | null;
   registration_date: Date | null;
+  creation_date: Date | null;
   last_sale_date: Date | null;
   metadata: EnsNameMetadata | null;
   metadata_updated_at: Date | null;  // When metadata was last fetched from The Graph
@@ -106,6 +107,7 @@ export async function buildSearchResults(
       en.owner_address,
       en.expiry_date,
       en.registration_date,
+      en.creation_date,
       en.last_sale_date,
       en.metadata,
       en.metadata_updated_at,
@@ -185,6 +187,7 @@ export async function buildSearchResults(
       owner: row.owner_address,
       expiry_date: row.expiry_date,
       registration_date: row.registration_date,
+      creation_date: row.creation_date,
       last_sale_date: row.last_sale_date,
       last_sale_price: row.last_sale_price,
       last_sale_currency: row.last_sale_currency,
