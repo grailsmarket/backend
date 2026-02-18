@@ -11,7 +11,7 @@ export interface EnsMetadata {
 
 interface FreshMetadataResult {
   metadata: EnsMetadata;
-  source: 'graph';
+  source: 'graph' | 'cache';
 }
 
 /**
@@ -28,14 +28,28 @@ export async function fetchFreshMetadata(
 ): Promise<FreshMetadataResult> {
   logger.info({ name, ensNameId }, 'Fetching fresh metadata from Graph (bypassing cache)');
 
-  const metadata = await fetchMetadataFromGraph(name);
+  try {
+    const metadata = await fetchMetadataFromGraph(name);
 
-  // Sync to database asynchronously - fire and forget
-  syncMetadataToDatabase(ensNameId, name, metadata).catch((error) => {
-    logger.error({ error, name, ensNameId }, 'Async metadata sync failed');
-  });
+    // Sync to database asynchronously - fire and forget
+    syncMetadataToDatabase(ensNameId, name, metadata).catch((error) => {
+      logger.error({ error, name, ensNameId }, 'Async metadata sync failed');
+    });
 
-  return { metadata, source: 'graph' };
+    return { metadata, source: 'graph' };
+  } catch (error) {
+    logger.error({ error, name, ensNameId }, 'Failed to fetch fresh metadata from Graph, falling back to cached');
+
+    // Fall back to cached metadata from the database
+    const pool = getPostgresPool();
+    const result = await pool.query(
+      `SELECT metadata FROM ens_names WHERE id = $1`,
+      [ensNameId]
+    );
+
+    const cached = result.rows[0]?.metadata || {};
+    return { metadata: cached, source: 'cache' as any };
+  }
 }
 
 /**
