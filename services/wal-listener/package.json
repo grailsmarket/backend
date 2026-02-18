@@ -53,6 +53,7 @@
     "find-desynced-graph:save": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names-graph.js --save"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.992.0",
     "axios": "^1.12.2",
     "pg-boss": "^9.0.3",
     "pg-logical-replication": "^2.1.0",

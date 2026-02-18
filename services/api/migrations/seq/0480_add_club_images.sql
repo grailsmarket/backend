@@ -1,0 +1,2 @@
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS avatar_image_key TEXT;
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS header_image_key TEXT;

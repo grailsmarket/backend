@@ -84,6 +84,15 @@ const ConfigSchema = z.object({
   openai: z.object({
     apiKey: z.string().optional(),
   }),
+  storage: z.object({
+    bucket: z.string().optional(),
+    accessKeyId: z.string().optional(),
+    secretAccessKey: z.string().optional(),
+    endpoint: z.string().optional(),
+    region: z.string().default('auto'),
+    forcePathStyle: z.boolean().default(false),
+    enabled: z.boolean(),
+  }),
 });
 
 const rawConfig = {
@@ -156,6 +165,15 @@ const rawConfig = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
+  },
+  storage: {
+    bucket: process.env.BUCKET,
+    accessKeyId: process.env.ACCESS_KEY_ID,
+    secretAccessKey: process.env.SECRET_ACCESS_KEY,
+    endpoint: process.env.ENDPOINT,
+    region: process.env.REGION || 'auto',
+    forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+    enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
   },
 };
 

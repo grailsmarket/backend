@@ -17,6 +17,7 @@
     "import:poap": "tsx scripts/import-poap-links.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.992.0",
     "@fastify/cors": "^8.5.0",
     "@fastify/helmet": "^11.1.1",
     "@fastify/rate-limit": "^9.1.0",
