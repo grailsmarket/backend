@@ -1,7 +1,38 @@
-import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { getPostgresPool, type APIResponse, getFile, isStorageEnabled } from '../../../shared/src';
 import { searchNames } from '../services/search';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
+
+// In-memory cache for S3 images
+const IMAGE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const IMAGE_CACHE_MAX = 120;
+interface CachedImage {
+  body: Buffer;
+  contentType: string;
+  cachedAt: number;
+}
+const imageCache = new Map<string, CachedImage>();
+
+function evictStaleImages() {
+  const now = Date.now();
+  for (const [key, entry] of imageCache) {
+    if (now - entry.cachedAt > IMAGE_CACHE_TTL_MS) {
+      imageCache.delete(key);
+    }
+  }
+  // If still at capacity, delete oldest
+  if (imageCache.size >= IMAGE_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of imageCache) {
+      if (entry.cachedAt < oldestTime) {
+        oldestTime = entry.cachedAt;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) imageCache.delete(oldestKey);
+  }
+}
 
 // Valid sort fields for clubs
 const VALID_SORT_FIELDS = [
@@ -154,6 +185,8 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           ROUND((c.premium_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS premium_percent,
           ROUND((c.available_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS available_percent,
           c.classifications,
+          c.avatar_image_key,
+          c.header_image_key,
           c.last_floor_update,
           c.last_sales_update,
           c.created_at,
@@ -179,7 +212,11 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          clubs: result.rows,
+          clubs: result.rows.map(club => ({
+            ...club,
+            avatar_url: club.avatar_image_key ? `/api/v1/clubs/${club.name}/avatar` : null,
+            header_url: club.header_image_key ? `/api/v1/clubs/${club.name}/header` : null,
+          })),
           total: result.rows.length,
         },
         meta: {
@@ -300,6 +337,65 @@ export async function clubsRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Serve club image from S3 (avatar or header)
+  async function serveClubImage(request: FastifyRequest, reply: FastifyReply, imageType: 'avatar' | 'header') {
+    const { clubName } = request.params as { clubName: string };
+
+    try {
+      const column = imageType === 'avatar' ? 'avatar_image_key' : 'header_image_key';
+      const result = await pool.query(`SELECT ${column} FROM clubs WHERE name = $1`, [clubName]);
+
+      if (result.rows.length === 0) {
+        return reply.status(404).send({ success: false, error: 'Club not found' });
+      }
+
+      const imageKey = result.rows[0][column];
+      if (!imageKey) {
+        return reply.status(404).send({ success: false, error: 'No image set' });
+      }
+
+      // Check in-memory cache
+      const cached = imageCache.get(imageKey);
+      if (cached && Date.now() - cached.cachedAt < IMAGE_CACHE_TTL_MS) {
+        return reply
+          .header('Content-Type', cached.contentType)
+          .header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800')
+          .send(cached.body);
+      }
+
+      if (!isStorageEnabled()) {
+        return reply.status(503).send({ success: false, error: 'Storage not configured' });
+      }
+
+      const file = await getFile(imageKey);
+      if (!file) {
+        return reply.status(404).send({ success: false, error: 'Image not found' });
+      }
+
+      // Cache in memory
+      evictStaleImages();
+      imageCache.set(imageKey, { body: file.body, contentType: file.contentType, cachedAt: Date.now() });
+
+      return reply
+        .header('Content-Type', file.contentType)
+        .header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800')
+        .send(file.body);
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ success: false, error: 'Failed to serve image' });
+    }
+  }
+
+  // Club avatar image proxy
+  fastify.get('/:clubName/avatar', async (request, reply) => {
+    return serveClubImage(request, reply, 'avatar');
+  });
+
+  // Club header image proxy
+  fastify.get('/:clubName/header', async (request, reply) => {
+    return serveClubImage(request, reply, 'header');
+  });
+
   // Get names in a specific club
   fastify.get('/:clubName', { preHandler: cacheHandler }, async (request, reply) => {
     const { clubName } = request.params as { clubName: string };
@@ -323,6 +419,8 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           sales_volume_wei_1mo,
           sales_volume_wei_1w,
           classifications,
+          avatar_image_key,
+          header_image_key,
           last_floor_update,
           last_sales_update,
           created_at
@@ -338,7 +436,11 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const club = clubResult.rows[0];
+      const club = {
+        ...clubResult.rows[0],
+        avatar_url: clubResult.rows[0].avatar_image_key ? `/api/v1/clubs/${clubName}/avatar` : null,
+        header_url: clubResult.rows[0].header_image_key ? `/api/v1/clubs/${clubName}/header` : null,
+      };
 
       // Search for names in this club using the search service
       const searchResults = await searchNames({
