@@ -8,8 +8,10 @@
  * 2. Queries The Graph ENS subgraph for domain.createdAt in batches
  * 3. Batch-updates creation_date in ens_names table using unnest
  *
+ * Uses keyset pagination (WHERE id > lastId) for constant-speed queries.
+ *
  * Usage:
- *   npx tsx src/scripts/backfill-creation-dates.ts [--dry-run] [--limit 1000000] [--batch-size 200] [--offset 0] [--concurrency 3]
+ *   npx tsx src/scripts/backfill-creation-dates.ts [--dry-run] [--limit 1000000] [--batch-size 200] [--from 0] [--concurrency 3]
  */
 
 import { getPostgresPool } from '../../../shared/src';
@@ -96,7 +98,7 @@ async function backfillCreationDates(options: {
     let totalUpdated = 0;
     let totalSkipped = 0;
     let totalFailed = 0;
-    let currentOffset = offset;
+    let lastId = offset; // keyset cursor — start after this id
     let pageNumber = 0;
     const startTime = Date.now();
 
@@ -109,12 +111,13 @@ async function backfillCreationDates(options: {
         SELECT id, name
         FROM ens_names
         WHERE creation_date IS NULL
+          AND id > $2
           AND name NOT LIKE '#%'
           AND name NOT LIKE 'token-%'
           AND name NOT LIKE '%.%.eth'
         ORDER BY id
-        LIMIT $1 OFFSET $2
-      `, [fetchSize, currentOffset]);
+        LIMIT $1
+      `, [fetchSize, lastId]);
 
       if (result.rows.length === 0) break;
       pageNumber++;
@@ -199,7 +202,7 @@ async function backfillCreationDates(options: {
       }
 
       totalProcessed += rows.length;
-      currentOffset += rows.length;
+      lastId = rows[rows.length - 1].id; // advance keyset cursor
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const rate = (totalProcessed / ((Date.now() - startTime) / 1000)).toFixed(0);
@@ -244,7 +247,7 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === '--batch-size' && args[i + 1]) {
     options.batchSize = parseInt(args[i + 1], 10);
     i++;
-  } else if (args[i] === '--offset' && args[i + 1]) {
+  } else if ((args[i] === '--offset' || args[i] === '--from') && args[i + 1]) {
     options.offset = parseInt(args[i + 1], 10);
     i++;
   } else if (args[i] === '--concurrency' && args[i + 1]) {
