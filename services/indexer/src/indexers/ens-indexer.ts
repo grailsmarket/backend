@@ -913,6 +913,7 @@ export class ENSIndexer {
     // Set defaults outside try block so they're available for transaction logging
     let correctTokenId = tokenIdStr;
     let registrationDate: Date | null = null;
+    let creationDate: Date | null = null;
     let registrantAddress = owner.toLowerCase();
 
     try {
@@ -967,6 +968,7 @@ export class ENSIndexer {
         // Use dates from The Graph, fallback to event data
         expiryDate = resolvedData.expiryDate || new Date(Number(expires) * 1000);
         registrationDate = resolvedData.registrationDate;
+        creationDate = resolvedData.creationDate;
 
         logger.debug(`Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`);
       } else {
@@ -976,6 +978,7 @@ export class ENSIndexer {
         if (resolvedData && resolvedData.name) {
           nameToStore = resolvedData.name;
           registrationDate = resolvedData.registrationDate;
+          creationDate = resolvedData.creationDate;
         } else {
           // The Graph lookup failed - this can happen due to race conditions where
           // The Graph hasn't indexed this block yet. Check if we already have this
@@ -1035,25 +1038,27 @@ export class ENSIndexer {
             registrant = $3,
             expiry_date = $4,
             registration_date = COALESCE(registration_date, $5),
+            creation_date = COALESCE(creation_date, $9),
             has_numbers = $6,
             has_emoji = $7,
             updated_at = NOW()
           WHERE name = $8
           RETURNING id`,
-          [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore]
+          [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore, creationDate]
         );
       } else {
         // Upsert by token_id
         const upsertQuery = `
           INSERT INTO ens_names (
             token_id, owner_address, registrant,
-            expiry_date, registration_date, name, has_numbers, has_emoji
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            expiry_date, registration_date, creation_date, name, has_numbers, has_emoji
+          ) VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8)
           ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           registrant = EXCLUDED.registrant,
           expiry_date = EXCLUDED.expiry_date,
           registration_date = COALESCE(ens_names.registration_date, EXCLUDED.registration_date),
+          creation_date = COALESCE(ens_names.creation_date, EXCLUDED.creation_date),
           name = CASE
             WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
             ELSE ens_names.name
@@ -1077,7 +1082,8 @@ export class ENSIndexer {
           registrationDate,
           nameToStore,
           has_numbers,
-          has_emoji
+          has_emoji,
+          creationDate
         ]);
       }
 
