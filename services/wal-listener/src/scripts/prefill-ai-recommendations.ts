@@ -11,6 +11,7 @@
  * Usage:
  *   npx tsx src/scripts/prefill-ai-recommendations.ts
  *   npx tsx src/scripts/prefill-ai-recommendations.ts --limit 100
+ *   npx tsx src/scripts/prefill-ai-recommendations.ts --limit 500 --concurrency 10
  *
  * Environment variables required:
  *   DATABASE_URL - PostgreSQL connection string
@@ -37,6 +38,12 @@ const MAX_RETRIES = 3;
 
 /** Default number of names to prefill */
 const DEFAULT_LIMIT = 500;
+
+/** Default concurrent OpenAI calls per chunk */
+const DEFAULT_CONCURRENCY = 10;
+
+/** Maximum allowed concurrency */
+const MAX_CONCURRENCY = 50;
 
 const SYSTEM_PROMPT = `given an input string, return exactly 10 results that are related and likely to be similarly or more common/well-known than the input.
 Rules (strict!):
@@ -245,6 +252,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Split an array into chunks of the given size */
+function chunk<T>(array: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/** Batch UPSERT successful recommendations in a single multi-row query */
+async function batchUpsert(
+  pool: ReturnType<typeof getPostgresPool>,
+  results: Array<{ label: string; suggestions: string[] }>
+): Promise<void> {
+  if (results.length === 0) return;
+
+  const values: any[] = [];
+  const placeholders: string[] = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const offset = i * 4;
+    const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, NOW())`);
+    values.push(results[i].label, JSON.stringify(results[i].suggestions), OPENAI_MODEL, expiresAt);
+  }
+
+  await pool.query(
+    `INSERT INTO ai_recommendations (name, recommendations, model, expires_at, updated_at)
+     VALUES ${placeholders.join(', ')}
+     ON CONFLICT (name)
+     DO UPDATE SET
+       recommendations = EXCLUDED.recommendations,
+       model = EXCLUDED.model,
+       expires_at = EXCLUDED.expires_at,
+       updated_at = NOW()`,
+    values
+  );
+}
+
 async function main() {
   console.log('Starting AI recommendations prefill...\n');
 
@@ -259,7 +305,19 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Limit: ${limit} names\n`);
+  // Parse --concurrency flag
+  const concurrencyArg = process.argv.find((arg) => arg.startsWith('--concurrency'));
+  const concurrency = concurrencyArg
+    ? parseInt(concurrencyArg.includes('=') ? concurrencyArg.split('=')[1] : process.argv[process.argv.indexOf(concurrencyArg) + 1])
+    : DEFAULT_CONCURRENCY;
+
+  if (isNaN(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
+    console.error(`Invalid --concurrency value. Must be between 1 and ${MAX_CONCURRENCY}.`);
+    process.exit(1);
+  }
+
+  console.log(`Limit: ${limit} names`);
+  console.log(`Concurrency: ${concurrency} parallel calls\n`);
 
   // Validate API key
   const apiKey = config.openai.apiKey;
@@ -307,53 +365,89 @@ async function main() {
       return;
     }
 
-    // Generate recommendations for each name
+    // Generate recommendations concurrently in chunks
     console.log('Generating recommendations...');
+    const startTime = Date.now();
     let generated = 0;
     let skipped = 0;
     let failed = 0;
 
-    for (const nameRow of names) {
-      try {
-        const categories = nameRow.clubs.filter(
-          (c) => !EXCLUDED_CATEGORIES.includes(c.toLowerCase())
-        );
+    const chunks = chunk(names, concurrency);
 
-        const suggestions = await callOpenAI(apiKey, nameRow.label, categories);
+    for (const nameChunk of chunks) {
+      // Fire all OpenAI calls in this chunk concurrently
+      const results = await Promise.allSettled(
+        nameChunk.map(async (nameRow) => {
+          const categories = nameRow.clubs.filter(
+            (c) => !EXCLUDED_CATEGORIES.includes(c.toLowerCase())
+          );
+          const suggestions = await callOpenAI(apiKey, nameRow.label, categories);
+          return { label: nameRow.label, suggestions };
+        })
+      );
 
-        if (suggestions.length === 0) {
-          skipped++;
-          process.stdout.write(`\r  Progress: ${generated + skipped + failed}/${names.length} (${generated} generated, ${skipped} empty, ${failed} failed)`);
-          await sleep(nextDelayMs);
-          continue;
+      // Separate successes from failures
+      const toUpsert: Array<{ label: string; suggestions: string[] }> = [];
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === 'fulfilled') {
+          if (result.value.suggestions.length === 0) {
+            skipped++;
+          } else {
+            toUpsert.push(result.value);
+          }
+        } else {
+          failed++;
+          console.error(`\n  ✗ Failed for "${nameChunk[i].label}":`, result.reason instanceof Error ? result.reason.message : result.reason);
         }
-
-        // UPSERT to database (compute expiry per-row to avoid thundering herd)
-        const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
-        await pool.query(
-          `INSERT INTO ai_recommendations (name, recommendations, model, expires_at, updated_at)
-           VALUES ($1, $2, $3, $4, NOW())
-           ON CONFLICT (name)
-           DO UPDATE SET
-             recommendations = EXCLUDED.recommendations,
-             model = EXCLUDED.model,
-             expires_at = EXCLUDED.expires_at,
-             updated_at = NOW()`,
-          [nameRow.label, JSON.stringify(suggestions), OPENAI_MODEL, expiresAt]
-        );
-
-        generated++;
-        process.stdout.write(`\r  Progress: ${generated + skipped + failed}/${names.length} (${generated} generated, ${skipped} empty, ${failed} failed)`);
-
-        // Adaptive rate limit delay (updated by callOpenAI based on response headers)
-        await sleep(nextDelayMs);
-      } catch (error) {
-        failed++;
-        console.error(`\n  ✗ Failed for "${nameRow.label}":`, error instanceof Error ? error.message : error);
       }
+
+      // Batch UPSERT all successful results from this chunk
+      if (toUpsert.length > 0) {
+        try {
+          await batchUpsert(pool, toUpsert);
+          generated += toUpsert.length;
+        } catch (batchError) {
+          // Fallback: insert individually if batch fails
+          console.warn(`\n  ⚠ Batch insert failed, falling back to individual inserts:`, batchError instanceof Error ? batchError.message : batchError);
+          for (const item of toUpsert) {
+            try {
+              const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+              await pool.query(
+                `INSERT INTO ai_recommendations (name, recommendations, model, expires_at, updated_at)
+                 VALUES ($1, $2, $3, $4, NOW())
+                 ON CONFLICT (name)
+                 DO UPDATE SET
+                   recommendations = EXCLUDED.recommendations,
+                   model = EXCLUDED.model,
+                   expires_at = EXCLUDED.expires_at,
+                   updated_at = NOW()`,
+                [item.label, JSON.stringify(item.suggestions), OPENAI_MODEL, expiresAt]
+              );
+              generated++;
+            } catch (individualError) {
+              failed++;
+              console.error(`\n  ✗ DB insert failed for "${item.label}":`, individualError instanceof Error ? individualError.message : individualError);
+            }
+          }
+        }
+      }
+
+      process.stdout.write(`\r  Progress: ${generated + skipped + failed}/${names.length} (${generated} generated, ${skipped} empty, ${failed} failed)`);
+
+      // Adaptive rate limit delay between chunks (updated by callOpenAI based on response headers)
+      await sleep(nextDelayMs);
     }
 
     // Summary
+    const elapsedMs = Date.now() - startTime;
+    const elapsedSec = elapsedMs / 1000;
+    const throughput = names.length > 0 ? (names.length / elapsedSec).toFixed(2) : '0';
+    const elapsedFormatted = elapsedSec >= 60
+      ? `${Math.floor(elapsedSec / 60)}m ${Math.round(elapsedSec % 60)}s`
+      : `${elapsedSec.toFixed(1)}s`;
+
     console.log('\n');
     console.log('Prefill Summary:');
     console.log('─────────────────────────────────────');
@@ -361,6 +455,9 @@ async function main() {
     console.log(`Recommendations made: ${generated}`);
     console.log(`Empty results:        ${skipped}`);
     console.log(`Failed:               ${failed}`);
+    console.log(`Concurrency:          ${concurrency}`);
+    console.log(`Elapsed time:         ${elapsedFormatted}`);
+    console.log(`Throughput:           ${throughput} names/sec`);
     console.log(`Cache TTL:            ${CACHE_TTL_DAYS} days`);
     console.log(`Model:                ${OPENAI_MODEL}`);
     console.log('─────────────────────────────────────\n');
