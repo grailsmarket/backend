@@ -20,7 +20,7 @@ const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.a
 async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, number>> {
   const query = `
     query GetDomainsByNames($names: [String!]!) {
-      domains(where: { name_in: $names }) {
+      domains(where: { name_in: $names }, first: 1000) {
         name
         createdAt
       }
