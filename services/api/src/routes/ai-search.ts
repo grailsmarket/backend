@@ -205,19 +205,22 @@ export async function aiSearchRoutes(fastify: FastifyInstance) {
       const { filter: semanticFilter } = buildESFilters({ ...filterOptions, sortBy });
       const semanticSort = buildESSort({ sortBy, sortOrder, q: undefined, resolvedOwnerAddress });
 
+      // Combine all expansion terms into single bulk queries instead of
+      // per-term nested bools. Per-term prefix/ngram queries rewrite into
+      // thousands of internal clauses and blow past ES maxClauseCount (1024).
+      const allTermsSpaced = expansions.join(' ');
+      const allTermsWithEth = expansions.map(t => `${t}.eth`);
+
       const semanticMust = [{
         bool: {
-          should: expansions.map(term => ({
-            bool: {
-              should: [
-                { term: { 'name.keyword': { value: `${term}.eth`, boost: 100 } } },
-                { match: { name: { query: term, boost: 10 } } },
-                { prefix: { name: { value: term, boost: 5 } } },
-                { match: { 'name.ngram': { query: term, boost: 1 } } },
-              ],
-              minimum_should_match: 1,
-            }
-          })),
+          should: [
+            // Exact .eth matches — single terms query for all expansions
+            { terms: { 'name.keyword': allTermsWithEth, boost: 100 } },
+            // Analyzed match across all terms (OR by default)
+            { match: { name: { query: allTermsSpaced, boost: 10 } } },
+            // Ngram match across all terms
+            { match: { 'name.ngram': { query: allTermsSpaced, boost: 1 } } },
+          ],
           minimum_should_match: 1,
         }
       }];
