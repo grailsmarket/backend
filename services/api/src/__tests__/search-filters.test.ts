@@ -19,6 +19,7 @@ interface SearchResult {
   name: string;
   owner?: string;
   expiry_date?: string;
+  creation_date?: string | null;
   last_sale_date?: string;
   clubs?: string[];
   listings?: Array<{ status: string; price?: string; source?: string }>;
@@ -624,6 +625,105 @@ describe('Search API Filters', () => {
         expect(expiry).toBeGreaterThan(now);
         expect(expiry).toBeLessThanOrEqual(futureDate);
       }
+    });
+  });
+
+  describe('Creation Date Filters', () => {
+    it('minCreationDate filters to names created on or after date', async () => {
+      const minDate = '2024-01-01';
+      const { data } = await search(
+        `filters[minCreationDate]=${minDate}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const min = new Date(minDate).getTime();
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.creation_date) {
+          failures.push(`${result.name}: no creation_date`);
+          continue;
+        }
+        if (new Date(result.creation_date).getTime() < min) {
+          failures.push(`${result.name}: creation_date ${result.creation_date} < ${minDate}`);
+        }
+      }
+
+      expect(failures, `Creation date filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('maxCreationDate filters to names created on or before date', async () => {
+      const maxDate = '2020-12-31';
+      const { data } = await search(
+        `filters[maxCreationDate]=${maxDate}&limit=50`
+      );
+      expect(data?.results.length).toBeGreaterThan(0);
+
+      const max = new Date(maxDate).getTime();
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.creation_date) {
+          failures.push(`${result.name}: no creation_date`);
+          continue;
+        }
+        if (new Date(result.creation_date).getTime() > max) {
+          failures.push(`${result.name}: creation_date ${result.creation_date} > ${maxDate}`);
+        }
+      }
+
+      expect(failures, `Creation date filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('minCreationDate + maxCreationDate filters to date range', async () => {
+      const minDate = '2023-01-01';
+      const maxDate = '2023-12-31';
+      const { data } = await search(
+        `filters[minCreationDate]=${minDate}&filters[maxCreationDate]=${maxDate}&limit=50`
+      );
+      // May have no names created in this range
+      if (data?.results.length === 0) return;
+
+      const min = new Date(minDate).getTime();
+      const max = new Date(maxDate).getTime();
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.creation_date) {
+          failures.push(`${result.name}: no creation_date`);
+          continue;
+        }
+        const created = new Date(result.creation_date).getTime();
+        if (created < min || created > max) {
+          failures.push(`${result.name}: creation_date ${result.creation_date} not in range [${minDate}, ${maxDate}]`);
+        }
+      }
+
+      expect(failures, `Creation date range filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('minCreationDate combined with other filters', async () => {
+      const minDate = '2023-01-01';
+      const { data } = await search(
+        `filters[minCreationDate]=${minDate}&filters[showListings]=true&sortBy=creation_date&sortOrder=asc&limit=50`
+      );
+      // May have no listed names created after this date
+      if (data?.results.length === 0) return;
+
+      const min = new Date(minDate).getTime();
+      const failures: string[] = [];
+      for (const result of data!.results) {
+        if (!result.creation_date) {
+          failures.push(`${result.name}: no creation_date`);
+          continue;
+        }
+        if (new Date(result.creation_date).getTime() < min) {
+          failures.push(`${result.name}: creation_date ${result.creation_date} < ${minDate}`);
+        }
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
+        if (!hasActiveListing) {
+          failures.push(`${result.name}: no active listing`);
+        }
+      }
+
+      expect(failures, `Combined creation date filter failures:\n${failures.join('\n')}`).toHaveLength(0);
     });
   });
 

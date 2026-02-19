@@ -102,6 +102,10 @@ const BulkFiltersSearchSchema = z.object({
     minDaysSinceLastSale: z.coerce.number().optional(),
     maxDaysSinceLastSale: z.coerce.number().optional(),
 
+    // Creation date filters
+    minCreationDate: z.string().optional(),
+    maxCreationDate: z.string().optional(),
+
     // Owner filter
     owner: z.string().optional(),
   }).optional(),
@@ -239,7 +243,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, minCreationDate, maxCreationDate, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -357,6 +361,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       lastSoldBefore,
       minDaysSinceLastSale,
       maxDaysSinceLastSale,
+      minCreationDate,
+      maxCreationDate,
       sortBy,
     });
 
@@ -823,6 +829,18 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (repeatingChars === 'only') {
         // Only names where all characters are the same
         whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^(.)\\1*$'`);
+      }
+
+      // Add creation date filters
+      if (minCreationDate) {
+        whereConditions.push(`en.creation_date >= $${paramCount}`);
+        params.push(minCreationDate);
+        paramCount++;
+      }
+      if (maxCreationDate) {
+        whereConditions.push(`en.creation_date <= $${paramCount}`);
+        params.push(maxCreationDate);
+        paramCount++;
       }
 
       // Add owner filter
@@ -1319,6 +1337,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
             lastSoldBefore: filters.lastSoldBefore,
             minDaysSinceLastSale: filters.minDaysSinceLastSale,
             maxDaysSinceLastSale: filters.maxDaysSinceLastSale,
+            minCreationDate: filters.minCreationDate,
+            maxCreationDate: filters.maxCreationDate,
             resolvedOwnerAddress,
           });
 
