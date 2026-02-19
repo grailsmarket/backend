@@ -13,14 +13,31 @@ export async function personasRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (_request, reply) => {
     try {
       const result = await pool.query(
-        `SELECT slug, name, description, icon
+        `SELECT slug, name, description, icon,
+                default_filters_all_names,
+                default_filters_listings,
+                default_filters_sales,
+                default_filters_registrations,
+                default_filters_offers
          FROM personas
          ORDER BY priority DESC`
       );
 
       const response: APIResponse = {
         success: true,
-        data: result.rows,
+        data: result.rows.map((row) => ({
+          slug: row.slug,
+          name: row.name,
+          description: row.description,
+          icon: row.icon,
+          defaultFilters: {
+            allNames: row.default_filters_all_names,
+            listings: row.default_filters_listings,
+            sales: row.default_filters_sales,
+            registrations: row.default_filters_registrations,
+            offers: row.default_filters_offers,
+          },
+        })),
         meta: { timestamp: new Date().toISOString() },
       };
 
