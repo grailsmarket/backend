@@ -363,12 +363,23 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       `;
       const activityCountResult = await pool.query(activityCountQuery, [ownerAddress]);
 
+      // Fetch persona for this address
+      const personaQuery = `
+        SELECT p.slug, p.name, p.icon
+        FROM users u
+        JOIN personas p ON p.id = u.persona_id
+        WHERE u.address = $1
+      `;
+      const personaResult = await pool.query(personaQuery, [ownerAddress]);
+      const persona = personaResult.rows.length > 0 ? personaResult.rows[0] : null;
+
       const response: APIResponse = {
         success: true,
         data: {
           address: ownerAddress,
           primaryName,
           ensRecords,
+          persona,
           ownedNames: ownedNamesResult.rows,
           stats: {
             totalNames: ownedNamesResult.rows.length,

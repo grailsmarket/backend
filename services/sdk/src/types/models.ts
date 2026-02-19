@@ -189,3 +189,29 @@ export interface AuthVerifyResponse {
   token: string;
   user: User;
 }
+
+/**
+ * User persona classification
+ */
+export interface Persona {
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+}
+
+/**
+ * Persona with default filter presets for each tab
+ */
+export interface PersonaWithFilters {
+  persona: Persona | null;
+  defaultFilters: {
+    allNames: Record<string, unknown>;
+    listings: Record<string, unknown>;
+    sales: Record<string, unknown>;
+    registrations: Record<string, unknown>;
+    offers: Record<string, unknown>;
+  };
+  scores: Record<string, number> | null;
+  classifiedAt: string | null;
+}
