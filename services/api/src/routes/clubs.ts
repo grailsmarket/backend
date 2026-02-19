@@ -162,6 +162,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       const query = `
         SELECT
           c.name,
+          c.display_name,
           c.description,
           c.member_count,
           c.floor_price_wei,
@@ -406,6 +407,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       const clubQuery = `
         SELECT
           name,
+          display_name,
           description,
           member_count,
           floor_price_wei,
