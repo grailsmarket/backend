@@ -37,6 +37,9 @@ const MULTICALL3_ABI = [
 const BALANCE_OF_SELECTOR = '0x70a08231'; // balanceOf(address)
 const ALLOWANCE_SELECTOR = '0xdd62ed3e'; // allowance(address,address)
 
+// Max offers per multicall batch to avoid RPC payload limits (each offer = 2 calls)
+const MULTICALL_BATCH_SIZE = 200;
+
 /**
  * Determine currency type from address
  */
@@ -142,7 +145,8 @@ function validateBalanceResult(balance: bigint, priceWei: string, currency: Curr
 }
 
 /**
- * Batch validate ETH balances using Multicall3
+ * Batch validate ETH balances using individual getBalance calls.
+ * Processes in chunks to avoid overwhelming the RPC provider.
  */
 async function batchValidateETHOffers(offers: OfferWithBalance[]): Promise<Map<number, ValidationResult>> {
   if (!provider) {
@@ -155,65 +159,34 @@ async function batchValidateETHOffers(offers: OfferWithBalance[]): Promise<Map<n
     return results;
   }
 
-  try {
-    const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
+  for (let i = 0; i < offers.length; i += MULTICALL_BATCH_SIZE) {
+    const chunk = offers.slice(i, i + MULTICALL_BATCH_SIZE);
 
-    // Build calls - for ETH balance, we can use getEthBalance from Multicall3
-    // But for simplicity, we'll just call each address with empty calldata
-    const calls = offers.map(offer => ({
-      target: offer.buyer_address,
-      allowFailure: true,
-      callData: '0x'
-    }));
-
-    // Execute multicall
-    const responses = await multicall.aggregate3.staticCall(calls);
-
-    // Process results
-    offers.forEach((offer, index) => {
-      let balance = 0n;
-
-      if (responses[index].success) {
-        // For ETH balance check via multicall, we actually need to use provider.getBalance
-        // Multicall3 doesn't directly return ETH balance, so we'll fall back to individual calls
-        // This is a limitation - for now, mark as needing individual validation
-        results.set(offer.id, {
-          isValid: false,
-          reason: 'needs_individual_validation',
-          checkedAt: new Date()
-        });
-      } else {
-        results.set(offer.id, {
-          isValid: false,
-          reason: 'balance_check_failed',
-          checkedAt: new Date()
-        });
+    try {
+      for (const offer of chunk) {
+        const balance = await provider.getBalance(offer.buyer_address);
+        results.set(offer.id, validateBalanceResult(balance, offer.offer_amount_wei, 'ETH'));
       }
-    });
-
-    // Actually, let's do individual ETH balance checks since multicall doesn't help here
-    for (const offer of offers) {
-      const balance = await provider.getBalance(offer.buyer_address);
-      results.set(offer.id, validateBalanceResult(balance, offer.offer_amount_wei, 'ETH'));
-    }
-
-  } catch (error: any) {
-    console.error('Error in batch ETH validation:', error);
-    // Mark all as needing retry
-    offers.forEach(offer => {
-      results.set(offer.id, {
-        isValid: false,
-        reason: 'batch_validation_error',
-        checkedAt: new Date()
+    } catch (error: any) {
+      console.error(`Error in batch ETH validation (chunk ${i / MULTICALL_BATCH_SIZE + 1}):`, error);
+      chunk.forEach(offer => {
+        if (!results.has(offer.id)) {
+          results.set(offer.id, {
+            isValid: false,
+            reason: 'batch_validation_error',
+            checkedAt: new Date()
+          });
+        }
       });
-    });
+    }
   }
 
   return results;
 }
 
 /**
- * Batch validate ERC20 token balances and allowances using Multicall3
+ * Batch validate ERC20 token balances and allowances using Multicall3.
+ * Chunks offers into batches to avoid 413 Payload Too Large errors from RPC providers.
  */
 async function batchValidateTokenOffers(
   tokenAddress: string,
@@ -230,102 +203,107 @@ async function batchValidateTokenOffers(
     return results;
   }
 
-  try {
-    const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
+  const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
 
-    // Build paired calls: [balanceOf, allowance, balanceOf, allowance, ...]
-    const calls = offers.flatMap(offer => {
-      const conduitAddress = getConduitAddress(offer.source);
-      return [
-        {
-          target: tokenAddress,
-          allowFailure: true,
-          callData: encodeBalanceOf(offer.buyer_address)
-        },
-        {
-          target: tokenAddress,
-          allowFailure: true,
-          callData: encodeAllowance(offer.buyer_address, conduitAddress)
+  // Process in chunks to stay under RPC payload limits
+  for (let i = 0; i < offers.length; i += MULTICALL_BATCH_SIZE) {
+    const chunk = offers.slice(i, i + MULTICALL_BATCH_SIZE);
+
+    try {
+      // Build paired calls: [balanceOf, allowance, balanceOf, allowance, ...]
+      const calls = chunk.flatMap(offer => {
+        const conduitAddress = getConduitAddress(offer.source);
+        return [
+          {
+            target: tokenAddress,
+            allowFailure: true,
+            callData: encodeBalanceOf(offer.buyer_address)
+          },
+          {
+            target: tokenAddress,
+            allowFailure: true,
+            callData: encodeAllowance(offer.buyer_address, conduitAddress)
+          }
+        ];
+      });
+
+      // Execute multicall
+      const responses = await multicall.aggregate3.staticCall(calls);
+
+      // Process results in pairs
+      chunk.forEach((offer, index) => {
+        const balanceResult = responses[index * 2];
+        const allowanceResult = responses[index * 2 + 1];
+        const required = BigInt(offer.offer_amount_wei);
+
+        // Check balance first
+        if (!balanceResult.success) {
+          results.set(offer.id, {
+            isValid: false,
+            reason: 'balance_check_failed',
+            checkedAt: new Date()
+          });
+          return;
         }
-      ];
-    });
 
-    // Execute multicall
-    const responses = await multicall.aggregate3.staticCall(calls);
+        const balance = decodeBalance(balanceResult.returnData);
+        if (balance < required) {
+          results.set(offer.id, {
+            isValid: false,
+            reason: `insufficient_${currency.toLowerCase()}`,
+            checkedAt: new Date(),
+            details: {
+              currentBalance: balance.toString(),
+              requiredBalance: required.toString(),
+              currency
+            }
+          });
+          return;
+        }
 
-    // Process results in pairs
-    offers.forEach((offer, index) => {
-      const balanceResult = responses[index * 2];
-      const allowanceResult = responses[index * 2 + 1];
-      const required = BigInt(offer.offer_amount_wei);
+        // Check allowance
+        if (!allowanceResult.success) {
+          results.set(offer.id, {
+            isValid: false,
+            reason: 'allowance_check_failed',
+            checkedAt: new Date()
+          });
+          return;
+        }
 
-      // Check balance first
-      if (!balanceResult.success) {
+        const allowance = decodeBalance(allowanceResult.returnData);
+        if (allowance < required) {
+          results.set(offer.id, {
+            isValid: false,
+            reason: `insufficient_${currency.toLowerCase()}_allowance`,
+            checkedAt: new Date(),
+            details: {
+              currentAllowance: allowance.toString(),
+              requiredAllowance: required.toString(),
+              currency
+            }
+          });
+          return;
+        }
+
+        // Both balance and allowance are sufficient
         results.set(offer.id, {
-          isValid: false,
-          reason: 'balance_check_failed',
+          isValid: true,
           checkedAt: new Date()
         });
-        return;
-      }
+      });
 
-      const balance = decodeBalance(balanceResult.returnData);
-      if (balance < required) {
+    } catch (error: any) {
+      console.error(`Error in batch ${currency} validation (chunk ${i / MULTICALL_BATCH_SIZE + 1}):`, error);
+      // Mark this chunk as needing retry
+      chunk.forEach(offer => {
         results.set(offer.id, {
           isValid: false,
-          reason: `insufficient_${currency.toLowerCase()}`,
-          checkedAt: new Date(),
-          details: {
-            currentBalance: balance.toString(),
-            requiredBalance: required.toString(),
-            currency
-          }
-        });
-        return;
-      }
-
-      // Check allowance
-      if (!allowanceResult.success) {
-        results.set(offer.id, {
-          isValid: false,
-          reason: 'allowance_check_failed',
+          reason: 'batch_validation_error',
           checkedAt: new Date()
         });
-        return;
-      }
-
-      const allowance = decodeBalance(allowanceResult.returnData);
-      if (allowance < required) {
-        results.set(offer.id, {
-          isValid: false,
-          reason: `insufficient_${currency.toLowerCase()}_allowance`,
-          checkedAt: new Date(),
-          details: {
-            currentAllowance: allowance.toString(),
-            requiredAllowance: required.toString(),
-            currency
-          }
-        });
-        return;
-      }
-
-      // Both balance and allowance are sufficient
-      results.set(offer.id, {
-        isValid: true,
-        checkedAt: new Date()
       });
-    });
-
-  } catch (error: any) {
-    console.error(`Error in batch ${currency} validation:`, error);
-    // Mark all as needing retry
-    offers.forEach(offer => {
-      results.set(offer.id, {
-        isValid: false,
-        reason: 'batch_validation_error',
-        checkedAt: new Date()
-      });
-    });
+    }
   }
 
   return results;
