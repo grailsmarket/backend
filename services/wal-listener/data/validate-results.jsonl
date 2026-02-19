@@ -1624,3 +1624,439 @@
 {"id":2993809,"name":"spital.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x954e951b3fe949a5c9dec543a70bd1e6bca451ed"]}
 {"id":2994435,"name":"liens.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0x431624b9d3a504ced84873f721bf09bb62952d55"]}
 {"id":2996830,"name":"jangid.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3001311,"name":"the-alana-project.eth","mismatches":["registrant: 0x83e2b1525beceee48bc00abb192813859df6b7a6 -> 0x676efef0dc8be574fb8f67e272259e7d213d3577"]}
+{"id":3005927,"name":"aiaffiliate.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcb9c6c28f33a394ed9f4fb732cb08f7dc74ddf3b"]}
+{"id":3012450,"name":"okan.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4e4e018514c72776fe0f48bdc13aa1aa49e88f61"]}
+{"id":3013073,"name":"xwarp.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1d56fb8ce9c56199c56661705b09005ce7bb2755"]}
+{"id":3014262,"name":"burnwallet.eth","mismatches":["registrant: 0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401 -> 0x888e0a88118fdc46f6b2db5ad5ef53f74c33ab13"]}
+{"id":3015968,"name":"$wbtc.eth","mismatches":["registrant: 0x47baba9b83c7cd484297e771d99076e904647511 -> 0xcb9c6c28f33a394ed9f4fb732cb08f7dc74ddf3b"]}
+{"id":3020096,"name":"kwisatz.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xaf17d92684e5f5299f9ef05e877ef38ae793fb2b"]}
+{"id":3021785,"name":"luciddreaming.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x43e47385f6b3f8bdbe02c210bf5c74b6c34ff441"]}
+{"id":3025464,"name":"0⃣4⃣9⃣.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe9b51db4b68fa62444a88bd4632180be9021ffc5"]}
+{"id":3030104,"name":"thewise.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5207797712e63d9c35f481f28accc9f8e5a616cd","registration_date: 2022-04-04T01:42:50.000Z -> 2026-02-16T19:48:47.000Z"]}
+{"id":3032362,"name":"xxx222.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbe31e9de5f242a055055d9955e141d8ab764c6db"]}
+{"id":3033997,"name":"bitkey.eth","mismatches":["registrant: 0x72419ee0bf43fef1ef1aa63c24a678cd197f183e -> 0x8d67b7667216b8bb73db4124db609229a46672ec"]}
+{"id":3034800,"name":"identitygate.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9e3388a93415239605491bfd778866ccd1d7bd1c","registration_date: 2022-10-08T01:06:35.000Z -> 2026-02-11T00:18:35.000Z"]}
+{"id":3037420,"name":"fundmedao.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3038574,"name":"15528.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x718f6a369239c6963fd7807c62face162f8a31bf"]}
+{"id":3040043,"name":"usa888.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3041796,"name":"renaper.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x481f50a5bdccc0bc4322c4dca04301433ded50f0"]}
+{"id":3041816,"name":"theovonbomhard.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x64c443c612a3e642297f65ed3472a6e40ed5c745","registration_date: 2022-04-05T13:40:00.000Z -> 2026-02-15T11:47:35.000Z"]}
+{"id":3044758,"name":"somoni.eth","mismatches":["registration_date: 2022-02-09T21:16:47.000Z -> 2026-02-13T18:22:47.000Z"]}
+{"id":3045230,"name":"iclick.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6ccea2664c7f2d8ce0805c439ad348713ccd038a","registration_date: 2022-05-02T11:36:52.000Z -> 2026-02-15T22:42:59.000Z"]}
+{"id":3046673,"name":"elsebreak.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x28893320e3ec737271510b92b3efe948144a396e","registration_date: 2021-10-09T22:59:30.000Z -> 2026-01-30T20:27:11.000Z"]}
+{"id":3046993,"name":"syphax.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xaf2b1effb6e2b222d93869c7bbd8feaaf0512fdc"]}
+{"id":3048091,"name":"lighthouseofalexandria.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3049041,"name":"cexai.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5b5f8e2a07a9492ab17beea9e3d6f94e8486de57"]}
+{"id":3050615,"name":"nftpet.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a153960d1d540e9443044fba6281776fb6a2c95"]}
+{"id":3052281,"name":"clawn.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfc426dfeae55dae2f936a592450c9ecea87a5736","registration_date: 2022-07-02T13:55:51.000Z -> 2026-01-31T04:48:47.000Z"]}
+{"id":3052539,"name":"mobot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8ac828306b2d5b3b301f34c578478c29d22bff7d","registration_date: 2022-02-14T01:34:08.000Z -> 2026-02-08T16:06:11.000Z"]}
+{"id":3053767,"name":"hegazy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4924ec124b450ce190401d54d97fe37657e82122","registration_date: 2022-05-31T10:41:55.000Z -> 2026-02-18T11:13:35.000Z"]}
+{"id":3054656,"name":"feyzi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa71959ad2ba61af2c5927a4a2bb18cb1c283ac9e","registration_date: 2022-07-23T05:48:26.000Z -> 2026-02-01T14:46:35.000Z"]}
+{"id":3055052,"name":"trust-less.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6007eb939927443a603bbabbef9416162757569c"]}
+{"id":3055407,"name":"procurementagent.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1f8b1b06b6d49c943109bd8b66fe95e474f1e4f4","registration_date: 2022-11-16T05:25:23.000Z -> 2026-02-01T02:22:35.000Z"]}
+{"id":3055864,"name":"migrants.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0ef708dc8135da4bcccb52ae180f71f3dbb05f28"]}
+{"id":3056316,"name":"dhirendra.eth","mismatches":["registrant: 0xd51c56bcc5487f545197ff9a8f1c1b7a3f814e71 -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3056921,"name":"bitcoinmaximalist.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x43e47385f6b3f8bdbe02c210bf5c74b6c34ff441"]}
+{"id":3056945,"name":"0xhernandez.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3057770,"name":"agent19.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x79721277d84a25f192029be0c62a9e99cd4e30c1"]}
+{"id":3057933,"name":"bluegill.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x709fd49a06cdd751f14d94916896df5d891b0807"]}
+{"id":3059234,"name":"robertmartin.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3060521,"name":"degents.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a153960d1d540e9443044fba6281776fb6a2c95"]}
+{"id":3060953,"name":"xiaowu.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2477ff47684ec5a94acb5363780b2feca05f30d7"]}
+{"id":3062509,"name":"69ceo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xdae7e11dab7670ff6650471ed493280ba1d32732","registration_date: 2022-07-12T00:53:15.000Z -> 2026-02-09T10:53:35.000Z"]}
+{"id":3063468,"name":"platformai.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3064558,"name":"ashleywilliams.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3065565,"name":"peiwo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x50694ac205846bc2fd56bca8dc05206b7db50805"]}
+{"id":3065620,"name":"anandmahindra.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5929d1a3f4a11d6f261d62ca6ed72cb3ae46292e"]}
+{"id":3066255,"name":"networkprotocol.eth","mismatches":["registrant: 0x5f75da57bd7eebbbc8e32f9158842d1f36de6775 -> 0xb814f4307588d4f8f725d58efcffcb16c3ce6709"]}
+{"id":3067399,"name":"federalfunds.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5"]}
+{"id":3070733,"name":"jcroger.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd3ad72af19df2633e25f1370036a501b21232ed7"]}
+{"id":3071149,"name":"johnhernandez.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3072152,"name":"bondst.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xdabc594e331f3cc74d97da9c2ad3cab557bc3fbb"]}
+{"id":3072998,"name":"rocketstaker.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4f98ee590ce899cc97adfb780ba050d6d7236489","registration_date: 2021-10-24T09:27:01.000Z -> 2026-02-16T00:36:47.000Z"]}
+{"id":3073144,"name":"epigenetic.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa402fb2afe8ce7544829f7038d63f874b282e858"]}
+{"id":3073291,"name":"exe123.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x71cfafc5f334527fd65821c0cba69f000ad14f07"]}
+{"id":3074974,"name":"josedasilva.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3075477,"name":"skypier.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x90d75245f8d70c88db5de3f6aa10f1a8edec28fc","registration_date: 2023-11-05T18:20:35.000Z -> 2026-02-16T23:07:23.000Z"]}
+{"id":3076669,"name":"96896.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf66ecd7de5bc9c9d91126f99795b982e2e04922a","registration_date: 2022-04-30T10:33:07.000Z -> 2026-02-08T11:21:35.000Z"]}
+{"id":3079859,"name":"unitedstatesfederalgovernment.eth","mismatches":["registration_date: 2022-09-17T03:42:59.000Z -> 2026-02-16T22:01:35.000Z"]}
+{"id":3080273,"name":"fizboz.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa5929f4dcbcea2aa70e4f60a2e35606f7380d0d1"]}
+{"id":3080783,"name":"94920.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbad9895fa47616022e648ddd846119f4c9661ed8"]}
+{"id":3081694,"name":"dematerialization.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb814f4307588d4f8f725d58efcffcb16c3ce6709"]}
+{"id":3083084,"name":"mikeeruzione.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfc6772873a3f2c708baf220513b668d560a8a550","registration_date: 2023-03-06T00:31:47.000Z -> 2026-02-15T00:00:23.000Z"]}
+{"id":3083242,"name":"henao.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3083557,"name":"dronai.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3084374,"name":"beesting.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcbde38ec5a7dea3526b6209010c64b44ee91b6c1"]}
+{"id":3085798,"name":"yeees.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5491790f44098431041c9a57aa957b395739c40d"]}
+{"id":3086406,"name":"notyoureth.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd3b0eea213f3d09b7be7c3732189b3717d9f133d"]}
+{"id":3087093,"name":"openml.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x282fdeff5d6ccb038b427836881a051371664e45"]}
+{"id":3089614,"name":"davidmuehlbacher.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9227c65682c00c369855d3e974f9f033ec5864a1"]}
+{"id":3089636,"name":"transactionmanager.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5"]}
+{"id":3089710,"name":"marywilson.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3091079,"name":"queencreek.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcac4b33b2ba70fe079688ae683264f7f16015b3c","registration_date: 2022-05-09T05:13:55.000Z -> 2026-02-17T18:26:47.000Z"]}
+{"id":3091120,"name":"iamsub.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9413ffc32e80e58335ce1ee3aa3bb063454db088"]}
+{"id":3091194,"name":"danubio.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x35f225882ab4365628957c0a9841d4c83982c5a9"]}
+{"id":3091614,"name":"elizabethjones.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3092833,"name":"mlbshop.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0b0a45d6600100bed51eb87257ae42a1cf899c11","registration_date: 2021-10-20T05:22:36.000Z -> 2026-02-08T03:48:35.000Z"]}
+{"id":3093531,"name":"0xjimenez.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3095588,"name":"_bots.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2d08204e0f665b61904923402628cdceb5d72468","registration_date: 2022-08-22T22:46:55.000Z -> 2026-02-02T02:44:59.000Z"]}
+{"id":3099017,"name":"21666.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x19242c60924cc2937890c1af7da13ae097be4db1","registration_date: 2023-10-27T21:32:11.000Z -> 2026-02-15T13:28:59.000Z"]}
+{"id":3099113,"name":"brokersai.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3100734,"name":"virtualportal.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x00f239fceb89b3c5e08539d14b46b5b68b4f4386","registration_date: 2022-05-18T06:41:04.000Z -> 2026-02-15T08:44:23.000Z"]}
+{"id":3101509,"name":"loweffort.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x97241338ac056dadc82faf5384ebf016c2a0e65d"]}
+{"id":3101807,"name":"10074.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x476e2bacd4208d463a0cf9e55fb8dbb2d0a638eb"]}
+{"id":3101975,"name":"batis.eth","mismatches":["registrant: 0x4de8d75ef9b48856e708347c4a0bf1bca338db53 -> 0x62751822d153eb35b9cb59070b30387a7e41a2a3"]}
+{"id":3102071,"name":"agentbond.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x54c4c8be4a2b779d1ba33b2a2439e365a09ab63b","registration_date: 2023-02-08T01:43:59.000Z -> 2026-02-09T05:20:47.000Z"]}
+{"id":3103649,"name":"elisabethmuehlbacher.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9227c65682c00c369855d3e974f9f033ec5864a1"]}
+{"id":3105922,"name":"adress.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6b8ecb8f47a86f39efeac4b80f316547cadd6e4a","registration_date: 2020-08-05T22:03:27.000Z -> 2026-02-11T16:07:47.000Z"]}
+{"id":3109973,"name":"zhongchan.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2477ff47684ec5a94acb5363780b2feca05f30d7"]}
+{"id":3112533,"name":"paven.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0681f47bf8308fa2a63f6ae15f3c4f0180b4aeb7","registration_date: 2022-08-04T18:57:31.000Z -> 2026-02-11T11:08:47.000Z"]}
+{"id":3112544,"name":"cowbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb096774d7060cc33557e6b0411439a40894c33f9"]}
+{"id":3112765,"name":"lector.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbdf811334072f875ebd0f9f1e48647a35e2df608"]}
+{"id":3113376,"name":"zero.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf87ede54675bac0581b071e03d8508f42d4a4f73","registration_date: 2020-02-05T05:31:46.000Z -> 2026-02-17T00:02:35.000Z"]}
+{"id":3114902,"name":"jessicawilliams.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3116244,"name":"mymara.eth","mismatches":["registrant: 0x283af0b28c62c092c9727f1ee09c02ca627eb7f5 -> 0x45bdd4a19f0d57ddf6cab15044b815f526cf20b3","registration_date: 2023-03-28T11:49:35.000Z -> 2026-02-08T13:09:11.000Z"]}
+{"id":3117431,"name":"60128.eth","mismatches":["registrant: 0x31953656289958c50ceb674c4962f40aaaf2c8e4 -> 0x5e51215fbd01f1b68c634ea1f2c2cbf264ff4ba0"]}
+{"id":3117655,"name":"proprietate.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3117758,"name":"quarry.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd6c8e6763e0f81a17993f3899fe92481bd367c5b"]}
+{"id":3119153,"name":"hashemites.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfe1334572eda6664ced64fd8f00aa2a8026c61a2"]}
+{"id":3122690,"name":"dinopunk.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf94b0a76ebddfde3ae4e1d2d213c97baaf916730"]}
+{"id":3123248,"name":"rebeccasmith.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3123327,"name":"claudy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa3dc3a7579f1f9f0e8ca0ae74e745b30b0e7d77f","registration_date: 2022-07-19T03:56:07.000Z -> 2026-02-01T13:55:11.000Z"]}
+{"id":3123831,"name":"marishka.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x88db3b707dba191bb8eeeeeccb4ba8ce625c24ee","registration_date: 2023-04-01T22:52:23.000Z -> 2026-02-02T23:49:11.000Z"]}
+{"id":3123838,"name":"johnmoore.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8","registration_date: 2022-05-05T06:48:51.000Z -> 2026-02-09T22:11:23.000Z"]}
+{"id":3126631,"name":"0xck.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xdd07812c818e2752800d1424e8b1ff278fe41768","registration_date: 2023-06-21T15:38:47.000Z -> 2026-02-10T11:43:59.000Z"]}
+{"id":3129272,"name":"six66.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcbde38ec5a7dea3526b6209010c64b44ee91b6c1"]}
+{"id":3129351,"name":"4⃣8⃣6⃣.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x43dc773cf3528c4afefd34ac2740724a1c428e26","registration_date: 2022-05-03T23:16:40.000Z -> 2026-02-17T20:23:47.000Z"]}
+{"id":3130262,"name":"ratnam.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7b417df7026e96b6df0aa47b7f3ea020bdfddf83"]}
+{"id":3132544,"name":"khosrow.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0fb6beef8697dca880ab0053b6b89282bb97b9e7","registration_date: 2022-06-07T09:21:22.000Z -> 2026-02-11T17:34:35.000Z"]}
+{"id":3133091,"name":"ospina.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3133131,"name":"0xreturn.eth","mismatches":["registrant: 0x283af0b28c62c092c9727f1ee09c02ca627eb7f5 -> 0x5d4901ae4653b708983ec3dbee65883755797ec5","registration_date: 2022-06-19T08:26:59.000Z -> 2026-02-13T21:34:59.000Z"]}
+{"id":3133619,"name":"dakshan.eth","mismatches":["registrant: 0x27b4582d577d024175ed7ffb7008cc2b1ba7e1c2 -> 0x68842a1617b73d1400d3deabd00183154f85cd93"]}
+{"id":3133938,"name":"ailinguistics.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3134548,"name":"kurvy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3b196d7740b62dc8004371c6ab480b62feecda53"]}
+{"id":3136418,"name":"myntkaup.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6b45a04027c6abf048dc84fea16f9773ba114051","registration_date: 2022-03-29T02:00:22.000Z -> 2026-02-03T04:05:59.000Z"]}
+{"id":3137282,"name":"plaque.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd6c8e6763e0f81a17993f3899fe92481bd367c5b"]}
+{"id":3137780,"name":"crowd.eth","mismatches":["registrant: 0x431624b9d3a504ced84873f721bf09bb62952d55 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3138514,"name":"11331.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x85585a82ace990e4e8f7ed065dafa4bd3a5493f2"]}
+{"id":3139471,"name":"vectorfi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3b196d7740b62dc8004371c6ab480b62feecda53"]}
+{"id":3139718,"name":"mercedesbenzstadium.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb194add161ff533aea038f657be74d44dcd1a22d","registration_date: 2021-10-12T00:54:49.000Z -> 2026-01-31T13:53:59.000Z"]}
+{"id":3140244,"name":"mglhernandez.eth","mismatches":["registrant: 0x4e48edb00147300db752163e34412d97cc4adc13 -> 0x688b322e54f183308dea41590d8505e5f701dedf"]}
+{"id":3140595,"name":"mfckr.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x849ad2669b244c99246d35580def03bd3a48c607"]}
+{"id":3141095,"name":"aiautomotive.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3143330,"name":"botlord.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe375aa25c5d425c9ab95bd2cadea569728823175","registration_date: 2021-08-11T07:08:50.000Z -> 2026-02-02T19:50:11.000Z"]}
+{"id":3145890,"name":"pressf.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xaf67503ab1ec0860a592a76189e54e7440d92c95"]}
+{"id":3146002,"name":"laurasmith.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8","registration_date: 2022-05-02T10:55:53.000Z -> 2026-02-09T21:03:11.000Z"]}
+{"id":3146493,"name":"mohammedkhan.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3146753,"name":"jamesjohnson.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3147763,"name":"artemisa.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x58f66974f68913a7d5f43129e1ccb1e02236da6c","registration_date: 2022-06-11T11:53:10.000Z -> 2026-02-15T21:46:23.000Z"]}
+{"id":3148326,"name":"cringepilled.eth","mismatches":["registrant: 0x27c92041ccbf2b092dbebf4265191f7e769c1454 -> 0x05e554dde03098a36c3584a5b7a9bfb8b517098c"]}
+{"id":3148677,"name":"bardella.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x01a404f5619f7d26cc9ad96cb6591a4742d113dc"]}
+{"id":3151722,"name":"thereptile.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xdabc594e331f3cc74d97da9c2ad3cab557bc3fbb"]}
+{"id":3151774,"name":"brokeragent.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0b0a45d6600100bed51eb87257ae42a1cf899c11"]}
+{"id":3153308,"name":"williambrown.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3155729,"name":"barge.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd6c8e6763e0f81a17993f3899fe92481bd367c5b"]}
+{"id":3157400,"name":"cowry.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xad2871e9d5882e109c38396fa287bc789edcfbe4"]}
+{"id":3157600,"name":"ethereumfuture.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb97d9350f32c1366016e2c0a55e4a210d1158b22"]}
+{"id":3158625,"name":"rumors.eth","mismatches":["registrant: 0x431624b9d3a504ced84873f721bf09bb62952d55 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3159037,"name":"bingchun.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f689ac8c99cefae22314702630a88b59b9a5953"]}
+{"id":3161001,"name":"voters.eth","mismatches":["registrant: 0x7b232b3d81507fcabe8b8655b50a2f9600a98af5 -> 0x5438f076431321224969fc258d1c99d340b8af5a"]}
+{"id":3163363,"name":"aldoushuxley.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x282fdeff5d6ccb038b427836881a051371664e45","registration_date: 2020-10-06T17:02:09.000Z -> 2026-02-14T09:56:11.000Z"]}
+{"id":3164638,"name":"xband.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbad9895fa47616022e648ddd846119f4c9661ed8","registration_date: 2022-06-14T12:30:36.000Z -> 2026-02-05T22:36:59.000Z"]}
+{"id":3165519,"name":"geotherm.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x92376789d228a4b891754cf4b445c5ee84e9db47"]}
+{"id":3167232,"name":"iothub.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf326cf4a8bdc97ffd29e8a2bb2817cc0ceef8c31"]}
+{"id":3171486,"name":"sanbernardo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcd172b9ba9b2e9546f646768d28497e39d42e3e7","registration_date: 2022-08-02T20:30:22.000Z -> 2026-02-07T15:40:59.000Z"]}
+{"id":3171870,"name":"canonic.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5672049bd1d3c25d3eb1ef5936c331f746e6d1f9"]}
+{"id":3172048,"name":"agen.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x22085ddf122bbe0c74bf8822a8b0034b34e7b00c"]}
+{"id":3173113,"name":"dalat.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a"]}
+{"id":3175409,"name":"hudba.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3175749,"name":"nosoul.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfc3e575579dd5b445c46d4becabdccde793db8da"]}
+{"id":3176264,"name":"dashmart.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4dbb749536ce9da1ba619d5acdc07469d60627af"]}
+{"id":3181175,"name":"3⃣9⃣4⃣.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xc2309929b4347fda6226b9ae876ce6fa14f20dd2"]}
+{"id":3181365,"name":"zaharia.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0a0298bf659495d04146c438b56cf00e3c3b2b66","registration_date: 2021-11-28T15:24:23.000Z -> 2026-02-18T16:45:11.000Z"]}
+{"id":3182956,"name":"williamdavis.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8","registration_date: 2022-07-08T12:38:55.000Z -> 2026-02-10T08:39:11.000Z"]}
+{"id":3183786,"name":"heshi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9d7bede2d9a0b8851dfcded2973d85e27fe0854d"]}
+{"id":3186261,"name":"tommymcfly.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbb6bd90a4aef5388d842ad96c32e4f90c3cea336"]}
+{"id":3187382,"name":"jefftang.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0f33a5147457d9d1daef9aad83500dcef1394c13"]}
+{"id":3189176,"name":"kellybot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5b5f8e2a07a9492ab17beea9e3d6f94e8486de57"]}
+{"id":3189461,"name":"cybear.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x74024dca09dac188614d837f2ad4f5463946d657","registration_date: 2022-10-16T15:15:59.000Z -> 2026-02-03T20:16:35.000Z"]}
+{"id":3190709,"name":"truestable.eth","mismatches":["registrant: 0xf945af007c92a03169be03892a1fd0a384eec4ed -> 0x901e9c15534dcfa7254b6824967c7ba8428ad45d"]}
+{"id":3192703,"name":"sequeira.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3197758,"name":"kaiba.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f622411fc576310edc34c8df703bd856c490f1e"]}
+{"id":3198719,"name":"immersively.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xc4a74d45afb04faed602c20a5c4c3eacf43f4cad"]}
+{"id":3201630,"name":"valens.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a"]}
+{"id":3203375,"name":"boxman.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x354356f7ec7fc527d07f375d63e46475d5504156","registration_date: 2022-03-21T15:25:31.000Z -> 2026-02-16T18:59:59.000Z"]}
+{"id":3204520,"name":"chinned.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xba182f51b592f38411ca17f824337dd1dc09d9b6"]}
+{"id":3206015,"name":"nicho.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x22085ddf122bbe0c74bf8822a8b0034b34e7b00c"]}
+{"id":3209179,"name":"nuevas.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x343c6d851edeea637b8d4d025828683b63a826a4","registration_date: 2022-07-18T18:38:01.000Z -> 2026-02-18T20:13:11.000Z"]}
+{"id":3210142,"name":"nftfactory.eth","mismatches":["registrant: 0xe5350d96fc3161bf5c385843ec5ee24e8b465b2f -> 0xabe23191d53e3caad10de495b7cfe0d0288b5e6f"]}
+{"id":3210931,"name":"feedx.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcd3ffb9b77b905fc10f453f2d0b9e8e974002549"]}
+{"id":3211815,"name":"kartion.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5cc1e4e7302207ffe7b169e23bcb351162ea86a7","registration_date: 2023-04-13T17:33:11.000Z -> 2026-02-09T07:39:47.000Z"]}
+{"id":3213365,"name":"quilly.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x79ea66891beb4273cb8ac06611a192a7f199b2d0"]}
+{"id":3214179,"name":"buddyfox.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x569bd76e645fc767e84f8cbb34f40261e7c74c76","registration_date: 2021-11-09T05:39:09.000Z -> 2026-02-16T23:57:35.000Z"]}
+{"id":3215347,"name":"agent001.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbad9895fa47616022e648ddd846119f4c9661ed8"]}
+{"id":3222600,"name":"bren.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf48d5d9079b47ac63195a22398dd3e477363c09f","registration_date: 2021-08-01T07:15:31.000Z -> 2026-02-17T23:16:47.000Z"]}
+{"id":3222885,"name":"drpc.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa51cc7665d31dbaadd014d29a9be2f46345a7e8f"]}
+{"id":3224184,"name":"trueguild.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9beee942159a2397ab9b961c3dc090b702f71aac","registration_date: 2022-08-11T11:37:07.000Z -> 2026-02-15T09:05:23.000Z"]}
+{"id":3224464,"name":"ilovethis.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1cc0e91f4fff428640208fed84a1d4713181ed6e","registration_date: 2022-03-19T02:49:05.000Z -> 2026-01-31T22:03:59.000Z"]}
+{"id":3225967,"name":"denylist.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb778ddef6cb50d61b81a6ad60fdbf9c4668585e9"]}
+{"id":3227983,"name":"savannahbond.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x81552ba99d1619bd1184e9283a41e55c318b1a8a","registration_date: 2022-03-12T08:46:27.000Z -> 2026-02-08T07:44:47.000Z"]}
+{"id":3228440,"name":"divideandconquer.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x43e47385f6b3f8bdbe02c210bf5c74b6c34ff441"]}
+{"id":3228748,"name":"cxchain.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x247a04b2333528db8b237b3bfb33c2f7e71ee411"]}
+{"id":3230447,"name":"lindadavis.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3230768,"name":"porcfest.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x858dfe1dbea506c2fd4ec706536b0c61b58046ea"]}
+{"id":3231746,"name":"scanme.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2d457d2d1f248f691fd249ab19176addbdc6218e"]}
+{"id":3233805,"name":"smartprofile.eth","mismatches":["registrant: 0x46e8b79dd64eb59c32826713754636e0a9141f93 -> 0x00f239fceb89b3c5e08539d14b46b5b68b4f4386"]}
+{"id":3234196,"name":"aseguranza.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9c8f5f4f9761332b4fe775d1303230b5e5d4fb0b"]}
+{"id":3237740,"name":"riveros.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3237816,"name":"civica.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb6a47f8ed6722b7ab9d7342e4d41f202b1401e40","registration_date: 2022-06-29T21:56:41.000Z -> 2026-02-07T19:31:23.000Z"]}
+{"id":3238985,"name":"williamjones.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3239002,"name":"winbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x484ec62385e780f2460feac34864a77ba5a18134","registration_date: 2023-08-13T10:35:23.000Z -> 2026-02-01T23:42:11.000Z"]}
+{"id":3239647,"name":"bayernmunichfc.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3244137,"name":"chioaachen.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa16981ec70d06043d19d26b3a8dfb0e056d18129","registration_date: 2022-07-24T08:15:54.000Z -> 2026-02-14T22:26:11.000Z"]}
+{"id":3244785,"name":"xgalaxy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe25598bdfea5192d3674fa1546071b59a7d7d8b4","registration_date: 2022-06-11T05:40:23.000Z -> 2026-02-07T12:55:11.000Z"]}
+{"id":3246349,"name":"lizhang.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3246801,"name":"boxbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xba6a3e6209cf524696e787ea54a880e01030f103"]}
+{"id":3248873,"name":"usaawallet.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7b35342a54676ef94051dd2e45956e86b46cef8f","registration_date: 2022-11-30T17:43:47.000Z -> 2026-02-15T21:00:47.000Z"]}
+{"id":3249499,"name":"damasceno.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3250801,"name":"bigwealth.eth","mismatches":["registration_date: 2022-10-20T20:20:11.000Z -> 2026-02-12T21:37:23.000Z"]}
+{"id":3250908,"name":"stuebben.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0b0a45d6600100bed51eb87257ae42a1cf899c11"]}
+{"id":3253096,"name":"teats.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe2d22182ab36738367c35b02d1bac243c51c05fe","registration_date: 2023-04-14T02:10:23.000Z -> 2026-01-31T07:07:11.000Z"]}
+{"id":3253815,"name":"ens-app.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x52ac12480565555257a77c9f79f5b7ac770cfa09"]}
+{"id":3254803,"name":"⚡flash.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf2a4f7f8530985e4b107c1941d5143daccbe3199"]}
+{"id":3258191,"name":"0xmadre.eth","mismatches":["registration_date: 2022-08-05T06:36:34.000Z -> 2026-02-16T08:16:47.000Z"]}
+{"id":3258814,"name":"portableidentity.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5","registration_date: 2022-09-14T02:19:59.000Z -> 2026-02-18T21:48:35.000Z"]}
+{"id":3259330,"name":"uae888.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3259807,"name":"goldengirl.eth","mismatches":["registrant: 0x770347502bcce92c038f25bc5e89070247e1c36c -> 0x3cb33e986f6bb3482cefec666d809e44129987f9"]}
+{"id":3260412,"name":"petbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5f078267eb1159eeb1cc3b6499097ebe64dcb53b","registration_date: 2022-08-09T05:16:53.000Z -> 2026-02-01T14:23:11.000Z"]}
+{"id":3263831,"name":"siemensenergy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0f82dcda40f42af2409e72404611d8d19205a5fa"]}
+{"id":3265668,"name":"enovis.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1f115debef0d2cbd1402680ea34cf4d562eeb81e","registration_date: 2022-05-26T12:15:40.000Z -> 2026-02-01T11:40:23.000Z"]}
+{"id":3267050,"name":"kripta.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd690be1b0cfdd152a5b1b78c96f4187c2caee077","registration_date: 2023-10-10T05:32:23.000Z -> 2026-02-09T17:56:59.000Z"]}
+{"id":3267500,"name":"ancientworld.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3268094,"name":"uk888.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3268602,"name":"bearflag.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4f184251c40056fe7b8abbf040f8f30803357799"]}
+{"id":3268896,"name":"williamralstonsaul.eth","mismatches":["registrant: 0xd51c56bcc5487f545197ff9a8f1c1b7a3f814e71 -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3269419,"name":"ethbot.eth","mismatches":["registrant: 0x257404b4d56509b64bc11e43367fd3b934075494 -> 0x9975dd1cef7e200163b8266f20eea445854339b3"]}
+{"id":3269805,"name":"christophersmith.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3271765,"name":"markettaker.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xec70f8e6fcd30b21c8a5410a3b256948696e1bd2","registration_date: 2021-07-15T01:35:20.000Z -> 2026-02-17T02:54:11.000Z"]}
+{"id":3274003,"name":"worldlabs.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5a968658af2e7f735190ba1191a22b5e3f53192f"]}
+{"id":3275034,"name":"pleasebepatientwithmeimsoooooooooo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf9464ddd9a02af92f3a59795825c7ff2dd6d0405"]}
+{"id":3275209,"name":"11375.eth","mismatches":["registrant: 0xee0d883474e6dbef7ab16f51c52b5356adedec09 -> 0x5a3e010dec58bc934f167c66f2cc96b8bcb69d97"]}
+{"id":3275314,"name":"kingbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd8c958f774de4b671e43f78fd0a04255e2291a13"]}
+{"id":3279155,"name":"lottodao.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb8164f24cc8c01977f58fd53bc36d69fc05a0bcc"]}
+{"id":3280884,"name":"williamwilson.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3281273,"name":"gnupunk.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6ff571d9a4a94232c3126c2849ad134b52f3cb3c","registration_date: 2023-06-09T07:49:47.000Z -> 2026-02-03T03:27:47.000Z"]}
+{"id":3284801,"name":"marksj.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb7e25c99c5ab622eefce4499ac615e13813e0d53","registration_date: 2021-11-07T18:40:33.000Z -> 2026-02-09T15:51:23.000Z"]}
+{"id":3284839,"name":"baytown.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd41b9a1ea689a4dbaa3410a0d0fa755d362f48e3"]}
+{"id":3285171,"name":"omni-tomo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8606d11b96f69db8cbb6516442f9471458cd227c","registration_date: 2022-12-25T09:44:23.000Z -> 2026-02-16T00:14:11.000Z"]}
+{"id":3287437,"name":"aviendha.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa8b4756959e1192042fc2a8a103dfe2bddf128e8","registration_date: 2021-11-27T05:22:54.000Z -> 2026-02-17T22:40:23.000Z"]}
+{"id":3291447,"name":"dodd.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x368ec619f2e7793c78b45fda817699eab563a794"]}
+{"id":3292614,"name":"nanowire.eth","mismatches":["registrant: 0xa00e4ba46907fcbf84b3ba22c7b5689e6db827a0 -> 0x79934278d354aa3a7c0de55b3013a7c40f7c66a1"]}
+{"id":3294479,"name":"takuya.eth","mismatches":["registrant: 0xd51c56bcc5487f545197ff9a8f1c1b7a3f814e71 -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3295625,"name":"siliconera.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9e3388a93415239605491bfd778866ccd1d7bd1c"]}
+{"id":3297764,"name":"assetprotocol.eth","mismatches":["registrant: 0x5f75da57bd7eebbbc8e32f9158842d1f36de6775 -> 0xb814f4307588d4f8f725d58efcffcb16c3ce6709"]}
+{"id":3299974,"name":"robertlopez.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3300830,"name":"mirakl.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x652234e7fdb0aab0c58c8c6191522fcd9d19bb71"]}
+{"id":3301873,"name":"valuehunter.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x880746318dc754ac0c46a605aa43206d61020ed5"]}
+{"id":3302817,"name":"lastviking.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5985a8947a1198b5c4ebfb376918bbe9bf8fae20"]}
+{"id":3305356,"name":"albadi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x830f79bf3a95ab5033a2523b3eee648028b8287e"]}
+{"id":3307894,"name":"häagendazs.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1caf67da2dcf33e3a82bee4a9d77107cbdf8e788","registration_date: 2022-05-04T15:38:10.000Z -> 2026-02-14T03:57:59.000Z"]}
+{"id":3309074,"name":"agentbull.eth","mismatches":["registrant: 0x2ede1903f20130e4d6d5890a5362b4bd3ada3ecc -> 0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401"]}
+{"id":3310621,"name":"alrawabi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb630d64f8ad83756bcaeb41a63435f1aed49e18a"]}
+{"id":3310692,"name":"encargo.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3315499,"name":"satoshi777.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3316073,"name":"hunted.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1badb16fdf023a4882bb9adfc780280e863c86be"]}
+{"id":3317679,"name":"jumala.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x830f79bf3a95ab5033a2523b3eee648028b8287e"]}
+{"id":3317690,"name":"boast.eth","mismatches":["registrant: 0x643e9d8586d4a75851d085be88b4ecbbf287cc40 -> 0xfae9bc4d8cd2b8c9909a35bc98fbb87aed6eefcf"]}
+{"id":3318716,"name":"09h00.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf94be4401483172dc1f72120c01ace2888ebdfc4"]}
+{"id":3322043,"name":"agentape.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf745b01d0a0e5d96d2a6461f2854201e1d11dd4b"]}
+{"id":3322105,"name":"awesomo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe375aa25c5d425c9ab95bd2cadea569728823175"]}
+{"id":3324130,"name":"nanjingchina.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x574c862e814a8c19b45346d08c09d4319e324664","registration_date: 2022-07-21T19:28:10.000Z -> 2026-02-01T03:52:59.000Z"]}
+{"id":3326447,"name":"lisawilliams.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3328389,"name":"ilhagrande.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8f8dd74055434bb3ca490df5b2f3c14ce797faa8"]}
+{"id":3330193,"name":"billionaire4.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3b3e3e12b7a48bf20ffa23e10d6c2403df678bc7","registration_date: 2023-08-21T01:50:59.000Z -> 2026-02-15T12:34:11.000Z"]}
+{"id":3334803,"name":"chiraag.eth","mismatches":["registrant: 0xa3567e3b5500b5483bcb2bac777b029bd4985e5c -> 0x985b543ad1896335611766236d31edf2bbf51d1c"]}
+{"id":3335578,"name":"22113.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xc4a74d45afb04faed602c20a5c4c3eacf43f4cad","registration_date: 2022-04-30T04:15:20.000Z -> 2026-02-17T12:34:59.000Z"]}
+{"id":3337675,"name":"marketdepth.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x43e47385f6b3f8bdbe02c210bf5c74b6c34ff441"]}
+{"id":3338027,"name":"enova.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3d29fb752f61d47ab6cdd8886d13ef0c2b415844","registration_date: 2022-01-10T00:50:54.000Z -> 2026-02-15T01:43:11.000Z"]}
+{"id":3345013,"name":"0xsatoshinakamoto.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3350409,"name":"fuckbet.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5c727c06960d880e7342f902f25f39d05d921ccd"]}
+{"id":3352125,"name":"🩶🩶🩶🩶🩶🩶.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6a92b9330849ec54f8b2cb0876a42cfff4993efa","registration_date: 2022-09-22T05:58:11.000Z -> 2026-02-15T01:13:23.000Z"]}
+{"id":3352949,"name":"apikeys.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23","registration_date: 2022-10-13T17:11:59.000Z -> 2026-02-01T08:56:23.000Z"]}
+{"id":3354459,"name":"web40.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x242a385c54d3112e5e8687e2e70fed1d9230c5d9"]}
+{"id":3355168,"name":"bottracker.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2adeb4716c1cc2b558bf52190238801cd3edcaa1"]}
+{"id":3357309,"name":"jamesthomas.eth","mismatches":["registrant: 0xcd30dea18a81b446e631df8196fa75f315361bbd -> 0x1f446cce66a24cdc7f85023d8abddb67c941afaf"]}
+{"id":3359665,"name":"government’s.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcb9c6c28f33a394ed9f4fb732cb08f7dc74ddf3b"]}
+{"id":3359987,"name":"$xau.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcb9c6c28f33a394ed9f4fb732cb08f7dc74ddf3b","registration_date: 2022-10-10T20:43:35.000Z -> 2026-02-05T22:53:47.000Z"]}
+{"id":3360577,"name":"onchainlink.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5","registration_date: 2023-10-25T21:52:11.000Z -> 2026-02-12T21:56:35.000Z"]}
+{"id":3361451,"name":"quantumcomputers.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f689ac8c99cefae22314702630a88b59b9a5953","registration_date: 2020-10-28T13:36:38.000Z -> 2026-02-16T21:28:59.000Z"]}
+{"id":3361809,"name":"cryptocareers.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcbde38ec5a7dea3526b6209010c64b44ee91b6c1"]}
+{"id":3364792,"name":"aihusband.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3365116,"name":"butlerianjihad.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3365570,"name":"hoprnet.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xa51cc7665d31dbaadd014d29a9be2f46345a7e8f"]}
+{"id":3367998,"name":"robertmiller.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3369897,"name":"botty.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9413ffc32e80e58335ce1ee3aa3bb063454db088"]}
+{"id":3370850,"name":"satoki.eth","mismatches":["registrant: 0xf5ac2d5e3d75fcfd0460b853198b5c02c814fd2b -> 0x10a67ee23c920451729a23d0dff8ad9f1ef414c8"]}
+{"id":3371117,"name":"bot1.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x22085ddf122bbe0c74bf8822a8b0034b34e7b00c"]}
+{"id":3371335,"name":"agentleman.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6c915c6499cf19ba87afe8c4357f8c8a94f6cd0b","registration_date: 2022-09-08T19:07:35.000Z -> 2026-02-13T15:57:35.000Z"]}
+{"id":3372567,"name":"sinks.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3374299,"name":"shahr.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0fb6beef8697dca880ab0053b6b89282bb97b9e7"]}
+{"id":3374637,"name":"zkbonds.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8432a50ab197bc2fcadb60a470171ce21fc17f32","registration_date: 2023-04-23T06:51:59.000Z -> 2026-02-15T10:59:23.000Z"]}
+{"id":3375876,"name":"futurum.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a"]}
+{"id":3375959,"name":"चौधरी.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xed7f50b4a658bec62dc4663b604a5b873615a676"]}
+{"id":3376057,"name":"locket.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd6c8e6763e0f81a17993f3899fe92481bd367c5b"]}
+{"id":3377054,"name":"gabunion.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x27c950c172b85256d0857d13f96d60b6ed2c4fc7"]}
+{"id":3377568,"name":"identityservice.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5"]}
+{"id":3377730,"name":"cookedm.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf2e6f6ed9714fb897c8d61e956d3f7a0f878edb1"]}
+{"id":3380260,"name":"octobass.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f622411fc576310edc34c8df703bd856c490f1e"]}
+{"id":3380731,"name":"leilao.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a","registration_date: 2021-07-01T22:34:39.000Z -> 2026-02-01T01:08:23.000Z"]}
+{"id":3382731,"name":"mattdwest.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1a123d835b006d27d4978c8eb40b14f08e0b8607"]}
+{"id":3384385,"name":"poblesec.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb97527632a95074f60148759035b21e4fd4c9a8e"]}
+{"id":3387159,"name":"27072.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9d268786f6bebb762e494aef8b0706fd1bd4217b","registration_date: 2022-04-27T18:14:23.000Z -> 2026-02-14T09:31:59.000Z"]}
+{"id":3388379,"name":"polygonlabs.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbb6a0518f663baf391219df755d5bd639803b567"]}
+{"id":3388466,"name":"wellnessbank.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf5c02a95a48b2bd0972f346282ab36257704832e","registration_date: 2022-05-03T11:57:47.000Z -> 2026-02-13T06:38:59.000Z"]}
+{"id":3390606,"name":"ashwednesday.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x699df93b22e46f8eeefcf33d3836fa52c1c627d8"]}
+{"id":3391700,"name":"0xcosta.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3393286,"name":"botarmy.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb4566cc09bfc2edfe51cb1fb46107b8008512b77"]}
+{"id":3393726,"name":"thorodinson.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x11d79b6dda75aa4fe33bd337e1306d98be75d863","registration_date: 2021-03-30T19:51:53.000Z -> 2026-02-16T17:39:47.000Z"]}
+{"id":3393972,"name":"jiawei.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3394969,"name":"jenniferwilliams.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3395474,"name":"carthage.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3395606,"name":"yieldhunter.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x880746318dc754ac0c46a605aa43206d61020ed5"]}
+{"id":3396039,"name":"31011994.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf05aedfd1ea24d9ea8de55301259912d177c7dd6"]}
+{"id":3399762,"name":"domainwhale.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x718f6a369239c6963fd7807c62face162f8a31bf"]}
+{"id":3401742,"name":"makervault.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a153960d1d540e9443044fba6281776fb6a2c95"]}
+{"id":3405032,"name":"educationai.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3405975,"name":"kethereum.eth","mismatches":["registration_date: 2022-09-08T22:17:01.000Z -> 2026-02-01T20:07:11.000Z"]}
+{"id":3406174,"name":"lexdiamonds.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2c6701ea24a344a57afa4211b8f24b39a90dc26d","registration_date: 2022-10-06T04:34:47.000Z -> 2026-02-12T08:11:47.000Z"]}
+{"id":3410134,"name":"imdoingsmth.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x0a30731d9fbe4d7580bce0cadce6ecef1f7b2b5d"]}
+{"id":3412356,"name":"edi.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x26713f39167001e25bce88ce97fdf76d5a6fb9ea"]}
+{"id":3412442,"name":"quadraticfunding.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5","registration_date: 2022-04-06T22:25:33.000Z -> 2026-02-15T04:15:23.000Z"]}
+{"id":3415174,"name":"dark-pool.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1165c34d3d2f39c7bb743ecc1acf73c6cf48bbe5","registration_date: 2020-02-06T14:02:56.000Z -> 2026-02-01T23:42:11.000Z"]}
+{"id":3418732,"name":"bicurious.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4feb3de5c973ad5528cf4ec7744f41f8111eb738"]}
+{"id":3419582,"name":"0xperp.eth","mismatches":["registrant: 0x283af0b28c62c092c9727f1ee09c02ca627eb7f5 -> 0x5d4901ae4653b708983ec3dbee65883755797ec5"]}
+{"id":3420975,"name":"installmentcredit.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5"]}
+{"id":3421511,"name":"matrixbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd8c958f774de4b671e43f78fd0a04255e2291a13"]}
+{"id":3425039,"name":"blockbandit.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x26713f39167001e25bce88ce97fdf76d5a6fb9ea"]}
+{"id":3425949,"name":"acryptos.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x22085ddf122bbe0c74bf8822a8b0034b34e7b00c"]}
+{"id":3429650,"name":"riachofu.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb11dcbacc82200721ecceeefb4d80233355f6fe0","registration_date: 2023-07-15T00:23:47.000Z -> 2026-02-07T20:12:59.000Z"]}
+{"id":3430434,"name":"0x454.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xad7bedfedc76b266cf645d6575bf58f64589d157","registration_date: 2022-04-29T04:51:03.000Z -> 2026-02-18T11:31:11.000Z"]}
+{"id":3432449,"name":"11161.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3ff4e9c5f5678de4a3c8f66cdd60efbe87668208"]}
+{"id":3435554,"name":"bigbob.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x981b8eb738b966af57a60e6649de91acae7ce318"]}
+{"id":3442104,"name":"cryptofuks.eth","mismatches":["registrant: 0x407e0b2cd7c7bde8828fd579f1fbfdf8eb75b02b -> 0xea19bd56f8f667b37dc98feea3f27124e3ce243f"]}
+{"id":3443719,"name":"clarinetto.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2572241d988c4021e87dfc3e8cac46638bc05781"]}
+{"id":3444023,"name":"prohibición.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3444146,"name":"howdy.eth","mismatches":["registrant: 0x2052051a0474fb0b98283b3f38c13b0b0b6a3677 -> 0x0dc1dd32b1300818c977ce5a36a464a5c0c14550"]}
+{"id":3445221,"name":"weichen.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3445730,"name":"wadohg.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xebff9e38c368797a141d2a748bee903375a06c98"]}
+{"id":3446845,"name":"joypad.eth","mismatches":["registrant: 0xfceb12840e527f01d418474b8a03468a452d7a8e -> 0xd11e3ab32c035af3ebf7f6bea94378bd9e29f957"]}
+{"id":3447003,"name":"artcat.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x73a324aa1b221d335f16378582934431a2bd564f","registration_date: 2021-06-28T03:59:19.000Z -> 2026-02-16T22:54:23.000Z"]}
+{"id":3448276,"name":"godverse.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe87b56cf45b98e2cd37b56935b6fdd7a9f37962c","registration_date: 2022-02-06T02:03:14.000Z -> 2026-02-13T01:56:59.000Z"]}
+{"id":3450489,"name":"apetraitoftheday.eth","mismatches":["registration_date: 2023-09-27T00:00:23.000Z -> 2026-02-12T22:13:23.000Z"]}
+{"id":3450833,"name":"mediamagazine.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3451332,"name":"0xpereira.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3452373,"name":"pussinboots.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xacc38323ee666787d3d4fd352f191ec24ccce999"]}
+{"id":3452439,"name":"rektcollector.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xaa5e5624ca1cf543b4de1aa9a4c632d8e76806d5"]}
+{"id":3455253,"name":"homily.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbdf811334072f875ebd0f9f1e48647a35e2df608"]}
+{"id":3455826,"name":"atv.eth","mismatches":["registrant: 0xd41b9a1ea689a4dbaa3410a0d0fa755d362f48e3 -> 0x4d982788c01402c4e0f657e1192d7736084ae5a8"]}
+{"id":3457118,"name":"parallelization.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8b24b1686832757e2f6d640e11e88e7f0064594a"]}
+{"id":3458139,"name":"confiscated.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23","registration_date: 2021-07-11T23:40:59.000Z -> 2026-02-01T09:19:11.000Z"]}
+{"id":3458708,"name":"pitchead.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xefedba4b3a49edf2f7a2148738c7bb3cf93d944a"]}
+{"id":3461144,"name":"0xsouza.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3462434,"name":"sujit.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xefb3095650d22cb77fab60faa11365643f2aa587"]}
+{"id":3465642,"name":"statistik.eth","mismatches":["registrant: 0xeb8f3290d0a3cd2daa72b2718ba6dcd70e924811 -> 0x2d457d2d1f248f691fd249ab19176addbdc6218e"]}
+{"id":3466121,"name":"pintopinheiro.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x58227a3f6930d635acbfce2d5d058e262f2db91a"]}
+{"id":3467466,"name":"niklays.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x99bee20fb323bf53261308ee46db0ec3b4e684f9"]}
+{"id":3469457,"name":"botcrypto.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x46e8b79dd64eb59c32826713754636e0a9141f93"]}
+{"id":3471247,"name":"mimeme.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x69220592ac4b00784d3c0af497e261b4cd722aaf","registration_date: 2023-08-25T13:13:59.000Z -> 2026-02-09T20:44:11.000Z"]}
+{"id":3472491,"name":"eur.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x51fd44ba77b3066949b874f24c374819ef78809a","registration_date: 2020-02-06T21:13:08.000Z -> 2026-02-15T07:43:59.000Z"]}
+{"id":3473345,"name":"luiyongsheng.eth","mismatches":["registrant: 0xe7169854a667ded34726c688b63f4be9297c1929 -> 0x9707e2e06449c3b9ba02d8254bf8b87df9d77545"]}
+{"id":3473507,"name":"xdollars.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a153960d1d540e9443044fba6281776fb6a2c95"]}
+{"id":3474831,"name":"gloss.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xd6c8e6763e0f81a17993f3899fe92481bd367c5b"]}
+{"id":3474843,"name":"donable.eth","mismatches":["registrant: 0x2ede1903f20130e4d6d5890a5362b4bd3ada3ecc -> 0x5c727c06960d880e7342f902f25f39d05d921ccd"]}
+{"id":3474979,"name":"justinsuntron.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6e60cce99d63b5b1f321e149230a311363eaa404"]}
+{"id":3477012,"name":"stv.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x354b02466469a5cb703ffb8d123bf744f11dacec"]}
+{"id":3479738,"name":"aiknowledge.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcc9ba74d02836705a6dadad705df53a8b834221e"]}
+{"id":3480868,"name":"miamipass.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3481128,"name":"goodbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xd8c958f774de4b671e43f78fd0a04255e2291a13"]}
+{"id":3485843,"name":"0xluxury.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb93db512d55fdbedf438ce79c98973dac6a9d5fc"]}
+{"id":3487627,"name":"fiscus.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a"]}
+{"id":3487769,"name":"tchristie.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6b82694f6b9254da8cdb11be621f30e04dab0fd2"]}
+{"id":3487834,"name":"bluepartyhat.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3b39c1e0c278457e0e27704b6b8f4a554f2e2bcf"]}
+{"id":3489044,"name":"scion.eth","mismatches":["registrant: 0x431624b9d3a504ced84873f721bf09bb62952d55 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3490261,"name":"mufgwallet.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7b35342a54676ef94051dd2e45956e86b46cef8f","registration_date: 2022-11-22T06:51:11.000Z -> 2026-02-15T20:22:35.000Z"]}
+{"id":3491538,"name":"العالم.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x948bac36c38c62653cb5130828e1cde704931ba3","registration_date: 2022-05-25T12:47:32.000Z -> 2026-02-16T20:47:23.000Z"]}
+{"id":3497088,"name":"organizers.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3497672,"name":"anpanman.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb79bfedcc95ef943a45f11fdf1d20ff879076519","registration_date: 2020-11-29T02:39:09.000Z -> 2026-02-16T15:11:35.000Z"]}
+{"id":3498471,"name":"apu.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb829a89c058895fefc9cef3f9da26bba148b1970"]}
+{"id":3499505,"name":"0xexposure.eth","mismatches":["registrant: 0x283af0b28c62c092c9727f1ee09c02ca627eb7f5 -> 0x5d4901ae4653b708983ec3dbee65883755797ec5","registration_date: 2022-11-20T16:03:35.000Z -> 2026-02-15T14:33:47.000Z"]}
+{"id":3500268,"name":"soundromeda.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x825e8ed75f672cfd30215c97d7171fb466d068ff"]}
+{"id":3501239,"name":"daring.eth","mismatches":["registrant: 0x431624b9d3a504ced84873f721bf09bb62952d55 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3503436,"name":"qpu.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfa1c341ddefbaf54cb21a294727a0dacc719aedd","registration_date: 2022-05-02T20:16:21.000Z -> 2026-02-03T03:30:59.000Z"]}
+{"id":3504636,"name":"webtwo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a153960d1d540e9443044fba6281776fb6a2c95"]}
+{"id":3505266,"name":"memelandceo.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x106897ee99427aa3e2bc2f8894a0b6e1ddc2908a"]}
+{"id":3506406,"name":"digitalcitizenship.eth","mismatches":["registrant: 0xeb8f3290d0a3cd2daa72b2718ba6dcd70e924811 -> 0x2d457d2d1f248f691fd249ab19176addbdc6218e"]}
+{"id":3508484,"name":"tieshan.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5985a8947a1198b5c4ebfb376918bbe9bf8fae20","registration_date: 2022-08-01T07:05:49.000Z -> 2026-02-03T17:55:23.000Z"]}
+{"id":3509510,"name":"rezzil.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5592f09275d636b18e17fcee6bc7b71a44273595","registration_date: 2022-02-26T03:45:10.000Z -> 2026-02-03T12:58:47.000Z"]}
+{"id":3511775,"name":"multiblock.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x5a9d532f47cb23af3a06242cec99aaed36077462"]}
+{"id":3512176,"name":"rejulso.eth","mismatches":["registrant: 0x055297898e193646cd555f3b089d64b0b431fe54 -> 0x45ed25b191e876294ca23cb08dfba584633415cd"]}
+{"id":3512744,"name":"tempel.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x52127427ecb65dfd6308e22f1604f971c1d117b3"]}
+{"id":3517597,"name":"sendittome.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7b0a91820f803b487bbe71bb7e0a22f22d40916d","registration_date: 2022-05-06T05:51:25.000Z -> 2026-02-01T23:39:23.000Z"]}
+{"id":3517848,"name":"per-mission.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x47828818836e11f536edcd76cd1cde955c913dd4"]}
+{"id":3517934,"name":"aicoins.eth","mismatches":["registrant: 0x016f40be4fc1b8456a74171fae3265d1431b3bdf -> 0xd2716817bc1a018f10f836d0bc2704d517182a00"]}
+{"id":3518392,"name":"christtheredeemer.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3518469,"name":"dabuzon.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xcd4a170ed7e13f354eb00a12af1903b656dc8e99","registration_date: 2021-11-16T22:43:11.000Z -> 2026-02-16T23:03:59.000Z"]}
+{"id":3518875,"name":"cubicles.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0x386df19524d39c6f4e87241810b8dd67ed63b2e5"]}
+{"id":3520646,"name":"leftclickown.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb3611da4a72fba65a80b0e7025b49431b193873e","registration_date: 2021-10-26T04:20:04.000Z -> 2026-02-17T02:26:59.000Z"]}
+{"id":3522063,"name":"gabrielz.eth","mismatches":["registrant: 0xa971c8fe244cc6ea7e6337eef5abf169f70256ed -> 0x1c7fdfcd1f48e4d2a9e1d64de04f76493c7eba6d"]}
+{"id":3522734,"name":"banana-gun.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1165c34d3d2f39c7bb743ecc1acf73c6cf48bbe5"]}
+{"id":3523121,"name":"since2023.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe7d8a894a8d2190c6b4de4dbabc861087d9718c6"]}
+{"id":3523156,"name":"metareport.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x4dbb749536ce9da1ba619d5acdc07469d60627af"]}
+{"id":3523765,"name":"bitcoin09.eth","mismatches":["registrant: 0xe9338ba4529a55095acbe5d6dd31831e2a2579b7 -> 0x2f9ea96e9a589d456d64b5b6f7fca5fed4ba5567"]}
+{"id":3525357,"name":"punk2567.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8011cf68ca8de6d04c858cb068a7fd57fa066abf"]}
+{"id":3525489,"name":"aiboss.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9d1b1903aeac26f4d871ed1667d2a2392d6089d2","registration_date: 2020-07-04T10:56:52.000Z -> 2026-02-07T17:24:59.000Z"]}
+{"id":3525988,"name":"feitosa.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3526269,"name":"menu.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x54fd548ffd6ff54943d6863f1d485cc2fb495574","registration_date: 2020-10-22T06:21:42.000Z -> 2026-02-04T19:34:59.000Z"]}
+{"id":3526877,"name":"0x959.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x85585a82ace990e4e8f7ed065dafa4bd3a5493f2","registration_date: 2022-04-29T04:38:18.000Z -> 2026-02-16T13:46:59.000Z"]}
+{"id":3527231,"name":"aitube.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x22d43741645dc9feb698879e67a852ad68ac6245"]}
+{"id":3528060,"name":"dontextraditeassange.eth","mismatches":["registrant: 0xdc751ffaeb53d8f5d5e5ddae647b276377290ac9 -> 0xaffa5c314e28e409f71d59c976d014b844c588e8"]}
+{"id":3528933,"name":"ingenio.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x6eaed35f540bb003e3e34c9f4275f1e48e41d35a","registration_date: 2022-06-09T05:58:46.000Z -> 2026-02-12T08:32:35.000Z"]}
+{"id":3530975,"name":"smartfit.eth","mismatches":["registrant: 0x00ac2a58a15d0d86d3d39a973c9e8ff602be717c -> 0x8f8dd74055434bb3ca490df5b2f3c14ce797faa8"]}
+{"id":3531021,"name":"mekaverse.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8ba853a9414e40ecf97315755c3798d28bc79195"]}
+{"id":3532025,"name":"kiarash.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7dca70b125df3b07ced903c2de5df371f536d9b3","registration_date: 2021-10-24T14:55:55.000Z -> 2026-02-13T10:28:59.000Z"]}
+{"id":3532241,"name":"0xdroid.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x62e86a98d79ec7e8363cec4dcb47d226c72ceb40"]}
+{"id":3532389,"name":"nemil.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x674ca194b1676918affc538c162d35ba726aaf94"]}
+{"id":3533351,"name":"donaldsmith.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3534630,"name":"zaabi.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3534958,"name":"enescu.eth","mismatches":["registrant: 0xeb8f3290d0a3cd2daa72b2718ba6dcd70e924811 -> 0x2d457d2d1f248f691fd249ab19176addbdc6218e"]}
+{"id":3535905,"name":"villarroel.eth","mismatches":["registrant: 0xf43e013e5713ef90c766eb5a46f9e69949b75f3c -> 0xe6e84f8df9ecb3cb7137702a2e91b92c0e55c1b0"]}
+{"id":3536791,"name":"elmiillor.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb7b2e87d828225c2722b4081c0bb2c53ea753af5","registration_date: 2023-10-15T18:19:35.000Z -> 2026-02-02T22:45:23.000Z"]}
+{"id":3537293,"name":"watersnake.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x79ea66891beb4273cb8ac06611a192a7f199b2d0"]}
+{"id":3537367,"name":"hashemite.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xfe1334572eda6664ced64fd8f00aa2a8026c61a2","registration_date: 2020-10-22T17:15:40.000Z -> 2026-02-08T08:40:23.000Z"]}
+{"id":3537838,"name":"plutonian.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xbab79ed317849cf1f3768bb8d17844cf025cd4ed","registration_date: 2023-08-30T22:02:23.000Z -> 2026-02-01T05:18:11.000Z"]}
+{"id":3539110,"name":"gallery27.eth","mismatches":["registrant: 0xed9198181bbd4e09ff320fa11ae062e140be0c4e -> 0xb54af9163c0b5ee4166c5977e99b2ba8c57635f1"]}
+{"id":3540778,"name":"mcnicholas.eth","mismatches":["registrant: 0x721accb64ec6436fe49c7c14cebbf220c3104b63 -> 0x5ba8bc80d8950188ea0e87c59c56c793943f37d3"]}
+{"id":3542490,"name":"jamesgarcia.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe1523e3ccaddadd0445046a85ca08139793824b8"]}
+{"id":3542583,"name":"experimenter.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9a75ed8e1e592c2e2b0d3eddee8404dcf326a8c5"]}
+{"id":3544066,"name":"39420.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x8bca9f3016a33b1e34135d5f536e46ed541f1a28","registration_date: 2022-05-01T13:28:49.000Z -> 2026-02-18T20:48:23.000Z"]}
+{"id":3550397,"name":"11770.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xb8e367f65a5ea372e3095657feaa38691d8fb443","registration_date: 2022-04-27T23:35:11.000Z -> 2026-02-15T02:53:59.000Z"]}
+{"id":3550502,"name":"backwardation.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3552033,"name":"artepop.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3552342,"name":"verticalaerospace.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f689ac8c99cefae22314702630a88b59b9a5953","registration_date: 2022-07-15T03:46:07.000Z -> 2026-02-02T15:53:47.000Z"]}
+{"id":3553226,"name":"aging.eth","mismatches":["registrant: 0xbcbd4885ee8b2b74249c5ad9b8b668fb256a51b1 -> 0xf0a41b6a2df506ebeca5df4281171eef1cc00b23"]}
+{"id":3553245,"name":"developmentfund.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x7e329f6bc2626f3f480532ef8958a7666ed89bd5"]}
+{"id":3555036,"name":"neighborhoodjewelry.eth","mismatches":["registrant: 0x9a2831d03a725e040a9b880de4b250e596069e53 -> 0x56241059e5c3fda10762fc3ac128112c623a94d6"]}
+{"id":3557135,"name":"kfckfckfc.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xc73db35751530e2c2e18148b787da3ef3d08b228"]}
+{"id":3557439,"name":"asael.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x15fbb73075b7debbc6290c50db47edfa8d59a253","registration_date: 2022-07-13T01:09:06.000Z -> 2026-02-05T14:07:35.000Z"]}
+{"id":3558448,"name":"99100.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x9d268786f6bebb762e494aef8b0706fd1bd4217b"]}
+{"id":3559304,"name":"aiexecutive.eth","mismatches":["registrant: 0xc290b7a8e9e7f62439ef8837f85d32bad651413c -> 0x3a89252e056fff53f5db24ca7077f058e2cbf1db"]}
+{"id":3560552,"name":"packed.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x1ff5f9550ae316ea9180e2b7368457e86c8a5c31"]}
+{"id":3560681,"name":"postai.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xba6a3e6209cf524696e787ea54a880e01030f103","registration_date: 2022-08-01T09:55:14.000Z -> 2026-02-19T01:44:35.000Z"]}
+{"id":3561329,"name":"kepler1.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xe0dea99ebe3379000230f3e4382a4712350c8ba5","registration_date: 2022-05-03T10:29:41.000Z -> 2026-02-13T06:36:23.000Z"]}
+{"id":3564028,"name":"aiids.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x00f239fceb89b3c5e08539d14b46b5b68b4f4386"]}
+{"id":3566819,"name":"launchkit.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xf94be4401483172dc1f72120c01ace2888ebdfc4"]}
+{"id":3567026,"name":"piercesoncoody.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x38ab17c5b796f15305ec81ff7ef2a0b00d796d1d"]}
+{"id":3570394,"name":"4⃣6⃣3⃣.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0xc2309929b4347fda6226b9ae876ce6fa14f20dd2"]}
+{"id":3571217,"name":"cellodao.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x2572241d988c4021e87dfc3e8cac46638bc05781"]}
+{"id":3572064,"name":"okbot.eth","mismatches":["registrant: 0x59e16fccd424cc24e280be16e11bcd56fb0ce547 -> 0x3f622411fc576310edc34c8df703bd856c490f1e","registration_date: 2023-10-21T07:09:59.000Z -> 2026-02-15T16:48:59.000Z"]}

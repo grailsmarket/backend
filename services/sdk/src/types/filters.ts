@@ -184,6 +184,12 @@ export interface SearchFilters {
   /** Maximum days since last sale */
   maxDaysSinceLastSale?: number;
 
+  // Creation date filters
+  /** Minimum creation date (ISO string) */
+  minCreationDate?: string;
+  /** Maximum creation date (ISO string) */
+  maxCreationDate?: string;
+
   // Owner filter
   /** Filter by owner (address or ENS name) */
   owner?: string;

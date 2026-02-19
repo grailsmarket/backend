@@ -88,6 +88,10 @@ export interface ESFilterOptions {
   minDaysSinceLastSale?: number | string;
   maxDaysSinceLastSale?: number | string;
 
+  // Creation date filters
+  minCreationDate?: string;
+  maxCreationDate?: string;
+
   // For watchlist: restrict to specific ENS names
   ensNames?: string[];
 
@@ -149,6 +153,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     lastSoldBefore,
     minDaysSinceLastSale,
     maxDaysSinceLastSale,
+    minCreationDate,
+    maxCreationDate,
     ensNames,
     sortBy,
   } = options;
@@ -669,6 +675,23 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     filter.push({
       range: {
         last_sale_date: { gte: `now-${days}d` },
+      },
+    });
+  }
+
+  // Creation date filters
+  if (minCreationDate) {
+    filter.push({
+      range: {
+        creation_date: { gte: minCreationDate },
+      },
+    });
+  }
+
+  if (maxCreationDate) {
+    filter.push({
+      range: {
+        creation_date: { lte: maxCreationDate },
       },
     });
   }
