@@ -104,6 +104,10 @@ const BulkFiltersSearchSchema = z.object({
 
     // Owner filter
     owner: z.string().optional(),
+
+    // Creation date filters
+    creation_date_min: z.string().optional(),
+    creation_date_max: z.string().optional(),
   }).optional(),
 });
 
@@ -239,8 +243,76 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller } = filters;
+    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller, creation_date_min, creation_date_max } = filters;
     const from = (page - 1) * limit;
+
+    // Validate creation date filters
+    if (creation_date_min || creation_date_max) {
+      try {
+        // Validate date formats
+        if (creation_date_min) {
+          const minDate = new Date(creation_date_min);
+          if (isNaN(minDate.getTime())) {
+            return reply.status(400).send({
+              success: false,
+              error: {
+                code: 'INVALID_DATE_FORMAT',
+                message: `Invalid creation_date_min format: ${creation_date_min}. Expected ISO 8601 date string.`,
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        }
+
+        if (creation_date_max) {
+          const maxDate = new Date(creation_date_max);
+          if (isNaN(maxDate.getTime())) {
+            return reply.status(400).send({
+              success: false,
+              error: {
+                code: 'INVALID_DATE_FORMAT',
+                message: `Invalid creation_date_max format: ${creation_date_max}. Expected ISO 8601 date string.`,
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        }
+
+        // Validate date range logic (min <= max)
+        if (creation_date_min && creation_date_max) {
+          const minDate = new Date(creation_date_min);
+          const maxDate = new Date(creation_date_max);
+
+          if (minDate > maxDate) {
+            return reply.status(400).send({
+              success: false,
+              error: {
+                code: 'INVALID_DATE_RANGE',
+                message: 'creation_date_min must be less than or equal to creation_date_max',
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        }
+      } catch (error: any) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'DATE_VALIDATION_ERROR',
+            message: `Date validation failed: ${error.message}`,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
 
     // Resolve owner filter - can be either address or ENS name
     let resolvedOwnerAddress: string | null = null;
@@ -357,6 +429,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       lastSoldBefore,
       minDaysSinceLastSale,
       maxDaysSinceLastSale,
+      creation_date_min,
+      creation_date_max,
       sortBy,
     });
 
@@ -829,6 +903,22 @@ export async function searchRoutes(fastify: FastifyInstance) {
       if (resolvedOwnerAddress) {
         whereConditions.push(`LOWER(en.owner_address) = $${paramCount}`);
         params.push(resolvedOwnerAddress);
+        paramCount++;
+      }
+
+      // Add creation date filters
+      if (creation_date_min) {
+        whereConditions.push(`en.registration_date >= $${paramCount}`);
+        params.push(creation_date_min);
+        paramCount++;
+      }
+
+      if (creation_date_max) {
+        // Make the max date inclusive by adding end-of-day
+        const maxDate = new Date(creation_date_max);
+        maxDate.setHours(23, 59, 59, 999);
+        whereConditions.push(`en.registration_date <= $${paramCount}`);
+        params.push(maxDate.toISOString());
         paramCount++;
       }
 
@@ -1320,6 +1410,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
             minDaysSinceLastSale: filters.minDaysSinceLastSale,
             maxDaysSinceLastSale: filters.maxDaysSinceLastSale,
             resolvedOwnerAddress,
+            // Creation date filters
+            creation_date_min: filters.creation_date_min,
+            creation_date_max: filters.creation_date_max,
           });
 
           const esResult = await es.search(esQuery);
@@ -1538,6 +1631,22 @@ export async function searchRoutes(fastify: FastifyInstance) {
           whereConditions.push(`en.last_sale_date IS NOT NULL`);
         } else if (filters.hasSales === 'false' || filters.hasSales === false) {
           whereConditions.push(`en.last_sale_date IS NULL`);
+        }
+
+        // Add creation date filters
+        if (filters.creation_date_min) {
+          whereConditions.push(`en.registration_date >= $${paramCount}`);
+          params.push(filters.creation_date_min);
+          paramCount++;
+        }
+
+        if (filters.creation_date_max) {
+          // Make the max date inclusive by adding end-of-day
+          const maxDate = new Date(filters.creation_date_max);
+          maxDate.setHours(23, 59, 59, 999);
+          whereConditions.push(`en.registration_date <= $${paramCount}`);
+          params.push(maxDate.toISOString());
+          paramCount++;
         }
 
         // Build sort clause

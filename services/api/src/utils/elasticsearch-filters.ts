@@ -88,6 +88,10 @@ export interface ESFilterOptions {
   minDaysSinceLastSale?: number | string;
   maxDaysSinceLastSale?: number | string;
 
+  // Creation date filters
+  creation_date_min?: string;
+  creation_date_max?: string;
+
   // For watchlist: restrict to specific ENS names
   ensNames?: string[];
 
@@ -151,6 +155,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     maxDaysSinceLastSale,
     ensNames,
     sortBy,
+    creation_date_min,
+    creation_date_max,
   } = options;
 
   // Exclude placeholder names from all searches
@@ -669,6 +675,45 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     filter.push({
       range: {
         last_sale_date: { gte: `now-${days}d` },
+      },
+    });
+  }
+
+  // Creation date filters - filter by registration_date field
+  if (creation_date_min || creation_date_max) {
+    const range: any = {};
+
+    if (creation_date_min) {
+      try {
+        const date = new Date(creation_date_min);
+        if (isNaN(date.getTime())) {
+          throw new Error(`Invalid date format: ${creation_date_min}`);
+        }
+        range.gte = date.toISOString();
+      } catch (error) {
+        // Let the validation in the route handle this
+        range.gte = creation_date_min;
+      }
+    }
+
+    if (creation_date_max) {
+      try {
+        const date = new Date(creation_date_max);
+        if (isNaN(date.getTime())) {
+          throw new Error(`Invalid date format: ${creation_date_max}`);
+        }
+        // Add end-of-day to make it inclusive
+        date.setHours(23, 59, 59, 999);
+        range.lte = date.toISOString();
+      } catch (error) {
+        // Let the validation in the route handle this
+        range.lte = creation_date_max;
+      }
+    }
+
+    filter.push({
+      range: {
+        registration_date: range,
       },
     });
   }
