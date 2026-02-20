@@ -27,6 +27,11 @@ export async function registerOnchainActivityWorker(boss: PgBoss) {
           const tx = data.result[0];
           lastTxAt = new Date(parseInt(tx.timeStamp) * 1000);
           lastTxHash = tx.hash;
+        } else {
+          logger.warn(
+            { jobId: job.id, address, etherscanStatus: data.status, etherscanMessage: data.message, etherscanResult: data.result },
+            'Etherscan API returned non-success response',
+          );
         }
 
         const pool = getPostgresPool();
