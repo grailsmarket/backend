@@ -86,7 +86,7 @@ const ConfigSchema = z.object({
   }),
   etherscan: z.object({
     apiKey: z.string().optional(),
-    baseUrl: z.string().default('https://api.etherscan.io/api'),
+    baseUrl: z.string().default('https://api.etherscan.io/v2/api'),
   }),
   googleAds: z.object({
     developerToken: z.string().optional(),

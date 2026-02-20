@@ -16,7 +16,7 @@ export async function registerOnchainActivityWorker(boss: PgBoss) {
         const apiKey = config.etherscan.apiKey;
         const baseUrl = config.etherscan.baseUrl;
 
-        const url = `${baseUrl}?module=account&action=txlist&address=${address}&sort=desc&page=1&offset=1${apiKey ? `&apikey=${apiKey}` : ''}`;
+        const url = `${baseUrl}?chainid=${config.blockchain.chainId}&module=account&action=txlist&address=${address}&sort=desc&page=1&offset=1${apiKey ? `&apikey=${apiKey}` : ''}`;
         const response = await fetch(url);
         const data = await response.json() as any;
 
