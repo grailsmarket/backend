@@ -29,6 +29,7 @@ export interface SearchResult {
   metadata: EnsNameMetadata | null;
   metadata_updated_at: Date | null;  // When metadata was last fetched from The Graph
   clubs: string[] | null;
+  club_ranks: Array<{ club: string; rank: number }> | null;
   has_numbers: boolean;
   has_emoji: boolean;
 
@@ -112,6 +113,10 @@ export async function buildSearchResults(
       en.metadata,
       en.metadata_updated_at,
       en.clubs,
+      (SELECT json_agg(json_build_object('club', cm.club_name, 'rank', cm.rank))
+       FROM club_memberships cm
+       WHERE cm.ens_name = en.name AND cm.rank IS NOT NULL
+      ) as club_ranks,
       en.has_numbers,
       en.has_emoji,
 
@@ -195,6 +200,7 @@ export async function buildSearchResults(
       metadata: row.metadata,
       metadata_updated_at: row.metadata_updated_at,
       clubs: row.clubs,
+      club_ranks: row.club_ranks || null,
       has_numbers: row.has_numbers,
       has_emoji: row.has_emoji,
       listings: row.listings || [],

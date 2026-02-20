@@ -127,6 +127,7 @@ function createNotFoundResult(name: string): SearchResult {
     metadata: {},
     metadata_updated_at: null,
     clubs: [],
+    club_ranks: null,
     has_numbers: false,
     has_emoji: false,
     last_sale_price: null,
@@ -307,6 +308,26 @@ export async function searchRoutes(fastify: FastifyInstance) {
     if (uniqueSellerEnabled) {
       usePostgresql = true;
       fastify.log.info('Forcing PostgreSQL because uniqueSeller filter is enabled');
+    }
+
+    // Validate and force PostgreSQL for ranking sort
+    if (sortBy === 'ranking') {
+      const isValidClubForRanking = clubs && Array.isArray(clubs) && clubs.length === 1
+        && !clubs.includes('any') && !clubs.includes('none');
+
+      if (!isValidClubForRanking) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'sortBy=ranking requires exactly one club filter',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      usePostgresql = true;
+      fastify.log.info('Forcing PostgreSQL because sortBy=ranking (requires club_memberships JOIN)');
     }
 
     if (usePostgresql && sortBy === 'watchers_count') {
@@ -852,9 +873,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
+      // Push club name param for ranking JOIN
+      let rankingParamIndex: number | null = null;
+      if (sortBy === 'ranking') {
+        rankingParamIndex = paramCount;
+        params.push(clubs[0]);
+        paramCount++;
+      }
+
       // Build ORDER BY clause based on sortBy parameter
       let orderByClause = '';
-      const order = sortOrder || 'desc';
+      const order = sortOrder || (sortBy === 'ranking' ? 'asc' : 'desc');
       const sqlOrder = order.toUpperCase();
 
       if (sortBy === 'last_sale_price') {
@@ -890,6 +919,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'alphabetical') {
         // Sort by name alphabetically
         orderByClause = `ORDER BY en.name ${sqlOrder}`;
+      } else if (sortBy === 'ranking') {
+        orderByClause = `ORDER BY sort_value ${sqlOrder} NULLS LAST`;
       } else {
         // Default sorting
         orderByClause = listingsOnly ? 'ORDER BY l.created_at DESC' : 'ORDER BY en.name ASC';
@@ -898,11 +929,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Build queries based on showListings - get the ENS names
       // When uniqueSeller is enabled, count unique sellers instead of unique names
       let countQuery: string;
+      const rankingJoin = sortBy === 'ranking' ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}` : '';
       if (uniqueSellerEnabled && listingsOnly) {
         countQuery = `
           SELECT COUNT(DISTINCT l.seller_address)
           FROM listings l
           JOIN ens_names en ON l.ens_name_id = en.id
+          ${rankingJoin}
           WHERE ${whereClause}
         `;
       } else if (listingsOnly) {
@@ -910,12 +943,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
           SELECT COUNT(DISTINCT en.id)
           FROM listings l
           JOIN ens_names en ON l.ens_name_id = en.id
+          ${rankingJoin}
           WHERE ${whereClause}
         `;
       } else {
         countQuery = `
           SELECT COUNT(*)
           FROM ens_names en
+          ${rankingJoin}
           WHERE ${whereClause}
         `;
       }
@@ -947,6 +982,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
       } else if (sortBy === 'offer') {
         selectClause = 'DISTINCT en.name, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort';
+      } else if (sortBy === 'ranking') {
+        selectClause = `DISTINCT en.name, cm_rank.rank as sort_value`;
       } else if (listingsOnly && !sortBy) {
         // Default sort for listings-only queries is l.created_at, must include it in SELECT
         selectClause = 'DISTINCT en.name, l.created_at';
@@ -967,8 +1004,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
             JOIN ens_names en ON l.ens_name_id = en.id
             WHERE ${whereClause}
           )
-          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : ', created_at'}
+          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
           FROM ranked_listings
+          ${sortBy === 'ranking' ? rankingJoin.replace('en.name', 'ranked_listings.name') : ''}
           WHERE rn = 1
           ${orderByClause.replace(/en\./g, '').replace(/l\./g, '')}
           LIMIT $${paramCount} OFFSET $${paramCount + 1}
@@ -978,6 +1016,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           SELECT ${selectClause}
           FROM listings l
           JOIN ens_names en ON l.ens_name_id = en.id
+          ${rankingJoin}
           WHERE ${whereClause}
           ${orderByClause}
           LIMIT $${paramCount} OFFSET $${paramCount + 1}
@@ -987,6 +1026,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           SELECT ${selectClause}
           FROM ens_names en
           ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
+          ${rankingJoin}
           WHERE ${whereClause}
           ${orderByClause}
           LIMIT $${paramCount} OFFSET $${paramCount + 1}

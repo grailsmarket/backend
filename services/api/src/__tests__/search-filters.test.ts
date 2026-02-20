@@ -28,6 +28,7 @@ interface SearchResult {
   highest_offer_wei?: string | null;
   view_count: number;
   watchers_count: number;
+  club_ranks?: Array<{ club: string; rank: number }> | null;
 }
 
 interface SearchResponse {
@@ -43,6 +44,12 @@ async function search(params: string): Promise<SearchResponse> {
   const url = `${API_BASE}?${params}`;
   const response = await fetch(url);
   return response.json() as Promise<SearchResponse>;
+}
+
+// Helper to make search requests and return raw Response (for status code checks)
+async function searchRaw(params: string): Promise<Response> {
+  const url = `${API_BASE}?${params}`;
+  return fetch(url);
 }
 
 // Helper to get label (name without .eth)
@@ -1603,6 +1610,119 @@ describe('Search API Filters', () => {
           expect(hasOffer).toBe(false);
         }
       }
+    });
+  });
+
+  describe('Ranking Sort', () => {
+    describe('Validation', () => {
+      it('sortBy=ranking without club filter returns 400', async () => {
+        const response = await searchRaw('sortBy=ranking');
+        expect(response.status).toBe(400);
+
+        const body = await response.json() as any;
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('VALIDATION_ERROR');
+        expect(body.error.message).toContain('requires exactly one club filter');
+      });
+
+      it('sortBy=ranking with clubs[]=any returns 400', async () => {
+        const response = await searchRaw('sortBy=ranking&filters[clubs][]=any');
+        expect(response.status).toBe(400);
+      });
+
+      it('sortBy=ranking with clubs[]=none returns 400', async () => {
+        const response = await searchRaw('sortBy=ranking&filters[clubs][]=none');
+        expect(response.status).toBe(400);
+      });
+
+      it('sortBy=ranking with multiple clubs returns 400', async () => {
+        const response = await searchRaw('sortBy=ranking&filters[clubs][]=999&filters[clubs][]=10k');
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('Sorting', () => {
+      it('sortBy=ranking defaults to ASC (rank 1 first)', async () => {
+        const { data } = await search('sortBy=ranking&filters[clubs][]=999&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        // Extract ranks for the filtered club from club_ranks
+        const ranks = data!.results.map((r) => {
+          const entry = r.club_ranks?.find((cr) => cr.club === '999');
+          return entry?.rank ?? null;
+        });
+
+        // Verify non-null ranks are in ascending order
+        const nonNullRanks = ranks.filter((r): r is number => r !== null);
+        expect(nonNullRanks.length).toBeGreaterThan(0);
+
+        for (let i = 1; i < nonNullRanks.length; i++) {
+          expect(nonNullRanks[i]).toBeGreaterThanOrEqual(nonNullRanks[i - 1]);
+        }
+      });
+
+      it('sortBy=ranking&sortOrder=desc returns highest rank first', async () => {
+        const { data } = await search('sortBy=ranking&sortOrder=desc&filters[clubs][]=999&limit=50');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        const ranks = data!.results.map((r) => {
+          const entry = r.club_ranks?.find((cr) => cr.club === '999');
+          return entry?.rank ?? null;
+        });
+
+        const nonNullRanks = ranks.filter((r): r is number => r !== null);
+        expect(nonNullRanks.length).toBeGreaterThan(0);
+
+        for (let i = 1; i < nonNullRanks.length; i++) {
+          expect(nonNullRanks[i]).toBeLessThanOrEqual(nonNullRanks[i - 1]);
+        }
+      });
+
+      it('sortBy=ranking with showListings=true returns listed names sorted by rank', async () => {
+        const { data } = await search('sortBy=ranking&filters[clubs][]=999&filters[showListings]=true&limit=50');
+        // May have no listed names in this club
+        if (data?.results.length === 0) return;
+
+        const failures: string[] = [];
+        let prevRank: number | null = null;
+
+        for (const result of data!.results) {
+          // Verify listed
+          const hasActiveListing = result.listings?.some((l) => l.status === 'active');
+          if (!hasActiveListing) {
+            failures.push(`${result.name}: no active listing`);
+          }
+
+          // Verify rank ordering (ASC default)
+          const entry = result.club_ranks?.find((cr) => cr.club === '999');
+          const rank = entry?.rank ?? null;
+          if (rank !== null && prevRank !== null && rank < prevRank) {
+            failures.push(`${result.name}: rank ${rank} < previous ${prevRank} (should be ascending)`);
+          }
+          if (rank !== null) prevRank = rank;
+        }
+
+        expect(failures, `Ranking sort failures:\n${failures.join('\n')}`).toHaveLength(0);
+      });
+
+      it('names without a rank appear last (NULLS LAST)', async () => {
+        const { data } = await search('sortBy=ranking&filters[clubs][]=999&limit=100');
+        expect(data?.results.length).toBeGreaterThan(0);
+
+        const ranks = data!.results.map((r) => {
+          const entry = r.club_ranks?.find((cr) => cr.club === '999');
+          return entry?.rank ?? null;
+        });
+
+        // Find the first null rank
+        const firstNullIndex = ranks.indexOf(null);
+        if (firstNullIndex === -1) return; // All have ranks, nothing to check
+
+        // All entries after the first null should also be null
+        for (let i = firstNullIndex; i < ranks.length; i++) {
+          expect(ranks[i]).toBeNull();
+        }
+      });
     });
   });
 
