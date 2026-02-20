@@ -3,14 +3,16 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
-import { config } from '../../shared/src';
+import { config, getPostgresPool } from '../../shared/src';
 import { registerRoutes } from './routes';
 import { errorHandler } from './middleware/error-handler';
 import { logger } from './utils/logger';
 import { ActivityNotifier } from './services/activity-notifier';
+import { ActivityLogger } from './services/activity-logger';
 import { mutelistService } from './services/mutelist';
 
 const activityNotifier = new ActivityNotifier();
+let activityLogger: ActivityLogger | null = null;
 
 async function start() {
   const fastify = Fastify({
@@ -41,6 +43,25 @@ async function start() {
 
   registerRoutes(fastify as any);
 
+  // Initialize activity logger for tracking authenticated API usage
+  activityLogger = new ActivityLogger(getPostgresPool());
+
+  fastify.addHook('onResponse', (request, reply, done) => {
+    if (request.user && activityLogger) {
+      activityLogger.log({
+        userId: parseInt(request.user.sub),
+        address: request.user.address,
+        method: request.method,
+        route: request.routeOptions?.url || request.url,
+        path: request.url,
+        queryParams: (request.query && Object.keys(request.query as object).length > 0)
+          ? request.query as Record<string, unknown>
+          : null,
+      });
+    }
+    done();
+  });
+
   try {
     await fastify.listen({
       port: config.api.port,
@@ -60,6 +81,7 @@ async function start() {
 
   process.on('SIGINT', async () => {
     console.log('Received SIGINT, shutting down gracefully...');
+    if (activityLogger) await activityLogger.shutdown();
     await activityNotifier.stop();
     await fastify.close();
     process.exit(0);
@@ -67,6 +89,7 @@ async function start() {
 
   process.on('SIGTERM', async () => {
     console.log('Received SIGTERM, shutting down gracefully...');
+    if (activityLogger) await activityLogger.shutdown();
     await activityNotifier.stop();
     await fastify.close();
     process.exit(0);

@@ -84,6 +84,10 @@ const ConfigSchema = z.object({
   openai: z.object({
     apiKey: z.string().optional(),
   }),
+  etherscan: z.object({
+    apiKey: z.string().optional(),
+    baseUrl: z.string().default('https://api.etherscan.io/api'),
+  }),
   googleAds: z.object({
     developerToken: z.string().optional(),
     clientId: z.string().optional(),
@@ -172,6 +176,10 @@ const rawConfig = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
+  },
+  etherscan: {
+    apiKey: process.env.ETHERSCAN_API_KEY,
+    baseUrl: process.env.ETHERSCAN_BASE_URL,
   },
   googleAds: {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
