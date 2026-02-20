@@ -84,6 +84,13 @@ const ConfigSchema = z.object({
   openai: z.object({
     apiKey: z.string().optional(),
   }),
+  googleAds: z.object({
+    developerToken: z.string().optional(),
+    clientId: z.string().optional(),
+    clientSecret: z.string().optional(),
+    refreshToken: z.string().optional(),
+    customerId: z.string().optional(),
+  }),
   storage: z.object({
     bucket: z.string().optional(),
     accessKeyId: z.string().optional(),
@@ -165,6 +172,13 @@ const rawConfig = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
+  },
+  googleAds: {
+    developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+    clientId: process.env.GOOGLE_ADS_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET,
+    refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN,
+    customerId: process.env.GOOGLE_ADS_CUSTOMER_ID,
   },
   storage: {
     bucket: process.env.BUCKET,
