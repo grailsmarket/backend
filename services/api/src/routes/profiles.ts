@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
 import { ethers } from 'ethers';
+import { getQueueClient, QUEUE_NAMES } from '../queue';
 
 export async function profilesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -363,15 +364,53 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       `;
       const activityCountResult = await pool.query(activityCountQuery, [ownerAddress]);
 
-      // Fetch persona for this address
+      // Fetch persona and last_seen_at for this address
       const personaQuery = `
-        SELECT p.slug, p.name, p.icon
+        SELECT p.slug, p.name, p.icon, u.last_seen_at
         FROM users u
-        JOIN personas p ON p.id = u.persona_id
+        LEFT JOIN personas p ON p.id = u.persona_id
         WHERE u.address = $1
       `;
       const personaResult = await pool.query(personaQuery, [ownerAddress]);
-      const persona = personaResult.rows.length > 0 ? personaResult.rows[0] : null;
+      const persona = personaResult.rows.length > 0
+        ? { slug: personaResult.rows[0].slug, name: personaResult.rows[0].name, icon: personaResult.rows[0].icon }
+        : null;
+      const lastSeenAt = personaResult.rows[0]?.last_seen_at || null;
+
+      // Fetch onchain activity cache and queue refresh if stale
+      let lastSeenOnchain = null;
+      const cacheResult = await pool.query(
+        'SELECT last_transaction_at, last_checked_at FROM onchain_activity_cache WHERE address = $1',
+        [ownerAddress],
+      );
+
+      if (cacheResult.rows.length > 0) {
+        lastSeenOnchain = cacheResult.rows[0].last_transaction_at;
+        const lastChecked = new Date(cacheResult.rows[0].last_checked_at);
+        const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+
+        if (lastChecked < sixHoursAgo) {
+          try {
+            const boss = await getQueueClient();
+            await boss.send(QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
+              { address: ownerAddress },
+              { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 },
+            );
+          } catch (err) {
+            fastify.log.warn({ err, address: ownerAddress }, 'Failed to queue onchain activity refresh');
+          }
+        }
+      } else {
+        try {
+          const boss = await getQueueClient();
+          await boss.send(QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
+            { address: ownerAddress },
+            { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 },
+          );
+        } catch (err) {
+          fastify.log.warn({ err, address: ownerAddress }, 'Failed to queue onchain activity lookup');
+        }
+      }
 
       const response: APIResponse = {
         success: true,
@@ -380,6 +419,8 @@ export async function profilesRoutes(fastify: FastifyInstance) {
           primaryName,
           ensRecords,
           persona,
+          lastSeenAt,
+          lastSeenOnchain,
           ownedNames: ownedNamesResult.rows,
           stats: {
             totalNames: ownedNamesResult.rows.length,

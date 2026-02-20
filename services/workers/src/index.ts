@@ -12,6 +12,8 @@ import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-an
 import { registerValidationWorkers, registerValidationSchedulers } from './workers/validation';
 import { registerReconcileOpenseaWorker } from './workers/reconcile-opensea';
 import { registerAiCacheCleanupWorker } from './workers/ai-cache-cleanup';
+import { registerOnchainActivityWorker } from './workers/onchain-activity';
+import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
 import { registerPersonaClassificationWorker } from './workers/persona-classification';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
@@ -52,6 +54,10 @@ async function start() {
 
     // Register AI recommendations cache cleanup worker
     await registerAiCacheCleanupWorker(boss);
+
+    // Register onchain activity and API log cleanup workers
+    await registerOnchainActivityWorker(boss);
+    await registerApiLogCleanupWorker(boss);
 
     // Register persona classification worker
     await registerPersonaClassificationWorker(boss);
