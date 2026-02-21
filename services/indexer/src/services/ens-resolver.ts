@@ -1,7 +1,7 @@
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { namehash, labelhash } from 'viem/ens';
-import { config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord } from '../../../shared/src';
+import { config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -351,6 +351,8 @@ export class ENSResolver {
               registrationDate
             }
             resolver {
+              address
+              texts
               textChangeds {
                 value
                 key
@@ -425,6 +427,8 @@ export class ENSResolver {
                 registrationDate
               }
               resolver {
+                address
+                texts
                 textChangeds {
                   value
                   key
@@ -549,6 +553,17 @@ export class ENSResolver {
                   delete textRecords[record.key];
                 }
               }
+            }
+          }
+
+          // Fallback to ENS worker if resolver doesn't emit values to The Graph
+          if (needsEnsWorkerFallback(domain.resolver?.address, domain.resolver?.texts, domain.resolver?.textChangeds)) {
+            try {
+              const workerRecords = await fetchTextRecordsFromEnsWorker(name);
+              Object.assign(textRecords, workerRecords);
+              logger.info(`ENS worker fallback used for ${name}: ${Object.keys(workerRecords).length} text records`);
+            } catch (error: any) {
+              logger.warn(`ENS worker fallback failed for ${name}: ${error?.message}`);
             }
           }
 

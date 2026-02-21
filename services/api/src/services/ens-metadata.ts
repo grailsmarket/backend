@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
@@ -141,6 +141,7 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
     query GetDomain($name: String!) {
       domains(where: { name: $name }) {
         resolver {
+          address
           texts
           textChangeds {
             key
@@ -206,6 +207,17 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
           delete metadata[record.key];
         }
       }
+    }
+  }
+
+  // Fallback to ENS worker if resolver doesn't emit values to The Graph
+  if (needsEnsWorkerFallback(domain?.resolver?.address, domain?.resolver?.texts, domain?.resolver?.textChangeds)) {
+    try {
+      const workerRecords = await fetchTextRecordsFromEnsWorker(name);
+      Object.assign(metadata, workerRecords);
+      logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker fallback used for text records');
+    } catch (error) {
+      logger.warn({ error, name }, 'ENS worker fallback failed');
     }
   }
 
