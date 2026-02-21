@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { config } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
@@ -104,6 +104,17 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
         if (record.key && record.value) {
           metadata[record.key] = record.value;
         }
+      }
+    }
+
+    // Fallback to ENS worker if resolver doesn't emit values to The Graph
+    if (needsEnsWorkerFallback(domain.resolver.address, domain.resolver.texts, domain.resolver.textChangeds)) {
+      try {
+        const workerRecords = await fetchTextRecordsFromEnsWorker(name);
+        Object.assign(metadata, workerRecords);
+        logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker fallback used for text records');
+      } catch (error) {
+        logger.warn({ error, name }, 'ENS worker fallback failed');
       }
     }
 

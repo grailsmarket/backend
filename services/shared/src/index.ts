@@ -9,3 +9,4 @@ export * from './utils/emoji';
 export * from './utils/address-decoder';
 export * from './utils/contenthash-decoder';
 export * from './services/storage';
+export * from './utils/ens-worker';

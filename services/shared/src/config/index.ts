@@ -42,6 +42,7 @@ const ConfigSchema = z.object({
   theGraph: z.object({
     ensSubgraphUrl: z.string().default('https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'),
     apiKey: z.string().optional(),
+    ensWorkerUrl: z.string().default('https://ens.ethfollow.xyz'),
   }),
   api: z.object({
     port: z.number().default(3000),
@@ -133,6 +134,7 @@ const rawConfig = {
   theGraph: {
     ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL,
     apiKey: process.env.THE_GRAPH_API_KEY,
+    ensWorkerUrl: process.env.ENS_WORKER_URL,
   },
   api: {
     port: parseInt(process.env.API_PORT || '3000'),
