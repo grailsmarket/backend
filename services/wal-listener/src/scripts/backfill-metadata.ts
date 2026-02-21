@@ -22,7 +22,7 @@
  *   npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
  */
 
-import { getPostgresPool, closeAllConnections, config, processAddressRecords, type AddressRecord } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections, config, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
 
 const pool = getPostgresPool();
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -191,6 +191,17 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
             delete metadata[record.key];
           }
         }
+      }
+    }
+
+    // Fallback to ENS worker if resolver doesn't emit values to The Graph
+    if (needsEnsWorkerFallback(domain.resolver?.address, domain.resolver?.texts, domain.resolver?.textChangeds)) {
+      try {
+        const workerRecords = await fetchTextRecordsFromEnsWorker(domain.name);
+        Object.assign(metadata, workerRecords);
+        console.log(`  ENS worker fallback used for ${domain.name}: ${Object.keys(workerRecords).length} text records`);
+      } catch (error: any) {
+        console.log(`  ENS worker fallback failed for ${domain.name}: ${error?.message}`);
       }
     }
 
