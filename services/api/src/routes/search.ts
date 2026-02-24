@@ -28,7 +28,8 @@ const BulkFiltersSearchSchema = z.object({
   // Sorting
   sortBy: z.enum([
     'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
-    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer'
+    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer',
+    'listing_date', 'listing_expiry'
   ]).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 
@@ -557,7 +558,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         includeExpired !== true &&
         includeExpired !== 'true' &&
         !pgHasExplicitExpirationFilter &&
-        (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price');
+        (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry');
 
       if (pgShouldExcludePremiumAvailable) {
         whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
@@ -916,6 +917,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'clubs_count') {
         // Sort by number of clubs with alphabetical tie-breaker (COLLATE "C" for consistent ASCII ordering)
         orderByClause = `ORDER BY sort_value ${sqlOrder}, name_sort ASC`;
+      } else if (sortBy === 'listing_date') {
+        orderByClause = `ORDER BY l.created_at ${sqlOrder} NULLS LAST`;
+      } else if (sortBy === 'listing_expiry') {
+        orderByClause = `ORDER BY l.expires_at ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'alphabetical') {
         // Sort by name alphabetically
         orderByClause = `ORDER BY en.name ${sqlOrder}`;
@@ -982,6 +987,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
         selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
       } else if (sortBy === 'offer') {
         selectClause = 'DISTINCT en.name, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort';
+      } else if (sortBy === 'listing_date') {
+        selectClause = 'DISTINCT en.name, l.created_at as sort_value';
+      } else if (sortBy === 'listing_expiry') {
+        selectClause = 'DISTINCT en.name, l.expires_at as sort_value';
       } else if (sortBy === 'ranking') {
         selectClause = `DISTINCT en.name, cm_rank.rank as sort_value`;
       } else if (listingsOnly && !sortBy) {
@@ -996,7 +1005,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Using ROW_NUMBER() to rank listings per seller, then filter to rn=1
         dataQuery = `
           WITH ranked_listings AS (
-            SELECT en.name, l.seller_address, l.created_at, l.price_wei,
+            SELECT en.name, l.seller_address, l.created_at, l.expires_at, l.price_wei,
                    en.expiry_date, en.registration_date, en.creation_date, en.last_sale_date, en.last_sale_price_usd,
                    en.view_count, en.highest_offer_wei, en.clubs, en.id as ens_name_id,
                    ROW_NUMBER() OVER (PARTITION BY l.seller_address ORDER BY l.created_at DESC) as rn
@@ -1004,7 +1013,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
             JOIN ens_names en ON l.ens_name_id = en.id
             WHERE ${whereClause}
           )
-          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
+          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'listing_date' ? ', created_at as sort_value' : sortBy === 'listing_expiry' ? ', expires_at as sort_value' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
           FROM ranked_listings
           ${sortBy === 'ranking' ? rankingJoin.replace('en.name', 'ranked_listings.name') : ''}
           WHERE rn = 1
@@ -1626,6 +1635,12 @@ export async function searchRoutes(fastify: FastifyInstance) {
               break;
             case 'watchers_count':
               orderBy = `watchers_count ${order} ${nullsLast}, en.name ASC`;
+              break;
+            case 'listing_date':
+              orderBy = `l.created_at ${order} NULLS LAST, en.name ASC`;
+              break;
+            case 'listing_expiry':
+              orderBy = `l.expires_at ${order} NULLS LAST, en.name ASC`;
               break;
             case 'alphabetical':
               orderBy = `en.name ${order}`;

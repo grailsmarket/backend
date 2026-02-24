@@ -34,7 +34,8 @@ const SearchWatchlistQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
   sortBy: z.enum(['price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
-    'last_sale_price', 'character_count', 'watchers_count', 'clubs_count', 'view_count', 'alphabetical', 'offer']).optional(),
+    'last_sale_price', 'character_count', 'watchers_count', 'clubs_count', 'view_count', 'alphabetical', 'offer',
+    'listing_date', 'listing_expiry']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
   filters: z.object({
     // Price filters
