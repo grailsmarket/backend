@@ -194,7 +194,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     includeExpired !== true &&
     includeExpired !== 'true' &&
     !hasExplicitExpirationFilter &&
-    (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price');
+    (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry');
 
   if (shouldExcludePremiumAvailable) {
     filter.push({
@@ -227,7 +227,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   }
 
   // Filter by listing status
-  if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price') {
+  if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry') {
     filter.push({ term: { status: 'active' } });
   } else if (listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true') {
     filter.push({
@@ -738,6 +738,20 @@ export function buildESSort(options: {
     } else if (sortBy === 'watchers_count') {
       sort.push({
         [sortBy]: {
+          order,
+          missing: '_last'
+        }
+      });
+    } else if (sortBy === 'listing_date') {
+      sort.push({
+        'listing_created_at': {
+          order,
+          missing: '_last'
+        }
+      });
+    } else if (sortBy === 'listing_expiry') {
+      sort.push({
+        'listing_expires_at': {
           order,
           missing: '_last'
         }
