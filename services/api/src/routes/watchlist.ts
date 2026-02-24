@@ -706,7 +706,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       const transformedQuery: any = {
         q: rawQuery.q,
         page: isExport ? 1 : parseInt(rawQuery.page || '1', 10),
-        limit: isExport ? Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS) : Math.min(requestedLimit, 100),
+        limit: Math.min(requestedLimit, 100),
         sortBy: rawQuery.sortBy,
         sortOrder: rawQuery.sortOrder,
         filters: {},
@@ -738,6 +738,12 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       }
 
       const query = SearchWatchlistQuerySchema.parse(transformedQuery);
+
+      // Override limit and page for export mode after Zod validation
+      if (isExport) {
+        query.limit = Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS);
+        query.page = 1;
+      }
 
       // Get user's watchlist ENS names
       const watchlistResult = await pool.query(
