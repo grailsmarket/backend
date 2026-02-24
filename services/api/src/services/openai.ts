@@ -4,7 +4,7 @@ import { normalize } from 'viem/ens';
 const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_MODEL = 'gpt-5.2-2025-12-11';
 
-const SYSTEM_PROMPT = `given an input string, return exactly 10 results that are related and likely to be similarly or more common/well-known than the input.
+const SYSTEM_PROMPT_TEMPLATE = `given an input string, return exactly {{count}} results that are related and likely to be similarly or more common/well-known than the input.
 Rules (strict!):
 3–16 chars per result
 No spaces in any result
@@ -183,7 +183,7 @@ async function callOpenAIRaw(apiKey: string, body: string, label: string): Promi
  * @returns Array of normalized, deduplicated name suggestions (up to 10)
  * @throws On non-retryable HTTP errors or after exhausting retries
  */
-async function callOpenAI(apiKey: string, name: string, categories?: string[]): Promise<string[]> {
+async function callOpenAI(apiKey: string, name: string, categories?: string[], count: number = 10): Promise<string[]> {
   // Filter out excluded categories
   const filteredCategories = categories?.filter(
     (cat) => !EXCLUDED_CATEGORIES.includes(cat.toLowerCase())
@@ -195,11 +195,13 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     input += `\ncategories: ${filteredCategories.join(', ')}`;
   }
 
+  const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{count}}', String(count));
+
   const body = JSON.stringify({
     model: OPENAI_MODEL,
-    instructions: SYSTEM_PROMPT,
+    instructions: systemPrompt,
     input,
-    max_output_tokens: 1000,
+    max_output_tokens: count > 10 ? 2000 : 1000,
     store: true,
     reasoning: {
       effort: 'none',
@@ -246,7 +248,7 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     const normalized = tryNormalizeName(raw);
     if (normalized && normalized !== name && !validSuggestions.includes(normalized)) {
       validSuggestions.push(normalized);
-      if (validSuggestions.length >= 10) break;
+      if (validSuggestions.length >= count) break;
     }
   }
 
@@ -337,11 +339,13 @@ async function callOpenAIExpansions(apiKey: string, query: string): Promise<stri
  *
  * @param name - ENS label (no .eth suffix), e.g. "vitalik"
  * @param categories - Optional club/category names for context, e.g. ["999", "10k"]
+ * @param count - Number of suggestions to generate (default: 10)
  * @returns Array of suggested name labels, or null on failure
  */
 export async function generateSimilarNames(
   name: string,
-  categories?: string[]
+  categories?: string[],
+  count: number = 10
 ): Promise<string[] | null> {
   const apiKey = config.openai.apiKey;
   if (!apiKey) {
@@ -350,7 +354,7 @@ export async function generateSimilarNames(
   }
 
   try {
-    return await callOpenAI(apiKey, name, categories);
+    return await callOpenAI(apiKey, name, categories, count);
   } catch (error) {
     console.error('[openai] Error generating similar names:', error);
     return null;

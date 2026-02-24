@@ -25,7 +25,7 @@ export async function googleMetricsRoutes(fastify: FastifyInstance) {
    * Cached results are public. Fetching fresh results requires auth.
    * Rate limited to 60 req/min per IP.
    *
-   * Response: { success: true, data: { avgMonthlySearches, avgCpc, monthlyTrend, relatedKeywordCount, competition } }
+   * Response: { success: true, data: { avgMonthlySearches, avgCpc, monthlyTrend, competition } }
    */
   fastify.get('/:name', {
     preHandler: [optionalAuth, cacheHandler],

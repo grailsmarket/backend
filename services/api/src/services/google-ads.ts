@@ -4,7 +4,6 @@ export interface KeywordMetricsResponse {
   avgMonthlySearches: number | null;
   avgCpc: number | null;
   monthlyTrend: { month: string; year: number; searches: number }[];
-  relatedKeywordCount: number;
   competition: string | null;
 }
 
@@ -163,10 +162,7 @@ export async function fetchKeywordMetrics(
   try {
     const accessToken = await getAccessToken();
 
-    const [metricsResult, relatedCount] = await Promise.all([
-      getKeywordHistoricalMetrics(keyword, accessToken),
-      getRelatedKeywordCount(keyword, accessToken),
-    ]);
+    const metricsResult = await getKeywordHistoricalMetrics(keyword, accessToken);
 
     const monthlyTrend = metricsResult.monthlyTrend.map((m) => ({
       month: m.month,
@@ -178,7 +174,6 @@ export async function fetchKeywordMetrics(
       avgMonthlySearches: metricsResult.avgMonthlySearches,
       avgCpc: metricsResult.avgCpc,
       monthlyTrend,
-      relatedKeywordCount: relatedCount,
       competition: metricsResult.competition,
     };
   } catch (error) {
