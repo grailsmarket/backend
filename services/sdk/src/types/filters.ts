@@ -31,7 +31,9 @@ export type SortBy =
   | 'view_count'
   | 'clubs_count'
   | 'alphabetical'
-  | 'offer';
+  | 'offer'
+  | 'listing_date'
+  | 'listing_expiry';
 
 /**
  * Sort order
