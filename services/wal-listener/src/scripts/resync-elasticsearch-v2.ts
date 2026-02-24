@@ -53,6 +53,7 @@ interface ListingData {
   currency_address: string | null;
   status: string;
   created_at: string;
+  expires_at: string | null;
 }
 
 interface OfferData {
@@ -156,7 +157,7 @@ async function loadActiveListings(): Promise<Map<number, ListingData>> {
   console.log('Loading active listings...');
   const result = await pool.query(`
     SELECT DISTINCT ON (ens_name_id)
-      ens_name_id, price_wei, currency_address, status, created_at
+      ens_name_id, price_wei, currency_address, status, created_at, expires_at
     FROM listings
     WHERE status = 'active'
     ORDER BY ens_name_id, created_at DESC
@@ -169,6 +170,7 @@ async function loadActiveListings(): Promise<Map<number, ListingData>> {
       currency_address: row.currency_address,
       status: row.status,
       created_at: row.created_at,
+      expires_at: row.expires_at,
     });
   }
   console.log(`  ${map.size.toLocaleString()} active listings loaded`);
@@ -248,6 +250,7 @@ function enrichRow(
   const listingCurrency = listing?.currency_address || null;
   const listingStatus = listing ? listing.status : 'unlisted';
   const listingCreatedAt = listing?.created_at || null;
+  const listingExpiresAt = listing?.expires_at || null;
 
   const expirationState = calculateExpirationState(row.expiry_date);
   const saleHistoryState = calculateSaleHistoryState(row.last_sale_date);
@@ -273,6 +276,7 @@ function enrichRow(
     last_sale_currency: row.last_sale_currency,
     last_sale_price_usd: row.last_sale_price_usd,
     listing_created_at: listingCreatedAt,
+    listing_expires_at: listingExpiresAt,
     active_offers_count: offerData?.count || 0,
     highest_offer: safeParsePrice(offerData?.highest_offer_wei),
     is_expired: expirationState.isExpired,

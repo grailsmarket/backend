@@ -99,6 +99,7 @@ export class ElasticsearchSync {
                   scaling_factor: 100, // 2 decimal precision for dollars (e.g., 16319.19)
                 },
                 listing_created_at: { type: 'date' },
+                listing_expires_at: { type: 'date' },
                 active_offers_count: { type: 'integer' },
                 highest_offer: {
                   type: 'double',
@@ -193,6 +194,7 @@ export class ElasticsearchSync {
           l.currency_address as listing_currency_address,
           l.status as listing_status,
           l.created_at as listing_created_at,
+          l.expires_at as listing_expires_at,
           en.last_sale_date,
           en.last_sale_price,
           en.last_sale_currency,
@@ -274,6 +276,7 @@ export class ElasticsearchSync {
             l.currency_address as listing_currency_address,
             l.status as listing_status,
             l.created_at as listing_created_at,
+            l.expires_at as listing_expires_at,
             COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
             en.last_sale_date,
             en.last_sale_price,
@@ -288,7 +291,7 @@ export class ElasticsearchSync {
             LIMIT 1
           ) l ON true
           LEFT JOIN offers o ON o.ens_name_id = en.id
-          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at
+          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.expires_at
           ORDER BY en.id
           LIMIT $1 OFFSET $2
         `;
@@ -433,6 +436,7 @@ export class ElasticsearchSync {
       last_sale_currency: data.last_sale_currency,
       last_sale_price_usd: data.last_sale_price_usd,
       listing_created_at: data.listing_created_at,
+      listing_expires_at: data.listing_expires_at,
       active_offers_count: data.active_offers_count || 0,
       highest_offer: safeParsePrice(data.highest_offer_wei),
       // Expiration state fields
