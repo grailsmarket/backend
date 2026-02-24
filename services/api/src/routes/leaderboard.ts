@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
@@ -105,6 +105,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
               COALESCE(SUM(s.sale_price_wei::numeric), 0) as sales_volume
             FROM sales s
             INNER JOIN filtered_owners fo ON LOWER(s.seller_address) = fo.owner_address
+            WHERE ${ETH_WETH_FILTER}
             GROUP BY LOWER(s.seller_address)
           )
           SELECT
@@ -178,6 +179,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
               COUNT(*) as names_sold,
               COALESCE(SUM(sale_price_wei::numeric), 0) as sales_volume
             FROM sales
+            WHERE ${ETH_WETH_FILTER}
             GROUP BY LOWER(seller_address)
           )
           SELECT
