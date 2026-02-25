@@ -1,4 +1,4 @@
-import { config } from '../../../shared/src';
+import { config } from '../config';
 
 export interface KeywordMetricsResponse {
   avgMonthlySearches: number | null;

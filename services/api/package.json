@@ -14,7 +14,8 @@
     "migrate": "tsx scripts/run-migrations.ts",
     "migrate:dry-run": "tsx scripts/run-migrations.ts --dry-run",
     "migrate:force": "tsx scripts/run-migrations.ts --force",
-    "import:poap": "tsx scripts/import-poap-links.ts"
+    "import:poap": "tsx scripts/import-poap-links.ts",
+    "cache": "npm run build && node dist/api/src/scripts/redis-cache.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.992.0",
