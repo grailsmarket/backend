@@ -1,10 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { SiweMessage } from 'siwe';
-import { verifyMessage } from 'viem';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { SiweMessage, SiweError } from 'siwe';
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
+import { getPostgresPool, config, type APIResponse } from '../../../shared/src';
 import { generateToken, requireAuth } from '../middleware/auth';
+
+const publicClient = createPublicClient({
+  chain: mainnet,
+  transport: http(config.blockchain.rpcUrl),
+});
 
 const NonceQuerySchema = z.object({
   address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address'),
@@ -197,7 +203,28 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // Now verify the signature
       try {
-        const verifyResult = await siweMessage.verify({ signature });
+        const verifyResult = await siweMessage.verify(
+          { signature },
+          {
+            verificationFallback: async (params, opts, message, EIP1271Promise) => {
+              const isValid = await publicClient.verifyMessage({
+                address: message.address as `0x${string}`,
+                message: message.prepareMessage(),
+                signature: params.signature as `0x${string}`,
+              });
+
+              if (isValid) {
+                return { success: true, data: message };
+              }
+
+              return {
+                success: false,
+                data: message,
+                error: new SiweError('Signature verification failed'),
+              };
+            },
+          }
+        );
 
         if (!verifyResult.success) {
           return reply.status(401).send({
