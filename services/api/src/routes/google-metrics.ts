@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, normalizeEnsName } from '../../../shared/src';
-import { fetchKeywordMetrics } from '../services/google-ads';
+import { getPostgresPool, APIResponse, normalizeEnsName, fetchKeywordMetrics } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 import { optionalAuth } from '../middleware/auth';
 import { generateCacheKey, setCachedResponse } from '../utils/redis';
