@@ -212,7 +212,7 @@ export class ElasticsearchSync {
           ORDER BY created_at DESC
           LIMIT 1
         ) l ON true
-        LEFT JOIN google_metrics gm ON gm.name = en.label_name AND gm.status = 'success' AND gm.expires_at > NOW()
+        LEFT JOIN google_metrics gm ON gm.name = REPLACE(en.name, '.eth', '') AND gm.status = 'success' AND gm.expires_at > NOW()
         WHERE en.id = $1
       `;
 
@@ -299,7 +299,7 @@ export class ElasticsearchSync {
             LIMIT 1
           ) l ON true
           LEFT JOIN offers o ON o.ens_name_id = en.id
-          LEFT JOIN google_metrics gm ON gm.name = en.label_name AND gm.status = 'success' AND gm.expires_at > NOW()
+          LEFT JOIN google_metrics gm ON gm.name = REPLACE(en.name, '.eth', '') AND gm.status = 'success' AND gm.expires_at > NOW()
           GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.expires_at, gm.metrics
           ORDER BY en.id
           LIMIT $1 OFFSET $2

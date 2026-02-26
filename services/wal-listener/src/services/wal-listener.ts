@@ -439,7 +439,7 @@ export class WALListener {
     try {
       // Look up the ens_names.id by matching label_name
       const result = await this.pool.query(
-        'SELECT id FROM ens_names WHERE label_name = $1 LIMIT 1',
+        'SELECT id FROM ens_names WHERE REPLACE(name, \'.eth\', \'\') = $1 LIMIT 1',
         [name]
       );
 
