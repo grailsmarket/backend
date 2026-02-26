@@ -29,7 +29,7 @@ const BulkFiltersSearchSchema = z.object({
   sortBy: z.enum([
     'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
     'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer',
-    'listing_date', 'listing_expiry'
+    'listing_date', 'listing_expiry', 'google_monthly_searches', 'google_avg_cpc'
   ]).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 
