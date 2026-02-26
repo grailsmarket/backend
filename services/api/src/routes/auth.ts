@@ -239,17 +239,58 @@ export async function authRoutes(fastify: FastifyInstance) {
           });
         }
       } catch (error: any) {
-        fastify.log.error('Signature verification error:', error?.message || 'Unknown error');
-        return reply.status(401).send({
-          success: false,
-          error: {
-            code: 'INVALID_SIGNATURE',
-            message: 'Failed to verify signature',
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-          },
-        });
+        // Smart wallet signatures (ERC-6492) are ABI-encoded and longer than 65 bytes.
+        // Ethers' ecrecover throws INVALID_ARGUMENT before the SIWE library can reach
+        // our verificationFallback. Catch this and verify with viem instead, which
+        // handles ERC-1271 and ERC-6492 natively.
+        if (error?.code === 'INVALID_ARGUMENT' && error?.argument === 'signature') {
+          try {
+            const isValid = await publicClient.verifyMessage({
+              address: siweMessage.address as `0x${string}`,
+              message: siweMessage.prepareMessage(),
+              signature: signature as `0x${string}`,
+            });
+
+            if (!isValid) {
+              return reply.status(401).send({
+                success: false,
+                error: {
+                  code: 'SIGNATURE_VERIFICATION_FAILED',
+                  message: 'Signature verification failed',
+                },
+                meta: {
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+
+            // Signature valid — fall through to mark nonce as used
+          } catch (viemError: any) {
+            fastify.log.error('Smart wallet signature verification error:', viemError?.message || 'Unknown error');
+            return reply.status(401).send({
+              success: false,
+              error: {
+                code: 'INVALID_SIGNATURE',
+                message: 'Failed to verify smart wallet signature',
+              },
+              meta: {
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          fastify.log.error('Signature verification error:', error?.message || 'Unknown error');
+          return reply.status(401).send({
+            success: false,
+            error: {
+              code: 'INVALID_SIGNATURE',
+              message: 'Failed to verify signature',
+            },
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
       }
 
       // Mark nonce as used
