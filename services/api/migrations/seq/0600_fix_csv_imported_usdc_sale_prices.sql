@@ -19,7 +19,16 @@ WHERE LOWER(currency_address) = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
   AND metadata->>'usd_price' IS NOT NULL
   AND order_data IS NULL;
 
--- Step 2: Recalculate ens_names.last_sale_price + last_sale_price_usd for names
+-- Step 2: Fix activity_history.price_wei for sold/bought events linked to corrected USDC sales
+UPDATE activity_history ah
+SET price_wei = s.sale_price_wei
+FROM sales s
+WHERE ah.event_type IN ('sold', 'bought')
+  AND (ah.metadata->>'sale_id')::int = s.id
+  AND LOWER(ah.currency_address) = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+  AND s.order_data IS NULL;
+
+-- Step 3: Recalculate ens_names.last_sale_price + last_sale_price_usd for names
 -- whose most recent sale was a USDC sale (now corrected)
 DO $$
 DECLARE
@@ -54,7 +63,7 @@ BEGIN
   RAISE NOTICE 'Recalculated last sale data for % ENS names with USDC last sales', update_count;
 END $$;
 
--- Step 3: Verify the fix
+-- Step 4: Verify the fix
 DO $$
 DECLARE
   bad_count INTEGER;
