@@ -129,7 +129,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       // Search filter (wildcard on name and description)
       if (search) {
-        whereConditions.push(`(c.name ILIKE $${paramCount} OR c.description ILIKE $${paramCount})`);
+        whereConditions.push(`(c.name ILIKE $${paramCount} OR c.description ILIKE $${paramCount} OR c.display_name ILIKE $${paramCount})`);
         params.push(`%${search}%`);
         paramCount++;
       }
