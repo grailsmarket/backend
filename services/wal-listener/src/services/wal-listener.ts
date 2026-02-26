@@ -175,6 +175,9 @@ export class WALListener {
         case 'offers':
           await this.processOfferChange(change);
           break;
+        case 'google_metrics':
+          await this.processGoogleMetricsChange(change);
+          break;
       }
     } catch (error) {
       logger.error(`Failed to process change for ${change.table}:`, error);
@@ -429,6 +432,27 @@ export class WALListener {
     }
   }
 
+  private async processGoogleMetricsChange(change: Change) {
+    const name = change.data?.name;
+    if (!name) return;
+
+    try {
+      // Look up the ens_names.id by matching label_name
+      const result = await this.pool.query(
+        'SELECT id FROM ens_names WHERE label_name = $1 LIMIT 1',
+        [name]
+      );
+
+      if (result.rows.length > 0) {
+        const ensNameId = result.rows[0].id;
+        logger.info(`Re-indexing ENS name ${ensNameId} due to google_metrics update for "${name}"`);
+        await this.esSync.updateENSNameListing(ensNameId);
+      }
+    } catch (error) {
+      logger.error(`Failed to process google_metrics change for "${name}":`, error);
+    }
+  }
+
   // Alternative: Use LISTEN/NOTIFY for real-time updates
   // IMPORTANT: This method assumes the notify_changes() function and triggers
   // already exist from database migrations. It should NEVER recreate or overwrite
@@ -454,7 +478,7 @@ export class WALListener {
       logger.info('Verified notify_changes function exists');
 
       // Verify triggers exist for each table (created by migrations)
-      const tables = ['ens_names', 'listings', 'offers'];
+      const tables = ['ens_names', 'listings', 'offers', 'google_metrics'];
       for (const table of tables) {
         const triggerCheck = await this.client.query(`
           SELECT 1 FROM pg_trigger

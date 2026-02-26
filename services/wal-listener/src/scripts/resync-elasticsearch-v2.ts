@@ -61,6 +61,11 @@ interface OfferData {
   highest_offer_wei: string | null;
 }
 
+interface GoogleMetricsData {
+  avgMonthlySearches: number | null;
+  avgCpc: number | null;
+}
+
 interface Checkpoint {
   lastId: number;
   processed: number;
@@ -200,6 +205,26 @@ async function loadOfferAggregates(): Promise<Map<number, OfferData>> {
   return map;
 }
 
+async function loadGoogleMetrics(): Promise<Map<string, GoogleMetricsData>> {
+  console.log('Loading google metrics...');
+  const result = await pool.query(`
+    SELECT name,
+      (metrics->>'avgMonthlySearches')::integer as avg_monthly_searches,
+      (metrics->>'avgCpc')::float as avg_cpc
+    FROM google_metrics
+    WHERE status = 'success' AND expires_at > NOW()
+  `);
+  const map = new Map<string, GoogleMetricsData>();
+  for (const row of result.rows) {
+    map.set(row.name, {
+      avgMonthlySearches: row.avg_monthly_searches,
+      avgCpc: row.avg_cpc,
+    });
+  }
+  console.log(`  ${map.size.toLocaleString()} google metrics loaded`);
+  return map;
+}
+
 async function getEthPriceUsd(): Promise<number> {
   try {
     const result = await pool.query(`
@@ -240,11 +265,14 @@ function enrichRow(
   row: any,
   listings: Map<number, ListingData>,
   offers: Map<number, OfferData>,
+  googleMetrics: Map<string, GoogleMetricsData>,
   ethPriceUsd: number,
 ) {
   const name = row.name || '';
   const listing = listings.get(row.id);
   const offerData = offers.get(row.id);
+  const labelName = (row.label_name || name.replace('.eth', '') || '');
+  const gm = googleMetrics.get(labelName);
 
   const listingPrice = listing?.price_wei || null;
   const listingCurrency = listing?.currency_address || null;
@@ -287,6 +315,8 @@ function enrichRow(
     last_sale_date: saleHistoryState.lastSaleDate,
     has_sales: saleHistoryState.hasSales,
     days_since_last_sale: saleHistoryState.daysSinceLastSale,
+    google_monthly_searches: gm?.avgMonthlySearches || null,
+    google_avg_cpc: gm?.avgCpc || null,
   };
 }
 
@@ -395,9 +425,10 @@ async function main() {
 
     // Phase 1: Pre-load auxiliary data
     console.log('\n--- Pre-loading auxiliary data ---');
-    const [listings, offers, ethPriceUsd] = await Promise.all([
+    const [listings, offers, googleMetrics, ethPriceUsd] = await Promise.all([
       loadActiveListings(),
       loadOfferAggregates(),
+      loadGoogleMetrics(),
       getEthPriceUsd(),
     ]);
     console.log(`ETH price: $${ethPriceUsd.toFixed(2)}`);
@@ -426,7 +457,7 @@ async function main() {
       // Build ES bulk body
       const bulkBody: any[] = [];
       for (const row of result.rows) {
-        const doc = enrichRow(row, listings, offers, ethPriceUsd);
+        const doc = enrichRow(row, listings, offers, googleMetrics, ethPriceUsd);
         bulkBody.push({ index: { _index: config.elasticsearch.index, _id: row.id.toString() } });
         bulkBody.push(doc);
       }

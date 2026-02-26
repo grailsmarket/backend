@@ -33,7 +33,9 @@ export type SortBy =
   | 'alphabetical'
   | 'offer'
   | 'listing_date'
-  | 'listing_expiry';
+  | 'listing_expiry'
+  | 'google_monthly_searches'
+  | 'google_avg_cpc';
 
 /**
  * Sort order

@@ -756,6 +756,8 @@ export function buildESSort(options: {
           missing: '_last'
         }
       });
+    } else if (sortBy === 'google_monthly_searches' || sortBy === 'google_avg_cpc') {
+      sort.push({ [sortBy]: { order, missing: '_last' } });
     } else if (sortBy === 'alphabetical') {
       sort.push({ 'name.keyword': { order } });
     } else {

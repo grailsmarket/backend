@@ -117,6 +117,9 @@ export class ElasticsearchSync {
                 last_sale_date: { type: 'date' },
                 has_sales: { type: 'boolean' },
                 days_since_last_sale: { type: 'integer' },
+                // Google metrics fields
+                google_monthly_searches: { type: 'integer' },
+                google_avg_cpc: { type: 'scaled_float', scaling_factor: 100 },
               },
             },
             settings: {
@@ -198,7 +201,9 @@ export class ElasticsearchSync {
           en.last_sale_date,
           en.last_sale_price,
           en.last_sale_currency,
-          en.last_sale_price_usd
+          en.last_sale_price_usd,
+          (gm.metrics->>'avgMonthlySearches')::integer as google_monthly_searches,
+          (gm.metrics->>'avgCpc')::float as google_avg_cpc
         FROM ens_names en
         LEFT JOIN LATERAL (
           SELECT * FROM listings
@@ -207,6 +212,7 @@ export class ElasticsearchSync {
           ORDER BY created_at DESC
           LIMIT 1
         ) l ON true
+        LEFT JOIN google_metrics gm ON gm.name = en.label_name AND gm.status = 'success' AND gm.expires_at > NOW()
         WHERE en.id = $1
       `;
 
@@ -281,7 +287,9 @@ export class ElasticsearchSync {
             en.last_sale_date,
             en.last_sale_price,
             en.last_sale_currency,
-            en.last_sale_price_usd
+            en.last_sale_price_usd,
+            (gm.metrics->>'avgMonthlySearches')::integer as google_monthly_searches,
+            (gm.metrics->>'avgCpc')::float as google_avg_cpc
           FROM ens_names en
           LEFT JOIN LATERAL (
             SELECT * FROM listings
@@ -291,7 +299,8 @@ export class ElasticsearchSync {
             LIMIT 1
           ) l ON true
           LEFT JOIN offers o ON o.ens_name_id = en.id
-          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.expires_at
+          LEFT JOIN google_metrics gm ON gm.name = en.label_name AND gm.status = 'success' AND gm.expires_at > NOW()
+          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.expires_at, gm.metrics
           ORDER BY en.id
           LIMIT $1 OFFSET $2
         `;
@@ -449,6 +458,9 @@ export class ElasticsearchSync {
       last_sale_date: saleHistoryState.lastSaleDate,
       has_sales: saleHistoryState.hasSales,
       days_since_last_sale: saleHistoryState.daysSinceLastSale,
+      // Google metrics fields
+      google_monthly_searches: data.google_monthly_searches || null,
+      google_avg_cpc: data.google_avg_cpc || null,
     };
   }
 
