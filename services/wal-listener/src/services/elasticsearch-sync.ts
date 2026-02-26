@@ -443,7 +443,7 @@ export class ElasticsearchSync {
       clubs: data.clubs || [],
       last_sale_price: safeParsePrice(data.last_sale_price),
       last_sale_currency: data.last_sale_currency,
-      last_sale_price_usd: data.last_sale_price_usd,
+      last_sale_price_usd: this.calculatePriceUsd(data.last_sale_price, data.last_sale_currency, ethPriceUsd),
       listing_created_at: data.listing_created_at,
       listing_expires_at: data.listing_expires_at,
       active_offers_count: data.active_offers_count || 0,
