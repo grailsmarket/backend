@@ -31,6 +31,10 @@ interface Club {
   sales_volume_wei_1y: string;
   sales_volume_wei_1mo: string;
   sales_volume_wei_1w: string;
+  total_reg_count: number;
+  reg_count_1y: number;
+  reg_count_1mo: number;
+  reg_count_1w: number;
   registered_count: number;
   grace_count: number;
   listings_count: number;
@@ -86,6 +90,10 @@ const VALID_SORT_FIELDS = [
   'sales_count_1y',
   'sales_count_1mo',
   'sales_count_1w',
+  'total_reg_count',
+  'reg_count_1y',
+  'reg_count_1mo',
+  'reg_count_1w',
   'member_count',
   'floor_price_wei',
   'name',
@@ -123,6 +131,10 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       expect(club).toHaveProperty('sales_volume_wei_1y');
       expect(club).toHaveProperty('sales_volume_wei_1mo');
       expect(club).toHaveProperty('sales_volume_wei_1w');
+      expect(club).toHaveProperty('total_reg_count');
+      expect(club).toHaveProperty('reg_count_1y');
+      expect(club).toHaveProperty('reg_count_1mo');
+      expect(club).toHaveProperty('reg_count_1w');
       expect(club).toHaveProperty('classifications');
     });
 
@@ -410,6 +422,60 @@ describe('Clubs API Filters, Sorting, and Search', () => {
     });
   });
 
+  describe('Sorting - Registration Count Fields', () => {
+    it('sortBy=total_reg_count&sortOrder=desc sorts by all-time reg count descending', async () => {
+      const { data } = await getClubs('sortBy=total_reg_count&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.total_reg_count);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] >= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be >= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=reg_count_1y&sortOrder=desc sorts by yearly reg count descending', async () => {
+      const { data } = await getClubs('sortBy=reg_count_1y&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.reg_count_1y);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] >= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be >= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=reg_count_1mo&sortOrder=desc sorts by monthly reg count descending', async () => {
+      const { data } = await getClubs('sortBy=reg_count_1mo&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.reg_count_1mo);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] >= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be >= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+
+    it('sortBy=reg_count_1w&sortOrder=desc sorts by weekly reg count descending', async () => {
+      const { data } = await getClubs('sortBy=reg_count_1w&sortOrder=desc');
+      expect(data?.clubs.length).toBeGreaterThan(1);
+
+      const counts = data!.clubs.map((c) => c.reg_count_1w);
+      for (let i = 1; i < counts.length; i++) {
+        expect(
+          counts[i - 1] >= counts[i],
+          `${data!.clubs[i - 1].name} (${counts[i - 1]}) should be >= ${data!.clubs[i].name} (${counts[i]})`
+        ).toBe(true);
+      }
+    });
+  });
+
   describe('Sorting - Other Fields', () => {
     it('sortBy=member_count&sortOrder=desc sorts by member count descending', async () => {
       const { data } = await getClubs('sortBy=member_count&sortOrder=desc');
@@ -666,6 +732,26 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       }
 
       expect(failures, `Time-based count inconsistencies:\n${failures.join('\n')}`).toHaveLength(0);
+    });
+
+    it('time-based registration counts are less than or equal to all-time counts', async () => {
+      const { data } = await getClubs();
+      expect(data?.clubs.length).toBeGreaterThan(0);
+
+      const failures: string[] = [];
+      for (const club of data!.clubs) {
+        if (club.reg_count_1w > club.reg_count_1mo) {
+          failures.push(`${club.name}: 1w reg count (${club.reg_count_1w}) > 1mo reg count (${club.reg_count_1mo})`);
+        }
+        if (club.reg_count_1mo > club.reg_count_1y) {
+          failures.push(`${club.name}: 1mo reg count (${club.reg_count_1mo}) > 1y reg count (${club.reg_count_1y})`);
+        }
+        if (club.reg_count_1y > club.total_reg_count) {
+          failures.push(`${club.name}: 1y reg count (${club.reg_count_1y}) > total reg count (${club.total_reg_count})`);
+        }
+      }
+
+      expect(failures, `Time-based reg count inconsistencies:\n${failures.join('\n')}`).toHaveLength(0);
     });
 
     it('time-based volumes are less than or equal to all-time volumes', async () => {

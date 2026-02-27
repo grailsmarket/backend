@@ -211,6 +211,68 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
 }
 
 /**
+ * Recalculate registration counts for a club from scratch
+ * Calculates all-time and time-based windows (1y, 1mo, 1w)
+ */
+async function recalculateRegCounts(clubName: string): Promise<void> {
+  logger.info({ clubName }, 'Recalculating registration counts for club');
+
+  try {
+    const result = await pool.query(
+      `
+      WITH club_regs AS (
+        SELECT r.registration_date
+        FROM registrations r
+        JOIN ens_names e ON r.ens_name_id = e.id
+        WHERE $1 = ANY(e.clubs)
+      )
+      SELECT
+        COUNT(*) as total_reg_count,
+        COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days') as reg_count_1y,
+        COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days') as reg_count_1mo,
+        COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days') as reg_count_1w
+      FROM club_regs
+      `,
+      [clubName]
+    );
+
+    const row = result.rows[0];
+
+    await pool.query(
+      `
+      UPDATE clubs
+      SET total_reg_count = $1,
+          reg_count_1y = $2,
+          reg_count_1mo = $3,
+          reg_count_1w = $4
+      WHERE name = $5
+      `,
+      [
+        parseInt(row.total_reg_count) || 0,
+        parseInt(row.reg_count_1y) || 0,
+        parseInt(row.reg_count_1mo) || 0,
+        parseInt(row.reg_count_1w) || 0,
+        clubName
+      ]
+    );
+
+    logger.info(
+      {
+        clubName,
+        totalRegCount: row.total_reg_count,
+        regCount1y: row.reg_count_1y,
+        regCount1mo: row.reg_count_1mo,
+        regCount1w: row.reg_count_1w
+      },
+      'Updated club registration counts'
+    );
+  } catch (error) {
+    logger.error({ error, clubName }, 'Error recalculating registration counts');
+    throw error;
+  }
+}
+
+/**
  * Recalculate status counts for all clubs
  * - registered_count: Names with expiry_date > NOW() (not expired)
  * - grace_count: Names with expiry_date <= NOW() AND > NOW() - 90 days (in grace period)
@@ -407,6 +469,7 @@ export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
       try {
         await recalculateFloorPrice(clubName);
         await recalculateSalesStats(clubName);
+        await recalculateRegCounts(clubName);
 
         logger.info({ clubName }, 'Successfully recalculated all club stats');
       } catch (error) {
