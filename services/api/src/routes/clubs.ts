@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getPostgresPool, type APIResponse, getFile, isStorageEnabled } from '../../../shared/src';
 import { searchNames } from '../services/search';
+import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
 
 // In-memory cache for S3 images
@@ -456,22 +457,81 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         header_url: clubResult.rows[0].header_image_key ? `/api/v1/clubs/${clubName}/header` : null,
       };
 
-      // Search for names in this club using the search service
-      const searchResults = await searchNames({
-        q: '*',
-        page: parseInt(page),
-        limit: parseInt(limit),
-        filters: {
-          clubs: [clubName],
-        },
-      });
+      // Query club members directly from club_memberships LEFT JOIN ens_names
+      // This includes both registered and unregistered names
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+      const offset = (pageNum - 1) * limitNum;
+
+      const namesQuery = `
+        SELECT cm.ens_name as name, (en.id IS NOT NULL) as is_registered
+        FROM club_memberships cm
+        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
+        WHERE cm.club_name = $1
+          AND cm.ens_name NOT LIKE '%.%.eth'
+          AND cm.ens_name NOT LIKE 'token-%'
+          AND cm.ens_name NOT LIKE '[%'
+        ORDER BY cm.ens_name ASC
+        LIMIT $2 OFFSET $3
+      `;
+      const namesResult = await pool.query(namesQuery, [clubName, limitNum, offset]);
+
+      // Use member_count from club metadata for total (already maintained by trigger)
+      const totalMembers = club.member_count || 0;
+      const totalPages = Math.ceil(totalMembers / limitNum);
+
+      // Split into registered and unregistered
+      const registeredNames = namesResult.rows
+        .filter((row: any) => row.is_registered)
+        .map((row: any) => row.name);
+
+      const registeredResults = await buildSearchResults(registeredNames);
+      const registeredMap = new Map(
+        registeredResults.map(r => [r.name.toLowerCase(), r])
+      );
+
+      // Fetch all clubs for unregistered names
+      const unregisteredNames = namesResult.rows
+        .filter((row: any) => !row.is_registered)
+        .map((row: any) => row.name);
+
+      let unregisteredClubsMap = new Map<string, string[]>();
+      if (unregisteredNames.length > 0) {
+        const clubsResult = await pool.query(
+          `SELECT ens_name, array_agg(club_name) as clubs
+           FROM club_memberships
+           WHERE ens_name = ANY($1)
+           GROUP BY ens_name`,
+          [unregisteredNames]
+        );
+        for (const row of clubsResult.rows) {
+          unregisteredClubsMap.set(row.ens_name.toLowerCase(), row.clubs);
+        }
+      }
+
+      // Merge in query order
+      const nameResults: SearchResult[] = namesResult.rows.map((row: any) => {
+        if (row.is_registered) {
+          return registeredMap.get(row.name.toLowerCase());
+        } else {
+          const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || [clubName];
+          return createUnregisteredPlaceholder(row.name, nameClubs);
+        }
+      }).filter((r): r is SearchResult => r !== undefined);
 
       const response: APIResponse = {
         success: true,
         data: {
           club,
-          names: searchResults.results,
-          pagination: searchResults.pagination,
+          names: nameResults,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: totalMembers,
+            totalPages,
+            hasNext: pageNum < totalPages,
+            hasPrev: pageNum > 1,
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),

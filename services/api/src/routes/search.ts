@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, type APIResponse } from '../../../shared/src';
-import { buildSearchResults, type SearchResult } from '../utils/response-builder';
+import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
@@ -331,6 +331,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
       fastify.log.info('Forcing PostgreSQL because sortBy=ranking (requires club_memberships JOIN)');
     }
 
+    // Force PostgreSQL for specific club filters (to include unregistered names from club_memberships)
+    const hasSpecificClubs = Array.isArray(clubs) && clubs.length > 0
+      && !clubs.includes('any') && !clubs.includes('none');
+    if (hasSpecificClubs && !usePostgresql) {
+      usePostgresql = true;
+      fastify.log.info('Forcing PostgreSQL because specific clubs filter is active (includes unregistered club members)');
+    }
+
     if (usePostgresql && sortBy === 'watchers_count') {
       fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
     }
@@ -564,12 +572,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
       }
 
+      // When specific clubs are active, name-pattern filters reference cm.ens_name
+      // so they match both registered and unregistered club members
+      const nameCol = hasSpecificClubs ? 'cm.ens_name' : 'en.name';
+      const labelExpr = `REPLACE(${nameCol}, '.eth', '')`;
+
       // Exclude subnames - only show *.eth pattern (not *.*.eth or deeper)
-      whereConditions.push(`en.name NOT LIKE '%.%.eth'`);
+      whereConditions.push(`${nameCol} NOT LIKE '%.%.eth'`);
 
       // Exclude placeholder names (token-* and [hash].eth)
-      whereConditions.push(`en.name NOT LIKE 'token-%'`);
-      whereConditions.push(`en.name NOT LIKE '[%'`);
+      whereConditions.push(`${nameCol} NOT LIKE 'token-%'`);
+      whereConditions.push(`${nameCol} NOT LIKE '[%'`);
 
       // Filter by listing status
       if (listingsOnly) {
@@ -611,7 +624,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
             case 'premium':
               return `(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`;
             case 'available':
-              return `en.expiry_date <= NOW() - INTERVAL '111 days'`;
+              // Unregistered club members are also "available"
+              return hasSpecificClubs
+                ? `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.id IS NULL)`
+                : `en.expiry_date <= NOW() - INTERVAL '111 days'`;
             default:
               return null;
           }
@@ -638,7 +654,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Add name search condition
       if (q && q.trim()) {
         const searchPattern = `%${q.toLowerCase()}%`;
-        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) LIKE $${paramCount}`);
         params.push(searchPattern);
         paramCount++;
         fastify.log.info(`Added name search condition: ${searchPattern}`);
@@ -659,13 +675,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add length filters
       if (minLength) {
-        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) >= $${paramCount}`);
+        whereConditions.push(`LENGTH(${labelExpr}) >= $${paramCount}`);
         params.push(parseInt(minLength));
         paramCount++;
       }
 
       if (maxLength) {
-        whereConditions.push(`LENGTH(REPLACE(en.name, '.eth', '')) <= $${paramCount}`);
+        whereConditions.push(`LENGTH(${labelExpr}) <= $${paramCount}`);
         params.push(parseInt(maxLength));
         paramCount++;
       }
@@ -708,42 +724,42 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add contains filter - exact substring match
       if (contains) {
-        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) LIKE $${paramCount}`);
         params.push(`%${contains.toLowerCase()}%`);
         paramCount++;
       }
 
       // Add startsWith filter - prefix match
       if (startsWith) {
-        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) LIKE $${paramCount}`);
         params.push(`${startsWith.toLowerCase()}%`);
         paramCount++;
       }
 
       // Add endsWith filter - suffix match (before .eth)
       if (endsWith) {
-        whereConditions.push(`LOWER(en.name) LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) LIKE $${paramCount}`);
         params.push(`%${endsWith.toLowerCase()}.eth`);
         paramCount++;
       }
 
       // Add doesNotContain filter - exclude names containing substring
       if (doesNotContain) {
-        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) NOT LIKE $${paramCount}`);
         params.push(`%${doesNotContain.toLowerCase()}%`);
         paramCount++;
       }
 
       // Add doesNotStartWith filter - exclude names starting with prefix
       if (doesNotStartWith) {
-        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) NOT LIKE $${paramCount}`);
         params.push(`${doesNotStartWith.toLowerCase()}%`);
         paramCount++;
       }
 
       // Add doesNotEndWith filter - exclude names ending with suffix (before .eth)
       if (doesNotEndWith) {
-        whereConditions.push(`LOWER(en.name) NOT LIKE $${paramCount}`);
+        whereConditions.push(`LOWER(${nameCol}) NOT LIKE $${paramCount}`);
         params.push(`%${doesNotEndWith.toLowerCase()}.eth`);
         paramCount++;
       }
@@ -776,6 +792,11 @@ export async function searchRoutes(fastify: FastifyInstance) {
         } else if (clubs.includes('any')) {
           // 'any' means names in at least one club
           whereConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+        } else if (hasSpecificClubs) {
+          // Club-based query: filter on club_memberships table
+          whereConditions.push(`cm.club_name = ANY($${paramCount}::text[])`);
+          params.push(clubs);
+          paramCount++;
         } else {
           // Regular club filter - match any of the specified clubs
           whereConditions.push(`en.clubs && $${paramCount}::text[]`);
@@ -804,42 +825,67 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add emoji filter
       if (hasEmoji !== undefined) {
-        whereConditions.push(`en.has_emoji = $${paramCount}`);
-        params.push(hasEmoji === 'true' || hasEmoji === true);
+        if (hasSpecificClubs) {
+          // In club mode, use COALESCE so unregistered names (NULL) are treated as non-emoji
+          const wantEmoji = hasEmoji === 'true' || hasEmoji === true;
+          whereConditions.push(`COALESCE(en.has_emoji, false) = $${paramCount}`);
+          params.push(wantEmoji);
+        } else {
+          whereConditions.push(`en.has_emoji = $${paramCount}`);
+          params.push(hasEmoji === 'true' || hasEmoji === true);
+        }
         paramCount++;
       }
 
       // Add numbers filter
       if (hasNumbers !== undefined) {
-        whereConditions.push(`en.has_numbers = $${paramCount}`);
-        params.push(hasNumbers === 'true' || hasNumbers === true);
-        paramCount++;
+        if (hasSpecificClubs) {
+          // In club mode, compute from name so unregistered names are included
+          const wantNumbers = hasNumbers === 'true' || hasNumbers === true;
+          if (wantNumbers) {
+            whereConditions.push(`${labelExpr} ~ '[0-9]'`);
+          } else {
+            whereConditions.push(`${labelExpr} !~ '[0-9]'`);
+          }
+        } else {
+          whereConditions.push(`en.has_numbers = $${paramCount}`);
+          params.push(hasNumbers === 'true' || hasNumbers === true);
+          paramCount++;
+        }
       }
 
       // Tri-state digits filter: allowed (default), exclude, only
       if (digits === 'exclude') {
-        whereConditions.push(`en.has_numbers = false`);
+        if (hasSpecificClubs) {
+          whereConditions.push(`${labelExpr} !~ '[0-9]'`);
+        } else {
+          whereConditions.push(`en.has_numbers = false`);
+        }
       } else if (digits === 'only') {
         // Only digits (0-9) - regex check
-        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^[0-9]+$'`);
+        whereConditions.push(`${labelExpr} ~ '^[0-9]+$'`);
       }
 
       // Tri-state letters filter: allowed (default), exclude, only
       if (letters === 'exclude') {
         // No letters allowed
-        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '[a-zA-Z]'`);
+        whereConditions.push(`${labelExpr} !~ '[a-zA-Z]'`);
       } else if (letters === 'only') {
         // Only letters (a-z)
-        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^[a-zA-Z]+$'`);
+        whereConditions.push(`${labelExpr} ~ '^[a-zA-Z]+$'`);
       }
 
       // Tri-state emoji filter: allowed (default), exclude, only
       if (emoji === 'exclude') {
-        whereConditions.push(`en.has_emoji = false`);
+        if (hasSpecificClubs) {
+          whereConditions.push(`COALESCE(en.has_emoji, false) = false`);
+        } else {
+          whereConditions.push(`en.has_emoji = false`);
+        }
       } else if (emoji === 'only') {
         // Only emoji - has emoji AND no letters AND no digits
         whereConditions.push(`en.has_emoji = true`);
-        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '[a-zA-Z0-9]'`);
+        whereConditions.push(`${labelExpr} !~ '[a-zA-Z0-9]'`);
       }
 
       // Tri-state repeatingChars filter: allowed (default), exclude, only
@@ -847,10 +893,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // "exclude" means NOT all characters are the same
       if (repeatingChars === 'exclude') {
         // Exclude names where all characters are the same
-        whereConditions.push(`REPLACE(en.name, '.eth', '') !~ '^(.)\\1*$'`);
+        whereConditions.push(`${labelExpr} !~ '^(.)\\1*$'`);
       } else if (repeatingChars === 'only') {
         // Only names where all characters are the same
-        whereConditions.push(`REPLACE(en.name, '.eth', '') ~ '^(.)\\1*$'`);
+        whereConditions.push(`${labelExpr} ~ '^(.)\\1*$'`);
       }
 
       // Add creation date filters
@@ -923,31 +969,43 @@ export async function searchRoutes(fastify: FastifyInstance) {
         orderByClause = `ORDER BY l.expires_at ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'alphabetical') {
         // Sort by name alphabetically
-        orderByClause = `ORDER BY en.name ${sqlOrder}`;
+        orderByClause = `ORDER BY ${nameCol} ${sqlOrder}`;
       } else if (sortBy === 'ranking') {
         orderByClause = `ORDER BY sort_value ${sqlOrder} NULLS LAST`;
       } else {
         // Default sorting
-        orderByClause = listingsOnly ? 'ORDER BY l.created_at DESC' : 'ORDER BY en.name ASC';
+        orderByClause = listingsOnly ? 'ORDER BY l.created_at DESC' : `ORDER BY ${nameCol} ASC`;
       }
 
       // Build queries based on showListings - get the ENS names
       // When uniqueSeller is enabled, count unique sellers instead of unique names
       let countQuery: string;
-      const rankingJoin = sortBy === 'ranking' ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}` : '';
+      // When hasSpecificClubs + ranking, we already have cm from club-based FROM; use cm.rank directly
+      const rankingJoin = sortBy === 'ranking' && !hasSpecificClubs
+        ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}`
+        : '';
+      // Club-based FROM clauses
+      const clubFromBase = `club_memberships cm LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)`;
+      const clubFromWithListings = `club_memberships cm JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) JOIN listings l ON l.ens_name_id = en.id`;
+
       if (uniqueSellerEnabled && listingsOnly) {
         countQuery = `
           SELECT COUNT(DISTINCT l.seller_address)
-          FROM listings l
-          JOIN ens_names en ON l.ens_name_id = en.id
+          FROM ${hasSpecificClubs ? clubFromWithListings : 'listings l JOIN ens_names en ON l.ens_name_id = en.id'}
           ${rankingJoin}
           WHERE ${whereClause}
         `;
       } else if (listingsOnly) {
         countQuery = `
           SELECT COUNT(DISTINCT en.id)
-          FROM listings l
-          JOIN ens_names en ON l.ens_name_id = en.id
+          FROM ${hasSpecificClubs ? clubFromWithListings : 'listings l JOIN ens_names en ON l.ens_name_id = en.id'}
+          ${rankingJoin}
+          WHERE ${whereClause}
+        `;
+      } else if (hasSpecificClubs) {
+        countQuery = `
+          SELECT COUNT(*)
+          FROM ${clubFromBase}
           ${rankingJoin}
           WHERE ${whereClause}
         `;
@@ -962,40 +1020,45 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Build SELECT clause - need to include sort column when using DISTINCT
       // PostgreSQL requires ORDER BY columns to be in SELECT list when using DISTINCT
-      let selectClause = 'DISTINCT en.name';
+      // When hasSpecificClubs, include is_registered flag for placeholder detection
+      const nameSelect = hasSpecificClubs ? `${nameCol} as name, (en.id IS NOT NULL) as is_registered` : 'DISTINCT en.name';
+      let selectClause = nameSelect;
       if (sortBy === 'watchers_count') {
-        selectClause = 'en.name, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value';
+        selectClause = `${nameSelect}, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value`;
       } else if (sortBy === 'view_count') {
-        selectClause = 'DISTINCT en.name, COALESCE(en.view_count, 0) as sort_value';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, COALESCE(en.view_count, 0) as sort_value`;
       } else if (sortBy === 'last_sale_price') {
-        selectClause = 'DISTINCT en.name, en.last_sale_price_usd';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, en.last_sale_price_usd`;
       } else if (sortBy === 'expiry_date') {
-        selectClause = 'DISTINCT en.name, en.expiry_date';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, en.expiry_date`;
       } else if (sortBy === 'registration_date') {
-        selectClause = 'DISTINCT en.name, en.registration_date';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, en.registration_date`;
       } else if (sortBy === 'creation_date') {
-        selectClause = 'DISTINCT en.name, en.creation_date';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, en.creation_date`;
       } else if (sortBy === 'last_sale_date') {
-        selectClause = 'DISTINCT en.name, en.last_sale_date';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, en.last_sale_date`;
       } else if (sortBy === 'character_count') {
-        selectClause = 'DISTINCT en.name, LENGTH(REPLACE(en.name, \'.eth\', \'\')) as sort_value';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, LENGTH(${labelExpr}) as sort_value`;
       } else if (sortBy === 'clubs_count') {
-        // Include (en.name COLLATE "C") in SELECT to satisfy DISTINCT + ORDER BY requirement
-        selectClause = 'DISTINCT en.name, (en.name COLLATE "C") as name_sort, COALESCE(array_length(en.clubs, 1), 0) as sort_value';
+        // Include (name COLLATE "C") in SELECT to satisfy DISTINCT + ORDER BY requirement
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, (${nameCol} COLLATE "C") as name_sort, COALESCE(array_length(en.clubs, 1), 0) as sort_value`;
       } else if (sortBy === 'price') {
         // Use a subquery to get the max price for each name to avoid DISTINCT issues
-        selectClause = 'en.name, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = \'active\') as sort_value';
+        selectClause = `${nameSelect}, (SELECT MAX(CAST(price_wei AS NUMERIC)) FROM listings WHERE ens_name_id = en.id AND status = 'active') as sort_value`;
       } else if (sortBy === 'offer') {
-        selectClause = 'DISTINCT en.name, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, CAST(en.highest_offer_wei AS NUMERIC) as offer_sort`;
       } else if (sortBy === 'listing_date') {
-        selectClause = 'DISTINCT en.name, l.created_at as sort_value';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, l.created_at as sort_value`;
       } else if (sortBy === 'listing_expiry') {
-        selectClause = 'DISTINCT en.name, l.expires_at as sort_value';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, l.expires_at as sort_value`;
       } else if (sortBy === 'ranking') {
-        selectClause = `DISTINCT en.name, cm_rank.rank as sort_value`;
+        // When hasSpecificClubs, cm is already in FROM so use cm.rank directly
+        selectClause = hasSpecificClubs
+          ? `${nameSelect}, cm.rank as sort_value`
+          : `DISTINCT en.name, cm_rank.rank as sort_value`;
       } else if (listingsOnly && !sortBy) {
         // Default sort for listings-only queries is l.created_at, must include it in SELECT
-        selectClause = 'DISTINCT en.name, l.created_at';
+        selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, l.created_at`;
       }
 
       // Build data query - use CTE with ROW_NUMBER() when uniqueSeller is enabled
@@ -1009,8 +1072,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
                    en.expiry_date, en.registration_date, en.creation_date, en.last_sale_date, en.last_sale_price_usd,
                    en.view_count, en.highest_offer_wei, en.clubs, en.id as ens_name_id,
                    ROW_NUMBER() OVER (PARTITION BY l.seller_address ORDER BY l.created_at DESC) as rn
-            FROM listings l
-            JOIN ens_names en ON l.ens_name_id = en.id
+            FROM ${hasSpecificClubs ? clubFromWithListings : 'listings l JOIN ens_names en ON l.ens_name_id = en.id'}
             WHERE ${whereClause}
           )
           SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'listing_date' ? ', created_at as sort_value' : sortBy === 'listing_expiry' ? ', expires_at as sort_value' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
@@ -1023,8 +1085,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (listingsOnly) {
         dataQuery = `
           SELECT ${selectClause}
-          FROM listings l
-          JOIN ens_names en ON l.ens_name_id = en.id
+          FROM ${hasSpecificClubs ? clubFromWithListings : 'listings l JOIN ens_names en ON l.ens_name_id = en.id'}
+          ${rankingJoin}
+          WHERE ${whereClause}
+          ${orderByClause}
+          LIMIT $${paramCount} OFFSET $${paramCount + 1}
+        `;
+      } else if (hasSpecificClubs) {
+        dataQuery = `
+          SELECT ${selectClause}
+          FROM ${clubFromBase}
+          ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
           ${rankingJoin}
           WHERE ${whereClause}
           ${orderByClause}
@@ -1055,11 +1126,11 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const currentPage = parseInt(page);
 
         // Extract names from result
-        const ensNames = dataResult.rows.map((row: any) => row.name);
+        const allNames = dataResult.rows.map((row: any) => row.name);
 
         // Handle export mode - use fast lightweight query
         if (isExport) {
-          const exportRows = await fetchExportData(pool, ensNames);
+          const exportRows = await fetchExportData(pool, allNames);
           const csvContent = await exportRowsToCSV(exportRows);
           reply.header('Content-Type', 'text/csv');
           reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
@@ -1069,10 +1140,54 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Get user ID if authenticated
         const userId = request.user ? parseInt(request.user.sub) : undefined;
 
-        // Build search results using shared utility
-        const results = await buildSearchResults(ensNames, userId);
+        // Build search results - for club-based queries, handle registered/unregistered split
+        let results: SearchResult[];
+        if (hasSpecificClubs) {
+          // Split into registered and unregistered names
+          const registeredNames = dataResult.rows
+            .filter((row: any) => row.is_registered)
+            .map((row: any) => row.name);
 
-        fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(ensNames.slice(0, 5))}`);
+          // Build full results for registered names
+          const registeredResults = await buildSearchResults(registeredNames, userId);
+          const registeredMap = new Map(
+            registeredResults.map(r => [r.name.toLowerCase(), r])
+          );
+
+          // Fetch clubs for unregistered names to populate placeholders accurately
+          const unregisteredNames = dataResult.rows
+            .filter((row: any) => !row.is_registered)
+            .map((row: any) => row.name);
+
+          let unregisteredClubsMap = new Map<string, string[]>();
+          if (unregisteredNames.length > 0) {
+            const clubsResult = await pool.query(
+              `SELECT ens_name, array_agg(club_name) as clubs
+               FROM club_memberships
+               WHERE ens_name = ANY($1)
+               GROUP BY ens_name`,
+              [unregisteredNames]
+            );
+            for (const row of clubsResult.rows) {
+              unregisteredClubsMap.set(row.ens_name.toLowerCase(), row.clubs);
+            }
+          }
+
+          // Merge in query order: registered → lookup from map, unregistered → placeholder
+          results = dataResult.rows.map((row: any) => {
+            if (row.is_registered) {
+              return registeredMap.get(row.name.toLowerCase());
+            } else {
+              const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || clubs;
+              return createUnregisteredPlaceholder(row.name, nameClubs);
+            }
+          }).filter((r): r is SearchResult => r !== undefined);
+        } else {
+          // Standard path: all names are registered
+          results = await buildSearchResults(allNames, userId);
+        }
+
+        fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(allNames.slice(0, 5))}`);
         if (sortBy === 'price') {
           const sortValues = dataResult.rows.slice(0, 5).map((row: any) => row.sort_value || row.price_wei);
           fastify.log.info(`First 5 sort values for price: ${JSON.stringify(sortValues)}`);

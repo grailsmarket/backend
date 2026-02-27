@@ -21,7 +21,7 @@ export interface SearchResult {
   id: number;  // ens_names.id - essential for creating offers and fulfilling them
   name: string;
   token_id: string;
-  owner: string;
+  owner: string | null;
   expiry_date: Date | null;
   registration_date: Date | null;
   creation_date: Date | null;
@@ -235,4 +235,43 @@ export async function buildSearchResults(
 export async function buildNameResult(name: string, userId?: number): Promise<SearchResult | null> {
   const results = await buildSearchResults([name], userId);
   return results.length > 0 ? results[0] : null;
+}
+
+/**
+ * Creates a placeholder SearchResult for an unregistered club name.
+ * Used when browsing clubs to show names that exist in club_memberships
+ * but have never been registered on-chain.
+ */
+export function createUnregisteredPlaceholder(name: string, clubs: string[]): SearchResult {
+  const label = name.replace('.eth', '');
+  return {
+    id: 0,
+    name,
+    token_id: '',
+    owner: null,
+    expiry_date: new Date('2020-01-01T00:00:00Z'),
+    registration_date: null,
+    creation_date: null,
+    last_sale_date: null,
+    metadata: null,
+    metadata_updated_at: null,
+    clubs,
+    club_ranks: null,
+    has_numbers: /\d/.test(label),
+    has_emoji: /\p{Emoji_Presentation}/u.test(label),
+    last_sale_price: null,
+    last_sale_currency: null,
+    last_sale_price_usd: null,
+    listings: [],
+    upvotes: 0,
+    downvotes: 0,
+    net_score: 0,
+    watchers_count: 0,
+    is_user_watching: false,
+    watchlist_record_id: null,
+    highest_offer_wei: null,
+    highest_offer_currency: null,
+    highest_offer_id: null,
+    view_count: 0,
+  };
 }
