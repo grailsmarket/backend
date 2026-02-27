@@ -412,6 +412,18 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Fetch ENS activity timestamps from transactions table
+      const ensTimestampsQuery = `
+        SELECT
+          (SELECT MAX(timestamp) FROM transactions
+           WHERE from_address = $1 AND transaction_type = 'renewal') AS last_renewed_at,
+          (SELECT MAX(timestamp) FROM transactions
+           WHERE to_address = $1 AND transaction_type = 'transfer') AS last_transfer_in_at,
+          (SELECT MAX(timestamp) FROM transactions
+           WHERE from_address = $1 AND transaction_type = 'transfer') AS last_transfer_out_at
+      `;
+      const ensTimestampsResult = await pool.query(ensTimestampsQuery, [ownerAddress]);
+
       const response: APIResponse = {
         success: true,
         data: {
@@ -421,6 +433,9 @@ export async function profilesRoutes(fastify: FastifyInstance) {
           persona,
           lastSeenAt,
           lastSeenOnchain,
+          lastRenewedAt: ensTimestampsResult.rows[0]?.last_renewed_at || null,
+          lastTransferInAt: ensTimestampsResult.rows[0]?.last_transfer_in_at || null,
+          lastTransferOutAt: ensTimestampsResult.rows[0]?.last_transfer_out_at || null,
           ownedNames: ownedNamesResult.rows,
           stats: {
             totalNames: ownedNamesResult.rows.length,
