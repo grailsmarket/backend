@@ -712,7 +712,9 @@ export class OpenSeaStreamListener {
             creatorFeeWei: eventData.creator_fee?.value,
             metadata: {
               collection: eventData.collection,
-              item_metadata: item.metadata
+              item_metadata: item.metadata,
+              payment_token_decimals: eventData.payment_token?.decimals,
+              payment_token_symbol: eventData.payment_token?.symbol,
             },
             saleDate: new Date(),
           });

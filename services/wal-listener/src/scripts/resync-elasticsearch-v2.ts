@@ -302,7 +302,7 @@ function enrichRow(
     clubs: row.clubs || [],
     last_sale_price: safeParsePrice(row.last_sale_price),
     last_sale_currency: row.last_sale_currency,
-    last_sale_price_usd: row.last_sale_price_usd,
+    last_sale_price_usd: calculatePriceUsd(row.last_sale_price, row.last_sale_currency, ethPriceUsd),
     listing_created_at: listingCreatedAt,
     listing_expires_at: listingExpiresAt,
     active_offers_count: offerData?.count || 0,

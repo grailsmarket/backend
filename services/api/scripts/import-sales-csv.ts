@@ -21,7 +21,7 @@
 
 import * as fs from 'fs';
 import * as readline from 'readline';
-import { getPostgresPool } from '../../shared/src';
+import { getPostgresPool, isEthOrWeth } from '../../shared/src';
 
 const pool = getPostgresPool();
 
@@ -154,8 +154,16 @@ async function mapToSalesRecord(row: CSVRow, stats: ImportStats): Promise<any | 
     saleDate = new Date(row.created_at);
   }
 
-  // Convert price to wei (assuming price is in ETH decimal format)
-  const salePriceWei = convertToWei(row.price_decimal || row.price);
+  // Convert price to smallest units of the currency
+  // The CSV's price_decimal is always ETH-normalized regardless of actual payment token.
+  // For ETH/WETH, convertToWei works correctly (multiply by 1e18).
+  // For non-ETH currencies (e.g. USDC), use the raw `amount` field which is already
+  // in the token's smallest units, or fall back to convertToWei if amount is missing.
+  const currencyAddr = row.currency_address?.toLowerCase() || '';
+  const isEth = isEthOrWeth(currencyAddr) || currencyAddr === '' || currencyAddr === '0x0000000000000000000000000000000000000000';
+  const salePriceWei = isEth
+    ? convertToWei(row.price_decimal || row.price)
+    : (row.amount || convertToWei(row.price_decimal || row.price));
 
   // Handle block_number - use from CSV if available, otherwise default to 0
   // (we can backfill later with actual block numbers if needed)
