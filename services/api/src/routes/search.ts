@@ -1004,7 +1004,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         `;
       } else if (hasSpecificClubs) {
         countQuery = `
-          SELECT COUNT(*)
+          SELECT COUNT(DISTINCT cm.ens_name)
           FROM ${clubFromBase}
           ${rankingJoin}
           WHERE ${whereClause}
@@ -1092,10 +1092,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
           LIMIT $${paramCount} OFFSET $${paramCount + 1}
         `;
       } else if (hasSpecificClubs) {
+        // Only include listings JOIN when sort or filter actually needs listing columns.
+        // Otherwise the JOIN creates duplicate rows for names with multiple active listings,
+        // causing LIMIT to return fewer unique names than expected after dedup.
+        const clubNeedsListingsJoin = sortBy === 'listing_date' || sortBy === 'listing_expiry' || unlistedOnly;
         dataQuery = `
           SELECT ${selectClause}
           FROM ${clubFromBase}
-          ${sortBy === 'price' ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
+          ${clubNeedsListingsJoin ? "LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'" : ''}
           ${rankingJoin}
           WHERE ${whereClause}
           ${orderByClause}
