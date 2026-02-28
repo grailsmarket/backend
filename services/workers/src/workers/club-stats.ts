@@ -277,7 +277,7 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
  * - registered_count: Names with expiry_date > NOW() (not expired)
  * - grace_count: Names with expiry_date <= NOW() AND > NOW() - 90 days (in grace period)
  * - premium_count: Names expired 90-111 days ago (in premium auction period)
- * - available_count: Names expired > 111 days ago (fully available for registration)
+ * - available_count: Derived as member_count - registered - grace - premium (includes names not in ens_names)
  * - listings_count: Names with active listings
  * This is done as a bulk update for efficiency since all clubs are updated together
  */
@@ -301,21 +301,28 @@ async function recalculateStatusCounts(): Promise<void> {
           COUNT(*) FILTER (
             WHERE expiry_date <= NOW() - INTERVAL '90 days'
               AND expiry_date > NOW() - INTERVAL '111 days'
-          ) as premium,
-          COUNT(*) FILTER (
-            WHERE expiry_date <= NOW() - INTERVAL '111 days'
-          ) as available
+          ) as premium
         FROM ens_names
         WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
         GROUP BY unnest(clubs)
+      ),
+      with_available AS (
+        SELECT
+          sc.club_name,
+          sc.registered,
+          sc.grace,
+          sc.premium,
+          GREATEST(c.member_count - sc.registered - sc.grace - sc.premium, 0) as available
+        FROM status_counts sc
+        JOIN clubs c ON c.name = sc.club_name
       )
       UPDATE clubs c
-      SET registered_count = COALESCE(sc.registered, 0),
-          grace_count = COALESCE(sc.grace, 0),
-          premium_count = COALESCE(sc.premium, 0),
-          available_count = COALESCE(sc.available, 0)
-      FROM status_counts sc
-      WHERE c.name = sc.club_name
+      SET registered_count = COALESCE(wa.registered, 0),
+          grace_count = COALESCE(wa.grace, 0),
+          premium_count = COALESCE(wa.premium, 0),
+          available_count = COALESCE(wa.available, 0)
+      FROM with_available wa
+      WHERE c.name = wa.club_name
       `
     );
 
