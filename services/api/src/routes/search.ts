@@ -1143,8 +1143,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Build search results - for club-based queries, handle registered/unregistered split
         let results: SearchResult[];
         if (hasSpecificClubs) {
+          // Deduplicate rows by name (can happen with multiple listings or multi-club membership)
+          const seenNames = new Set<string>();
+          const uniqueRows = dataResult.rows.filter((row: any) => {
+            const lower = row.name.toLowerCase();
+            if (seenNames.has(lower)) return false;
+            seenNames.add(lower);
+            return true;
+          });
+
           // Split into registered and unregistered names
-          const registeredNames = dataResult.rows
+          const registeredNames = uniqueRows
             .filter((row: any) => row.is_registered)
             .map((row: any) => row.name);
 
@@ -1155,7 +1164,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           );
 
           // Fetch clubs for unregistered names to populate placeholders accurately
-          const unregisteredNames = dataResult.rows
+          const unregisteredNames = uniqueRows
             .filter((row: any) => !row.is_registered)
             .map((row: any) => row.name);
 
@@ -1174,7 +1183,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           }
 
           // Merge in query order: registered → lookup from map, unregistered → placeholder
-          results = dataResult.rows.map((row: any) => {
+          results = uniqueRows.map((row: any) => {
             if (row.is_registered) {
               return registeredMap.get(row.name.toLowerCase());
             } else {
