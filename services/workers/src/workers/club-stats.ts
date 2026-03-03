@@ -211,26 +211,34 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
 }
 
 /**
- * Recalculate registration counts for a club from scratch
+ * Recalculate registration counts and volume for a club from scratch
  * Calculates all-time and time-based windows (1y, 1mo, 1w)
  */
 async function recalculateRegCounts(clubName: string): Promise<void> {
-  logger.info({ clubName }, 'Recalculating registration counts for club');
+  logger.info({ clubName }, 'Recalculating registration stats for club');
 
   try {
     const result = await pool.query(
       `
       WITH club_regs AS (
-        SELECT r.registration_date
+        SELECT
+          r.registration_date,
+          r.total_cost_wei::numeric as cost
         FROM registrations r
         JOIN ens_names e ON r.ens_name_id = e.id
         WHERE $1 = ANY(e.clubs)
       )
       SELECT
+        -- Counts
         COUNT(*) as total_reg_count,
         COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days') as reg_count_1y,
         COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days') as reg_count_1mo,
-        COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days') as reg_count_1w
+        COUNT(*) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days') as reg_count_1w,
+        -- Volume
+        COALESCE(SUM(cost), 0) as total_reg_volume,
+        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days'), 0) as reg_volume_1y,
+        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days'), 0) as reg_volume_1mo,
+        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_1w
       FROM club_regs
       `,
       [clubName]
@@ -244,14 +252,22 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
       SET total_reg_count = $1,
           reg_count_1y = $2,
           reg_count_1mo = $3,
-          reg_count_1w = $4
-      WHERE name = $5
+          reg_count_1w = $4,
+          total_reg_volume_wei = $5,
+          reg_volume_wei_1y = $6,
+          reg_volume_wei_1mo = $7,
+          reg_volume_wei_1w = $8
+      WHERE name = $9
       `,
       [
         parseInt(row.total_reg_count) || 0,
         parseInt(row.reg_count_1y) || 0,
         parseInt(row.reg_count_1mo) || 0,
         parseInt(row.reg_count_1w) || 0,
+        row.total_reg_volume?.toString() || '0',
+        row.reg_volume_1y?.toString() || '0',
+        row.reg_volume_1mo?.toString() || '0',
+        row.reg_volume_1w?.toString() || '0',
         clubName
       ]
     );
@@ -262,12 +278,13 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         totalRegCount: row.total_reg_count,
         regCount1y: row.reg_count_1y,
         regCount1mo: row.reg_count_1mo,
-        regCount1w: row.reg_count_1w
+        regCount1w: row.reg_count_1w,
+        totalRegVolume: row.total_reg_volume?.toString(),
       },
-      'Updated club registration counts'
+      'Updated club registration stats'
     );
   } catch (error) {
-    logger.error({ error, clubName }, 'Error recalculating registration counts');
+    logger.error({ error, clubName }, 'Error recalculating registration stats');
     throw error;
   }
 }
