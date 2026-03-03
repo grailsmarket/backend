@@ -78,6 +78,9 @@ const VALID_CLASSIFICATIONS = [
   'prepunk',
   'geo',
   'letters',
+  'fantasy',
+  'crypto',
+  'ai',
 ] as const;
 
 // Valid sort fields

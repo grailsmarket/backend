@@ -79,7 +79,8 @@ const VALID_CLASSIFICATIONS = [
   'geo',
   'letters',
   'fantasy',
-  'crypto'
+  'crypto',
+  'ai'
 ] as const;
 
 // Volume/price fields that need numeric casting for sorting
