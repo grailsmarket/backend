@@ -671,6 +671,23 @@ export class WALListener {
       const { getQueueClient, QUEUE_NAMES } = await import('../queue');
       const boss = await getQueueClient();
 
+      // Look up the actual sale price from the sales table
+      // (the listing price_wei may differ from the actual sale price, e.g. when an offer is accepted)
+      const saleQuery = `
+        SELECT sale_price_wei, buyer_address, transaction_hash
+        FROM sales
+        WHERE listing_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      const saleResult = await this.pool.query(saleQuery, [listingData.id]);
+      const saleData = saleResult.rows[0];
+
+      // Use sale price if available, fall back to listing price
+      const priceWei = saleData?.sale_price_wei || listingData.price_wei;
+      const buyerAddress = saleData?.buyer_address || listingData.buyer_address || listingData.metadata?.buyer_address;
+      const transactionHash = saleData?.transaction_hash || listingData.transaction_hash;
+
       // Find the seller (user with matching address)
       const sellerQuery = `
         SELECT id, email, email_verified, notify_on_listing_sold
@@ -691,10 +708,10 @@ export class WALListener {
           email: seller.email,
           ensNameId: listingData.ens_name_id,
           metadata: {
-            priceWei: listingData.price_wei,
-            buyerAddress: listingData.buyer_address || listingData.metadata?.buyer_address,
+            priceWei: priceWei,
+            buyerAddress: buyerAddress,
             listingId: listingData.id,
-            transactionHash: listingData.transaction_hash,
+            transactionHash: transactionHash,
           },
         });
 
