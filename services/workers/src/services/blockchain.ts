@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
@@ -74,6 +74,7 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
         query,
         variables: { name: name.toLowerCase() },
       }),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (!response.ok) {
@@ -114,7 +115,15 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
         Object.assign(metadata, workerRecords);
         logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker fallback used for text records');
       } catch (error) {
-        logger.warn({ error, name }, 'ENS worker fallback failed');
+        logger.warn({ error, name }, 'ENS worker fallback failed, trying on-chain resolution');
+        try {
+          const textKeys = domain.resolver.texts || [];
+          const onChainRecords = await fetchTextRecordsOnChain(name, textKeys);
+          Object.assign(metadata, onChainRecords);
+          logger.info({ name, keys: Object.keys(onChainRecords) }, 'On-chain text record resolution succeeded');
+        } catch (onChainError) {
+          logger.error({ error: onChainError, name }, 'All text record sources failed');
+        }
       }
     }
 

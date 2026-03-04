@@ -1,4 +1,14 @@
+import { createPublicClient, http } from 'viem';
+import { mainnet } from 'viem/chains';
 import { config } from '../config';
+
+// Common text record keys to try when The Graph keys aren't available
+const COMMON_TEXT_KEYS = [
+  'avatar', 'description', 'display', 'email', 'keywords', 'mail',
+  'notice', 'location', 'phone', 'url', 'name', 'header',
+  'com.github', 'com.twitter', 'org.telegram', 'com.discord',
+  'com.reddit', 'com.linkedin', 'io.keybase', 'xyz.farcaster',
+];
 
 const BAD_RESOLVER = '0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41';
 
@@ -47,6 +57,7 @@ export async function fetchTextRecordsFromEnsWorker(
 
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
   });
 
   if (!response.ok) {
@@ -63,6 +74,46 @@ export async function fetchTextRecordsFromEnsWorker(
       if (value != null && value !== '') {
         records[key] = value as string;
       }
+    }
+  }
+
+  return records;
+}
+
+/**
+ * Fetch text records directly from chain using viem's getEnsText().
+ * Used as a secondary fallback when the ENS worker is unavailable.
+ *
+ * @param name - Full ENS name (e.g., "siwe.eth")
+ * @param textKeys - Array of text record keys to resolve. Falls back to common keys if empty.
+ * @returns A flat Record<string, string> of text record key/value pairs.
+ */
+export async function fetchTextRecordsOnChain(
+  name: string,
+  textKeys?: string[],
+): Promise<Record<string, string>> {
+  const keys = textKeys && textKeys.length > 0 ? textKeys : COMMON_TEXT_KEYS;
+
+  const client = createPublicClient({
+    chain: mainnet,
+    transport: http(config.blockchain.rpcUrl),
+  });
+
+  const records: Record<string, string> = {};
+
+  const results = await Promise.allSettled(
+    keys.map(async (key) => {
+      const value = await client.getEnsText({
+        name,
+        key,
+      });
+      return { key, value };
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value.value) {
+      records[result.value.key] = result.value.value;
     }
   }
 
