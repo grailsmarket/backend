@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
@@ -11,7 +11,7 @@ export interface EnsMetadata {
 
 interface FreshMetadataResult {
   metadata: EnsMetadata;
-  source: 'graph' | 'cache';
+  source: 'graph' | 'worker' | 'cache';
 }
 
 /**
@@ -40,10 +40,24 @@ export async function fetchFreshMetadata(
   } catch (error: any) {
     logger.error(
       { error: error?.message, cause: error?.cause?.message || error?.cause, url: config.theGraph.ensSubgraphUrl, name, ensNameId },
-      'Failed to fetch fresh metadata from Graph, falling back to cached'
+      'Failed to fetch fresh metadata from Graph, trying ENS worker standalone'
     );
 
-    // Fall back to cached metadata from the database
+    // Graph failed entirely — try ENS worker standalone
+    try {
+      const workerRecords = await fetchTextRecordsFromEnsWorker(name);
+      if (Object.keys(workerRecords).length > 0) {
+        logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker standalone fallback succeeded');
+        syncMetadataToDatabase(ensNameId, name, workerRecords).catch((syncError) => {
+          logger.error({ error: syncError, name, ensNameId }, 'Async metadata sync failed (worker fallback)');
+        });
+        return { metadata: workerRecords, source: 'worker' };
+      }
+    } catch (workerError: any) {
+      logger.warn({ error: workerError?.message, name }, 'ENS worker standalone fallback also failed');
+    }
+
+    // Final fallback: cached metadata from the database
     const pool = getPostgresPool();
     const result = await pool.query(
       `SELECT metadata FROM ens_names WHERE id = $1`,
@@ -51,7 +65,7 @@ export async function fetchFreshMetadata(
     );
 
     const cached = result.rows[0]?.metadata || {};
-    return { metadata: cached, source: 'cache' as any };
+    return { metadata: cached, source: 'cache' };
   }
 }
 
@@ -179,6 +193,7 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
       query,
       variables: { name: name.toLowerCase() },
     }),
+    signal: AbortSignal.timeout(20000),
   });
 
   if (!response.ok) {
@@ -217,7 +232,15 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
       Object.assign(metadata, workerRecords);
       logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker fallback used for text records');
     } catch (error) {
-      logger.warn({ error, name }, 'ENS worker fallback failed');
+      logger.warn({ error, name }, 'ENS worker fallback failed, trying on-chain resolution');
+      try {
+        const textKeys = domain?.resolver?.texts || [];
+        const onChainRecords = await fetchTextRecordsOnChain(name, textKeys);
+        Object.assign(metadata, onChainRecords);
+        logger.info({ name, keys: Object.keys(onChainRecords) }, 'On-chain text record resolution succeeded');
+      } catch (onChainError) {
+        logger.error({ error: onChainError, name }, 'All text record sources failed');
+      }
     }
   }
 
