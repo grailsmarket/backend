@@ -922,7 +922,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Push club name param for ranking JOIN
       let rankingParamIndex: number | null = null;
-      if (sortBy === 'ranking') {
+      if (sortBy === 'ranking' && !hasSpecificClubs) {
         rankingParamIndex = paramCount;
         params.push(clubs[0]);
         paramCount++;
