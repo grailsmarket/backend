@@ -625,9 +625,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
               return `(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`;
             case 'available':
               // Unregistered club members are also "available"
+              // Names with NULL expiry_date (in ens_names but never registered) are also available
               return hasSpecificClubs
-                ? `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.id IS NULL)`
-                : `en.expiry_date <= NOW() - INTERVAL '111 days'`;
+                ? `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.expiry_date IS NULL OR en.id IS NULL)`
+                : `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.expiry_date IS NULL)`;
             default:
               return null;
           }
