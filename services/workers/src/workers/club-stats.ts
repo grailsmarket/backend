@@ -302,26 +302,27 @@ async function recalculateStatusCounts(): Promise<void> {
   logger.info('Recalculating status counts for all clubs');
 
   try {
-    // Calculate status counts for all clubs in a single query using unnest
+    // Calculate status counts for all clubs using club_memberships (source of truth)
+    // instead of ens_names.clubs (denormalized, can be out of sync)
     await pool.query(
       `
       WITH status_counts AS (
         SELECT
-          unnest(clubs) as club_name,
+          cm.club_name,
           COUNT(*) FILTER (
-            WHERE expiry_date > NOW()
+            WHERE en.expiry_date > NOW()
           ) as registered,
           COUNT(*) FILTER (
-            WHERE expiry_date <= NOW()
-              AND expiry_date > NOW() - INTERVAL '90 days'
+            WHERE en.expiry_date <= NOW()
+              AND en.expiry_date > NOW() - INTERVAL '90 days'
           ) as grace,
           COUNT(*) FILTER (
-            WHERE expiry_date <= NOW() - INTERVAL '90 days'
-              AND expiry_date > NOW() - INTERVAL '111 days'
+            WHERE en.expiry_date <= NOW() - INTERVAL '90 days'
+              AND en.expiry_date > NOW() - INTERVAL '111 days'
           ) as premium
-        FROM ens_names
-        WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
-        GROUP BY unnest(clubs)
+        FROM club_memberships cm
+        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
+        GROUP BY cm.club_name
       ),
       with_available AS (
         SELECT
@@ -378,7 +379,7 @@ async function recalculateStatusCounts(): Promise<void> {
       `
     );
 
-    // Set status counts to 0 for clubs with no names
+    // Set status counts to 0 for clubs with no members in club_memberships
     await pool.query(
       `
       UPDATE clubs
@@ -387,9 +388,7 @@ async function recalculateStatusCounts(): Promise<void> {
           premium_count = 0,
           available_count = 0
       WHERE name NOT IN (
-        SELECT DISTINCT unnest(clubs)
-        FROM ens_names
-        WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0
+        SELECT DISTINCT club_name FROM club_memberships
       )
       `
     );
