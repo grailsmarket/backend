@@ -353,5 +353,5 @@ kubectl apply -f k8s/
 ## Support & Documentation
 - Individual service CLAUDE.md files in each service directory
 - API documentation at http://localhost:3002/api-docs
-- Database schema in services/api/prisma/schema.prisma
+- Database schema in services/shared/src/db/schema.sql
 - Frontend component storybook (if configured)
