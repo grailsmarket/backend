@@ -2,6 +2,7 @@ import { config, getPostgresPool, closeAllConnections } from '../../shared/src';
 import { ENSIndexer } from './indexers/ens-indexer';
 import { SeaportIndexer } from './indexers/seaport-indexer';
 import { OpenSeaStreamListener } from './services/opensea-stream';
+import { SubscriptionListener } from './services/subscription-listener';
 import { logger } from './utils/logger';
 import { getQueueClient, closeQueueClient } from './queue';
 
@@ -45,6 +46,7 @@ async function start() {
   const ensIndexer = new ENSIndexer();
   const seaportIndexer = new SeaportIndexer();
   const openSeaStream = new OpenSeaStreamListener();
+  const subscriptionListener = new SubscriptionListener();
 
   try {
     logger.info('Starting ENS indexer...');
@@ -61,6 +63,10 @@ async function start() {
       logger.info('OpenSea stream started successfully');
     }
 
+    logger.info('Starting subscription listener...');
+    await subscriptionListener.start();
+    logger.info('Subscription listener started successfully');
+
     logger.info('All indexers started successfully');
   } catch (error: any) {
     logger.error('Failed to start indexers:', error?.message || error);
@@ -75,6 +81,7 @@ async function start() {
     await ensIndexer.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
+    await subscriptionListener.stop();
     await closeQueueClient();
     await closeAllConnections();
     process.exit(0);
@@ -85,6 +92,7 @@ async function start() {
     await ensIndexer.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
+    await subscriptionListener.stop();
     await closeQueueClient();
     await closeAllConnections();
     process.exit(0);

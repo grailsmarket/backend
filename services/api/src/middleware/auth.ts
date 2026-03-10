@@ -5,6 +5,9 @@ import { config } from '../../../shared/src';
 export interface JWTPayload {
   sub: string;      // User ID
   address: string;  // Ethereum address
+  tier: string;     // 'free' | 'pro'
+  tierExpiresAt: string | null; // ISO string or null
+  isAdmin: boolean;
   iat: number;      // Issued at
   exp: number;      // Expires at
 }
@@ -18,15 +21,24 @@ declare module 'fastify' {
 /**
  * Generate JWT token for authenticated user
  */
-export function generateToken(userId: number, address: string): string {
+export function generateToken(user: {
+  id: number;
+  address: string;
+  tier?: string;
+  tier_expires_at?: string | null;
+  is_admin?: boolean;
+}): string {
   const secret = config.jwt.secret;
   if (!secret) {
     throw new Error('JWT_SECRET is not configured');
   }
 
   const payload: Omit<JWTPayload, 'iat' | 'exp'> = {
-    sub: userId.toString(),
-    address: address.toLowerCase(),
+    sub: user.id.toString(),
+    address: user.address.toLowerCase(),
+    tier: user.tier || 'free',
+    tierExpiresAt: user.tier_expires_at || null,
+    isAdmin: user.is_admin || false,
   };
 
   return jwt.sign(payload, secret, {
@@ -131,5 +143,88 @@ export async function optionalAuth(
   } catch (error: any) {
     // Silently fail for optional auth
     request.log.debug('Optional auth failed:', error?.message || 'Unknown error');
+  }
+}
+
+/**
+ * Middleware to require a specific tier.
+ * Checks JWT tier + expiry without DB queries.
+ * Usage: { preHandler: [requireAuth, requireTier('pro')] }
+ */
+export function requireTier(...allowedTiers: string[]) {
+  return async function (request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) {
+      return reply.status(401).send({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const { tier, tierExpiresAt } = request.user;
+
+    // Check if tier has expired (server-side check even if JWT is still valid)
+    if (tier !== 'free' && tierExpiresAt) {
+      const expiresAt = new Date(tierExpiresAt);
+      if (expiresAt < new Date()) {
+        // Tier expired but JWT hasn't been refreshed yet - treat as free
+        if (!allowedTiers.includes('free')) {
+          return reply.status(403).send({
+            success: false,
+            error: {
+              code: 'TIER_EXPIRED',
+              message: 'Your PRO subscription has expired. Please renew or refresh your session.',
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+        return; // free is allowed, continue
+      }
+    }
+
+    if (!allowedTiers.includes(tier)) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'INSUFFICIENT_TIER',
+          message: `This feature requires one of: ${allowedTiers.join(', ')}. Your current tier: ${tier}`,
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+  };
+}
+
+/**
+ * Middleware to require admin access.
+ * Usage: { preHandler: [requireAuth, requireAdmin] }
+ */
+export async function requireAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  if (!request.user) {
+    return reply.status(401).send({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      },
+      meta: { timestamp: new Date().toISOString() },
+    });
+  }
+
+  if (!request.user.isAdmin) {
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: 'ADMIN_REQUIRED',
+        message: 'Admin access required',
+      },
+      meta: { timestamp: new Date().toISOString() },
+    });
   }
 }

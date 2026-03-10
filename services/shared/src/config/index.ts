@@ -105,6 +105,12 @@ const ConfigSchema = z.object({
     forcePathStyle: z.boolean().default(false),
     enabled: z.boolean(),
   }),
+  admin: z.object({
+    addresses: z.array(z.string()).default([]),
+  }),
+  subscription: z.object({
+    contractAddress: z.string().optional(),
+  }),
 });
 
 const rawConfig = {
@@ -198,6 +204,14 @@ const rawConfig = {
     region: process.env.REGION || 'auto',
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
     enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
+  },
+  admin: {
+    addresses: process.env.ADMIN_ADDRESSES
+      ? process.env.ADMIN_ADDRESSES.split(',').map(a => a.trim().toLowerCase())
+      : [],
+  },
+  subscription: {
+    contractAddress: process.env.SUBSCRIPTION_CONTRACT_ADDRESS,
   },
 };
 

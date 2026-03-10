@@ -299,20 +299,23 @@ export async function authRoutes(fastify: FastifyInstance) {
         [siweMessage.nonce]
       );
 
-      // Upsert user record
+      // Check if this is an admin address
+      const isAdmin = config.admin.addresses.includes(normalizedAddress);
+
+      // Upsert user record — auto-flag admins on sign-in
       const userResult = await pool.query(
-        `INSERT INTO users (address, last_sign_in)
-         VALUES ($1, NOW())
+        `INSERT INTO users (address, last_sign_in, is_admin)
+         VALUES ($1, NOW(), $2)
          ON CONFLICT (address)
-         DO UPDATE SET last_sign_in = NOW()
+         DO UPDATE SET last_sign_in = NOW(), is_admin = GREATEST(users.is_admin, $2::boolean)
          RETURNING *`,
-        [normalizedAddress]
+        [normalizedAddress, isAdmin]
       );
 
       const user = userResult.rows[0];
 
-      // Generate JWT
-      const token = generateToken(user.id, user.address);
+      // Generate JWT with tier info
+      const token = generateToken(user);
 
       const response: APIResponse = {
         success: true,
@@ -325,6 +328,9 @@ export async function authRoutes(fastify: FastifyInstance) {
             emailVerified: user.email_verified,
             telegram: user.telegram,
             discord: user.discord,
+            tier: user.tier,
+            tierExpiresAt: user.tier_expires_at,
+            isAdmin: user.is_admin,
             createdAt: user.created_at,
             lastSignIn: user.last_sign_in,
           },
@@ -416,6 +422,9 @@ export async function authRoutes(fastify: FastifyInstance) {
           emailVerified: user.email_verified,
           telegram: user.telegram,
           discord: user.discord,
+          tier: user.tier,
+          tierExpiresAt: user.tier_expires_at,
+          isAdmin: user.is_admin,
           createdAt: user.created_at,
           updatedAt: user.updated_at,
           lastSignIn: user.last_sign_in,
@@ -439,6 +448,62 @@ export async function authRoutes(fastify: FastifyInstance) {
         meta: {
           timestamp: new Date().toISOString(),
         },
+      });
+    }
+  });
+
+  /**
+   * POST /api/v1/auth/refresh
+   * Re-issue JWT with current DB tier (no re-signing needed, just valid JWT required)
+   */
+  fastify.post('/refresh', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const userResult = await pool.query(
+        'SELECT * FROM users WHERE id = $1',
+        [parseInt(request.user.sub)]
+      );
+
+      if (userResult.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const user = userResult.rows[0];
+      const token = generateToken(user);
+
+      const response: APIResponse = {
+        success: true,
+        data: {
+          token,
+          user: {
+            id: user.id,
+            address: user.address,
+            tier: user.tier,
+            tierExpiresAt: user.tier_expires_at,
+            isAdmin: user.is_admin,
+          },
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error('Error refreshing token:', error);
+      return reply.status(500).send({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Failed to refresh token' },
+        meta: { timestamp: new Date().toISOString() },
       });
     }
   });
