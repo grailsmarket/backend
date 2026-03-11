@@ -15,6 +15,8 @@ export {
   type BasicOrderParameters,
   type BuildListingOrderParams,
   type BuildOfferOrderParams,
+  type BuildBulkOfferOrdersParams,
+  type BuildCriteriaOfferOrderParams,
 } from './types.js';
 
 export {
@@ -31,3 +33,18 @@ export {
 
 export { SeaportOrderBuilder } from './order-builder.js';
 export { SeaportOrderFulfiller } from './order-fulfiller.js';
+
+export {
+  prepareBulkSignature,
+  extractBulkSignatures,
+  type BulkSignatureResult,
+  type IndividualBulkSignature,
+} from './bulk-signature.js';
+
+export {
+  buildCriteriaMerkleTree,
+  applyOfferCriteria,
+  getCriteriaProof,
+  verifyCriteriaProof,
+  type CriteriaOrderResult,
+} from './criteria-order.js';

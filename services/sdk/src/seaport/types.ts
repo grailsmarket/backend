@@ -172,3 +172,34 @@ export interface BuildOfferOrderParams {
   /** Platform fee in basis points */
   platformFeeBps?: number;
 }
+
+/**
+ * Parameters for building bulk offer orders (shotgun mode)
+ */
+export interface BuildBulkOfferOrdersParams {
+  /** Array of individual offers */
+  offers: Array<{
+    /** ENS token ID */
+    tokenId: string;
+    /** Offer amount in wei (WETH) */
+    offerAmountWei: string;
+  }>;
+  /** Buyer address (offerer) */
+  offerer: string;
+  /** Duration in days (default: 7) */
+  durationDays?: number;
+}
+
+/**
+ * Parameters for building a criteria offer order (pick-one mode)
+ */
+export interface BuildCriteriaOfferOrderParams {
+  /** Array of acceptable ENS token IDs */
+  tokenIds: string[];
+  /** Offer amount in wei (WETH) — same price for all candidates */
+  offerAmountWei: string;
+  /** Buyer address (offerer) */
+  offerer: string;
+  /** Duration in days (default: 7) */
+  durationDays?: number;
+}

@@ -9,6 +9,8 @@ import {
   type SeaportConsiderationItem,
   type BuildListingOrderParams,
   type BuildOfferOrderParams,
+  type BuildBulkOfferOrdersParams,
+  type BuildCriteriaOfferOrderParams,
   OrderType,
   ItemType,
 } from './types.js';
@@ -20,6 +22,17 @@ import {
   DEFAULT_ZONE,
   DEFAULT_ZONE_HASH,
 } from './constants.js';
+import {
+  prepareBulkSignature,
+  extractBulkSignatures,
+  type BulkSignatureResult,
+  type IndividualBulkSignature,
+} from './bulk-signature.js';
+import {
+  buildCriteriaMerkleTree,
+  applyOfferCriteria,
+  type CriteriaOrderResult,
+} from './criteria-order.js';
 
 /**
  * Calculate fee amount in wei
@@ -246,6 +259,84 @@ export class SeaportOrderBuilder {
       conduitKey: DEFAULT_CONDUIT_KEY,
       totalOriginalConsiderationItems: consideration.length,
     };
+  }
+
+  /**
+   * Build multiple offer orders for bulk signing (shotgun offers).
+   * Each offer targets a different ENS name at a specified price.
+   *
+   * @param params - Bulk offer parameters
+   * @returns Array of SeaportOrder structures (unsigned)
+   */
+  buildBulkOfferOrders(params: BuildBulkOfferOrdersParams): SeaportOrder[] {
+    const { offers, offerer, durationDays = 7 } = params;
+
+    return offers.map((item) =>
+      this.buildOfferOrder({
+        tokenId: item.tokenId,
+        offerAmountWei: item.offerAmountWei,
+        offerer,
+        durationDays,
+      })
+    );
+  }
+
+  /**
+   * Build a criteria-based offer order (pick-one offers).
+   * Creates a single offer valid for ANY one name from the provided set.
+   *
+   * @param params - Criteria offer parameters
+   * @returns Order with merkle root + proofs for fulfillment
+   */
+  buildCriteriaOfferOrder(params: BuildCriteriaOfferOrderParams): CriteriaOrderResult {
+    const { tokenIds, offerAmountWei, offerer, durationDays = 7 } = params;
+
+    // Build merkle tree of acceptable token IDs
+    const { merkleRoot, proofs, sortedTokenIds } = buildCriteriaMerkleTree(tokenIds);
+
+    // Build a standard offer order using the first token ID as placeholder
+    const baseOrder = this.buildOfferOrder({
+      tokenId: tokenIds[0],
+      offerAmountWei,
+      offerer,
+      durationDays,
+    });
+
+    // Convert to criteria-based order
+    const order = applyOfferCriteria(baseOrder, merkleRoot);
+
+    return { order, merkleRoot, proofs, sortedTokenIds };
+  }
+
+  /**
+   * Prepare a bulk signature structure for multiple orders.
+   * Returns the typed data for a single wallet signTypedData call.
+   *
+   * @param orders - Array of SeaportOrder objects
+   * @param counter - Seaport counter for the signer (default 0)
+   * @returns BulkSignatureResult with typed data
+   */
+  prepareBulkSignature(
+    orders: SeaportOrder[],
+    counter: bigint = 0n
+  ): BulkSignatureResult {
+    return prepareBulkSignature(orders, counter);
+  }
+
+  /**
+   * Extract per-order signatures from a bulk signature.
+   *
+   * @param signature - Raw signature from signTypedData
+   * @param result - BulkSignatureResult from prepareBulkSignature
+   * @param orders - Original orders array
+   * @returns Array of IndividualBulkSignature
+   */
+  extractBulkSignatures(
+    signature: string,
+    result: BulkSignatureResult,
+    orders: SeaportOrder[]
+  ): IndividualBulkSignature[] {
+    return extractBulkSignatures(signature, result, orders);
   }
 
   /**
