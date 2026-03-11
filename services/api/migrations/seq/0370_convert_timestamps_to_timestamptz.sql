@@ -44,9 +44,9 @@ ALTER TABLE ens_names
 -- Sales table - blockchain sale timestamps
 -- ============================================
 
-ALTER TABLE sales
-  ALTER COLUMN sale_date TYPE TIMESTAMPTZ
-  USING sale_date AT TIME ZONE 'America/New_York';
+-- ALTER TABLE sales
+--   ALTER COLUMN sale_date TYPE TIMESTAMPTZ
+--   USING sale_date AT TIME ZONE 'America/New_York';
 
 -- ============================================
 -- Transactions table - blockchain transaction timestamps
@@ -78,9 +78,9 @@ ALTER TABLE offers
 -- Price feeds table - price timestamps
 -- ============================================
 
-ALTER TABLE price_feeds
-  ALTER COLUMN timestamp TYPE TIMESTAMPTZ
-  USING timestamp AT TIME ZONE 'America/New_York';
+-- ALTER TABLE price_feeds
+--   ALTER COLUMN timestamp TYPE TIMESTAMPTZ
+--   USING timestamp AT TIME ZONE 'America/New_York';
 
 -- ============================================
 -- Legends table - block timestamps
