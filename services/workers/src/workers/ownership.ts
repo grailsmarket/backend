@@ -22,6 +22,16 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
     async (job) => {
       const { ensNameId, newOwner, blockNumber, transactionHash } = job.data;
 
+      // Defense-in-depth: never set Name Wrapper contract as owner
+      const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+      if (newOwner.toLowerCase() === NAME_WRAPPER_ADDRESS) {
+        logger.warn(
+          { ensNameId, newOwner, blockNumber, transactionHash },
+          'Rejecting ownership update: newOwner is Name Wrapper contract'
+        );
+        return;
+      }
+
       logger.info(
         { ensNameId, newOwner, blockNumber, transactionHash },
         'Processing ownership update'

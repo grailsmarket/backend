@@ -282,6 +282,7 @@ export class ENSIndexer {
     logger.info(`Name Wrapper transfer: token ${tokenIdStr} from ${from} to ${to}`);
 
     let ensNameId: number | null = null;
+    let resolvedOwner: string | null = null;
 
     try {
       // Resolve the namehash token ID to get the name
@@ -304,6 +305,9 @@ export class ENSIndexer {
         logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore}, skipping`);
         return;
       }
+
+      // Save resolved owner for the queue job (avoids sending raw Name Wrapper address)
+      resolvedOwner = ownerToStore;
 
       logger.info(`Name Wrapper transfer for ${nameToStore}: updating owner to ${ownerToStore}`);
 
@@ -358,12 +362,12 @@ export class ENSIndexer {
 
         await boss.send(QUEUE_NAMES.UPDATE_OWNERSHIP, {
           ensNameId,
-          newOwner: to.toLowerCase(),
+          newOwner: resolvedOwner || to.toLowerCase(),
           blockNumber: Number(log.blockNumber),
           transactionHash: log.transactionHash || '',
         });
 
-        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: to }, 'Published ownership update job for wrapped name transfer');
+        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() }, 'Published ownership update job for wrapped name transfer');
       } catch (queueError: any) {
         logger.error({
           errorMessage: queueError?.message || String(queueError),
@@ -657,6 +661,7 @@ export class ENSIndexer {
     const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
     let ensNameId: number | null = null;
+    let resolvedOwner: string | null = null;
 
     try {
       // Check if this involves the Name Wrapper contract
@@ -782,6 +787,9 @@ export class ENSIndexer {
         logger.debug(`Standard transfer: token ${tokenIdStr}, owner ${ownerToStore}`);
       }
 
+      // Save resolved owner for the queue job (avoids sending raw Name Wrapper address)
+      resolvedOwner = ownerToStore;
+
       // Check if this name exists with a different token_id (edge case for wrapped/unwrapped transitions)
       const duplicateName = await this.pool.query(
         'SELECT id, token_id FROM ens_names WHERE name = $1 AND token_id != $2',
@@ -857,12 +865,12 @@ export class ENSIndexer {
 
         await boss.send(QUEUE_NAMES.UPDATE_OWNERSHIP, {
           ensNameId,
-          newOwner: to.toLowerCase(),
+          newOwner: resolvedOwner || to.toLowerCase(),
           blockNumber: Number(log.blockNumber),
           transactionHash: log.transactionHash || '',
         });
 
-        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: to }, 'Published ownership update job');
+        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() }, 'Published ownership update job');
       } catch (queueError: any) {
         // Don't fail indexing if queue publishing fails
         logger.error({
