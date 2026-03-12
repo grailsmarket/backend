@@ -54,7 +54,8 @@
     "reconcile-opensea-listings": "npx tsx src/scripts/reconcile-opensea-listings.ts",
     "reconcile-opensea-listings:fix": "npx tsx src/scripts/reconcile-opensea-listings.ts --fix",
     "import-opensea-listing": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js",
-    "import-opensea-listing:fix": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js --fix"
+    "import-opensea-listing:fix": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js --fix",
+    "import-rankings-short-name-auction": "npm run build && node dist/wal-listener/src/scripts/import-club-rankings-short-name-auction.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.992.0",
