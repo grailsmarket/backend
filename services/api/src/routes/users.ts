@@ -12,6 +12,7 @@ const UpdateProfileSchema = z.object({
   discord: z.string().max(100).optional(),
   notify_on_offer_received: z.boolean().optional(),
   notify_on_listing_sold: z.boolean().optional(),
+  min_offer_threshold: z.number().min(0).nullable().optional(),
 });
 
 const AddressParamsSchema = z.object({
@@ -255,6 +256,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
+      if (updates.min_offer_threshold !== undefined) {
+        updateFields.push(`min_offer_threshold = $${paramCount}`);
+        values.push(updates.min_offer_threshold);
+        paramCount++;
+      }
+
       if (updateFields.length === 0) {
         return reply.status(400).send({
           success: false,
@@ -334,6 +341,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
           discord: user.discord,
           notifyOnOfferReceived: user.notify_on_offer_received,
           notifyOnListingSold: user.notify_on_listing_sold,
+          minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
           updatedAt: user.updated_at,
         },
         meta: {
