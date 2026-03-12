@@ -12,6 +12,7 @@ const AddToWatchlistSchema = z.object({
   notifyOnOffer: z.boolean().default(true),
   notifyOnListing: z.boolean().default(true),
   notifyOnPriceChange: z.boolean().default(false),
+  minOfferThreshold: z.number().min(0).nullable().default(null),
 });
 
 const UpdateWatchlistSchema = z.object({
@@ -19,6 +20,7 @@ const UpdateWatchlistSchema = z.object({
   notifyOnOffer: z.boolean().optional(),
   notifyOnListing: z.boolean().optional(),
   notifyOnPriceChange: z.boolean().optional(),
+  minOfferThreshold: z.number().min(0).nullable().optional(),
 });
 
 const WatchlistQuerySchema = z.object({
@@ -180,6 +182,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
             notifyOnOffer: row.notify_on_offer,
             notifyOnListing: row.notify_on_listing,
             notifyOnPriceChange: row.notify_on_price_change,
+            minOfferThreshold: row.min_offer_threshold != null ? parseFloat(row.min_offer_threshold) : null,
             addedAt: row.added_at,
             nameData: {
               name: row.name,
@@ -269,15 +272,16 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       const watchlistResult = await pool.query(
         `INSERT INTO watchlist (
           user_id, ens_name_id, notify_on_sale, notify_on_offer,
-          notify_on_listing, notify_on_price_change
+          notify_on_listing, notify_on_price_change, min_offer_threshold
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (user_id, ens_name_id)
         DO UPDATE SET
           notify_on_sale = EXCLUDED.notify_on_sale,
           notify_on_offer = EXCLUDED.notify_on_offer,
           notify_on_listing = EXCLUDED.notify_on_listing,
-          notify_on_price_change = EXCLUDED.notify_on_price_change
+          notify_on_price_change = EXCLUDED.notify_on_price_change,
+          min_offer_threshold = EXCLUDED.min_offer_threshold
         RETURNING *`,
         [
           userId,
@@ -286,6 +290,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           data.notifyOnOffer,
           data.notifyOnListing,
           data.notifyOnPriceChange,
+          data.minOfferThreshold,
         ]
       );
 
@@ -302,6 +307,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           notifyOnOffer: watchlist.notify_on_offer,
           notifyOnListing: watchlist.notify_on_listing,
           notifyOnPriceChange: watchlist.notify_on_price_change,
+          minOfferThreshold: watchlist.min_offer_threshold != null ? parseFloat(watchlist.min_offer_threshold) : null,
           addedAt: watchlist.added_at,
         },
         meta: {
@@ -510,6 +516,12 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
+      if (updates.minOfferThreshold !== undefined) {
+        updateFields.push(`min_offer_threshold = $${paramCount}`);
+        values.push(updates.minOfferThreshold);
+        paramCount++;
+      }
+
       if (updateFields.length === 0) {
         return reply.status(400).send({
           success: false,
@@ -543,6 +555,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           notifyOnOffer: watchlist.notify_on_offer,
           notifyOnListing: watchlist.notify_on_listing,
           notifyOnPriceChange: watchlist.notify_on_price_change,
+          minOfferThreshold: watchlist.min_offer_threshold != null ? parseFloat(watchlist.min_offer_threshold) : null,
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -611,6 +624,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           w.notify_on_offer,
           w.notify_on_listing,
           w.notify_on_price_change,
+          w.min_offer_threshold,
           w.added_at,
           en.id as ens_name_id,
           en.name
@@ -649,6 +663,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
             notifyOnOffer: row.notify_on_offer,
             notifyOnListing: row.notify_on_listing,
             notifyOnPriceChange: row.notify_on_price_change,
+            minOfferThreshold: row.min_offer_threshold != null ? parseFloat(row.min_offer_threshold) : null,
             addedAt: row.added_at,
           } : null,
         },
@@ -1170,6 +1185,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           w.notify_on_offer,
           w.notify_on_listing,
           w.notify_on_price_change,
+          w.min_offer_threshold,
           w.id as watchlist_id,
           w.added_at,
           en.name
@@ -1188,6 +1204,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           notifyOnOffer: row.notify_on_offer,
           notifyOnListing: row.notify_on_listing,
           notifyOnPriceChange: row.notify_on_price_change,
+          minOfferThreshold: row.min_offer_threshold != null ? parseFloat(row.min_offer_threshold) : null,
           addedAt: row.added_at,
         });
       });
