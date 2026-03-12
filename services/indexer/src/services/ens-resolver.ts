@@ -535,9 +535,15 @@ export class ENSResolver {
           }
 
           // Get registrant address (the original registerer of the name)
+          // If registrant is Name Wrapper, use wrappedOwner instead
           let registrantAddress: string | null = null;
           if (domain.registrant?.id) {
-            registrantAddress = domain.registrant.id.toLowerCase();
+            const rawRegistrant = domain.registrant.id.toLowerCase();
+            if (rawRegistrant === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+              registrantAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
+            } else {
+              registrantAddress = rawRegistrant;
+            }
           }
 
           // Process text records - keep the last value for each key
