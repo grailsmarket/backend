@@ -30,7 +30,19 @@ const ENS_CONTROLLER_ABIS = {
   v2: parseAbi([
     'event NameRegistered(string label, bytes32 indexed labelhash, address indexed owner, uint256 baseCost, uint256 premium, uint256 expires, bytes32 referrer)',
   ]),
+  // NameRenewed ABIs (Controller events with cost data)
+  renewalOriginal: parseAbi([
+    'event NameRenewed(string name, bytes32 indexed label, uint256 cost, uint256 expires)',
+  ]),
+  renewalV2: parseAbi([
+    'event NameRenewed(string label, bytes32 indexed labelhash, uint256 cost, uint256 expires, bytes32 referrer)',
+  ]),
 };
+
+// RenewalReferred event ABI for bulk renewal Event Emitter contract
+const RENEWAL_REFERRED_ABI = parseAbi([
+  'event RenewalReferred(string label, bytes32 indexed labelHash, uint256 cost, uint256 duration, bytes32 referrer)',
+]);
 
 // Name Wrapper ABI (ERC-1155 for wrapped names)
 const NAME_WRAPPER_ABI = parseAbi([
@@ -47,6 +59,12 @@ const ENS_EVENTS = {
 const ENS_CONTROLLER_EVENTS = {
   NameRegisteredOriginal: ENS_CONTROLLER_ABIS.original[0],
   NameRegisteredV2: ENS_CONTROLLER_ABIS.v2[0],
+  NameRenewedOriginal: ENS_CONTROLLER_ABIS.renewalOriginal[0],
+  NameRenewedV2: ENS_CONTROLLER_ABIS.renewalV2[0],
+} as const;
+
+const RENEWAL_REFERRED_EVENTS = {
+  RenewalReferred: RENEWAL_REFERRED_ABI[0],
 } as const;
 
 const NAME_WRAPPER_EVENTS = {
@@ -161,10 +179,24 @@ export class ENSIndexer {
       });
     }
 
-    // Process Controller logs (registration costs)
+    // Process Controller logs (registration costs + renewal costs)
     for (const log of controllerLogs) {
       await this.queue.add(async () => {
         await this.processControllerLog(log);
+      });
+    }
+
+    // Fetch logs from Event Emitter contract for RenewalReferred events (bulk renewals with referrer data)
+    const eventEmitterLogs = await this.client.getLogs({
+      address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
+      fromBlock,
+      toBlock,
+    });
+
+    // Process Event Emitter logs (RenewalReferred)
+    for (const log of eventEmitterLogs) {
+      await this.queue.add(async () => {
+        await this.processRenewalReferredLog(log);
       });
     }
 
@@ -447,17 +479,44 @@ export class ENSIndexer {
           });
           isV2 = true;
         } catch {
-          // Not a NameRegistered event from any known Controller, skip
+          // Not a NameRegistered event - try NameRenewed events
+          decodedLog = null;
+        }
+      }
+
+      if (decodedLog) {
+        logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber} (${isV2 ? 'V2' : 'Original'})`);
+        await this.handleControllerNameRegistered(decodedLog.args, log, isV2);
+        return;
+      }
+
+      // Try to decode as Controller NameRenewed events
+      let isRenewalV2 = false;
+
+      try {
+        decodedLog = decodeEventLog({
+          abi: [ENS_CONTROLLER_EVENTS.NameRenewedOriginal],
+          data: log.data,
+          topics: log.topics as any,
+        });
+      } catch {
+        try {
+          decodedLog = decodeEventLog({
+            abi: [ENS_CONTROLLER_EVENTS.NameRenewedV2],
+            data: log.data,
+            topics: log.topics as any,
+          });
+          isRenewalV2 = true;
+        } catch {
+          // Not a NameRegistered or NameRenewed event from any known Controller, skip
           return;
         }
       }
 
-      if (!decodedLog) {
-        return;
+      if (decodedLog) {
+        logger.debug(`Processing Controller NameRenewed event at block ${log.blockNumber} (${isRenewalV2 ? 'V2' : 'Original'})`);
+        await this.handleControllerNameRenewed(decodedLog.args, log, isRenewalV2);
       }
-
-      logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber} (${isV2 ? 'V2' : 'Original'})`);
-      await this.handleControllerNameRegistered(decodedLog.args, log, isV2);
     } catch (error: any) {
       logger.error(`Error processing Controller log at block ${log.blockNumber}:`, {
         error: error.message,
@@ -524,18 +583,22 @@ export class ENSIndexer {
 
       const ensNameId = ensNameResult.rows[0].id;
 
+      // Extract referrer from V2 controller events
+      const referrer = isV2 && args.referrer ? args.referrer : null;
+
       // Insert registration record with cost data
       await this.pool.query(
         `INSERT INTO registrations (
           ens_name_id, registrant_address, owner_address,
           base_cost_wei, premium_wei, total_cost_wei,
           name_length, transaction_hash, block_number,
-          registration_date, expiry_date, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          registration_date, expiry_date, metadata, referrer
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
           base_cost_wei = EXCLUDED.base_cost_wei,
           premium_wei = EXCLUDED.premium_wei,
-          total_cost_wei = EXCLUDED.total_cost_wei`,
+          total_cost_wei = EXCLUDED.total_cost_wei,
+          referrer = COALESCE(EXCLUDED.referrer, registrations.referrer)`,
         [
           ensNameId,
           registrantAddress,
@@ -548,7 +611,8 @@ export class ENSIndexer {
           log.blockNumber?.toString(),
           registrationDate,
           expiryDate,
-          JSON.stringify({ label: labelHash })
+          JSON.stringify({ label: labelHash }),
+          referrer,
         ]
       );
 
@@ -581,6 +645,189 @@ export class ENSIndexer {
         transactionHash: log.transactionHash
       });
       throw error;
+    }
+  }
+
+  private async handleControllerNameRenewed(args: any, log: Log, isV2: boolean = false) {
+    // V2 controller uses 'label' for the name string and 'labelhash' for the hash
+    // Original controller uses 'name' for the name string and 'label' for the hash
+    const name = isV2 ? args.label : args.name;
+    const { cost, expires } = args;
+    const referrer = isV2 && args.referrer ? args.referrer : null;
+
+    const costWei = typeof cost === 'bigint' ? cost.toString() : String(cost);
+    const nameLength = name.length;
+    const fullName = `${name}.eth`;
+    const expiryDate = new Date(Number(expires) * 1000);
+
+    // Get block timestamp for renewal date
+    let renewalDate: Date;
+    try {
+      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      renewalDate = new Date(Number(block.timestamp) * 1000);
+    } catch (blockError: any) {
+      logger.warn(`Could not fetch block for renewal date, using current time: ${blockError.message}`);
+      renewalDate = new Date();
+    }
+
+    // Get the actual renewer (transaction sender)
+    let renewerAddress = '0x0000000000000000000000000000000000000000';
+    if (log.transactionHash) {
+      try {
+        const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+        if (tx && tx.from) {
+          renewerAddress = tx.from.toLowerCase();
+        }
+      } catch (txError: any) {
+        logger.warn(`Could not fetch transaction for Controller NameRenewed event: ${txError.message}`);
+      }
+    }
+
+    try {
+      // Find the ens_name_id for this name
+      const ensNameResult = await this.pool.query(
+        'SELECT id FROM ens_names WHERE name = $1',
+        [fullName]
+      );
+
+      if (ensNameResult.rows.length === 0) {
+        logger.debug(`Controller NameRenewed: name ${fullName} not yet in ens_names, skipping`);
+        return;
+      }
+
+      const ensNameId = ensNameResult.rows[0].id;
+
+      // Insert renewal record
+      await this.pool.query(
+        `INSERT INTO renewals (
+          ens_name_id, renewer_address, cost_wei,
+          new_expiry_date, referrer, name_length,
+          transaction_hash, block_number, renewal_date, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
+          cost_wei = EXCLUDED.cost_wei,
+          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
+        [
+          ensNameId,
+          renewerAddress,
+          costWei,
+          expiryDate,
+          referrer,
+          nameLength,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          renewalDate,
+          JSON.stringify({ source: 'controller', version: isV2 ? 'v2' : 'original' }),
+        ]
+      );
+
+      logger.info(`Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`);
+    } catch (error: any) {
+      logger.error('Failed to record renewal cost:', {
+        error: error.message,
+        name: fullName,
+        transactionHash: log.transactionHash,
+      });
+      throw error;
+    }
+  }
+
+  private async processRenewalReferredLog(log: Log) {
+    try {
+      let decodedLog: any;
+
+      try {
+        decodedLog = decodeEventLog({
+          abi: [RENEWAL_REFERRED_EVENTS.RenewalReferred],
+          data: log.data,
+          topics: log.topics as any,
+        });
+      } catch {
+        // Not a RenewalReferred event, skip
+        return;
+      }
+
+      if (!decodedLog) {
+        return;
+      }
+
+      const { label, cost, duration, referrer } = decodedLog.args;
+      const costWei = typeof cost === 'bigint' ? cost.toString() : String(cost);
+      const durationSeconds = typeof duration === 'bigint' ? Number(duration) : Number(duration);
+      const nameLength = label.length;
+      const fullName = `${label}.eth`;
+
+      // Get block timestamp for renewal date
+      let renewalDate: Date;
+      try {
+        const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+        renewalDate = new Date(Number(block.timestamp) * 1000);
+      } catch (blockError: any) {
+        logger.warn(`Could not fetch block for RenewalReferred date, using current time: ${blockError.message}`);
+        renewalDate = new Date();
+      }
+
+      // Get the actual renewer (transaction sender)
+      let renewerAddress = '0x0000000000000000000000000000000000000000';
+      if (log.transactionHash) {
+        try {
+          const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+          if (tx && tx.from) {
+            renewerAddress = tx.from.toLowerCase();
+          }
+        } catch (txError: any) {
+          logger.warn(`Could not fetch transaction for RenewalReferred event: ${txError.message}`);
+        }
+      }
+
+      // Find the ens_name_id for this name
+      const ensNameResult = await this.pool.query(
+        'SELECT id, expiry_date FROM ens_names WHERE name = $1',
+        [fullName]
+      );
+
+      if (ensNameResult.rows.length === 0) {
+        logger.debug(`RenewalReferred: name ${fullName} not found in ens_names, skipping`);
+        return;
+      }
+
+      const ensNameId = ensNameResult.rows[0].id;
+      // Use existing expiry_date as the new_expiry_date (the Base Registrar NameRenewed event
+      // will have already updated it, or will update it shortly)
+      const newExpiryDate = ensNameResult.rows[0].expiry_date || renewalDate;
+
+      // Insert renewal record
+      await this.pool.query(
+        `INSERT INTO renewals (
+          ens_name_id, renewer_address, cost_wei, duration_seconds,
+          new_expiry_date, referrer, name_length,
+          transaction_hash, block_number, renewal_date, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
+          cost_wei = EXCLUDED.cost_wei,
+          duration_seconds = EXCLUDED.duration_seconds,
+          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
+        [
+          ensNameId,
+          renewerAddress,
+          costWei,
+          durationSeconds,
+          newExpiryDate,
+          referrer,
+          nameLength,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          renewalDate,
+          JSON.stringify({ source: 'event_emitter' }),
+        ]
+      );
+
+      logger.info(`Recorded RenewalReferred for ${fullName}: cost=${costWei}, duration=${durationSeconds}s, referrer=${referrer}`);
+    } catch (error: any) {
+      logger.error(`Error processing RenewalReferred log at block ${log.blockNumber}:`, {
+        error: error.message,
+        transactionHash: log.transactionHash,
+      });
     }
   }
 
