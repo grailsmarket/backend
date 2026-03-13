@@ -31,6 +31,7 @@ const ConfigSchema = z.object({
       '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
     ]),
     ensNameWrapperAddress: z.string().default('0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401'),
+    ensBulkRenewalEventEmitter: z.string().default('0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a'),
     seaportAddress: z.string().default('0x0000000000000068F116a894984e2DB1123eB395'),
     startBlock: z.number().optional(),
     confirmations: z.number().default(12),
@@ -123,6 +124,7 @@ const rawConfig = {
     ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
     ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(','),
     ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS,
+    ensBulkRenewalEventEmitter: process.env.ENS_BULK_RENEWAL_EVENT_EMITTER,
     seaportAddress: process.env.SEAPORT_ADDRESS,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
     confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
