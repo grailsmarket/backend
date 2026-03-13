@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-03-12T23:19:32.691Z",
+  "summary": {
+    "usersChecked": 3654,
+    "usersWithDeeds": 5,
+    "totalDeedsFound": 7,
+    "totalUnclaimedEth": "0.37"
+  },
+  "results": [
+    {
+      "address": "0xe2faa63f2351c6f2b88659f2fffc2167172d329a",
+      "totalUnclaimedEth": "0.3",
+      "deeds": [
+        {
+          "deedAddress": "0xe615b17ebde4cfc8622595412df5221af4434850",
+          "balance": "0.3"
+        }
+      ]
+    },
+    {
+      "address": "0x16a80a9a9f1b4fc42e4786890809279af8a28d9f",
+      "totalUnclaimedEth": "0.04",
+      "deeds": [
+        {
+          "deedAddress": "0x9705d599b5b23d947b3f842efa23fd5a9792b9b9",
+          "balance": "0.01"
+        },
+        {
+          "deedAddress": "0xca17ebbd986fe4268928613ca7540ee920feafc1",
+          "balance": "0.01"
+        },
+        {
+          "deedAddress": "0xe8c7769245b97476421a684ae2f0caa1825a05a9",
+          "balance": "0.02"
+        }
+      ]
+    },
+    {
+      "address": "0x6d8dec3fd68d94a7189a98346ea52b4d32e00012",
+      "totalUnclaimedEth": "0.01",
+      "deeds": [
+        {
+          "deedAddress": "0xd52952eceba06aa0e479e0b3a6d7575f039dae93",
+          "balance": "0.01"
+        }
+      ]
+    },
+    {
+      "address": "0xe010b3bcbb3d077a82985194800227914393360a",
+      "totalUnclaimedEth": "0.01",
+      "deeds": [
+        {
+          "deedAddress": "0xc584857cbe3adc3477b06d39dcb4b61520d2d8e7",
+          "balance": "0.01"
+        }
+      ]
+    },
+    {
+      "address": "0x27d73b9087efb467b195be206fa857124a24aa3a",
+      "totalUnclaimedEth": "0.01",
+      "deeds": [
+        {
+          "deedAddress": "0x1f42a261967691318331941de90547b2c53bcbd1",
+          "balance": "0.01"
+        }
+      ]
+    }
+  ]
+}
