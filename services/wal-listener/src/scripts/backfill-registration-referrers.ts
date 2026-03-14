@@ -18,6 +18,7 @@
  *   --dry-run              Preview without updating
  *   --batch-size <n>       Registrations per batch (default: 50)
  *   --limit <n>            Maximum registrations to process
+ *   --from-block <n>       Only process registrations at or after this block number
  *   --verbose              Show detailed logs
  */
 
@@ -38,6 +39,7 @@ interface Options {
   dryRun: boolean;
   batchSize: number;
   limit: number | undefined;
+  fromBlock: number | undefined;
   verbose: boolean;
 }
 
@@ -70,11 +72,16 @@ async function backfillRegistrationReferrers(options: Options) {
     console.log(`Mode:              ${options.dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
     console.log(`Batch size:        ${options.batchSize} registrations`);
     console.log(`Limit:             ${options.limit || 'unlimited'}`);
+    console.log(`From block:        ${options.fromBlock || 'none (all blocks)'}`);
     console.log(`Verbose:           ${options.verbose ? 'YES' : 'NO'}`);
     console.log(`V2 Controller:     ${V2_CONTROLLER_ADDRESS}`);
     console.log('');
 
-    const countResult = await pool.query(`SELECT COUNT(*) FROM registrations WHERE referrer IS NULL`);
+    const blockFilter = options.fromBlock ? `AND r.block_number >= ${Number(options.fromBlock)}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM registrations r WHERE r.referrer IS NULL ${blockFilter}`
+    );
     console.log(`Registrations without referrer: ${countResult.rows[0].count}\n`);
 
     let lastId: number | null = null;
@@ -94,7 +101,7 @@ async function backfillRegistrationReferrers(options: Options) {
             `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
              FROM registrations r
              JOIN ens_names en ON r.ens_name_id = en.id
-             WHERE r.referrer IS NULL
+             WHERE r.referrer IS NULL ${blockFilter}
              ORDER BY r.id ASC
              LIMIT $1`,
             [currentBatchSize]
@@ -103,7 +110,7 @@ async function backfillRegistrationReferrers(options: Options) {
             `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
              FROM registrations r
              JOIN ens_names en ON r.ens_name_id = en.id
-             WHERE r.referrer IS NULL AND r.id > $1
+             WHERE r.referrer IS NULL AND r.id > $1 ${blockFilter}
              ORDER BY r.id ASC
              LIMIT $2`,
             [lastId, currentBatchSize]
@@ -118,6 +125,9 @@ async function backfillRegistrationReferrers(options: Options) {
         stats.processed++;
 
         try {
+          // Small delay between RPC calls to reduce memory pressure
+          await sleep(50);
+
           const receipt = await client.getTransactionReceipt({ hash: row.transaction_hash as `0x${string}` });
 
           // Look for V2 Controller NameRegistered event in receipt logs
@@ -174,11 +184,14 @@ async function backfillRegistrationReferrers(options: Options) {
         }
       }
 
+      const memLine = batchNum % 10 === 0
+        ? ` | heap ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+        : '';
       console.log(
         `Batch ${batchNum}: ${stats.processed} processed | ` +
         `${stats.updated} updated | ` +
         `${stats.noReferrer} no referrer | ` +
-        `${stats.failed} failed`
+        `${stats.failed} failed${memLine}`
       );
 
       await sleep(500);
@@ -213,6 +226,7 @@ function parseArgs(): Options {
     dryRun: false,
     batchSize: 50,
     limit: undefined,
+    fromBlock: undefined,
     verbose: false,
   };
 
@@ -227,6 +241,9 @@ function parseArgs(): Options {
       i++;
     } else if (arg === '--limit' && args[i + 1]) {
       options.limit = parseInt(args[i + 1], 10);
+      i++;
+    } else if (arg === '--from-block' && args[i + 1]) {
+      options.fromBlock = parseInt(args[i + 1], 10);
       i++;
     }
   }

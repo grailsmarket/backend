@@ -60,8 +60,8 @@
     "check-unclaimed-deposits:dry": "npm run build && node dist/wal-listener/src/scripts/check-unclaimed-deposits.js --limit 10 --verbose",
     "backfill-renewals": "npm run build && node dist/wal-listener/src/scripts/backfill-renewals.js",
     "backfill-renewals:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-renewals.js --dry-run --verbose",
-    "backfill-registration-referrers": "npm run build && node dist/wal-listener/src/scripts/backfill-registration-referrers.js",
-    "backfill-registration-referrers:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-registration-referrers.js --dry-run --verbose"
+    "backfill-registration-referrers": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js",
+    "backfill-registration-referrers:dry": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js --dry-run --verbose"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.992.0",
