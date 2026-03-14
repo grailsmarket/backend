@@ -8,7 +8,7 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji } from '../../../shared/src';
+import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -631,6 +631,7 @@ export class ENSIndexer {
             base_cost_wei: baseCostWei,
             premium_wei: premiumWei,
             total_cost_wei: totalCostWei,
+            ...(referrer ? { referrer, registration_source: getRegistrationSource(referrer) } : {}),
           }),
           ensNameId,
           log.transactionHash,

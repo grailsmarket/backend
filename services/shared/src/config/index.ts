@@ -233,4 +233,18 @@ export function isEthOrWeth(currencyAddress: string | null | undefined): boolean
 // SQL fragment for filtering ETH/WETH currencies
 export const ETH_WETH_FILTER = `(currency_address = '${CURRENCY_ADDRESSES.ETH}' OR currency_address = '${CURRENCY_ADDRESSES.WETH}')`;
 
+// ENS registration referrer codes (bytes32 values, lowercase) → human-readable source names
+export const ENS_REFERRER_CODES: Record<string, string> = {
+  '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d': 'grails',
+  '0x0000000000000000000000001c0ea438837302b4516ac3f380313061ec11760f': 'snipezone',
+  '0x000000000000000000000000efce7f86fd1efb0359a91c873e6dee9f98788713': 'enstools',
+  '0x0000000000000000000000009531c059098e3d194ff87febb587ab07b30b1306': 'rotki',
+  '0x000000000000000000000000f919a96d2970380b87917b04f02e6d3d08368b10': 'vision',
+};
+
+// Look up a bytes32 referrer value and return the human-readable source name, or null
+export function getRegistrationSource(referrer: string): string | null {
+  return ENS_REFERRER_CODES[referrer.toLowerCase()] ?? null;
+}
+
 export default config;
