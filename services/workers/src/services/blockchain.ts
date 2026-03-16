@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
@@ -272,7 +272,7 @@ export async function resolveTokenIdToName(tokenId: string): Promise<string | nu
       const domain = domains[0];
       const name = domain.name || domain.labelName;
 
-      if (name) {
+      if (name && !isPlaceholderName(name)) {
         logger.info({ tokenId, name }, 'Resolved token ID to ENS name');
         return name;
       }

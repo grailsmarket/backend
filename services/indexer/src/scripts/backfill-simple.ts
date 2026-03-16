@@ -7,7 +7,7 @@
  */
 
 import { Pool } from 'pg';
-import { hasEmoji } from '../../../shared/src';
+import { hasEmoji, isPlaceholderName } from '../../../shared/src';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -107,8 +107,8 @@ async function backfill(batchSize: number, limit?: number) {
 
     // Fetch batch
     const batchResult: any = lastId === null
-      ? await pool.query(`SELECT id, token_id, name FROM ens_names WHERE name LIKE 'token-%' ORDER BY id DESC LIMIT $1`, [currentBatchSize])
-      : await pool.query(`SELECT id, token_id, name FROM ens_names WHERE name LIKE 'token-%' AND id < $1 ORDER BY id DESC LIMIT $2`, [lastId, currentBatchSize]);
+      ? await pool.query(`SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') ORDER BY id DESC LIMIT $1`, [currentBatchSize])
+      : await pool.query(`SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') AND id < $1 ORDER BY id DESC LIMIT $2`, [lastId, currentBatchSize]);
 
     const batch: any[] = batchResult.rows;
     if (batch.length === 0) break;
@@ -125,7 +125,7 @@ async function backfill(batchSize: number, limit?: number) {
       for (const row of batch) {
         const name = resolved.get(row.token_id);
 
-        if (name && name !== row.name) {
+        if (name && name !== row.name && !isPlaceholderName(name)) {
           const hasNumbers = /\d/.test(name);
           const nameHasEmoji = hasEmoji(name);
 
