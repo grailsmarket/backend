@@ -19,6 +19,7 @@
  *   --dry-run              Preview without inserting
  *   --batch-size <n>       Transactions per batch (default: 50)
  *   --limit <n>            Maximum transactions to process
+ *   --start-id <n>         Resume from transaction id (skips rows with id <= n)
  *   --verbose              Show detailed logs
  */
 
@@ -46,6 +47,7 @@ interface Options {
   dryRun: boolean;
   batchSize: number;
   limit: number | undefined;
+  startId: number | undefined;
   verbose: boolean;
 }
 
@@ -70,6 +72,7 @@ async function backfillRenewals(options: Options) {
   const client = createPublicClient({
     chain: mainnet,
     transport: http(config.blockchain.rpcUrl),
+    cacheTime: 0,
   });
 
   try {
@@ -79,6 +82,7 @@ async function backfillRenewals(options: Options) {
     console.log(`Mode:          ${options.dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
     console.log(`Batch size:    ${options.batchSize} transactions`);
     console.log(`Limit:         ${options.limit || 'unlimited'}`);
+    console.log(`Start ID:      ${options.startId ?? 'beginning'}`);
     console.log(`Verbose:       ${options.verbose ? 'YES' : 'NO'}`);
     console.log(`Controllers:   ${CONTROLLER_ADDRESSES.join(', ')}`);
     console.log(`Event Emitter: ${EVENT_EMITTER_ADDRESS}`);
@@ -87,7 +91,7 @@ async function backfillRenewals(options: Options) {
     const countResult = await pool.query(`SELECT COUNT(*) FROM transactions WHERE transaction_type = 'renewal'`);
     console.log(`Total renewal transactions: ${countResult.rows[0].count}\n`);
 
-    let lastId: number | null = null;
+    let lastId: number | null = options.startId ?? null;
     let batchNum = 0;
 
     while (true) {
@@ -358,6 +362,7 @@ function parseArgs(): Options {
     dryRun: false,
     batchSize: 50,
     limit: undefined,
+    startId: undefined,
     verbose: false,
   };
 
@@ -372,6 +377,9 @@ function parseArgs(): Options {
       i++;
     } else if (arg === '--limit' && args[i + 1]) {
       options.limit = parseInt(args[i + 1], 10);
+      i++;
+    } else if (arg === '--start-id' && args[i + 1]) {
+      options.startId = parseInt(args[i + 1], 10);
       i++;
     }
   }
