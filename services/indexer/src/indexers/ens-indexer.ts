@@ -619,10 +619,12 @@ export class ENSIndexer {
       logger.info(`Recorded registration cost for ${fullName}: base=${baseCostWei}, premium=${premiumWei}, total=${totalCostWei}`);
 
       // Update the mint activity record with cost metadata if it exists
+      const registrationSource = referrer ? getRegistrationSource(referrer) : null;
       await this.pool.query(
         `UPDATE activity_history
          SET metadata = metadata || $1::jsonb,
              price_wei = $4
+             ${registrationSource ? ', platform = $5' : ''}
          WHERE ens_name_id = $2
            AND event_type = 'mint'
            AND transaction_hash = $3`,
@@ -631,11 +633,12 @@ export class ENSIndexer {
             base_cost_wei: baseCostWei,
             premium_wei: premiumWei,
             total_cost_wei: totalCostWei,
-            ...(referrer ? { referrer, registration_source: getRegistrationSource(referrer) } : {}),
+            ...(referrer ? { referrer, registration_source: registrationSource } : {}),
           }),
           ensNameId,
           log.transactionHash,
-          totalCostWei
+          totalCostWei,
+          ...(registrationSource ? [registrationSource] : []),
         ]
       );
 
