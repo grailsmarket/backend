@@ -32,7 +32,7 @@ export async function registerBatchNameResolutionWorker(boss: PgBoss): Promise<v
 
       try {
         // Find ENS names with placeholder names (limit to avoid overwhelming The Graph)
-        const BATCH_SIZE = 20; // Process 20 at a time to respect rate limits
+        const BATCH_SIZE = 100; // Process 100 at a time
 
         const result = await pool.query(
           `SELECT id, token_id, name

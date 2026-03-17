@@ -1442,7 +1442,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' OR ens_names.name LIKE '[%].eth' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           last_transfer_date = NOW(),
@@ -1458,7 +1458,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' OR ens_names.name LIKE '[%].eth' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
