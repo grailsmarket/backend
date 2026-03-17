@@ -725,6 +725,32 @@ export class ENSIndexer {
         ]
       );
 
+      // Create renewal activity history record
+      const renewalSource = referrer ? getRegistrationSource(referrer) : null;
+      await this.pool.query(
+        `INSERT INTO activity_history (
+          ens_name_id, event_type, actor_address, platform,
+          chain_id, price_wei, transaction_hash, block_number, metadata, created_at
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        WHERE NOT EXISTS (
+          SELECT 1 FROM activity_history
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+        )`,
+        [
+          ensNameId,
+          renewerAddress,
+          renewalSource || 'blockchain',
+          costWei,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          JSON.stringify({
+            source: 'controller',
+            ...(referrer ? { referrer, registration_source: renewalSource } : {}),
+          }),
+          renewalDate,
+        ]
+      );
+
       logger.info(`Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`);
     } catch (error: any) {
       logger.error('Failed to record renewal cost:', {
@@ -823,6 +849,33 @@ export class ENSIndexer {
           log.blockNumber?.toString(),
           renewalDate,
           JSON.stringify({ source: 'event_emitter' }),
+        ]
+      );
+
+      // Create renewal activity history record
+      const renewalSource = referrer ? getRegistrationSource(referrer as string) : null;
+      await this.pool.query(
+        `INSERT INTO activity_history (
+          ens_name_id, event_type, actor_address, platform,
+          chain_id, price_wei, transaction_hash, block_number, metadata, created_at
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        WHERE NOT EXISTS (
+          SELECT 1 FROM activity_history
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+        )`,
+        [
+          ensNameId,
+          renewerAddress,
+          renewalSource || 'blockchain',
+          costWei,
+          log.transactionHash,
+          log.blockNumber?.toString(),
+          JSON.stringify({
+            source: 'event_emitter',
+            duration_seconds: durationSeconds,
+            ...(referrer ? { referrer, registration_source: renewalSource } : {}),
+          }),
+          renewalDate,
         ]
       );
 
