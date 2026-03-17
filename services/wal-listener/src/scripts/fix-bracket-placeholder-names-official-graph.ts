@@ -18,8 +18,11 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import { normalizeEnsName } from '../../../shared/src/utils/ens-normalize';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+// The paid Graph gateway has label preimages that the ensnode endpoint lacks
+const GRAPH_ENS_SUBGRAPH_URL = 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH';
+const GRAPH_API_KEY = process.env.THE_GRAPH_API_KEY || '';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const ETH_NODE = '0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae';
 
@@ -58,15 +61,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function processDomain(domain: any): DomainData {
-  // Process text records
   const textRecords: Record<string, string> = {};
-  if (domain.resolver?.textChangeds) {
-    for (const record of domain.resolver.textChangeds) {
-      if (record.key && record.value) {
-        textRecords[record.key] = record.value;
-      }
-    }
-  }
 
   // Determine owner and wrapped status
   const ownerAddr = domain.owner?.id?.toLowerCase();
@@ -123,12 +118,6 @@ const DOMAIN_FIELDS = `
     expiryDate
     registrationDate
   }
-  resolver {
-    textChangeds {
-      key
-      value
-    }
-  }
 `;
 
 /**
@@ -146,7 +135,7 @@ async function queryGraphByIds(tokenIdHexArray: string[]): Promise<Map<string, D
   try {
     const response = await fetch(GRAPH_ENS_SUBGRAPH_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(GRAPH_API_KEY ? { 'Authorization': `Bearer ${GRAPH_API_KEY}` } : {}) },
       body: JSON.stringify({ query, variables: { ids: tokenIdHexArray } }),
     });
 
@@ -190,7 +179,7 @@ async function queryGraphByLabelhashes(labelhashes: string[]): Promise<Map<strin
   try {
     const response = await fetch(GRAPH_ENS_SUBGRAPH_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(GRAPH_API_KEY ? { 'Authorization': `Bearer ${GRAPH_API_KEY}` } : {}) },
       body: JSON.stringify({ query, variables: { labelhashes } }),
     });
 
@@ -247,6 +236,14 @@ async function fixBracketPlaceholderNames(options: {
 
   try {
     console.log('\n=== Fix [hash].eth Bracket Placeholder Names ===\n');
+    console.log(`Graph endpoint: ${GRAPH_ENS_SUBGRAPH_URL}`);
+    console.log(`Graph API key: ${GRAPH_API_KEY ? GRAPH_API_KEY.substring(0, 8) + '...' : 'NOT SET'}`);
+    if (!GRAPH_API_KEY) {
+      console.error('\n❌ THE_GRAPH_API_KEY is required (paid gateway has label preimages the free endpoint lacks)');
+      console.error('Set it via: THE_GRAPH_API_KEY=<key> node ...');
+      await pool.end();
+      return;
+    }
     console.log(`Dry run: ${dryRun ? 'YES' : 'NO'}`);
     console.log(`Offset: ${offset}`);
     console.log(`Limit: ${limit}`);
@@ -263,7 +260,7 @@ async function fixBracketPlaceholderNames(options: {
       SELECT id, name, token_id, owner_address
       FROM ens_names
       WHERE name ~ '^\\[[0-9a-fA-F]{64}\\]\\.eth$'
-      ORDER BY id DESC
+      ORDER BY id
       LIMIT $1 OFFSET $2
     `;
 
@@ -281,7 +278,8 @@ async function fixBracketPlaceholderNames(options: {
     // Show examples
     console.log('Sample placeholders:');
     placeholders.slice(0, 5).forEach((p) => {
-      console.log(`  ID ${p.id}: ${p.name} (token: ${p.token_id.substring(0, 20)}...)`);
+      const hex = '0x' + BigInt(p.token_id).toString(16).padStart(64, '0');
+      console.log(`  ID ${p.id}: ${p.name} (token_id: ${p.token_id}, hex: ${hex})`);
     });
     console.log('');
 
@@ -339,14 +337,27 @@ async function fixBracketPlaceholderNames(options: {
         const domainData = byIdResults.get(tokenIdHex) || byLabelhashResults.get(tokenIdHex);
 
         if (!domainData || !domainData.name) {
-          console.log(`  ⚠️  ${placeholder.name.substring(0, 20)}... - Not found in Graph (token: ${tokenIdHex.substring(0, 14)}...)`);
+          console.log(`  ⚠️  ID ${placeholder.id} ${placeholder.name} - Not found in Graph (hex: ${tokenIdHex})`);
           skipped++;
           continue;
         }
 
         // The Graph returns [hash].eth when the label preimage is unknown — treat as unresolved
         if (/^\[[0-9a-fA-F]{64}\]\.eth$/.test(domainData.name)) {
-          console.log(`  ⚠️  ${placeholder.name.substring(0, 20)}... - Graph returned unknown label (no preimage)`);
+          console.log(`  ⚠️  ID ${placeholder.id} ${placeholder.name} - Graph returned unknown label (no preimage), graph name: ${domainData.name}`);
+          skipped++;
+          continue;
+        }
+
+        // Normalize and validate — only insert names that pass ENS normalization
+        const normResult = normalizeEnsName(domainData.name);
+        if (!normResult.isValid) {
+          console.log(`  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (${normResult.error || 'normalization failed'})`);
+          skipped++;
+          continue;
+        }
+        if (normResult.normalized !== domainData.name) {
+          console.log(`  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (contains non-normalized characters)`);
           skipped++;
           continue;
         }
@@ -362,7 +373,7 @@ async function fixBracketPlaceholderNames(options: {
         const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
         const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
 
-        console.log(`  ✅ ${placeholder.name.substring(0, 20)}... → ${domainData.name}`);
+        console.log(`  ✅ ID ${placeholder.id} ${placeholder.name} → ${domainData.name}`);
 
         if (dryRun) {
           recovered++;
@@ -409,16 +420,14 @@ async function fixBracketPlaceholderNames(options: {
                   owner_address = COALESCE($3, owner_address),
                   expiry_date = COALESCE($4, expiry_date),
                   registration_date = COALESCE($5, registration_date),
-                  metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
                   updated_at = NOW()
-                WHERE id = $7`,
+                WHERE id = $6`,
                 [
                   domainData.name,
                   correctTokenId,
                   domainData.owner,
                   expiryDate,
                   registrationDate,
-                  JSON.stringify({ text_records: domainData.textRecords }),
                   keepId,
                 ]
               );
@@ -442,16 +451,14 @@ async function fixBracketPlaceholderNames(options: {
                   owner_address = COALESCE($3, owner_address),
                   expiry_date = COALESCE($4, expiry_date),
                   registration_date = COALESCE($5, registration_date),
-                  metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
                   updated_at = NOW()
-                WHERE id = $7`,
+                WHERE id = $6`,
                 [
                   domainData.name,
                   correctTokenId,
                   domainData.owner,
                   expiryDate,
                   registrationDate,
-                  JSON.stringify({ text_records: domainData.textRecords }),
                   placeholder.id,
                 ]
               );
