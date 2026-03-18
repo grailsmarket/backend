@@ -4,7 +4,6 @@ import { config, getPostgresPool } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
-const ENS_CONTRACT = '0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85';
 const OPENSEA_API_KEY = config.opensea.apiKey;
 const RECONCILE_LIMIT = 100;
 
@@ -102,7 +101,7 @@ async function fetchOpenSeaOffers(): Promise<OpenSeaOffer[]> {
     return [];
   }
 
-  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/offers?asset_contract_address=${ENS_CONTRACT}&limit=${RECONCILE_LIMIT}`;
+  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/offers?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
 
   const response = await fetch(url, {
     headers: {
@@ -125,7 +124,7 @@ async function fetchOpenSeaListings(): Promise<OpenSeaListing[]> {
     return [];
   }
 
-  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${ENS_CONTRACT}&limit=${RECONCILE_LIMIT}`;
+  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
 
   const response = await fetch(url, {
     headers: {
