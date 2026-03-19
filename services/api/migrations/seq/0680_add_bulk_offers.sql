@@ -49,7 +49,7 @@ CREATE TABLE offer_limits (
 INSERT INTO offer_limits (key, value, description) VALUES
   ('max_bulk_offers_per_request', '500', 'Max offers in a single bulk request'),
   ('max_active_offers_per_user', '5000', 'Max concurrent pending offers per user'),
-  ('min_offer_amount_wei', '10000000000000000', 'Minimum offer amount (0.01 ETH)'),
+  ('min_offer_amount_wei', '100000000000000', 'Minimum offer amount (0.0001 ETH)'),
   ('min_offer_floor_pct', '10', 'Min offer as % of club floor price'),
   ('max_bulk_offer_names', '10000', 'Max names per bulk offer'),
   ('max_criteria_offer_names', '1000', 'Max names in a pick-one criteria offer'),

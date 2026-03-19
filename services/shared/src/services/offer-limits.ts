@@ -13,7 +13,7 @@ interface OfferLimits {
 const DEFAULT_LIMITS: OfferLimits = {
   max_bulk_offers_per_request: 500,
   max_active_offers_per_user: 5000,
-  min_offer_amount_wei: '10000000000000000',
+  min_offer_amount_wei: '100000000000000',
   min_offer_floor_pct: 10,
   max_bulk_offer_names: 10000,
   max_criteria_offer_names: 1000,
