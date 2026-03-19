@@ -179,7 +179,7 @@ export function requireTier(...allowedTiers: string[]) {
             success: false,
             error: {
               code: 'TIER_EXPIRED',
-              message: 'Your PRO subscription has expired. Please renew or refresh your session.',
+              message: 'Your subscription has expired. Please renew or refresh your session.',
             },
             meta: { timestamp: new Date().toISOString() },
           });
@@ -204,7 +204,7 @@ export function requireTier(...allowedTiers: string[]) {
 /**
  * Middleware to require a minimum tier level (hierarchical check).
  * Unlike requireTier() which is exact-match, this allows any tier
- * at or above the specified level (e.g., requireMinTier('pro') allows 'pro' and 'premium').
+ * at or above the specified level (e.g., requireMinTier('pro') allows 'pro', 'plus', and 'gold').
  * Usage: { preHandler: [requireAuth, requireMinTier('pro')] }
  */
 export function requireMinTier(minimumTier: string) {

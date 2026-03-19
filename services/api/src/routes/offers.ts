@@ -9,7 +9,7 @@ import {
   validateBulkOfferLimits,
   invalidateOfferLimitsCache,
 } from '../../../shared/src';
-import { requireAuth, requireTier, requireAdmin } from '../middleware/auth';
+import { requireAuth, requireMinTier, requireAdmin } from '../middleware/auth';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -566,7 +566,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     '/cancel',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const CancelOffersSchema = z.object({
         offerIds: z.array(z.number()).min(1).max(500),
@@ -743,7 +743,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     '/bulk',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const body = CreateBulkOffersSchema.parse(request.body);
       const buyerAddress = body.buyerAddress.toLowerCase();
@@ -944,7 +944,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.delete(
     '/bulk/:groupId',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const { groupId } = request.params as { groupId: string };
       const buyerAddress = request.user!.address;
@@ -1117,7 +1117,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     '/criteria',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const body = CreateCriteriaOfferSchema.parse(request.body);
       const buyerAddress = body.buyerAddress.toLowerCase();
@@ -1242,7 +1242,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.delete(
     '/criteria/:id',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const buyerAddress = request.user!.address;
@@ -1373,7 +1373,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.put(
     '/:id/edit',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const body = EditOfferSchema.parse(request.body);
@@ -1463,7 +1463,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
    */
   fastify.put(
     '/bulk/edit',
-    { preHandler: [requireAuth, requireTier('pro')] },
+    { preHandler: [requireAuth, requireMinTier('pro')] },
     async (request, reply) => {
       const body = BulkEditOffersSchema.parse(request.body);
       const buyerAddress = body.buyerAddress.toLowerCase();

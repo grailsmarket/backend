@@ -8,6 +8,8 @@
 export const TIER_MAP: Record<number, string> = {
   0: 'free',
   1: 'pro',
+  2: 'plus',
+  3: 'gold',
 };
 
 export const TIER_ID_MAP: Record<string, number> = Object.fromEntries(
@@ -21,6 +23,8 @@ export const TIER_ID_MAP: Record<string, number> = Object.fromEntries(
 export const TIER_RANK: Record<string, number> = {
   free: 0,
   pro: 1,
+  plus: 2,
+  gold: 3,
 };
 
 /** Convert a contract tier_id (uint256) to a tier name string */
