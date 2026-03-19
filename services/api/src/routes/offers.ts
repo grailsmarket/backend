@@ -557,6 +557,183 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // ========================
+  // Bulk Cancellation
+  // ========================
+
+  /**
+   * POST /api/v1/offers/cancel
+   * Cancel specific offers by ID, return order data for on-chain cancellation
+   */
+  fastify.post(
+    '/cancel',
+    { preHandler: [requireAuth, requireTier('pro')] },
+    async (request, reply) => {
+      const CancelOffersSchema = z.object({
+        offerIds: z.array(z.number()).min(1).max(500),
+      });
+
+      const body = CancelOffersSchema.parse(request.body);
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel offers that belong to the authenticated user and are still pending
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE id = ANY($1) AND LOWER(buyer_address) = LOWER($2) AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data, bulk_offer_group_id`,
+          [body.offerIds, buyerAddress]
+        );
+
+        if (cancelResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NO_OFFERS_FOUND', message: 'No matching pending offers found for your address' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Update any bulk_offer_groups that are now fully cancelled
+        const affectedGroupIds = [...new Set(
+          cancelResult.rows
+            .map((r: any) => r.bulk_offer_group_id)
+            .filter((id: any) => id != null)
+        )];
+
+        let groupsCancelled: number[] = [];
+        if (affectedGroupIds.length > 0) {
+          const groupUpdateResult = await client.query(
+            `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW()
+             WHERE id = ANY($1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM offers WHERE bulk_offer_group_id = bulk_offer_groups.id AND status = 'pending'
+               )
+             RETURNING id`,
+            [affectedGroupIds]
+          );
+          groupsCancelled = groupUpdateResult.rows.map((r: any) => r.id);
+        }
+
+        await client.query('COMMIT');
+
+        // Publish recalculate-highest-offer jobs for affected ENS names
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs for cancel');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            cancelledCount: cancelResult.rows.length,
+            orderComponents,
+            groupsAffected: groupsCancelled,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/offers/cancel-all
+   * Cancel all pending offers for the authenticated user
+   */
+  fastify.post(
+    '/cancel-all',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel all pending offers for this user
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE LOWER(buyer_address) = LOWER($1) AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data, bulk_offer_group_id`,
+          [buyerAddress]
+        );
+
+        // Cancel all active bulk_offer_groups for this user
+        const groupResult = await client.query(
+          `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW()
+           WHERE LOWER(buyer_address) = LOWER($1) AND status = 'active'
+           RETURNING id`,
+          [buyerAddress]
+        );
+
+        await client.query('COMMIT');
+
+        // Publish recalculate-highest-offer jobs for affected ENS names
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs for cancel-all');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            cancelledCount: cancelResult.rows.length,
+            orderComponents,
+            groupsCancelled: groupResult.rows.map((r: any) => r.id),
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  // ========================
   // Bulk Offers (Mode 1: Shotgun) — PRO only
   // ========================
 
@@ -795,7 +972,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
         const cancelResult = await client.query(
           `UPDATE offers SET status = 'cancelled'
            WHERE bulk_offer_group_id = $1 AND status = 'pending'
-           RETURNING id, ens_name_id`,
+           RETURNING id, ens_name_id, order_hash, order_data`,
           [groupId]
         );
 
@@ -822,9 +999,15 @@ export async function offersRoutes(fastify: FastifyInstance) {
           fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs');
         }
 
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
         const response: APIResponse = {
           success: true,
-          data: { groupId: parseInt(groupId), cancelledCount: cancelResult.rows.length },
+          data: { groupId: parseInt(groupId), cancelledCount: cancelResult.rows.length, orderComponents },
           meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
         };
 

@@ -514,13 +514,24 @@ export class SeaportIndexer {
   private async handleOrderCancelled(args: any, log: Log) {
     const { orderHash } = args;
 
-    const updateQuery = `
-      UPDATE listings
-      SET status = 'cancelled', updated_at = NOW()
-      WHERE order_hash = $1
-    `;
+    // Cancel matching listing
+    await this.pool.query(
+      `UPDATE listings SET status = 'cancelled', updated_at = NOW() WHERE order_hash = $1`,
+      [orderHash]
+    );
 
-    await this.pool.query(updateQuery, [orderHash]);
+    // Cancel matching offer
+    const cancelledOffer = await this.pool.query(
+      `UPDATE offers SET status = 'cancelled' WHERE order_hash = $1 AND status = 'pending' RETURNING id, ens_name_id`,
+      [orderHash]
+    );
+
+    // Recalculate highest offer if an offer was cancelled
+    if (cancelledOffer.rows.length > 0) {
+      const row = cancelledOffer.rows[0];
+      logger.info(`Cancelled offer ${row.id} for order_hash ${orderHash} via OrderCancelled event`);
+      await safePublishJob('recalculate-highest-offer', { ensNameId: row.ens_name_id }, 'order_cancelled');
+    }
   }
 
   private async handleCounterIncremented(args: any, log: Log) {
@@ -548,20 +559,44 @@ export class SeaportIndexer {
       logger.info(`Cancelled ${cancelledListings.rows.length} active listings for ${offererAddress} due to counter increment`);
     }
 
-    // Cancel all active offers from this buyer
+    // Cancel all pending offers from this buyer
     // Offers are also Seaport orders that become invalid when the counter is incremented
     const cancelOffersQuery = `
       UPDATE offers
       SET status = 'cancelled'
       WHERE buyer_address = $1
-        AND status = 'active'
-      RETURNING id, order_hash
+        AND status = 'pending'
+      RETURNING id, order_hash, ens_name_id, bulk_offer_group_id
     `;
 
     const cancelledOffers = await this.pool.query(cancelOffersQuery, [offererAddress]);
 
     if (cancelledOffers.rows.length > 0) {
-      logger.info(`Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`);
+      logger.info(`Cancelled ${cancelledOffers.rows.length} pending offers for ${offererAddress} due to counter increment`);
+
+      // Recalculate highest offer for all affected ENS names
+      const affectedEnsNameIds = [...new Set(cancelledOffers.rows.map((r: any) => r.ens_name_id))];
+      for (const ensNameId of affectedEnsNameIds) {
+        await safePublishJob('recalculate-highest-offer', { ensNameId }, 'counter_incremented');
+      }
+
+      // Cancel any bulk_offer_groups that are now fully cancelled
+      const affectedGroupIds = [...new Set(
+        cancelledOffers.rows
+          .map((r: any) => r.bulk_offer_group_id)
+          .filter((id: any) => id != null)
+      )];
+
+      if (affectedGroupIds.length > 0) {
+        await this.pool.query(
+          `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW()
+           WHERE id = ANY($1)
+             AND NOT EXISTS (
+               SELECT 1 FROM offers WHERE bulk_offer_group_id = bulk_offer_groups.id AND status = 'pending'
+             )`,
+          [affectedGroupIds]
+        );
+      }
     }
   }
 
