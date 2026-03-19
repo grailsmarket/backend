@@ -601,9 +601,11 @@ export class WALListener {
         JOIN users u ON u.id = w.user_id
         WHERE w.ens_name_id = $1
           AND w.notify_on_offer = true
+          AND (w.min_offer_threshold IS NULL
+               OR ($2::NUMERIC / 1e18) >= w.min_offer_threshold)
       `;
 
-      const watchers = await this.pool.query(watchlistQuery, [offerData.ens_name_id]);
+      const watchers = await this.pool.query(watchlistQuery, [offerData.ens_name_id, offerData.offer_amount_wei]);
 
       for (const watcher of watchers.rows) {
         await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
@@ -634,9 +636,11 @@ export class WALListener {
         WHERE en.id = $1
           AND u.email_verified = TRUE
           AND u.notify_on_offer_received = TRUE
+          AND (u.min_offer_threshold IS NULL
+               OR ($2::NUMERIC / 1e18) >= u.min_offer_threshold)
       `;
 
-      const ownerResult = await this.pool.query(ownerQuery, [offerData.ens_name_id]);
+      const ownerResult = await this.pool.query(ownerQuery, [offerData.ens_name_id, offerData.offer_amount_wei]);
 
       if (ownerResult.rows.length > 0) {
         const owner = ownerResult.rows[0];

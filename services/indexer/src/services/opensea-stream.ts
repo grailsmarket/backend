@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize } from '../../../shared/src';
+import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize, isPlaceholderName } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
@@ -385,6 +385,10 @@ export class OpenSeaStreamListener {
       // Always resolve the token ID via The Graph to get authoritative data
       // This also detects non-normalized registrations (e.g., "Vitalik.eth" vs "vitalik.eth")
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
+      // Don't trust placeholder names from OpenSea metadata (e.g., "[hash].eth")
+      if (nameToStore && isPlaceholderName(nameToStore)) {
+        nameToStore = null;
+      }
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
@@ -580,6 +584,10 @@ export class OpenSeaStreamListener {
 
       // Always resolve via The Graph to verify the registration and detect non-normalized names
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
+      // Don't trust placeholder names from OpenSea metadata (e.g., "[hash].eth")
+      if (nameToStore && isPlaceholderName(nameToStore)) {
+        nameToStore = null;
+      }
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
@@ -854,6 +862,10 @@ export class OpenSeaStreamListener {
 
       // Always resolve via The Graph to verify the registration and detect non-normalized names
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
+      // Don't trust placeholder names from OpenSea metadata (e.g., "[hash].eth")
+      if (nameToStore && isPlaceholderName(nameToStore)) {
+        nameToStore = null;
+      }
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
@@ -1040,6 +1052,10 @@ export class OpenSeaStreamListener {
 
       // Always resolve via The Graph to verify the registration and detect non-normalized names
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
+      // Don't trust placeholder names from OpenSea metadata (e.g., "[hash].eth")
+      if (nameToStore && isPlaceholderName(nameToStore)) {
+        nameToStore = null;
+      }
       let expiryDate: Date | null = null;
       let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
@@ -1426,7 +1442,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' OR ens_names.name LIKE '[%].eth' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           last_transfer_date = NOW(),
@@ -1442,7 +1458,7 @@ export class OpenSeaStreamListener {
         ON CONFLICT (token_id) DO UPDATE SET
           owner_address = EXCLUDED.owner_address,
           name = CASE
-            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' THEN EXCLUDED.name
+            WHEN ens_names.name LIKE 'token-%' OR ens_names.name LIKE '#%' OR ens_names.name LIKE '[%].eth' THEN EXCLUDED.name
             ELSE ens_names.name
           END,
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),

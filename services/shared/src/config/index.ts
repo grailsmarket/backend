@@ -31,6 +31,7 @@ const ConfigSchema = z.object({
       '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
     ]),
     ensNameWrapperAddress: z.string().default('0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401'),
+    ensBulkRenewalEventEmitter: z.string().default('0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a'),
     seaportAddress: z.string().default('0x0000000000000068F116a894984e2DB1123eB395'),
     startBlock: z.number().optional(),
     confirmations: z.number().default(12),
@@ -129,6 +130,7 @@ const rawConfig = {
     ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
     ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(','),
     ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS,
+    ensBulkRenewalEventEmitter: process.env.ENS_BULK_RENEWAL_EVENT_EMITTER,
     seaportAddress: process.env.SEAPORT_ADDRESS,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
     confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
@@ -244,5 +246,19 @@ export function isEthOrWeth(currencyAddress: string | null | undefined): boolean
 
 // SQL fragment for filtering ETH/WETH currencies
 export const ETH_WETH_FILTER = `(currency_address = '${CURRENCY_ADDRESSES.ETH}' OR currency_address = '${CURRENCY_ADDRESSES.WETH}')`;
+
+// ENS registration referrer codes (bytes32 values, lowercase) → human-readable source names
+export const ENS_REFERRER_CODES: Record<string, string> = {
+  '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d': 'grails',
+  '0x0000000000000000000000001c0ea438837302b4516ac3f380313061ec11760f': 'snipezone',
+  '0x000000000000000000000000efce7f86fd1efb0359a91c873e6dee9f98788713': 'enstools',
+  '0x0000000000000000000000009531c059098e3d194ff87febb587ab07b30b1306': 'rotki',
+  '0x000000000000000000000000f919a96d2970380b87917b04f02e6d3d08368b10': 'vision',
+};
+
+// Look up a bytes32 referrer value and return the human-readable source name, or null
+export function getRegistrationSource(referrer: string): string | null {
+  return ENS_REFERRER_CODES[referrer.toLowerCase()] ?? null;
+}
 
 export default config;

@@ -6,10 +6,11 @@
  * Inserts any missing offers that we may have missed due to WebSocket gaps.
  *
  * Usage:
- *   npx tsx src/scripts/reconcile-opensea-offers.ts                    # Check all recent offers (dry run)
+ *   npx tsx src/scripts/reconcile-opensea-offers.ts                    # Check last 21 days (dry run)
  *   npx tsx src/scripts/reconcile-opensea-offers.ts --fix              # Insert missing offers
+ *   npx tsx src/scripts/reconcile-opensea-offers.ts --days 7           # Check last 7 days
  *   npx tsx src/scripts/reconcile-opensea-offers.ts --token-id <id>    # Check specific token
- *   npx tsx src/scripts/reconcile-opensea-offers.ts --limit 100        # Limit number of offers to check
+ *   npx tsx src/scripts/reconcile-opensea-offers.ts --limit 100        # Per-page limit
  */
 
 import { Pool } from 'pg';
@@ -17,13 +18,14 @@ import { config } from '../../../shared/src';
 
 const FIX_MODE = process.argv.includes('--fix');
 const OPENSEA_API_KEY = config.opensea.apiKey;
-const ENS_CONTRACT = '0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85';
+const MAX_RETRIES = 3;
 
 // Parse arguments
-function parseArgs(): { tokenId?: string; limit: number } {
+function parseArgs(): { tokenId?: string; limit: number; days: number } {
   const args = process.argv.slice(2);
   let tokenId: string | undefined;
   let limit = 50;
+  let days = 21;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--token-id' && args[i + 1]) {
@@ -32,10 +34,39 @@ function parseArgs(): { tokenId?: string; limit: number } {
     } else if (args[i] === '--limit' && args[i + 1]) {
       limit = parseInt(args[i + 1]);
       i++;
+    } else if (args[i] === '--days' && args[i + 1]) {
+      days = parseInt(args[i + 1]);
+      i++;
     }
   }
 
-  return { tokenId, limit };
+  return { tokenId, limit, days };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
+  const response = await fetch(url, {
+    headers: {
+      'X-API-Key': OPENSEA_API_KEY!,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (response.status === 429 && attempt <= MAX_RETRIES) {
+    const delay = Math.pow(2, attempt) * 1000;
+    console.log(`  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`);
+    await sleep(delay);
+    return fetchWithRetry(url, attempt + 1);
+  }
+
+  if (!response.ok) {
+    throw new Error(`OpenSea API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response;
 }
 
 interface OpenSeaOffer {
@@ -68,72 +99,77 @@ interface OpenSeaOffer {
   finalized: boolean;
 }
 
-async function fetchOpenSeaOffers(tokenId?: string, limit = 50): Promise<OpenSeaOffer[]> {
+async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: number): Promise<OpenSeaOffer[]> {
   if (!OPENSEA_API_KEY) {
     throw new Error('OPENSEA_API_KEY not configured');
   }
 
+  const allOffers: OpenSeaOffer[] = [];
   const baseUrl = 'https://api.opensea.io/api/v2/orders/ethereum/seaport/offers';
   const params = new URLSearchParams({
-    asset_contract_address: ENS_CONTRACT,
+    collection_slug: 'ens',
     limit: limit.toString(),
   });
 
   if (tokenId) {
     params.append('token_ids', tokenId);
   }
-
-  const url = `${baseUrl}?${params}`;
-  console.log(`Fetching offers from OpenSea: ${url}`);
-
-  const response = await fetch(url, {
-    headers: {
-      'X-API-Key': OPENSEA_API_KEY,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenSea API error: ${response.status} ${response.statusText}`);
+  if (listedAfter) {
+    params.append('listed_after', listedAfter.toString());
   }
 
-  const data = await response.json() as { orders?: OpenSeaOffer[] };
+  let url: string | null = `${baseUrl}?${params}`;
+  let page = 1;
 
-  // Debug: Log first offer structure to verify API response format
-  if (data.orders && data.orders.length > 0) {
-    console.log('\n=== Debug: First offer structure ===');
-    const first = data.orders[0];
-    console.log(`  order_hash: ${first.order_hash}`);
-    console.log(`  cancelled: ${first.cancelled}`);
-    console.log(`  finalized: ${first.finalized}`);
-    console.log(`  current_price: ${first.current_price}`);
-    console.log(`  taker_asset_bundle: ${JSON.stringify(first.taker_asset_bundle)}`);
-    console.log('');
+  while (url) {
+    console.log(`Fetching page ${page}...`);
+    const response = await fetchWithRetry(url);
+    const data = await response.json() as { orders?: OpenSeaOffer[]; next?: string };
+
+    if (data.orders) {
+      allOffers.push(...data.orders);
+      console.log(`  Got ${data.orders.length} offers (total: ${allOffers.length})`);
+    }
+
+    if (data.next) {
+      const nextParams = new URLSearchParams({
+        collection_slug: 'ens',
+        limit: limit.toString(),
+        cursor: data.next,
+      });
+      if (tokenId) {
+        nextParams.append('token_ids', tokenId);
+      }
+      if (listedAfter) {
+        nextParams.append('listed_after', listedAfter.toString());
+      }
+      url = `${baseUrl}?${nextParams}`;
+      page++;
+      await sleep(300);
+    } else {
+      url = null;
+    }
   }
 
-  return data.orders || [];
+  return allOffers;
 }
 
-async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50) {
+async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 21) {
   console.log('=== OpenSea Offer Reconciliation ===\n');
-  console.log(`Mode: ${FIX_MODE ? 'FIX (will insert missing offers)' : 'CHECK ONLY (dry run)'}\n`);
+  console.log(`Mode: ${FIX_MODE ? 'FIX (will insert missing offers)' : 'CHECK ONLY (dry run)'}`);
+  console.log(`Looking back: ${days} days\n`);
+
+  // Compute listed_after timestamp
+  const listedAfter = Math.floor(Date.now() / 1000) - (days * 86400);
 
   // Fetch offers from OpenSea
-  const osOffers = await fetchOpenSeaOffers(tokenId, limit);
-  console.log(`Fetched ${osOffers.length} active offers from OpenSea\n`);
+  const osOffers = await fetchOpenSeaOffers(tokenId, limit, listedAfter);
+  console.log(`\nFetched ${osOffers.length} offers from OpenSea\n`);
 
   if (osOffers.length === 0) {
     console.log('No offers found on OpenSea.');
     return;
   }
-
-  // Debug: Show cancelled/finalized status for all offers
-  console.log('=== Debug: Offer statuses ===');
-  for (const o of osOffers) {
-    const name = o.taker_asset_bundle?.assets?.[0]?.name || 'unknown';
-    console.log(`  ${name}: cancelled=${o.cancelled}, finalized=${o.finalized}`);
-  }
-  console.log('');
 
   // Get order hashes to check against our database
   const orderHashes = osOffers
@@ -284,10 +320,11 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50) {
 }
 
 async function main() {
-  const { tokenId, limit } = parseArgs();
+  const { tokenId, limit, days } = parseArgs();
 
   console.log(`Token ID filter: ${tokenId || 'none (all offers)'}`);
   console.log(`Limit: ${limit}`);
+  console.log(`Days: ${days}`);
   console.log('');
 
   const pool = new Pool({
@@ -299,7 +336,7 @@ async function main() {
     await pool.query('SELECT 1');
     console.log('Database connected.\n');
 
-    await reconcileOffers(pool, tokenId, limit);
+    await reconcileOffers(pool, tokenId, limit, days);
   } catch (error) {
     console.error('Error:', error);
     process.exit(1);

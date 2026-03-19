@@ -54,7 +54,16 @@
     "reconcile-opensea-listings": "npx tsx src/scripts/reconcile-opensea-listings.ts",
     "reconcile-opensea-listings:fix": "npx tsx src/scripts/reconcile-opensea-listings.ts --fix",
     "import-opensea-listing": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js",
-    "import-opensea-listing:fix": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js --fix"
+    "import-opensea-listing:fix": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js --fix",
+    "import-rankings-short-name-auction": "npm run build && node dist/wal-listener/src/scripts/import-club-rankings-short-name-auction.js",
+    "check-unclaimed-deposits": "npm run build && node dist/wal-listener/src/scripts/check-unclaimed-deposits.js",
+    "check-unclaimed-deposits:dry": "npm run build && node dist/wal-listener/src/scripts/check-unclaimed-deposits.js --limit 10 --verbose",
+    "backfill-renewals": "npm run build && node dist/wal-listener/src/scripts/backfill-renewals.js",
+    "backfill-renewals:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-renewals.js --dry-run --verbose",
+    "backfill-registration-referrers": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js",
+    "backfill-registration-referrers:dry": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js --dry-run --verbose",
+    "backfill-renewal-activity": "npm run build && node dist/wal-listener/src/scripts/backfill-renewal-activity.js",
+    "backfill-renewal-activity:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-renewal-activity.js --dry-run --verbose"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.992.0",
