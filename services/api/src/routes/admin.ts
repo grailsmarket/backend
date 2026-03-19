@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, tierIdToName, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 
 const GrantSubscriptionSchema = z.object({
   address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address'),
   durationDays: z.number().int().min(1).max(3650),
+  tierId: z.number().int().min(1).optional().default(1),
   notes: z.string().optional(),
 });
 
@@ -46,18 +47,20 @@ export async function adminRoutes(fastify: FastifyInstance) {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + body.durationDays);
 
+        const tierName = tierIdToName(body.tierId);
+
         // Insert subscription record
         await client.query(
           `INSERT INTO user_subscriptions
-           (user_id, tier, status, started_at, expires_at, payment_method, granted_by, notes)
-           VALUES ($1, 'pro', 'active', NOW(), $2, 'admin_grant', $3, $4)`,
-          [userId, expiresAt, adminUserId, body.notes || null]
+           (user_id, tier, tier_id, status, started_at, expires_at, payment_method, granted_by, notes)
+           VALUES ($1, $2, $3, 'active', NOW(), $4, 'admin_grant', $5, $6)`,
+          [userId, tierName, body.tierId, expiresAt, adminUserId, body.notes || null]
         );
 
         // Update denormalized user fields
         await client.query(
-          `UPDATE users SET tier = 'pro', tier_expires_at = $2 WHERE id = $1`,
-          [userId, expiresAt]
+          `UPDATE users SET tier = $2, tier_id = $3, tier_expires_at = $4 WHERE id = $1`,
+          [userId, tierName, body.tierId, expiresAt]
         );
 
         await client.query('COMMIT');
@@ -67,7 +70,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
           data: {
             userId,
             address: normalizedAddress,
-            tier: 'pro',
+            tier: tierName,
+            tierId: body.tierId,
             expiresAt: expiresAt.toISOString(),
           },
           meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
@@ -125,7 +129,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
         // Downgrade user
         await client.query(
-          `UPDATE users SET tier = 'free', tier_expires_at = NULL WHERE id = $1`,
+          `UPDATE users SET tier = 'free', tier_id = 0, tier_expires_at = NULL WHERE id = $1`,
           [userId]
         );
 
@@ -170,7 +174,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
         `SELECT us.*, u.address
          FROM user_subscriptions us
          JOIN users u ON us.user_id = u.id
-         WHERE us.tier = 'pro' ${statusFilter}
+         WHERE us.tier_id > 0 ${statusFilter}
          ORDER BY us.created_at DESC
          LIMIT $1 OFFSET $2`,
         params
@@ -182,7 +186,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
       const countResult = await pool.query(
         `SELECT COUNT(*) FROM user_subscriptions
-         WHERE tier = 'pro' ${countStatusFilter}`,
+         WHERE tier_id > 0 ${countStatusFilter}`,
         countParams
       );
 

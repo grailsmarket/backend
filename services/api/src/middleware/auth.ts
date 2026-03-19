@@ -1,11 +1,12 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { config } from '../../../shared/src';
+import { config, TIER_RANK } from '../../../shared/src';
 
 export interface JWTPayload {
   sub: string;      // User ID
   address: string;  // Ethereum address
-  tier: string;     // 'free' | 'pro'
+  tier: string;     // 'free' | 'pro' | 'premium'
+  tierId: number;   // Contract tier ID (0=free, 1=pro, ...)
   tierExpiresAt: string | null; // ISO string or null
   isAdmin: boolean;
   iat: number;      // Issued at
@@ -25,6 +26,7 @@ export function generateToken(user: {
   id: number;
   address: string;
   tier?: string;
+  tier_id?: number;
   tier_expires_at?: string | null;
   is_admin?: boolean;
 }): string {
@@ -37,6 +39,7 @@ export function generateToken(user: {
     sub: user.id.toString(),
     address: user.address.toLowerCase(),
     tier: user.tier || 'free',
+    tierId: user.tier_id ?? 0,
     tierExpiresAt: user.tier_expires_at || null,
     isAdmin: user.is_admin || false,
   };
@@ -191,6 +194,60 @@ export function requireTier(...allowedTiers: string[]) {
         error: {
           code: 'INSUFFICIENT_TIER',
           message: `This feature requires one of: ${allowedTiers.join(', ')}. Your current tier: ${tier}`,
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+  };
+}
+
+/**
+ * Middleware to require a minimum tier level (hierarchical check).
+ * Unlike requireTier() which is exact-match, this allows any tier
+ * at or above the specified level (e.g., requireMinTier('pro') allows 'pro' and 'premium').
+ * Usage: { preHandler: [requireAuth, requireMinTier('pro')] }
+ */
+export function requireMinTier(minimumTier: string) {
+  const minRank = TIER_RANK[minimumTier] ?? 0;
+
+  return async function (request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) {
+      return reply.status(401).send({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const { tier, tierExpiresAt } = request.user;
+
+    // Check if tier has expired
+    if (tier !== 'free' && tierExpiresAt) {
+      const expiresAt = new Date(tierExpiresAt);
+      if (expiresAt < new Date()) {
+        if (minRank > (TIER_RANK['free'] ?? 0)) {
+          return reply.status(403).send({
+            success: false,
+            error: {
+              code: 'TIER_EXPIRED',
+              message: 'Your subscription has expired. Please renew or refresh your session.',
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+        return; // free-level access is allowed
+      }
+    }
+
+    if ((TIER_RANK[tier] ?? 0) < minRank) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'INSUFFICIENT_TIER',
+          message: `This feature requires at least: ${minimumTier}. Your current tier: ${tier}`,
         },
         meta: { timestamp: new Date().toISOString() },
       });

@@ -12,3 +12,4 @@ export * from './services/storage';
 export * from './utils/ens-worker';
 export * from './services/google-ads';
 export * from './services/offer-limits';
+export * from './constants/tiers';

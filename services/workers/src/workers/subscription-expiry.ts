@@ -54,7 +54,7 @@ export async function registerSubscriptionExpiryWorker(boss: PgBoss): Promise<vo
 
         if (activeCheck.rows.length === 0) {
           await pool.query(
-            `UPDATE users SET tier = 'free', tier_expires_at = NULL WHERE id = $1`,
+            `UPDATE users SET tier = 'free', tier_id = 0, tier_expires_at = NULL WHERE id = $1`,
             [userId]
           );
           logger.info({ userId }, 'User downgraded to free tier');

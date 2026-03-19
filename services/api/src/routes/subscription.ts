@@ -21,7 +21,7 @@ export async function subscriptionRoutes(fastify: FastifyInstance) {
     const userId = parseInt(request.user.sub);
 
     const userResult = await pool.query(
-      'SELECT tier, tier_expires_at FROM users WHERE id = $1',
+      'SELECT tier, tier_id, tier_expires_at FROM users WHERE id = $1',
       [userId]
     );
 
@@ -48,6 +48,7 @@ export async function subscriptionRoutes(fastify: FastifyInstance) {
       success: true,
       data: {
         tier: user.tier,
+        tierId: user.tier_id,
         tierExpiresAt: user.tier_expires_at,
         subscription: subResult.rows[0] || null,
       },
