@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
 import { ethers } from 'ethers';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
+import { getViewerIdentifier } from '../services/name-views';
+import { trackProfileView, getProfileViewCount } from '../services/profile-views';
 
 export async function profilesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -424,6 +426,9 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       `;
       const ensTimestampsResult = await pool.query(ensTimestampsQuery, [ownerAddress]);
 
+      // Fetch profile view count
+      const viewCount = await getProfileViewCount(ownerAddress);
+
       const response: APIResponse = {
         success: true,
         data: {
@@ -441,6 +446,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
             totalNames: ownedNamesResult.rows.length,
             listedNames: ownedNamesResult.rows.filter(n => n.is_listed).length,
             totalActivity: parseInt(activityCountResult.rows[0].total),
+            viewCount,
           },
         },
         meta: {
@@ -449,7 +455,17 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         },
       };
 
-      return reply.send(response);
+      // Send response immediately
+      reply.send(response);
+
+      // Track profile view asynchronously (fire-and-forget)
+      const viewer = getViewerIdentifier(request);
+      trackProfileView(ownerAddress, viewer.identifier, viewer.type).catch((error) => {
+        fastify.log.error(
+          { error, profileAddress: ownerAddress, viewerType: viewer.type },
+          'Failed to track profile view asynchronously'
+        );
+      });
     } catch (error: any) {
       fastify.log.error('Error fetching profile:', error);
       return reply.status(500).send({
