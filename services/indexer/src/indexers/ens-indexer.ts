@@ -633,6 +633,7 @@ export class ENSIndexer {
             base_cost_wei: baseCostWei,
             premium_wei: premiumWei,
             total_cost_wei: totalCostWei,
+            duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000),
             ...(referrer ? { referrer, registration_source: registrationSource } : {}),
           }),
           ensNameId,
@@ -688,9 +689,11 @@ export class ENSIndexer {
     }
 
     try {
-      // Find the ens_name_id for this name
+      // Find the ens_name_id and current expiry for this name
+      // Note: old expiry is available because Controller NameRenewed fires before
+      // the Base Registrar NameRenewed event that updates ens_names.expiry_date
       const ensNameResult = await this.pool.query(
-        'SELECT id FROM ens_names WHERE name = $1',
+        'SELECT id, expiry_date FROM ens_names WHERE name = $1',
         [fullName]
       );
 
@@ -700,21 +703,27 @@ export class ENSIndexer {
       }
 
       const ensNameId = ensNameResult.rows[0].id;
+      const oldExpiryDate = ensNameResult.rows[0].expiry_date;
+      const durationSeconds = oldExpiryDate
+        ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
+        : null;
 
       // Insert renewal record
       await this.pool.query(
         `INSERT INTO renewals (
-          ens_name_id, renewer_address, cost_wei,
+          ens_name_id, renewer_address, cost_wei, duration_seconds,
           new_expiry_date, referrer, name_length,
           transaction_hash, block_number, renewal_date, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
           cost_wei = EXCLUDED.cost_wei,
+          duration_seconds = COALESCE(EXCLUDED.duration_seconds, renewals.duration_seconds),
           referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
         [
           ensNameId,
           renewerAddress,
           costWei,
+          durationSeconds,
           expiryDate,
           referrer,
           nameLength,
@@ -745,6 +754,7 @@ export class ENSIndexer {
           log.blockNumber?.toString(),
           JSON.stringify({
             source: 'controller',
+            ...(durationSeconds != null ? { duration_seconds: durationSeconds } : {}),
             ...(referrer ? { referrer, registration_source: renewalSource } : {}),
           }),
           renewalDate,
@@ -1440,7 +1450,7 @@ export class ENSIndexer {
               1,
               log.transactionHash || null,
               log.blockNumber?.toString() || null,
-              JSON.stringify({ token_id: correctTokenId }),
+              JSON.stringify({ token_id: correctTokenId, duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000) }),
               registrationDate
             ]
           );
