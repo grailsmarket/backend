@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
 import { getViewerIdentifier } from '../services/name-views';
 import { trackProfileView, getProfileViewCount } from '../services/profile-views';
+import { optionalAuth } from '../middleware/auth';
 
 export async function profilesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -201,7 +202,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
    * Get profile data for an address or ENS name
    * Includes primary ENS name, ENS records, owned names, and activity
    */
-  fastify.get('/:addressOrName', async (request, reply) => {
+  fastify.get('/:addressOrName', { preHandler: optionalAuth }, async (request, reply) => {
     const { addressOrName } = request.params as { addressOrName: string };
 
     try {
