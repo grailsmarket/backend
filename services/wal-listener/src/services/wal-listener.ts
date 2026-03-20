@@ -531,11 +531,16 @@ export class WALListener {
       const boss = await getQueueClient();
 
       // Find all users watching this ENS name with the appropriate notification setting
+      // Use bool_or() to aggregate across multiple lists — notify if ANY list entry has the flag on
       const watchlistQuery = `
-        SELECT w.user_id, u.email, w.notify_on_listing, w.notify_on_price_change, w.notify_on_sale
+        SELECT w.user_id, u.email,
+          bool_or(w.notify_on_listing) as notify_on_listing,
+          bool_or(w.notify_on_price_change) as notify_on_price_change,
+          bool_or(w.notify_on_sale) as notify_on_sale
         FROM watchlist w
         JOIN users u ON u.id = w.user_id
         WHERE w.ens_name_id = $1
+        GROUP BY w.user_id, u.email
       `;
 
       const watchers = await this.pool.query(watchlistQuery, [listingData.ens_name_id]);
@@ -595,6 +600,7 @@ export class WALListener {
       const boss = await getQueueClient();
 
       // 1. Find all users watching this ENS name who want offer notifications
+      // Group by user to deduplicate across multiple lists
       const watchlistQuery = `
         SELECT w.user_id, u.email
         FROM watchlist w
@@ -603,6 +609,7 @@ export class WALListener {
           AND w.notify_on_offer = true
           AND (w.min_offer_threshold IS NULL
                OR ($2::NUMERIC / 1e18) >= w.min_offer_threshold)
+        GROUP BY w.user_id, u.email
       `;
 
       const watchers = await this.pool.query(watchlistQuery, [offerData.ens_name_id, offerData.offer_amount_wei]);

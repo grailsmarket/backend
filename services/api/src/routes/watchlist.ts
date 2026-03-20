@@ -8,6 +8,7 @@ import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '
 
 const AddToWatchlistSchema = z.object({
   ensName: z.string().min(1),
+  listId: z.number().int().positive().optional(),
   notifyOnSale: z.boolean().default(true),
   notifyOnOffer: z.boolean().default(true),
   notifyOnListing: z.boolean().default(true),
@@ -26,6 +27,7 @@ const UpdateWatchlistSchema = z.object({
 const WatchlistQuerySchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
+  listId: z.coerce.number().int().positive().optional(),
 });
 
 // Helper to properly parse boolean strings (unlike z.coerce.boolean which treats "false" as true)
@@ -102,8 +104,371 @@ const SearchWatchlistQuerySchema = z.object({
   }).optional(),
 });
 
+const MAX_LISTS_PER_USER = 20;
+
+const CreateListSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+});
+
+const UpdateListSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+});
+
+const BulkAddSchema = z.object({
+  listId: z.number().int().positive().optional(),
+  ensNames: z.array(z.string().min(1)).min(1).max(100),
+});
+
+const BulkDeleteSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+async function getOrCreateDefaultList(pool: any, userId: number): Promise<number> {
+  // Verify user exists before attempting FK-constrained insert
+  const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+  if (userCheck.rows.length === 0) {
+    const err: any = new Error('User not found');
+    err.code = 'USER_NOT_FOUND';
+    throw err;
+  }
+
+  // Try to find existing default list
+  const result = await pool.query(
+    'SELECT id FROM watchlist_lists WHERE user_id = $1 AND is_default = TRUE',
+    [userId]
+  );
+  if (result.rows.length > 0) {
+    return result.rows[0].id;
+  }
+  // Create default list
+  const insertResult = await pool.query(
+    `INSERT INTO watchlist_lists (user_id, name, is_default)
+     VALUES ($1, 'Watchlist', TRUE)
+     ON CONFLICT (user_id, name) DO UPDATE SET is_default = TRUE
+     RETURNING id`,
+    [userId]
+  );
+  return insertResult.rows[0].id;
+}
+
 export async function watchlistRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
+
+  // ─── List CRUD Endpoints ───
+
+  /**
+   * GET /api/v1/watchlist/lists
+   * Get all user's watchlists with item counts
+   */
+  fastify.get('/lists', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const userId = parseInt(request.user.sub);
+
+      const result = await pool.query(
+        `SELECT wl.id, wl.name, wl.is_default, wl.created_at, wl.updated_at,
+           COUNT(w.id)::int as item_count
+         FROM watchlist_lists wl
+         LEFT JOIN watchlist w ON w.list_id = wl.id
+         WHERE wl.user_id = $1
+         GROUP BY wl.id
+         ORDER BY wl.is_default DESC, wl.created_at ASC`,
+        [userId]
+      );
+
+      return reply.send({
+        success: true,
+        data: {
+          lists: result.rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            isDefault: row.is_default,
+            itemCount: row.item_count,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          })),
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      fastify.log.error('Error fetching watchlist lists:', error);
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch lists' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  /**
+   * POST /api/v1/watchlist/lists
+   * Create a new named watchlist
+   */
+  fastify.post('/lists', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const userId = parseInt(request.user.sub);
+      const data = CreateListSchema.parse(request.body);
+
+      // Check list limit
+      const countResult = await pool.query(
+        'SELECT COUNT(*)::int as count FROM watchlist_lists WHERE user_id = $1',
+        [userId]
+      );
+      if (countResult.rows[0].count >= MAX_LISTS_PER_USER) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'LIST_LIMIT_REACHED', message: `You can have at most ${MAX_LISTS_PER_USER} lists` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO watchlist_lists (user_id, name, is_default)
+         VALUES ($1, $2, FALSE)
+         RETURNING *`,
+        [userId, data.name]
+      );
+
+      const list = result.rows[0];
+      return reply.status(201).send({
+        success: true,
+        data: {
+          id: list.id,
+          name: list.name,
+          isDefault: list.is_default,
+          itemCount: 0,
+          createdAt: list.created_at,
+          updatedAt: list.updated_at,
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      fastify.log.error('Error creating watchlist list:', error);
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid request body', details: error.errors }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (error?.code === '23505') {
+        return reply.status(409).send({ success: false, error: { code: 'DUPLICATE_LIST_NAME', message: 'A list with this name already exists' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create list' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  /**
+   * PATCH /api/v1/watchlist/lists/:listId
+   * Rename a watchlist
+   */
+  fastify.patch('/lists/:listId', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const { listId } = request.params as { listId: string };
+      const userId = parseInt(request.user.sub);
+      const data = UpdateListSchema.parse(request.body);
+
+      // Verify ownership and check if default
+      const checkResult = await pool.query(
+        'SELECT user_id, is_default FROM watchlist_lists WHERE id = $1',
+        [parseInt(listId)]
+      );
+      if (checkResult.rows.length === 0) {
+        return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'List not found' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (checkResult.rows[0].user_id !== userId) {
+        return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'This list belongs to another user' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (checkResult.rows[0].is_default) {
+        return reply.status(400).send({ success: false, error: { code: 'CANNOT_RENAME_DEFAULT', message: 'The default watchlist cannot be renamed' }, meta: { timestamp: new Date().toISOString() } });
+      }
+
+      const result = await pool.query(
+        'UPDATE watchlist_lists SET name = $1 WHERE id = $2 RETURNING *',
+        [data.name, parseInt(listId)]
+      );
+
+      const list = result.rows[0];
+      return reply.send({
+        success: true,
+        data: {
+          id: list.id,
+          name: list.name,
+          isDefault: list.is_default,
+          updatedAt: list.updated_at,
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      fastify.log.error('Error renaming watchlist list:', error);
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid request body', details: error.errors }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (error?.code === '23505') {
+        return reply.status(409).send({ success: false, error: { code: 'DUPLICATE_LIST_NAME', message: 'A list with this name already exists' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to rename list' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  /**
+   * DELETE /api/v1/watchlist/lists/:listId
+   * Delete a watchlist (cascade deletes all entries)
+   */
+  fastify.delete('/lists/:listId', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const { listId } = request.params as { listId: string };
+      const userId = parseInt(request.user.sub);
+
+      const checkResult = await pool.query(
+        'SELECT user_id, is_default FROM watchlist_lists WHERE id = $1',
+        [parseInt(listId)]
+      );
+      if (checkResult.rows.length === 0) {
+        return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'List not found' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (checkResult.rows[0].user_id !== userId) {
+        return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'This list belongs to another user' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (checkResult.rows[0].is_default) {
+        return reply.status(400).send({ success: false, error: { code: 'CANNOT_DELETE_DEFAULT', message: 'The default watchlist cannot be deleted' }, meta: { timestamp: new Date().toISOString() } });
+      }
+
+      await pool.query('DELETE FROM watchlist_lists WHERE id = $1', [parseInt(listId)]);
+
+      return reply.send({
+        success: true,
+        data: { message: 'List deleted' },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      fastify.log.error('Error deleting watchlist list:', error);
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete list' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  // ─── Bulk Operations ───
+
+  /**
+   * POST /api/v1/watchlist/bulk
+   * Add multiple ENS names to a watchlist at once
+   */
+  fastify.post('/bulk', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const userId = parseInt(request.user.sub);
+      const data = BulkAddSchema.parse(request.body);
+
+      // Resolve list
+      let listId: number;
+      if (data.listId) {
+        const listCheck = await pool.query(
+          'SELECT id FROM watchlist_lists WHERE id = $1 AND user_id = $2',
+          [data.listId, userId]
+        );
+        if (listCheck.rows.length === 0) {
+          return reply.status(404).send({ success: false, error: { code: 'LIST_NOT_FOUND', message: 'List not found' }, meta: { timestamp: new Date().toISOString() } });
+        }
+        listId = data.listId;
+      } else {
+        listId = await getOrCreateDefaultList(pool, userId);
+      }
+
+      // Resolve ENS names to IDs
+      const ensResult = await pool.query(
+        'SELECT id, name FROM ens_names WHERE LOWER(name) = ANY($1::text[])',
+        [data.ensNames.map(n => n.toLowerCase())]
+      );
+
+      if (ensResult.rows.length === 0) {
+        return reply.status(404).send({ success: false, error: { code: 'ENS_NAMES_NOT_FOUND', message: 'None of the specified ENS names were found' }, meta: { timestamp: new Date().toISOString() } });
+      }
+
+      // Batch insert with ON CONFLICT DO NOTHING
+      const values: string[] = [];
+      const params: any[] = [listId, userId];
+      let paramCount = 3;
+
+      for (const row of ensResult.rows) {
+        values.push(`($1, $2, $${paramCount})`);
+        params.push(row.id);
+        paramCount++;
+      }
+
+      const insertResult = await pool.query(
+        `INSERT INTO watchlist (list_id, user_id, ens_name_id)
+         VALUES ${values.join(', ')}
+         ON CONFLICT (list_id, ens_name_id) DO NOTHING
+         RETURNING id`,
+        params
+      );
+
+      return reply.send({
+        success: true,
+        data: {
+          added: insertResult.rowCount,
+          alreadyExisted: ensResult.rows.length - (insertResult.rowCount || 0),
+          notFound: data.ensNames.length - ensResult.rows.length,
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      fastify.log.error('Error bulk adding to watchlist:', error);
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid request body', details: error.errors }, meta: { timestamp: new Date().toISOString() } });
+      }
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to bulk add to watchlist' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  /**
+   * DELETE /api/v1/watchlist/bulk
+   * Remove multiple watchlist entries at once
+   */
+  fastify.delete('/bulk', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const userId = parseInt(request.user.sub);
+      const data = BulkDeleteSchema.parse(request.body);
+
+      // Delete entries that belong to the user (verified via list ownership)
+      const result = await pool.query(
+        `DELETE FROM watchlist w
+         USING watchlist_lists wl
+         WHERE w.list_id = wl.id
+           AND wl.user_id = $1
+           AND w.id = ANY($2::int[])
+         RETURNING w.id`,
+        [userId, data.ids]
+      );
+
+      return reply.send({
+        success: true,
+        data: {
+          removed: result.rowCount || 0,
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+    } catch (error: any) {
+      fastify.log.error('Error bulk removing from watchlist:', error);
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid request body', details: error.errors }, meta: { timestamp: new Date().toISOString() } });
+      }
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to bulk remove from watchlist' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  // ─── Existing Watchlist Item Endpoints ───
 
   /**
    * GET /api/v1/watchlist
@@ -124,20 +489,43 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const { page, limit } = WatchlistQuerySchema.parse(request.query);
+      const { page, limit, listId } = WatchlistQuerySchema.parse(request.query);
       const userId = parseInt(request.user.sub);
       const offset = (page - 1) * limit;
 
+      // If listId provided, verify ownership; otherwise default to user's default list
+      let resolvedListId: number;
+      if (listId) {
+        const listCheck = await pool.query(
+          'SELECT id FROM watchlist_lists WHERE id = $1 AND user_id = $2',
+          [listId, userId]
+        );
+        if (listCheck.rows.length === 0) {
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'LIST_NOT_FOUND', message: 'List not found' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+        resolvedListId = listId;
+      } else {
+        resolvedListId = await getOrCreateDefaultList(pool, userId);
+      }
+
+      // Always filter by list_id
+      const whereClause = 'w.list_id = $1';
+      const whereParam = resolvedListId;
+
       // Get total count
       const countResult = await pool.query(
-        'SELECT COUNT(*) FROM watchlist WHERE user_id = $1',
-        [userId]
+        `SELECT COUNT(*) FROM watchlist w WHERE ${whereClause}`,
+        [whereParam]
       );
 
       const total = parseInt(countResult.rows[0].count);
       const totalPages = Math.ceil(total / limit);
 
-      // Get watchlist with ENS name details
+      // Get watchlist with ENS name details and list info
       const watchlistResult = await pool.query(
         `SELECT
           w.*,
@@ -145,6 +533,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           en.token_id,
           en.owner_address,
           en.expiry_date,
+          wl.id as list_id,
+          wl.name as list_name,
+          wl.is_default as list_is_default,
           EXISTS (
             SELECT 1 FROM listings l
             WHERE l.ens_name_id = w.ens_name_id AND l.status = 'active'
@@ -164,10 +555,11 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           ) as active_listing
         FROM watchlist w
         JOIN ens_names en ON w.ens_name_id = en.id
-        WHERE w.user_id = $1
+        JOIN watchlist_lists wl ON w.list_id = wl.id
+        WHERE ${whereClause}
         ORDER BY w.added_at DESC
         LIMIT $2 OFFSET $3`,
-        [userId, limit, offset]
+        [whereParam, limit, offset]
       );
 
       const response: APIResponse = {
@@ -178,6 +570,8 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
             userId: row.user_id,
             ensNameId: row.ens_name_id,
             ensName: row.name,
+            listId: row.list_id,
+            listName: row.list_name,
             notifyOnSale: row.notify_on_sale,
             notifyOnOffer: row.notify_on_offer,
             notifyOnListing: row.notify_on_listing,
@@ -210,6 +604,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error fetching watchlist:', error);
 
       return reply.status(500).send({
@@ -247,6 +644,25 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       const data = AddToWatchlistSchema.parse(request.body);
       const userId = parseInt(request.user.sub);
 
+      // Resolve list
+      let listId: number;
+      if (data.listId) {
+        const listCheck = await pool.query(
+          'SELECT id FROM watchlist_lists WHERE id = $1 AND user_id = $2',
+          [data.listId, userId]
+        );
+        if (listCheck.rows.length === 0) {
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'LIST_NOT_FOUND', message: 'List not found' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+        listId = data.listId;
+      } else {
+        listId = await getOrCreateDefaultList(pool, userId);
+      }
+
       // Resolve ENS name to ens_name_id
       const ensResult = await pool.query(
         'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
@@ -268,14 +684,14 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       const ensNameId = ensResult.rows[0].id;
 
-      // Insert or return existing watchlist entry
+      // Insert or update existing watchlist entry within the same list
       const watchlistResult = await pool.query(
         `INSERT INTO watchlist (
-          user_id, ens_name_id, notify_on_sale, notify_on_offer,
+          list_id, user_id, ens_name_id, notify_on_sale, notify_on_offer,
           notify_on_listing, notify_on_price_change, min_offer_threshold
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (user_id, ens_name_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (list_id, ens_name_id)
         DO UPDATE SET
           notify_on_sale = EXCLUDED.notify_on_sale,
           notify_on_offer = EXCLUDED.notify_on_offer,
@@ -284,6 +700,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           min_offer_threshold = EXCLUDED.min_offer_threshold
         RETURNING *`,
         [
+          listId,
           userId,
           ensNameId,
           data.notifyOnSale,
@@ -303,6 +720,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           userId: watchlist.user_id,
           ensNameId: watchlist.ens_name_id,
           ensName: data.ensName,
+          listId: watchlist.list_id,
           notifyOnSale: watchlist.notify_on_sale,
           notifyOnOffer: watchlist.notify_on_offer,
           notifyOnListing: watchlist.notify_on_listing,
@@ -318,6 +736,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error adding to watchlist:', error);
 
       if (error instanceof z.ZodError) {
@@ -616,26 +1037,13 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       const { name } = request.params as { name: string };
       const userId = parseInt(request.user.sub);
 
-      // Look up the ENS name and check if it's in the watchlist
-      const result = await pool.query(
-        `SELECT
-          w.id,
-          w.notify_on_sale,
-          w.notify_on_offer,
-          w.notify_on_listing,
-          w.notify_on_price_change,
-          w.min_offer_threshold,
-          w.added_at,
-          en.id as ens_name_id,
-          en.name
-        FROM ens_names en
-        LEFT JOIN watchlist w ON w.ens_name_id = en.id AND w.user_id = $1
-        WHERE LOWER(en.name) = LOWER($2)`,
-        [userId, name]
+      // Look up the ENS name
+      const ensResult = await pool.query(
+        'SELECT id, name FROM ens_names WHERE LOWER(name) = LOWER($1)',
+        [name]
       );
 
-      if (result.rows.length === 0) {
-        // ENS name doesn't exist in database
+      if (ensResult.rows.length === 0) {
         return reply.status(404).send({
           success: false,
           error: {
@@ -648,24 +1056,61 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const row = result.rows[0];
-      const isWatching = row.id !== null;
+      const ensNameId = ensResult.rows[0].id;
+      const ensName = ensResult.rows[0].name;
+
+      // Find all list entries for this name
+      const result = await pool.query(
+        `SELECT
+          w.id,
+          w.notify_on_sale,
+          w.notify_on_offer,
+          w.notify_on_listing,
+          w.notify_on_price_change,
+          w.min_offer_threshold,
+          w.added_at,
+          wl.id as list_id,
+          wl.name as list_name,
+          wl.is_default as list_is_default
+        FROM watchlist w
+        JOIN watchlist_lists wl ON w.list_id = wl.id
+        WHERE w.ens_name_id = $1 AND wl.user_id = $2
+        ORDER BY wl.is_default DESC, w.added_at ASC`,
+        [ensNameId, userId]
+      );
+
+      const isWatching = result.rows.length > 0;
+      const firstEntry = result.rows[0] || null;
 
       const response: APIResponse = {
         success: true,
         data: {
           isWatching,
-          watchlistEntry: isWatching ? {
-            id: row.id,
-            ensNameId: row.ens_name_id,
-            ensName: row.name,
+          // Backward-compatible single entry (from default list or first entry)
+          watchlistEntry: firstEntry ? {
+            id: firstEntry.id,
+            ensNameId,
+            ensName,
+            notifyOnSale: firstEntry.notify_on_sale,
+            notifyOnOffer: firstEntry.notify_on_offer,
+            notifyOnListing: firstEntry.notify_on_listing,
+            notifyOnPriceChange: firstEntry.notify_on_price_change,
+            minOfferThreshold: firstEntry.min_offer_threshold != null ? parseFloat(firstEntry.min_offer_threshold) : null,
+            addedAt: firstEntry.added_at,
+          } : null,
+          // Per-list entries
+          lists: result.rows.map(row => ({
+            listId: row.list_id,
+            listName: row.list_name,
+            listIsDefault: row.list_is_default,
+            watchlistEntryId: row.id,
             notifyOnSale: row.notify_on_sale,
             notifyOnOffer: row.notify_on_offer,
             notifyOnListing: row.notify_on_listing,
             notifyOnPriceChange: row.notify_on_price_change,
             minOfferThreshold: row.min_offer_threshold != null ? parseFloat(row.min_offer_threshold) : null,
             addedAt: row.added_at,
-          } : null,
+          })),
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -760,13 +1205,34 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         query.page = 1;
       }
 
-      // Get user's watchlist ENS names
+      // Support listId query param for filtering by specific list; default to user's default list
+      const searchListId = rawQuery.listId ? parseInt(rawQuery.listId, 10) : undefined;
+      let resolvedSearchListId: number;
+
+      if (searchListId) {
+        const listCheck = await pool.query(
+          'SELECT id FROM watchlist_lists WHERE id = $1 AND user_id = $2',
+          [searchListId, userId]
+        );
+        if (listCheck.rows.length === 0) {
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'LIST_NOT_FOUND', message: 'List not found' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+        resolvedSearchListId = searchListId;
+      } else {
+        resolvedSearchListId = await getOrCreateDefaultList(pool, userId);
+      }
+
+      // Get watchlist ENS names for the resolved list
       const watchlistResult = await pool.query(
         `SELECT en.name
          FROM watchlist w
          JOIN ens_names en ON w.ens_name_id = en.id
-         WHERE w.user_id = $1`,
-        [userId]
+         WHERE w.list_id = $1`,
+        [resolvedSearchListId]
       );
 
       if (watchlistResult.rows.length === 0) {
@@ -862,12 +1328,12 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
         // Watchers count filters
         if (filters.minWatchersCount !== undefined) {
-          whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
+          whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
           params.push(filters.minWatchersCount);
           paramCount++;
         }
         if (filters.maxWatchersCount !== undefined) {
-          whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
+          whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
           params.push(filters.maxWatchersCount);
           paramCount++;
         }
@@ -1072,7 +1538,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         let selectClause = '';
 
         if (query.sortBy === 'watchers_count') {
-          selectClause = 'en.name, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value';
+          selectClause = 'en.name, (SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) as sort_value';
           orderByClause = `ORDER BY sort_value ${sqlOrder}`;
         } else if (query.sortBy === 'view_count') {
           selectClause = 'en.name, COALESCE(en.view_count, 0) as sort_value';
@@ -1177,7 +1643,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       // Build results with watchlist metadata
       const results = await buildSearchResults(resultNames, userId);
 
-      // Fetch watchlist preferences for each result
+      // Fetch watchlist preferences for each result (including list info)
       const watchlistPrefsResult = await pool.query(
         `SELECT
           w.ens_name_id,
@@ -1188,33 +1654,47 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
           w.min_offer_threshold,
           w.id as watchlist_id,
           w.added_at,
+          w.list_id,
+          wl.name as list_name,
           en.name
         FROM watchlist w
         JOIN ens_names en ON w.ens_name_id = en.id
+        JOIN watchlist_lists wl ON w.list_id = wl.id
         WHERE w.user_id = $1 AND en.name = ANY($2)`,
         [userId, resultNames]
       );
 
-      // Create a map of name -> watchlist data
-      const watchlistMap = new Map();
+      // Create a map of name -> watchlist data (array of entries across lists)
+      const watchlistMap = new Map<string, any[]>();
       watchlistPrefsResult.rows.forEach(row => {
-        watchlistMap.set(row.name, {
+        const entry = {
           watchlistId: row.watchlist_id,
+          listId: row.list_id,
+          listName: row.list_name,
           notifyOnSale: row.notify_on_sale,
           notifyOnOffer: row.notify_on_offer,
           notifyOnListing: row.notify_on_listing,
           notifyOnPriceChange: row.notify_on_price_change,
           minOfferThreshold: row.min_offer_threshold != null ? parseFloat(row.min_offer_threshold) : null,
           addedAt: row.added_at,
-        });
+        };
+        const existing = watchlistMap.get(row.name);
+        if (existing) {
+          existing.push(entry);
+        } else {
+          watchlistMap.set(row.name, [entry]);
+        }
       });
 
       // Merge watchlist data with search results
       const enrichedResults = results.map(result => {
-        const watchlistData = watchlistMap.get(result.name);
+        const entries = watchlistMap.get(result.name);
         return {
           ...result,
-          watchlist: watchlistData || null,
+          // Backward-compatible: first entry (or null)
+          watchlist: entries?.[0] || null,
+          // All list entries
+          watchlistEntries: entries || [],
         };
       });
 
@@ -1241,6 +1721,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error searching watchlist:', error);
 
       return reply.status(500).send({
