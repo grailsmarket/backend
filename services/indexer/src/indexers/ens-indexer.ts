@@ -749,10 +749,10 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
-          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
         )`,
         [
           ensNameId,
@@ -877,10 +877,10 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
-          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
         )`,
         [
           ensNameId,
