@@ -124,6 +124,14 @@ const BulkDeleteSchema = z.object({
 });
 
 async function getOrCreateDefaultList(pool: any, userId: number): Promise<number> {
+  // Verify user exists before attempting FK-constrained insert
+  const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+  if (userCheck.rows.length === 0) {
+    const err: any = new Error('User not found');
+    err.code = 'USER_NOT_FOUND';
+    throw err;
+  }
+
   // Try to find existing default list
   const result = await pool.query(
     'SELECT id FROM watchlist_lists WHERE user_id = $1 AND is_default = TRUE',
@@ -410,6 +418,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
       });
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error bulk adding to watchlist:', error);
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid request body', details: error.errors }, meta: { timestamp: new Date().toISOString() } });
@@ -593,6 +604,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error fetching watchlist:', error);
 
       return reply.status(500).send({
@@ -722,6 +736,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error adding to watchlist:', error);
 
       if (error instanceof z.ZodError) {
@@ -1704,6 +1721,9 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      if (error.code === 'USER_NOT_FOUND') {
+        return reply.status(401).send({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User account not found. Please re-authenticate.' }, meta: { timestamp: new Date().toISOString() } });
+      }
       fastify.log.error('Error searching watchlist:', error);
 
       return reply.status(500).send({
