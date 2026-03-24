@@ -2,6 +2,7 @@ import {
   createPublicClient,
   http,
   decodeEventLog,
+  decodeFunctionData,
   type Log,
   type PublicClient,
   parseAbi,
@@ -42,6 +43,12 @@ const ENS_CONTROLLER_ABIS = {
 // RenewalReferred event ABI for bulk renewal Event Emitter contract
 const RENEWAL_REFERRED_ABI = parseAbi([
   'event RenewalReferred(string label, bytes32 indexed labelHash, uint256 cost, uint256 duration, bytes32 referrer)',
+]);
+
+// Controller function ABIs for decoding transaction calldata to extract duration
+const CONTROLLER_FUNCTION_ABI = parseAbi([
+  'function renew(string name, uint256 duration)',
+  'function renewWithReferrer(string name, uint256 duration, bytes32 referrer)',
 ]);
 
 // Name Wrapper ABI (ERC-1155 for wrapped names)
@@ -170,9 +177,10 @@ export class ENSIndexer {
     });
 
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
-    // Within a renewal transaction, the Controller NameRenewed event fires BEFORE the Base Registrar
-    // NameRenewed event (lower logIndex), so sorting ensures the Controller handler reads the old
-    // expiry_date before the Base Registrar handler updates it.
+    // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
+    // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
+    // The Controller handler guards against reading an already-updated expiry by decoding the
+    // duration from transaction calldata, falling back to treating duration <= 0 as null.
     const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
       ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
       ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
@@ -683,13 +691,29 @@ export class ENSIndexer {
       renewalDate = new Date();
     }
 
-    // Get the actual renewer (transaction sender)
+    // Get the actual renewer (transaction sender) and decode duration from calldata
     let renewerAddress = '0x0000000000000000000000000000000000000000';
+    let durationSeconds: number | null = null;
     if (log.transactionHash) {
       try {
         const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
         if (tx && tx.from) {
           renewerAddress = tx.from.toLowerCase();
+        }
+        // Try to decode the duration directly from transaction calldata
+        // This is more reliable than computing from expiry dates, since the Base Registrar
+        // NameRenewed event may have already updated ens_names.expiry_date
+        if (tx && tx.input) {
+          try {
+            const decoded = decodeFunctionData({
+              abi: CONTROLLER_FUNCTION_ABI,
+              data: tx.input,
+            });
+            const rawDuration = Number(decoded.args[1]);
+            durationSeconds = rawDuration > 0 ? rawDuration : null;
+          } catch {
+            // Tx was likely called through a wrapper contract — fall back to expiry computation below
+          }
         }
       } catch (txError: any) {
         logger.warn(`Could not fetch transaction for Controller NameRenewed event: ${txError.message}`);
@@ -697,10 +721,7 @@ export class ENSIndexer {
     }
 
     try {
-      // Find the ens_name_id and current expiry for this name.
-      // The old expiry is available because logs are processed in (blockNumber, logIndex) order,
-      // and the Controller NameRenewed event has a lower logIndex than the Base Registrar
-      // NameRenewed event within the same transaction.
+      // Find the ens_name_id for this name
       const ensNameResult = await this.pool.query(
         'SELECT id, expiry_date FROM ens_names WHERE name = $1',
         [fullName]
@@ -712,10 +733,16 @@ export class ENSIndexer {
       }
 
       const ensNameId = ensNameResult.rows[0].id;
-      const oldExpiryDate = ensNameResult.rows[0].expiry_date;
-      const durationSeconds = oldExpiryDate
-        ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
-        : null;
+
+      // If calldata decoding didn't produce a duration, fall back to expiry computation
+      // (clamped to null if <= 0, which happens when Base Registrar already updated the expiry)
+      if (durationSeconds == null) {
+        const oldExpiryDate = ensNameResult.rows[0].expiry_date;
+        const rawDuration = oldExpiryDate
+          ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
+          : null;
+        durationSeconds = (rawDuration != null && rawDuration > 0) ? rawDuration : null;
+      }
 
       // Insert renewal record
       await this.pool.query(
@@ -726,7 +753,11 @@ export class ENSIndexer {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
           cost_wei = EXCLUDED.cost_wei,
-          duration_seconds = COALESCE(EXCLUDED.duration_seconds, renewals.duration_seconds),
+          duration_seconds = CASE
+            WHEN EXCLUDED.duration_seconds IS NOT NULL AND EXCLUDED.duration_seconds > 0
+              THEN EXCLUDED.duration_seconds
+            ELSE renewals.duration_seconds
+          END,
           referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
         [
           ensNameId,
@@ -769,6 +800,23 @@ export class ENSIndexer {
           renewalDate,
         ]
       );
+
+      // If we have a valid duration, fix any existing activity_history record that has
+      // duration_seconds = 0 or missing (e.g., from a prior run that computed incorrectly)
+      if (durationSeconds != null && durationSeconds > 0) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET metadata = metadata || jsonb_build_object('duration_seconds', $1::bigint)
+           WHERE ens_name_id = $2
+             AND event_type = 'renewal'
+             AND transaction_hash = $3::varchar
+             AND (
+               metadata->>'duration_seconds' IS NULL
+               OR (metadata->>'duration_seconds')::bigint <= 0
+             )`,
+          [durationSeconds, ensNameId, log.transactionHash]
+        );
+      }
 
       logger.info(`Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`);
     } catch (error: any) {
@@ -897,6 +945,24 @@ export class ENSIndexer {
           renewalDate,
         ]
       );
+
+      // Always update activity_history with the authoritative duration from the blockchain event.
+      // The Controller handler may have already created a record with duration_seconds = 0 or null
+      // (since the Base Registrar updates expiry_date before the Controller handler runs).
+      if (durationSeconds > 0) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET metadata = metadata || jsonb_build_object('duration_seconds', $1::bigint)
+           WHERE ens_name_id = $2
+             AND event_type = 'renewal'
+             AND transaction_hash = $3::varchar
+             AND (
+               metadata->>'duration_seconds' IS NULL
+               OR (metadata->>'duration_seconds')::bigint <= 0
+             )`,
+          [durationSeconds, ensNameId, log.transactionHash]
+        );
+      }
 
       logger.info(`Recorded RenewalReferred for ${fullName}: cost=${costWei}, duration=${durationSeconds}s, referrer=${referrer}`);
     } catch (error: any) {
