@@ -285,7 +285,7 @@ async function main() {
   const queue = new PQueue({ concurrency: 5, interval: 1000, intervalCap: 10 });
   let processed = 0;
   let diagnosticSamples = 0;
-  const skipReasons = { receiptFailed: 0, noControllerEvents: 0, noNameMatch: 0, noPrevExpiry: 0 };
+  const skipReasons = { noNewExpiry: 0, noPrevExpiry: 0 };
 
   for (const [txHash, rows] of txHashToRows) {
     await queue.add(async () => {
@@ -326,37 +326,27 @@ async function main() {
         return;
       }
 
-      // Strategy 3: Use Controller event's `expires` + previous expiry from DB
-      if (receiptResult && receiptResult.controllerExpires.size > 0) {
-        for (const row of rows) {
-          const expiresEpoch = receiptResult.controllerExpires.get(row.name);
-          if (!expiresEpoch) {
-            stats.skipped++;
-            skipReasons.noNameMatch++;
-            if (VERBOSE) console.log(`  SKIP ${row.name} — name not found in controller events (found: ${[...receiptResult.controllerExpires.keys()].join(', ')})`);
-            continue;
-          }
-          const duration = await getDurationFromExpiry(pool, row.ens_name_id, row.id, expiresEpoch);
-          if (duration != null) {
-            await applyFix(pool, row, duration, 'expiry', stats);
-            stats.fixedFromExpiry++;
-          } else {
-            stats.skipped++;
-            skipReasons.noPrevExpiry++;
-            if (VERBOSE) console.log(`  SKIP ${row.name} — no previous expiry found in DB`);
-          }
+      // Strategy 3: Compute duration from new_expiry_date (already in renewals table,
+      // set from Controller event's `expires`) minus the previous known expiry from the DB.
+      // This doesn't depend on receipt name matching — uses the DB data directly.
+      for (const row of rows) {
+        if (!row.new_expiry_date) {
+          stats.skipped++;
+          skipReasons.noNewExpiry++;
+          if (VERBOSE) console.log(`  SKIP ${row.name} — no new_expiry_date in renewals table`);
+          continue;
         }
-        return;
+        const newExpiresEpoch = Math.floor(new Date(row.new_expiry_date).getTime() / 1000);
+        const duration = await getDurationFromExpiry(pool, row.ens_name_id, row.id, newExpiresEpoch);
+        if (duration != null) {
+          await applyFix(pool, row, duration, 'expiry', stats);
+          stats.fixedFromExpiry++;
+        } else {
+          stats.skipped++;
+          skipReasons.noPrevExpiry++;
+          if (VERBOSE) console.log(`  SKIP ${row.name} — no previous expiry found in DB`);
+        }
       }
-
-      // All strategies failed — no controller events in receipt
-      if (!receiptResult) {
-        skipReasons.receiptFailed += rows.length;
-      } else {
-        skipReasons.noControllerEvents += rows.length;
-      }
-      stats.skipped += rows.length;
-      if (VERBOSE) console.log(`  SKIP ${txHash.slice(0, 20)}... — ${!receiptResult ? 'receipt fetch failed' : 'no controller events in receipt'}`);
     });
   }
 
@@ -413,9 +403,7 @@ async function main() {
   console.log(`  Fixed (from expiry):    ${stats.fixedFromExpiry}`);
   console.log(`  Skipped (undecoded):    ${stats.skipped}`);
   if (stats.skipped > 0) {
-    console.log(`    - receipt fetch failed:    ${skipReasons.receiptFailed}`);
-    console.log(`    - no controller events:    ${skipReasons.noControllerEvents}`);
-    console.log(`    - name mismatch:           ${skipReasons.noNameMatch}`);
+    console.log(`    - no new_expiry_date:      ${skipReasons.noNewExpiry}`);
     console.log(`    - no previous expiry:      ${skipReasons.noPrevExpiry}`);
   }
   console.log(`  Failed:                 ${stats.failed}`);
