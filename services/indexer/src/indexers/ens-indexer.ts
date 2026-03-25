@@ -48,7 +48,8 @@ const RENEWAL_REFERRED_ABI = parseAbi([
 // Controller function ABIs for decoding transaction calldata to extract duration
 const CONTROLLER_FUNCTION_ABI = parseAbi([
   'function renew(string name, uint256 duration)',
-  'function renewWithReferrer(string name, uint256 duration, bytes32 referrer)',
+  'function renew(string name, uint256 duration, bytes32 referrer)',
+  'function renewAll(string[] names, uint256 duration)',
 ]);
 
 // Name Wrapper ABI (ERC-1155 for wrapped names)

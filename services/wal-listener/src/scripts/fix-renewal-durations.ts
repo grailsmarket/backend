@@ -46,7 +46,8 @@ const CONTROLLER_RENEWAL_V2_ABI = parseAbi([
 // Function ABIs for calldata decoding
 const CONTROLLER_FUNCTION_ABI = parseAbi([
   'function renew(string name, uint256 duration)',
-  'function renewWithReferrer(string name, uint256 duration, bytes32 referrer)',
+  'function renew(string name, uint256 duration, bytes32 referrer)',
+  'function renewAll(string[] names, uint256 duration)',
 ]);
 
 const EVENT_EMITTER_ADDRESS = config.blockchain.ensBulkRenewalEventEmitter.toLowerCase();
@@ -352,9 +353,10 @@ async function main() {
 
   await queue.onIdle();
 
-  // Backfill activity_history records that are missing duration_seconds entirely
-  // but have a valid value in the renewals table
-  console.log('\nBackfilling missing duration_seconds into activity_history...');
+  // Backfill activity_history records that have duration_seconds missing or 0,
+  // using the correct value from the renewals table. This catches cases where the
+  // Controller handler wrote 0 but the RenewalReferred handler later fixed renewals.
+  console.log('\nBackfilling duration_seconds into activity_history from renewals...');
   if (!DRY_RUN) {
     const backfillResult = await pool.query(`
       UPDATE activity_history ah
@@ -364,10 +366,13 @@ async function main() {
         AND ah.transaction_hash = rn.transaction_hash
         AND ah.ens_name_id = rn.ens_name_id
         AND rn.duration_seconds IS NOT NULL AND rn.duration_seconds > 0
-        AND (ah.metadata->>'duration_seconds') IS NULL
+        AND (
+          (ah.metadata->>'duration_seconds') IS NULL
+          OR (ah.metadata->>'duration_seconds')::bigint <= 0
+        )
     `);
     stats.activityUpdated += backfillResult.rowCount || 0;
-    console.log(`  Backfilled ${backfillResult.rowCount || 0} activity_history records`);
+    console.log(`  Updated ${backfillResult.rowCount || 0} activity_history records`);
   } else {
     const countResult = await pool.query(`
       SELECT COUNT(*) as cnt
@@ -375,9 +380,12 @@ async function main() {
       JOIN renewals rn ON ah.transaction_hash = rn.transaction_hash AND ah.ens_name_id = rn.ens_name_id
       WHERE ah.event_type = 'renewal'
         AND rn.duration_seconds IS NOT NULL AND rn.duration_seconds > 0
-        AND (ah.metadata->>'duration_seconds') IS NULL
+        AND (
+          (ah.metadata->>'duration_seconds') IS NULL
+          OR (ah.metadata->>'duration_seconds')::bigint <= 0
+        )
     `);
-    console.log(`  Would backfill ${countResult.rows[0].cnt} activity_history records`);
+    console.log(`  Would update ${countResult.rows[0].cnt} activity_history records`);
   }
 
   // Report any remaining 0s for manual investigation
