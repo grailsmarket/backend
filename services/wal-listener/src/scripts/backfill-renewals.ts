@@ -207,7 +207,7 @@ async function backfillRenewals(options: Options) {
                     new_expiry_date, referrer, name_length,
                     transaction_hash, block_number, renewal_date, metadata
                   ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                  ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
+                  ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET referrer = EXCLUDED.referrer WHERE renewals.referrer IS NULL
                   RETURNING id`,
                   [
                     ensNameId, renewerAddress, costWei,
@@ -285,7 +285,7 @@ async function backfillRenewals(options: Options) {
                     new_expiry_date, referrer, name_length,
                     transaction_hash, block_number, renewal_date, metadata
                   ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                  ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
+                  ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET referrer = EXCLUDED.referrer WHERE renewals.referrer IS NULL
                   RETURNING id`,
                   [
                     ensNameId, renewerAddress, costWei, durationSeconds,
