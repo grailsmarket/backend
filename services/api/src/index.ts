@@ -39,6 +39,21 @@ async function start() {
 
   await fastify.register(websocket);
 
+  // Custom JSON parser that preserves rawBody for Stripe webhook signature verification.
+  // Stripe requires the raw (unparsed) request body to verify webhook signatures.
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer' },
+    (req: any, body: Buffer, done: any) => {
+      req.rawBody = body;
+      try {
+        done(null, JSON.parse(body.toString()));
+      } catch (err) {
+        done(err, undefined);
+      }
+    },
+  );
+
   fastify.setErrorHandler(errorHandler as any);
 
   registerRoutes(fastify as any);

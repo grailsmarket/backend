@@ -106,6 +106,16 @@ const ConfigSchema = z.object({
     forcePathStyle: z.boolean().default(false),
     enabled: z.boolean(),
   }),
+  stripe: z.object({
+    secretKey: z.string().optional(),
+    webhookSecret: z.string().optional(),
+    plusMonthlyPriceId: z.string().optional(),
+    plusYearlyPriceId: z.string().optional(),
+    proMonthlyPriceId: z.string().optional(),
+    proYearlyPriceId: z.string().optional(),
+    goldMonthlyPriceId: z.string().optional(),
+    goldYearlyPriceId: z.string().optional(),
+  }),
 });
 
 const rawConfig = {
@@ -200,6 +210,16 @@ const rawConfig = {
     region: process.env.REGION || 'auto',
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
     enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
+  },
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    plusMonthlyPriceId: process.env.STRIPE_PLUS_MONTHLY_PRICE_ID,
+    plusYearlyPriceId: process.env.STRIPE_PLUS_YEARLY_PRICE_ID,
+    proMonthlyPriceId: process.env.STRIPE_PRO_MONTHLY_PRICE_ID,
+    proYearlyPriceId: process.env.STRIPE_PRO_YEARLY_PRICE_ID,
+    goldMonthlyPriceId: process.env.STRIPE_GOLD_MONTHLY_PRICE_ID,
+    goldYearlyPriceId: process.env.STRIPE_GOLD_YEARLY_PRICE_ID,
   },
 };
 

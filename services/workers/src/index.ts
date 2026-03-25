@@ -16,6 +16,7 @@ import { registerOnchainActivityWorker } from './workers/onchain-activity';
 import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
 import { registerPersonaClassificationWorker } from './workers/persona-classification';
 import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-backfill';
+import { registerStripeWebhookWorker } from './workers/stripe-webhook';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -65,6 +66,9 @@ async function start() {
 
     // Register Google metrics backfill worker
     await registerGoogleMetricsBackfillWorker(boss);
+
+    // Register Stripe webhook worker
+    await registerStripeWebhookWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

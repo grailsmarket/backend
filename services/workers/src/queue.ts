@@ -98,6 +98,12 @@ export interface BackfillGoogleMetricsJob {
   // Scheduled job — no payload needed
 }
 
+export interface ProcessStripeWebhookJob {
+  eventId: string;
+  eventType: string;
+  eventData: any;
+}
+
 // Queue names as constants
 export const QUEUE_NAMES = {
   EXPIRE_ORDERS: 'expire-orders',
@@ -112,4 +118,5 @@ export const QUEUE_NAMES = {
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
   CLEANUP_API_REQUEST_LOGS: 'cleanup-api-request-logs',
   BACKFILL_GOOGLE_METRICS: 'backfill-google-metrics',
+  PROCESS_STRIPE_WEBHOOK: 'process-stripe-webhook',
 } as const;

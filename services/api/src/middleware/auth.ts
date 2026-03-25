@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { config } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
+import { SUBSCRIPTION_TIERS, type SubscriptionTier } from '../services/stripe';
 
 export interface JWTPayload {
   sub: string;      // User ID
@@ -132,4 +133,74 @@ export async function optionalAuth(
     // Silently fail for optional auth
     request.log.debug('Optional auth failed:', error?.message || 'Unknown error');
   }
+}
+
+/**
+ * Middleware factory: requires the authenticated user to have at least the given subscription tier.
+ * Must be used after requireAuth (request.user must be set).
+ * Higher tiers include access to all lower-tier features.
+ *
+ * Usage: { preHandler: [requireAuth, requireTier('plus')] }
+ */
+export function requireTier(minimumTier: SubscriptionTier) {
+  return async function (request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) {
+      return reply.status(401).send({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const pool = getPostgresPool();
+    const result = await pool.query(
+      'SELECT subscription_tier, subscription_status FROM users WHERE id = $1',
+      [request.user.sub],
+    );
+
+    const user = result.rows[0];
+    if (!user) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // Check billing status is active (free users always pass status check)
+    const activeBillingStatuses = ['active', 'trialing', 'free'];
+    if (!activeBillingStatuses.includes(user.subscription_status)) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'SUBSCRIPTION_INACTIVE',
+          message: 'Your subscription is not active',
+          details: { status: user.subscription_status },
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // Check tier level
+    const userTierLevel = SUBSCRIPTION_TIERS[user.subscription_tier as SubscriptionTier] ?? 0;
+    const requiredTierLevel = SUBSCRIPTION_TIERS[minimumTier];
+
+    if (userTierLevel < requiredTierLevel) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'INSUFFICIENT_TIER',
+          message: `Requires ${minimumTier} tier or higher`,
+          details: {
+            required_tier: minimumTier,
+            current_tier: user.subscription_tier,
+          },
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+  };
 }

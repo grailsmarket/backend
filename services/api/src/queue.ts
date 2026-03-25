@@ -52,4 +52,5 @@ export const QUEUE_NAMES = {
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
+  PROCESS_STRIPE_WEBHOOK: 'process-stripe-webhook',
 } as const;

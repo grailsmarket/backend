@@ -415,3 +415,111 @@ Manage notification preferences: ${unsubscribeUrl}
     `.trim(),
   };
 }
+
+/**
+ * Build email template for subscription welcome (first activation)
+ */
+export function buildSubscriptionWelcomeEmail(
+  email: string,
+  tier: string,
+  frontendUrl: string,
+): { to: string; template: EmailTemplate } {
+  const tierName = tier.charAt(0).toUpperCase() + tier.slice(1);
+  const settingsUrl = `${frontendUrl}/settings/subscription`;
+
+  return {
+    to: email,
+    template: {
+      subject: `Welcome to Grails ${tierName}!`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Welcome to Grails ${tierName}!</h2>
+          <p>Your subscription is now active. You have access to all ${tierName}-tier features.</p>
+          <p><a href="${settingsUrl}" style="background-color: #7C3AED; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">Manage Subscription</a></p>
+          <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="font-size: 12px; color: #666;">
+            You received this email because you subscribed to Grails ${tierName}.
+          </p>
+        </div>
+      `,
+      text: `
+Welcome to Grails ${tierName}!
+
+Your subscription is now active. You have access to all ${tierName}-tier features.
+
+Manage your subscription: ${settingsUrl}
+      `.trim(),
+    },
+  };
+}
+
+/**
+ * Build email template for payment failure notification
+ */
+export function buildPaymentFailedEmail(
+  email: string,
+  frontendUrl: string,
+): { to: string; template: EmailTemplate } {
+  const settingsUrl = `${frontendUrl}/settings/subscription`;
+
+  return {
+    to: email,
+    template: {
+      subject: 'Payment Failed - Action Required',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Payment Failed</h2>
+          <p>We were unable to process your subscription payment. Please update your payment method to avoid losing access to your subscription features.</p>
+          <p><a href="${settingsUrl}" style="background-color: #EF4444; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">Update Payment Method</a></p>
+          <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="font-size: 12px; color: #666;">
+            You received this email because your Grails subscription payment failed.
+          </p>
+        </div>
+      `,
+      text: `
+Payment Failed
+
+We were unable to process your subscription payment. Please update your payment method to avoid losing access to your subscription features.
+
+Update your payment method: ${settingsUrl}
+      `.trim(),
+    },
+  };
+}
+
+/**
+ * Build email template for subscription cancellation
+ */
+export function buildSubscriptionCancelledEmail(
+  email: string,
+  frontendUrl: string,
+): { to: string; template: EmailTemplate } {
+  const subscribeUrl = `${frontendUrl}/pricing`;
+
+  return {
+    to: email,
+    template: {
+      subject: 'Your Grails Subscription Has Ended',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Subscription Ended</h2>
+          <p>Your Grails subscription has ended. You've been moved to the free tier.</p>
+          <p>If you'd like to resubscribe, you can do so at any time:</p>
+          <p><a href="${subscribeUrl}" style="background-color: #7C3AED; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">View Plans</a></p>
+          <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="font-size: 12px; color: #666;">
+            You received this email because your Grails subscription ended.
+          </p>
+        </div>
+      `,
+      text: `
+Subscription Ended
+
+Your Grails subscription has ended. You've been moved to the free tier.
+
+If you'd like to resubscribe, you can do so at any time: ${subscribeUrl}
+      `.trim(),
+    },
+  };
+}
