@@ -11,9 +11,9 @@ const UpdateProfileSchema = z.object({
   email: z.string().email().optional(),
   telegram: z.string().max(100).optional(),
   discord: z.string().max(100).optional(),
-  notify_on_offer_received: z.boolean().optional(),
-  notify_on_listing_sold: z.boolean().optional(),
-  min_offer_threshold: z.number().min(0).nullable().optional(),
+  notifyOnOfferReceived: z.boolean().optional(),
+  notifyOnListingSold: z.boolean().optional(),
+  minOfferThreshold: z.number().min(0).nullable().optional(),
 });
 
 const AddressParamsSchema = z.object({
@@ -295,21 +295,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
-      if (updates.notify_on_offer_received !== undefined) {
+      if (updates.notifyOnOfferReceived !== undefined) {
         updateFields.push(`notify_on_offer_received = $${paramCount}`);
-        values.push(updates.notify_on_offer_received);
+        values.push(updates.notifyOnOfferReceived);
         paramCount++;
       }
 
-      if (updates.notify_on_listing_sold !== undefined) {
+      if (updates.notifyOnListingSold !== undefined) {
         updateFields.push(`notify_on_listing_sold = $${paramCount}`);
-        values.push(updates.notify_on_listing_sold);
+        values.push(updates.notifyOnListingSold);
         paramCount++;
       }
 
-      if (updates.min_offer_threshold !== undefined) {
+      if (updates.minOfferThreshold !== undefined) {
         updateFields.push(`min_offer_threshold = $${paramCount}`);
-        values.push(updates.min_offer_threshold);
+        values.push(updates.minOfferThreshold);
         paramCount++;
       }
 
