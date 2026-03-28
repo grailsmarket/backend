@@ -947,6 +947,27 @@ export class ENSIndexer {
         ]
       );
 
+      // If the Controller handler already created this record with platform='blockchain'
+      // (because the Original Controller NameRenewed event has no referrer param),
+      // update it with the correct platform and referrer from the RenewalReferred event.
+      if (renewalSource) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET platform = $1,
+               metadata = metadata || $2::jsonb
+           WHERE ens_name_id = $3
+             AND event_type = 'renewal'
+             AND transaction_hash = $4::varchar
+             AND platform = 'blockchain'`,
+          [
+            renewalSource,
+            JSON.stringify({ referrer, registration_source: renewalSource }),
+            ensNameId,
+            log.transactionHash,
+          ]
+        );
+      }
+
       // Always update activity_history with the authoritative duration from the blockchain event.
       // The Controller handler may have already created a record with duration_seconds = 0 or null
       // (since the Base Registrar updates expiry_date before the Controller handler runs).
