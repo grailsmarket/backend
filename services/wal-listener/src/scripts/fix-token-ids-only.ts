@@ -198,8 +198,8 @@ async function fixTokenIds() {
           // Check if token ID needs updating
           if (currentTokenId !== correctTokenId) {
             const correctOwner = domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
-              ? domain.wrappedOwner.id
-              : domain.owner.id;
+              ? domain.wrappedOwner.id?.toLowerCase()
+              : domain.owner.id?.toLowerCase();
 
             console.log(`  [UPDATE] ${name}`);
             console.log(`    Current:  ${currentTokenId}`);
