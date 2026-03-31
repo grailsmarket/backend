@@ -287,7 +287,7 @@ function enrichRow(
   return {
     name,
     token_id: row.token_id,
-    owner: row.owner_address,
+    owner: row.owner_address?.toLowerCase() || null,
     price: safeParsePrice(listingPrice),
     price_usd: priceUsd,
     currency_address: listingCurrency,
