@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
+import { requireAuth } from '../middleware/auth';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -19,8 +20,20 @@ const UpdateOfferSchema = z.object({
 export async function offersRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
     const body = CreateOfferSchema.parse(request.body);
+
+    // Verify buyer address matches authenticated user
+    if (body.buyerAddress.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Buyer address does not match authenticated user',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     // Validate fee for Grails marketplace offers (offers are always 'grails' source)
     const feeValidation = validateFeeInOrder(body.orderData, 'grails');
@@ -242,9 +255,71 @@ export async function offersRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.put('/:id', async (request, reply) => {
+  fastify.put('/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = UpdateOfferSchema.parse(request.body);
+
+    // Verify the user is authorized to update this offer
+    const offerCheck = await pool.query(`
+      SELECT o.buyer_address, o.status, en.owner_address
+      FROM offers o
+      JOIN ens_names en ON o.ens_name_id = en.id
+      WHERE o.id = $1
+    `, [id]);
+
+    if (offerCheck.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'OFFER_NOT_FOUND',
+          message: 'Offer not found',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const offer = offerCheck.rows[0];
+    const userAddr = request.user!.address.toLowerCase();
+    const isBuyer = offer.buyer_address.toLowerCase() === userAddr;
+    const isOwner = offer.owner_address.toLowerCase() === userAddr;
+
+    if (body.status === 'rejected') {
+      // Only the buyer (offer creator) can reject/cancel their own offer
+      if (!isBuyer) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Only the offer creator can cancel this offer',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+    } else if (body.status === 'accepted') {
+      // Only the ENS name owner can accept an offer on their name
+      if (!isOwner) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Only the ENS name owner can accept this offer',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+    } else {
+      // For other updates, require the user to be either the buyer or the name owner
+      if (!isBuyer && !isOwner) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Not authorized to update this offer',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+    }
 
     const updates: string[] = [];
     const values: any[] = [];
