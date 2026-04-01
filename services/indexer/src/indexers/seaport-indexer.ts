@@ -405,6 +405,27 @@ export class SeaportIndexer {
 
         const ensNameId = nameResult.rows[0].id;
 
+        // Fallback: if order_hash didn't match an offer, try by ens_name_id + buyer_address
+        if (!offerId && buyerAddress) {
+          const fallbackOfferQuery = `
+            SELECT id, source FROM offers
+            WHERE ens_name_id = $1
+            AND buyer_address = $2
+            AND status IN ('pending', 'accepted')
+            ORDER BY created_at DESC
+            LIMIT 1
+          `;
+          const fallbackResult = await this.pool.query(fallbackOfferQuery, [
+            ensNameId,
+            buyerAddress.toLowerCase(),
+          ]);
+          if (fallbackResult.rows.length > 0) {
+            offerId = fallbackResult.rows[0].id;
+            offerSource = fallbackResult.rows[0].source;
+            logger.info(`Fallback offer match for ENS ${nameToStore}: offerId=${offerId}, source=${offerSource}`);
+          }
+        }
+
         logger.debug(`Seaport sale for ENS ${nameToStore} (token ${tokenId})`);
 
         const saleDate = new Date(Number(block.timestamp) * 1000);
