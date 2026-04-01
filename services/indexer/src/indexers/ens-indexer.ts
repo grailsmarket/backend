@@ -728,16 +728,35 @@ export class ENSIndexer {
         [fullName]
       );
 
-      if (ensNameResult.rows.length === 0) {
-        logger.debug(`Controller NameRenewed: name ${fullName} not yet in ens_names, skipping`);
-        return;
-      }
+      let ensNameId: number;
 
-      const ensNameId = ensNameResult.rows[0].id;
+      if (ensNameResult.rows.length === 0) {
+        // Name not in ens_names (registered before indexer started or backfill gap).
+        // Create a minimal record so the renewal isn't lost.
+        const labelHash = isV2 ? args.labelhash : args.label;
+        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const attributes = this.calculateNameAttributes(fullName);
+
+        logger.info(`Controller NameRenewed: name ${fullName} not in ens_names, creating record`);
+
+        const insertResult = await this.pool.query(
+          `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, has_numbers, has_emoji)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (name) DO UPDATE SET
+             expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+             updated_at = NOW()
+           RETURNING id`,
+          [tokenIdStr, fullName, renewerAddress, expiryDate, attributes.has_numbers, attributes.has_emoji]
+        );
+
+        ensNameId = insertResult.rows[0].id;
+      } else {
+        ensNameId = ensNameResult.rows[0].id;
+      }
 
       // If calldata decoding didn't produce a duration, fall back to expiry computation
       // (clamped to null if <= 0, which happens when Base Registrar already updated the expiry)
-      if (durationSeconds == null) {
+      if (durationSeconds == null && ensNameResult.rows.length > 0) {
         const oldExpiryDate = ensNameResult.rows[0].expiry_date;
         const rawDuration = oldExpiryDate
           ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
@@ -884,15 +903,34 @@ export class ENSIndexer {
         [fullName]
       );
 
+      let ensNameId: number;
+
       if (ensNameResult.rows.length === 0) {
-        logger.debug(`RenewalReferred: name ${fullName} not found in ens_names, skipping`);
-        return;
+        // Name not in ens_names (registered before indexer started or backfill gap).
+        // Create a minimal record so the renewal isn't lost.
+        const labelHash = decodedLog.args.labelHash;
+        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const attributes = this.calculateNameAttributes(fullName);
+
+        logger.info(`RenewalReferred: name ${fullName} not in ens_names, creating record`);
+
+        const insertResult = await this.pool.query(
+          `INSERT INTO ens_names (token_id, name, owner_address, has_numbers, has_emoji)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (name) DO UPDATE SET
+             updated_at = NOW()
+           RETURNING id`,
+          [tokenIdStr, fullName, renewerAddress, attributes.has_numbers, attributes.has_emoji]
+        );
+
+        ensNameId = insertResult.rows[0].id;
+      } else {
+        ensNameId = ensNameResult.rows[0].id;
       }
 
-      const ensNameId = ensNameResult.rows[0].id;
       // Use existing expiry_date as the new_expiry_date (the Base Registrar NameRenewed event
       // will have already updated it, or will update it shortly)
-      const newExpiryDate = ensNameResult.rows[0].expiry_date || renewalDate;
+      const newExpiryDate = (ensNameResult.rows.length > 0 && ensNameResult.rows[0].expiry_date) || renewalDate;
 
       // Insert renewal record
       await this.pool.query(
