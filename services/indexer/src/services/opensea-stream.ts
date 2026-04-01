@@ -676,15 +676,16 @@ export class OpenSeaStreamListener {
         }
       }
 
-      // If no listing found, check if this is an offer acceptance
+      // Always check for matching offer (not just when no listing found).
+      // For offer acceptances, the offer source is the authoritative platform.
       let offerId: number | undefined;
       let offerSource: string | null = null;
-      if (!listingId && buyerAddress) {
+      if (buyerAddress) {
         const findOfferQuery = `
           SELECT id, source FROM offers
           WHERE ens_name_id = $1
           AND buyer_address = $2
-          AND status = 'pending'
+          AND status IN ('pending', 'accepted')
           ORDER BY created_at DESC
           LIMIT 1
         `;
@@ -700,8 +701,11 @@ export class OpenSeaStreamListener {
         }
       }
 
-      // Record sale in sales table - use listing/offer source if found, otherwise default to 'opensea'
-      const saleSource = listingSource || offerSource || 'opensea';
+      // For offer-driven sales, use the offer source (it tells us which platform facilitated the sale).
+      // For direct listing purchases, use the listing source.
+      const saleSource = offerId
+        ? (offerSource || listingSource || 'opensea')
+        : (listingSource || offerSource || 'opensea');
       const txHash = transaction?.hash || `opensea_${Date.now()}`;
       let saleAlreadyExists = false;
 

@@ -97,6 +97,19 @@ export async function createSale(params: CreateSaleParams) {
       console.log(`[createSale] Upgraded synthetic hash for sale ${existingSale.id}: ${existingSale.transaction_hash} -> ${transactionHash}`);
       const sale = upgradeResult.rows[0];
 
+      // Update activity records created by the trigger to reflect corrected source/hash
+      if (sale) {
+        try {
+          await pool.query(`
+            UPDATE activity_history
+            SET platform = $1, transaction_hash = $2, block_number = $3
+            WHERE (metadata->>'sale_id')::integer = $4
+          `, [sale.source, transactionHash, blockNumber, existingSale.id]);
+        } catch (err) {
+          console.error(`[createSale] Failed to update activity records for sale ${existingSale.id}:`, err);
+        }
+      }
+
       // Return with clubs info
       if (sale) {
         try {
