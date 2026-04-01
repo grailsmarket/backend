@@ -6,6 +6,7 @@ import {
   validateBrokeredListingFees,
 } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
+import { requireAuth } from '../middleware/auth';
 
 const CreateBrokeredListingSchema = z.object({
   token_id: z.string(),
@@ -42,7 +43,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/v1/brokered-listings - Create a brokered listing
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
     // Validate request body with Zod
     const parseResult = CreateBrokeredListingSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -56,6 +57,19 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
       });
     }
     const body = parseResult.data;
+
+    // Verify seller address matches authenticated user
+    if (body.seller_address.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Seller address does not match authenticated user',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
     const brokerConfig = getBrokerFeeConfig();
 
     // Validate seller !== broker (no self-brokering)
