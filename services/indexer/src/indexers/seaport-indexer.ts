@@ -296,10 +296,11 @@ export class SeaportIndexer {
     const listingId = listingResult.rows.length > 0 ? listingResult.rows[0].id : undefined;
     const listingSource = listingResult.rows.length > 0 ? listingResult.rows[0].source : null;
 
-    // If no listing found, check if this is an offer acceptance
+    // Always check for matching offer (not just when no listing found).
+    // For offer acceptances, the offer source is the authoritative platform.
     let offerId: number | undefined;
     let offerSource: string | null = null;
-    if (!listingId) {
+    {
       const findOfferQuery = `
         SELECT id, source FROM offers
         WHERE order_hash = $1
@@ -413,8 +414,11 @@ export class SeaportIndexer {
         const saleAlreadyExists = existingSaleResult.rows.length > 0;
 
         if (!saleAlreadyExists) {
-          // Record sale in sales table - use listing/offer source or default to 'opensea'
-          const saleSource = listingSource || offerSource || 'opensea';
+          // For offer-driven sales, use the offer source (it tells us which platform facilitated the sale).
+          // For direct listing purchases, use the listing source.
+          const saleSource = (offerId || isOfferAcceptance)
+            ? (offerSource || listingSource || 'opensea')
+            : (listingSource || offerSource || 'opensea');
           try {
             const sale = await createSale({
               ensNameId,

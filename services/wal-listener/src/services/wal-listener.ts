@@ -328,16 +328,8 @@ export class WALListener {
 
             // Listing fulfilled (sold)
             if (change.oldData.status === 'active' && change.data.status === 'sold') {
-              // We need to get the buyer address from somewhere
-              // This might be in metadata or we might need to join with a transaction table
-              const buyerAddress = change.data.buyer_address || change.data.metadata?.buyer_address;
-              if (buyerAddress) {
-                await this.activityHistory.handleListingFulfilled(
-                  change.data,
-                  buyerAddress,
-                  change.data.transaction_hash
-                );
-              }
+              // NOTE: 'bought' and 'sold' activity records are created by the
+              // create_activity_on_sale() database trigger when the sale is inserted.
 
               // Notify the seller that their listing was sold
               await this.publishOwnerNotificationForSale(change.data);
