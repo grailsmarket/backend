@@ -89,7 +89,7 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const offset = (query.page - 1) * query.limit;
 
     const [countResult, dataResult] = await Promise.all([
-      pool.query('SELECT COUNT(*) FROM watchlist WHERE user_id = $1', [userId]),
+      pool.query('SELECT COUNT(DISTINCT ens_name_id) FROM watchlist WHERE user_id = $1', [userId]),
 
       pool.query(
         `SELECT

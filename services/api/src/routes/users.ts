@@ -5,14 +5,15 @@ import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { getQueueClient } from '../queue';
 import { fetchBalances } from '../services/balances';
+import { fetchUnclaimedDeposits } from '../services/unclaimed-deposits';
 
 const UpdateProfileSchema = z.object({
   email: z.string().email().optional(),
   telegram: z.string().max(100).optional(),
   discord: z.string().max(100).optional(),
-  notify_on_offer_received: z.boolean().optional(),
-  notify_on_listing_sold: z.boolean().optional(),
-  min_offer_threshold: z.number().min(0).nullable().optional(),
+  notifyOnOfferReceived: z.boolean().optional(),
+  notifyOnListingSold: z.boolean().optional(),
+  minOfferThreshold: z.number().min(0).nullable().optional(),
 });
 
 const AddressParamsSchema = z.object({
@@ -173,6 +174,56 @@ export async function usersRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GET /api/v1/users/:address/unclaimed-deposits
+   * Check for unclaimed ENS old registrar deposits (Vickrey auction deeds)
+   */
+  fastify.get('/:address/unclaimed-deposits', async (request, reply) => {
+    try {
+      const { address } = AddressParamsSchema.parse(request.params);
+
+      const result = await fetchUnclaimedDeposits(address);
+
+      const response: APIResponse = {
+        success: true,
+        data: result,
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error({ error, address: (request.params as any)?.address }, 'Error fetching unclaimed deposits');
+
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid address format',
+            details: error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to fetch unclaimed deposits',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
    * PATCH /api/v1/users/me
    * Update current user's profile
    */
@@ -244,21 +295,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
-      if (updates.notify_on_offer_received !== undefined) {
+      if (updates.notifyOnOfferReceived !== undefined) {
         updateFields.push(`notify_on_offer_received = $${paramCount}`);
-        values.push(updates.notify_on_offer_received);
+        values.push(updates.notifyOnOfferReceived);
         paramCount++;
       }
 
-      if (updates.notify_on_listing_sold !== undefined) {
+      if (updates.notifyOnListingSold !== undefined) {
         updateFields.push(`notify_on_listing_sold = $${paramCount}`);
-        values.push(updates.notify_on_listing_sold);
+        values.push(updates.notifyOnListingSold);
         paramCount++;
       }
 
-      if (updates.min_offer_threshold !== undefined) {
+      if (updates.minOfferThreshold !== undefined) {
         updateFields.push(`min_offer_threshold = $${paramCount}`);
-        values.push(updates.min_offer_threshold);
+        values.push(updates.minOfferThreshold);
         paramCount++;
       }
 

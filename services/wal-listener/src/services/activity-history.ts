@@ -99,7 +99,7 @@ export class ActivityHistoryService {
                  (metadata->>'listing_id')::integer = $4
                  OR (metadata->>'offer_id')::integer = $5
                )
-               AND created_at > NOW() - INTERVAL '1 minute'
+               AND created_at > NOW() - INTERVAL '24 hours'
              LIMIT 1`,
             [ens_name_id, event_type, actor_address, listingId || null, offerId || null]
           );
@@ -338,43 +338,18 @@ export class ActivityHistoryService {
       },
     });
 
-    // Create buy/sell records
-    await this.createSaleRecords({
-      ens_name_id: offer.ens_name_id,
-      buyer_address: offer.buyer_address,
-      seller_address: seller_address,
-      platform: offer.source || 'grails',
-      price_wei: offer.offer_amount_wei,
-      currency_address: offer.currency_address,
-      metadata: {
-        offer_id: offer.id,
-        sale_type: 'offer_accepted',
-      },
-    });
+    // NOTE: 'bought' and 'sold' activity records are created by the
+    // create_activity_on_sale() database trigger when the sale is inserted.
+    // Do NOT create them here to avoid duplicates.
   }
 
   /**
    * Handle listing fulfillment (direct purchase - creates buy/sell records)
    */
-  async handleListingFulfilled(listing: any, buyer_address: string, transaction_hash?: string): Promise<void> {
-    if (!listing.ens_name_id || !listing.seller_address) {
-      logger.warn('Missing required fields for listing fulfilled event');
-      return;
-    }
-
-    await this.createSaleRecords({
-      ens_name_id: listing.ens_name_id,
-      buyer_address: buyer_address,
-      seller_address: listing.seller_address,
-      platform: listing.source || 'grails',
-      price_wei: listing.price_wei,
-      currency_address: listing.currency_address,
-      transaction_hash,
-      metadata: {
-        listing_id: listing.id,
-        sale_type: 'listing_fulfilled',
-      },
-    });
+  async handleListingFulfilled(_listing: any, _buyer_address: string, _transaction_hash?: string): Promise<void> {
+    // NOTE: 'bought' and 'sold' activity records are created by the
+    // create_activity_on_sale() database trigger when the sale is inserted.
+    // This method is intentionally a no-op to avoid duplicates.
   }
 
   /**

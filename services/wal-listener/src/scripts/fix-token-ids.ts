@@ -316,8 +316,8 @@ async function fixTokenIds() {
           // Check if token ID or name needs updating
           if (currentTokenId !== correctTokenId || isPlaceholder) {
             const correctOwner = domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
-              ? domain.wrappedOwner.id
-              : domain.owner.id;
+              ? domain.wrappedOwner.id?.toLowerCase()
+              : domain.owner.id?.toLowerCase();
 
             console.log(`  [UPDATE] ${name}${isPlaceholder ? ` -> ${correctName}` : ''}`);
             console.log(`    Current:  ${currentTokenId}`);

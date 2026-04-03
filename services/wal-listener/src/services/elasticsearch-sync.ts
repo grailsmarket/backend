@@ -428,7 +428,7 @@ export class ElasticsearchSync {
     return {
       name,
       token_id: data.token_id,
-      owner: data.owner_address,
+      owner: data.owner_address?.toLowerCase() || null,
       price: safeParsePrice(data.listing_price),
       price_usd: priceUsd,
       currency_address: data.listing_currency_address || null,

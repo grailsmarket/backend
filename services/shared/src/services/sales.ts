@@ -41,6 +41,90 @@ export async function createSale(params: CreateSaleParams) {
     saleDate
   } = params;
 
+  const normalizedSeller = sellerAddress.toLowerCase();
+  const normalizedBuyer = buyerAddress.toLowerCase();
+
+  // Multi-criteria dedup check: order_hash, transaction_hash, or fuzzy match (same parties within 60s)
+  const dedupQuery = `
+    SELECT * FROM sales
+    WHERE ens_name_id = $1 AND (
+      (order_hash IS NOT NULL AND order_hash = $2)
+      OR (transaction_hash = $3)
+      OR (seller_address = $4 AND buyer_address = $5
+          AND sale_date BETWEEN ($6::timestamptz - INTERVAL '60 seconds')
+                            AND ($6::timestamptz + INTERVAL '60 seconds'))
+    )
+    LIMIT 1
+  `;
+
+  const dedupResult = await pool.query(dedupQuery, [
+    ensNameId,
+    orderHash || null,
+    transactionHash,
+    normalizedSeller,
+    normalizedBuyer,
+    saleDate
+  ]);
+
+  const existingSale = dedupResult.rows[0];
+
+  if (existingSale) {
+    const existingHasSyntheticHash = existingSale.transaction_hash?.startsWith('opensea_');
+    const newHasRealHash = transactionHash?.startsWith('0x');
+
+    // If existing sale has a synthetic hash and we now have the real blockchain hash, upgrade it
+    if (existingHasSyntheticHash && newHasRealHash) {
+      const upgradeQuery = `
+        UPDATE sales
+        SET transaction_hash = $1,
+            block_number = CASE WHEN $2 > 0 THEN $2 ELSE block_number END,
+            source = CASE WHEN $3 = 'grails' THEN 'grails' ELSE source END,
+            order_hash = COALESCE($4, order_hash),
+            order_data = COALESCE($5, order_data)
+        WHERE id = $6
+        RETURNING *
+      `;
+
+      const upgradeResult = await pool.query(upgradeQuery, [
+        transactionHash,
+        blockNumber,
+        source,
+        orderHash,
+        orderData ? JSON.stringify(orderData) : null,
+        existingSale.id
+      ]);
+
+      console.log(`[createSale] Upgraded synthetic hash for sale ${existingSale.id}: ${existingSale.transaction_hash} -> ${transactionHash}`);
+      const sale = upgradeResult.rows[0];
+
+      // Update activity records created by the trigger to reflect corrected source/hash
+      if (sale) {
+        try {
+          await pool.query(`
+            UPDATE activity_history
+            SET platform = $1, transaction_hash = $2, block_number = $3
+            WHERE (metadata->>'sale_id')::integer = $4
+          `, [sale.source, transactionHash, blockNumber, existingSale.id]);
+        } catch (err) {
+          console.error(`[createSale] Failed to update activity records for sale ${existingSale.id}:`, err);
+        }
+      }
+
+      // Return with clubs info
+      if (sale) {
+        try {
+          const clubsResult = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [ensNameId]);
+          return { ...sale, clubs: clubsResult.rows[0]?.clubs || [] };
+        } catch { return sale; }
+      }
+      return sale;
+    }
+
+    // Existing sale found with real hash already — skip
+    console.log(`[createSale] Duplicate sale detected for ens_name_id ${ensNameId}, existing sale ${existingSale.id} (source: ${existingSale.source}, tx: ${existingSale.transaction_hash}). Skipping.`);
+    return null;
+  }
+
   const query = `
     INSERT INTO sales (
       ens_name_id,
@@ -66,8 +150,8 @@ export async function createSale(params: CreateSaleParams) {
 
   const values = [
     ensNameId,
-    sellerAddress.toLowerCase(),
-    buyerAddress.toLowerCase(),
+    normalizedSeller,
+    normalizedBuyer,
     salePriceWei,
     currencyAddress,
     listingId,

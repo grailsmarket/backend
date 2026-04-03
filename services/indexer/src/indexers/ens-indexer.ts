@@ -2,6 +2,7 @@ import {
   createPublicClient,
   http,
   decodeEventLog,
+  decodeFunctionData,
   type Log,
   type PublicClient,
   parseAbi,
@@ -42,6 +43,13 @@ const ENS_CONTROLLER_ABIS = {
 // RenewalReferred event ABI for bulk renewal Event Emitter contract
 const RENEWAL_REFERRED_ABI = parseAbi([
   'event RenewalReferred(string label, bytes32 indexed labelHash, uint256 cost, uint256 duration, bytes32 referrer)',
+]);
+
+// Controller function ABIs for decoding transaction calldata to extract duration
+const CONTROLLER_FUNCTION_ABI = parseAbi([
+  'function renew(string name, uint256 duration)',
+  'function renew(string name, uint256 duration, bytes32 referrer)',
+  'function renewAll(string[] names, uint256 duration)',
 ]);
 
 // Name Wrapper ABI (ERC-1155 for wrapped names)
@@ -131,11 +139,11 @@ export class ENSIndexer {
 
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
-        logger.error(`Error in index loop at block ${this.currentBlock}:`, {
-          error: error.message,
+        logger.error({
+          err: error,
           code: error.code,
           details: error.shortMessage || error.details
-        });
+        }, `Error in index loop at block ${this.currentBlock}`);
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
@@ -144,59 +152,68 @@ export class ENSIndexer {
   private async indexBlockRange(fromBlock: bigint, toBlock: bigint) {
     logger.info(`Indexing ENS events from block ${fromBlock} to ${toBlock}`);
 
-    // Fetch logs from Base Registrar (ERC-721)
+    // Fetch logs from all sources
     const registrarLogs = await this.client.getLogs({
       address: config.blockchain.ensRegistrarAddress as `0x${string}`,
       fromBlock,
       toBlock,
     });
 
-    // Fetch logs from Name Wrapper (ERC-1155) for wrapped name transfers
     const nameWrapperLogs = await this.client.getLogs({
       address: config.blockchain.ensNameWrapperAddress as `0x${string}`,
       fromBlock,
       toBlock,
     });
 
-    // Fetch logs from ENS Controllers for registration cost data (supports multiple controllers)
     const controllerLogs = await this.client.getLogs({
       address: config.blockchain.ensControllerAddresses as `0x${string}`[],
       fromBlock,
       toBlock,
     });
 
-    // Process Base Registrar logs
-    for (const log of registrarLogs) {
-      await this.queue.add(async () => {
-        await this.processLog(log);
-      });
-    }
-
-    // Process Name Wrapper logs
-    for (const log of nameWrapperLogs) {
-      await this.queue.add(async () => {
-        await this.processNameWrapperLog(log);
-      });
-    }
-
-    // Process Controller logs (registration costs + renewal costs)
-    for (const log of controllerLogs) {
-      await this.queue.add(async () => {
-        await this.processControllerLog(log);
-      });
-    }
-
-    // Fetch logs from Event Emitter contract for RenewalReferred events (bulk renewals with referrer data)
     const eventEmitterLogs = await this.client.getLogs({
       address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
       fromBlock,
       toBlock,
     });
 
-    // Process Event Emitter logs (RenewalReferred)
-    for (const log of eventEmitterLogs) {
+    // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
+    // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
+    // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
+    // The Controller handler guards against reading an already-updated expiry by decoding the
+    // duration from transaction calldata, falling back to treating duration <= 0 as null.
+    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
+      ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
+      ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
+      ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
+      ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
+    ];
+
+    allLogs.sort((a, b) => {
+      const blockA = a.log.blockNumber ?? 0n;
+      const blockB = b.log.blockNumber ?? 0n;
+      if (blockA !== blockB) return blockA < blockB ? -1 : 1;
+      const idxA = a.log.logIndex ?? 0;
+      const idxB = b.log.logIndex ?? 0;
+      return idxA - idxB;
+    });
+
+    for (const { log, source } of allLogs) {
       await this.queue.add(async () => {
-        await this.processRenewalReferredLog(log);
+        switch (source) {
+          case 'registrar':
+            await this.processLog(log);
+            break;
+          case 'nameWrapper':
+            await this.processNameWrapperLog(log);
+            break;
+          case 'controller':
+            await this.processControllerLog(log);
+            break;
+          case 'eventEmitter':
+            await this.processRenewalReferredLog(log);
+            break;
+        }
       });
     }
 
@@ -243,12 +260,12 @@ export class ENSIndexer {
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
       // Only log actual errors, not decode failures
-      console.error(`Error processing log at block ${log.blockNumber}:`, {
-        error: error.message,
+      logger.error({
+        err: error,
         code: error.code,
         transactionHash: log.transactionHash,
-        topics: log.topics?.slice(0, 2), // Just first 2 topics for brevity
-      });
+        topics: log.topics?.slice(0, 2),
+      }, `Error processing log at block ${log.blockNumber}`);
     }
   }
 
@@ -285,11 +302,11 @@ export class ENSIndexer {
         await this.handleNameWrapperTransferBatch(decodedLog.args, log);
       }
     } catch (error: any) {
-      logger.error(`Error processing Name Wrapper log at block ${log.blockNumber}:`, {
-        error: error.message,
+      logger.error({
+        err: error,
         code: error.code,
         transactionHash: log.transactionHash,
-      });
+      }, `Error processing Name Wrapper log at block ${log.blockNumber}`);
     }
   }
 
@@ -377,12 +394,12 @@ export class ENSIndexer {
         }
       }
     } catch (error: any) {
-      logger.error('Failed to process Name Wrapper TransferSingle:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: tokenIdStr,
         from,
         to
-      });
+      }, 'Failed to process Name Wrapper TransferSingle');
       throw error;
     }
 
@@ -437,11 +454,11 @@ export class ENSIndexer {
         ]);
       }
     } catch (error: any) {
-      logger.error('Failed to insert wrapped transfer transaction:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: tokenIdStr,
         transactionHash: log.transactionHash
-      });
+      }, 'Failed to insert wrapped transfer transaction');
     }
   }
 
@@ -518,11 +535,11 @@ export class ENSIndexer {
         await this.handleControllerNameRenewed(decodedLog.args, log, isRenewalV2);
       }
     } catch (error: any) {
-      logger.error(`Error processing Controller log at block ${log.blockNumber}:`, {
-        error: error.message,
+      logger.error({
+        err: error,
         code: error.code,
         transactionHash: log.transactionHash,
-      });
+      }, `Error processing Controller log at block ${log.blockNumber}`);
     }
   }
 
@@ -644,11 +661,11 @@ export class ENSIndexer {
       );
 
     } catch (error: any) {
-      logger.error('Failed to record registration cost:', {
-        error: error.message,
+      logger.error({
+        err: error,
         name: fullName,
         transactionHash: log.transactionHash
-      });
+      }, 'Failed to record registration cost');
       throw error;
     }
   }
@@ -675,13 +692,29 @@ export class ENSIndexer {
       renewalDate = new Date();
     }
 
-    // Get the actual renewer (transaction sender)
+    // Get the actual renewer (transaction sender) and decode duration from calldata
     let renewerAddress = '0x0000000000000000000000000000000000000000';
+    let durationSeconds: number | null = null;
     if (log.transactionHash) {
       try {
         const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
         if (tx && tx.from) {
           renewerAddress = tx.from.toLowerCase();
+        }
+        // Try to decode the duration directly from transaction calldata
+        // This is more reliable than computing from expiry dates, since the Base Registrar
+        // NameRenewed event may have already updated ens_names.expiry_date
+        if (tx && tx.input) {
+          try {
+            const decoded = decodeFunctionData({
+              abi: CONTROLLER_FUNCTION_ABI,
+              data: tx.input,
+            });
+            const rawDuration = Number(decoded.args[1]);
+            durationSeconds = rawDuration > 0 ? rawDuration : null;
+          } catch {
+            // Tx was likely called through a wrapper contract — fall back to expiry computation below
+          }
         }
       } catch (txError: any) {
         logger.warn(`Could not fetch transaction for Controller NameRenewed event: ${txError.message}`);
@@ -689,24 +722,47 @@ export class ENSIndexer {
     }
 
     try {
-      // Find the ens_name_id and current expiry for this name
-      // Note: old expiry is available because Controller NameRenewed fires before
-      // the Base Registrar NameRenewed event that updates ens_names.expiry_date
+      // Find the ens_name_id for this name
       const ensNameResult = await this.pool.query(
         'SELECT id, expiry_date FROM ens_names WHERE name = $1',
         [fullName]
       );
 
+      let ensNameId: number;
+
       if (ensNameResult.rows.length === 0) {
-        logger.debug(`Controller NameRenewed: name ${fullName} not yet in ens_names, skipping`);
-        return;
+        // Name not in ens_names (registered before indexer started or backfill gap).
+        // Create a minimal record so the renewal isn't lost.
+        const labelHash = isV2 ? args.labelhash : args.label;
+        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const attributes = this.calculateNameAttributes(fullName);
+
+        logger.info(`Controller NameRenewed: name ${fullName} not in ens_names, creating record`);
+
+        const insertResult = await this.pool.query(
+          `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, has_numbers, has_emoji)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (name) DO UPDATE SET
+             expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+             updated_at = NOW()
+           RETURNING id`,
+          [tokenIdStr, fullName, renewerAddress, expiryDate, attributes.has_numbers, attributes.has_emoji]
+        );
+
+        ensNameId = insertResult.rows[0].id;
+      } else {
+        ensNameId = ensNameResult.rows[0].id;
       }
 
-      const ensNameId = ensNameResult.rows[0].id;
-      const oldExpiryDate = ensNameResult.rows[0].expiry_date;
-      const durationSeconds = oldExpiryDate
-        ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
-        : null;
+      // If calldata decoding didn't produce a duration, fall back to expiry computation
+      // (clamped to null if <= 0, which happens when Base Registrar already updated the expiry)
+      if (durationSeconds == null && ensNameResult.rows.length > 0) {
+        const oldExpiryDate = ensNameResult.rows[0].expiry_date;
+        const rawDuration = oldExpiryDate
+          ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
+          : null;
+        durationSeconds = (rawDuration != null && rawDuration > 0) ? rawDuration : null;
+      }
 
       // Insert renewal record
       await this.pool.query(
@@ -717,7 +773,11 @@ export class ENSIndexer {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (transaction_hash, ens_name_id) DO UPDATE SET
           cost_wei = EXCLUDED.cost_wei,
-          duration_seconds = COALESCE(EXCLUDED.duration_seconds, renewals.duration_seconds),
+          duration_seconds = CASE
+            WHEN EXCLUDED.duration_seconds IS NOT NULL AND EXCLUDED.duration_seconds > 0
+              THEN EXCLUDED.duration_seconds
+            ELSE renewals.duration_seconds
+          END,
           referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
         [
           ensNameId,
@@ -740,10 +800,10 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
-          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
         )`,
         [
           ensNameId,
@@ -761,13 +821,30 @@ export class ENSIndexer {
         ]
       );
 
+      // If we have a valid duration, fix any existing activity_history record that has
+      // duration_seconds = 0 or missing (e.g., from a prior run that computed incorrectly)
+      if (durationSeconds != null && durationSeconds > 0) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET metadata = metadata || jsonb_build_object('duration_seconds', $1::bigint)
+           WHERE ens_name_id = $2
+             AND event_type = 'renewal'
+             AND transaction_hash = $3::varchar
+             AND (
+               metadata->>'duration_seconds' IS NULL
+               OR (metadata->>'duration_seconds')::bigint <= 0
+             )`,
+          [durationSeconds, ensNameId, log.transactionHash]
+        );
+      }
+
       logger.info(`Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`);
     } catch (error: any) {
-      logger.error('Failed to record renewal cost:', {
-        error: error.message,
+      logger.error({
+        err: error,
         name: fullName,
         transactionHash: log.transactionHash,
-      });
+      }, 'Failed to record renewal cost');
       throw error;
     }
   }
@@ -826,15 +903,34 @@ export class ENSIndexer {
         [fullName]
       );
 
+      let ensNameId: number;
+
       if (ensNameResult.rows.length === 0) {
-        logger.debug(`RenewalReferred: name ${fullName} not found in ens_names, skipping`);
-        return;
+        // Name not in ens_names (registered before indexer started or backfill gap).
+        // Create a minimal record so the renewal isn't lost.
+        const labelHash = decodedLog.args.labelHash;
+        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const attributes = this.calculateNameAttributes(fullName);
+
+        logger.info(`RenewalReferred: name ${fullName} not in ens_names, creating record`);
+
+        const insertResult = await this.pool.query(
+          `INSERT INTO ens_names (token_id, name, owner_address, has_numbers, has_emoji)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (name) DO UPDATE SET
+             updated_at = NOW()
+           RETURNING id`,
+          [tokenIdStr, fullName, renewerAddress, attributes.has_numbers, attributes.has_emoji]
+        );
+
+        ensNameId = insertResult.rows[0].id;
+      } else {
+        ensNameId = ensNameResult.rows[0].id;
       }
 
-      const ensNameId = ensNameResult.rows[0].id;
       // Use existing expiry_date as the new_expiry_date (the Base Registrar NameRenewed event
       // will have already updated it, or will update it shortly)
-      const newExpiryDate = ensNameResult.rows[0].expiry_date || renewalDate;
+      const newExpiryDate = (ensNameResult.rows.length > 0 && ensNameResult.rows[0].expiry_date) || renewalDate;
 
       // Insert renewal record
       await this.pool.query(
@@ -868,10 +964,10 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
-          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5
+          WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
         )`,
         [
           ensNameId,
@@ -889,12 +985,51 @@ export class ENSIndexer {
         ]
       );
 
+      // If the Controller handler already created this record with platform='blockchain'
+      // (because the Original Controller NameRenewed event has no referrer param),
+      // update it with the correct platform and referrer from the RenewalReferred event.
+      if (renewalSource) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET platform = $1,
+               metadata = metadata || $2::jsonb
+           WHERE ens_name_id = $3
+             AND event_type = 'renewal'
+             AND transaction_hash = $4::varchar
+             AND platform = 'blockchain'`,
+          [
+            renewalSource,
+            JSON.stringify({ referrer, registration_source: renewalSource }),
+            ensNameId,
+            log.transactionHash,
+          ]
+        );
+      }
+
+      // Always update activity_history with the authoritative duration from the blockchain event.
+      // The Controller handler may have already created a record with duration_seconds = 0 or null
+      // (since the Base Registrar updates expiry_date before the Controller handler runs).
+      if (durationSeconds > 0) {
+        await this.pool.query(
+          `UPDATE activity_history
+           SET metadata = metadata || jsonb_build_object('duration_seconds', $1::bigint)
+           WHERE ens_name_id = $2
+             AND event_type = 'renewal'
+             AND transaction_hash = $3::varchar
+             AND (
+               metadata->>'duration_seconds' IS NULL
+               OR (metadata->>'duration_seconds')::bigint <= 0
+             )`,
+          [durationSeconds, ensNameId, log.transactionHash]
+        );
+      }
+
       logger.info(`Recorded RenewalReferred for ${fullName}: cost=${costWei}, duration=${durationSeconds}s, referrer=${referrer}`);
     } catch (error: any) {
-      logger.error(`Error processing RenewalReferred log at block ${log.blockNumber}:`, {
-        error: error.message,
+      logger.error({
+        err: error,
         transactionHash: log.transactionHash,
-      });
+      }, `Error processing RenewalReferred log at block ${log.blockNumber}`);
     }
   }
 
@@ -959,11 +1094,11 @@ export class ENSIndexer {
           logger.debug(`Unhandled event type: ${eventName}`);
       }
     } catch (error: any) {
-      logger.error(`Error processing ${eventName} event:`, {
-        error: error.message,
+      logger.error({
+        err: error,
         args,
         blockNumber: log.blockNumber?.toString()
-      });
+      }, `Error processing ${eventName} event`);
       throw error;
     }
   }
@@ -1163,11 +1298,11 @@ export class ENSIndexer {
         ensNameId = result.rows[0].id;
       }
     } catch (error: any) {
-      logger.error('Failed to process Transfer event:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: tokenIdStr,
         to
-      });
+      }, 'Failed to process Transfer event');
       throw error;
     }
 
@@ -1218,11 +1353,11 @@ export class ENSIndexer {
         new Date(Number(block.timestamp) * 1000),
       ]);
     } catch (error: any) {
-      logger.error('Failed to insert transaction:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: tokenIdStr,
         transactionHash: log.transactionHash
-      });
+      }, 'Failed to insert transaction');
       // Don't rethrow - we can continue even if transaction insert fails
     }
   }
@@ -1456,20 +1591,20 @@ export class ENSIndexer {
           );
           logger.debug(`Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}, minter: ${actualMinter}`);
         } catch (activityError: any) {
-          logger.error('Failed to create mint activity:', {
-            error: activityError.message,
+          logger.error({
+            err: activityError,
             tokenId: correctTokenId,
             ensNameId
-          });
+          }, 'Failed to create mint activity');
           // Don't fail the entire registration if activity creation fails
         }
       }
     } catch (error: any) {
-      logger.error('Failed to handle NameRegistered:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: tokenIdStr,
         owner
-      });
+      }, 'Failed to handle NameRegistered');
       throw error;
     }
 
@@ -1502,10 +1637,10 @@ export class ENSIndexer {
         timestamp,
       ]);
     } catch (error: any) {
-      logger.error('Failed to insert registration transaction:', {
-        error: error.message,
+      logger.error({
+        err: error,
         tokenId: correctTokenId
-      });
+      }, 'Failed to insert registration transaction');
     }
   }
 

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
+import { requireAuth } from '../middleware/auth';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -256,8 +257,20 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
     const body = CreateListingSchema.parse(request.body);
+
+    // Verify seller address matches authenticated user
+    if (body.sellerAddress.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Seller address does not match authenticated user',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     const query = `
       INSERT INTO listings (
@@ -358,9 +371,35 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.put('/:id', async (request, reply) => {
+  fastify.put('/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = UpdateListingSchema.parse(request.body);
+
+    // Verify the listing belongs to the authenticated user
+    const ownerCheck = await pool.query(
+      'SELECT seller_address FROM listings WHERE id = $1 AND status = $2',
+      [id, 'active']
+    );
+    if (ownerCheck.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'LISTING_NOT_FOUND',
+          message: 'Active listing not found',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+    if (ownerCheck.rows[0].seller_address.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Only the listing seller can update this listing',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -450,8 +489,34 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
+
+    // Verify the listing belongs to the authenticated user
+    const ownerCheck = await pool.query(
+      'SELECT seller_address FROM listings WHERE id = $1 AND status = $2',
+      [id, 'active']
+    );
+    if (ownerCheck.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'LISTING_NOT_FOUND',
+          message: 'Active listing not found',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+    if (ownerCheck.rows[0].seller_address.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Only the listing seller can cancel this listing',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     const query = `
       UPDATE listings
@@ -470,9 +535,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
           code: 'LISTING_NOT_FOUND',
           message: 'Active listing not found',
         },
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
+        meta: { timestamp: new Date().toISOString() },
       });
     }
 

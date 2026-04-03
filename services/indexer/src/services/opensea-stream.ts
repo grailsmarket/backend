@@ -652,15 +652,16 @@ export class OpenSeaStreamListener {
       const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
 
       // Find the listing that's being sold and get its source
+      // Include recently-sold listings in case the Seaport indexer already marked it as sold
       let listingId: number | undefined;
       let listingSource: string | null = null;
       if (sellerAddress) {
         const findListingQuery = `
-          SELECT id, source FROM listings
+          SELECT id, source, status FROM listings
           WHERE ens_name_id = $1
           AND seller_address = $2
-          AND status = 'active'
-          ORDER BY created_at DESC
+          AND status IN ('active', 'sold')
+          ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updated_at DESC
           LIMIT 1
         `;
 
@@ -675,15 +676,16 @@ export class OpenSeaStreamListener {
         }
       }
 
-      // If no listing found, check if this is an offer acceptance
+      // Always check for matching offer (not just when no listing found).
+      // For offer acceptances, the offer source is the authoritative platform.
       let offerId: number | undefined;
       let offerSource: string | null = null;
-      if (!listingId && buyerAddress) {
+      if (buyerAddress) {
         const findOfferQuery = `
           SELECT id, source FROM offers
           WHERE ens_name_id = $1
           AND buyer_address = $2
-          AND status = 'pending'
+          AND status IN ('pending', 'accepted')
           ORDER BY created_at DESC
           LIMIT 1
         `;
@@ -699,9 +701,37 @@ export class OpenSeaStreamListener {
         }
       }
 
-      // Record sale in sales table - use listing/offer source if found, otherwise default to 'opensea'
-      const saleSource = listingSource || offerSource || 'opensea';
+      // For offer-driven sales, use the offer source (it tells us which platform facilitated the sale).
+      // For direct listing purchases, use the listing source.
+      const saleSource = offerId
+        ? (offerSource || listingSource || 'opensea')
+        : (listingSource || offerSource || 'opensea');
+      const txHash = transaction?.hash || `opensea_${Date.now()}`;
+      let saleAlreadyExists = false;
+
+      // Check if a sale already exists for this order_hash or transaction_hash
+      // (mirrors the dedup check in the Seaport indexer)
       if (buyerAddress && sellerAddress) {
+        try {
+          const existingSaleQuery = `
+            SELECT id, source FROM sales
+            WHERE (order_hash IS NOT NULL AND order_hash = $1) OR transaction_hash = $2
+            LIMIT 1
+          `;
+          const existingSaleResult = await this.pool.query(existingSaleQuery, [
+            eventData.order_hash || null,
+            txHash,
+          ]);
+          if (existingSaleResult.rows.length > 0) {
+            saleAlreadyExists = true;
+            logger.info(`Sale already exists for order_hash ${eventData.order_hash} or tx ${txHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation in OpenSea stream`);
+          }
+        } catch (error: any) {
+          logger.error(`Failed to check existing sale: ${error.message}`);
+        }
+      }
+
+      if (buyerAddress && sellerAddress && !saleAlreadyExists) {
         try {
           const sale = await createSale({
             ensNameId,
@@ -711,7 +741,7 @@ export class OpenSeaStreamListener {
             currencyAddress: eventData.payment_token?.address,
             listingId,
             offerId,
-            transactionHash: transaction?.hash || `opensea_${Date.now()}`,
+            transactionHash: txHash,
             blockNumber: transaction?.block_number || 0,
             orderHash: eventData.order_hash,
             orderData: eventData,
@@ -799,7 +829,7 @@ export class OpenSeaStreamListener {
 
         await this.pool.query(txQuery, [
           ensNameId,
-          transaction?.hash || `opensea_${Date.now()}`,
+          txHash,
           transaction?.block_number || 0,
           sellerAddress,
           buyerAddress,

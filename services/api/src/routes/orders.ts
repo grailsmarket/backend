@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
+import { requireAuth } from '../middleware/auth';
 
 const CreateOrderSchema = z.object({
   tokenId: z.string(),
@@ -62,8 +63,34 @@ export async function ordersRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // POST /api/v1/orders - Save order (listing/offer) to database
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
     const body = SaveOrderSchema.parse(request.body);
+
+    // Verify the address in the order matches the authenticated user
+    const userAddress = request.user!.address.toLowerCase();
+    if (body.type === 'listing' && body.seller_address) {
+      if (body.seller_address.toLowerCase() !== userAddress) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Seller address does not match authenticated user',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+    } else if ((body.type === 'offer' || body.type === 'collection_offer') && body.buyer_address) {
+      if (body.buyer_address.toLowerCase() !== userAddress) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Buyer address does not match authenticated user',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+    }
 
     try {
       // For listings, first ensure ENS name exists or create it
@@ -357,8 +384,38 @@ export async function ordersRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
+
+    // First verify the listing exists and belongs to the authenticated user
+    const checkQuery = `
+      SELECT seller_address FROM listings
+      WHERE (order_hash = $1 OR id = $2)
+      AND status = 'active'
+    `;
+    const checkResult = await pool.query(checkQuery, [id, parseInt(id) || 0]);
+
+    if (checkResult.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'ORDER_NOT_FOUND',
+          message: `Active order "${id}" not found`,
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    if (checkResult.rows[0].seller_address.toLowerCase() !== request.user!.address.toLowerCase()) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Cannot cancel another user\'s order',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     const query = `
       UPDATE listings
@@ -377,9 +434,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           code: 'ORDER_NOT_FOUND',
           message: `Active order "${id}" not found`,
         },
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
+        meta: { timestamp: new Date().toISOString() },
       });
     }
 
@@ -399,7 +454,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/v1/orders/bulk - Bulk create listings (up to 500)
-  fastify.post('/bulk', async (request, reply) => {
+  fastify.post('/bulk', { preHandler: requireAuth }, async (request, reply) => {
     // Parse and validate request body
     const parseResult = BulkSaveOrderSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -415,6 +470,22 @@ export async function ordersRoutes(fastify: FastifyInstance) {
     }
 
     const { listings } = parseResult.data;
+
+    // Verify all listings belong to the authenticated user
+    const userAddress = request.user!.address.toLowerCase();
+    const unauthorizedListing = listings.find(
+      l => l.seller_address.toLowerCase() !== userAddress
+    );
+    if (unauthorizedListing) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'All listings must have seller_address matching authenticated user',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
     const results: BulkListingResult[] = [];
     const validListings: Array<typeof listings[0] & { index: number; ensNameId?: number; expiresAt?: Date | null }> = [];
 

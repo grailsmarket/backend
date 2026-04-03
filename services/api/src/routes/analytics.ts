@@ -412,7 +412,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       pool.query(
         `SELECT
           (SELECT COUNT(*) FROM name_views WHERE viewer_identifier = $1 AND viewer_type = 'authenticated') as names_viewed,
-          (SELECT COUNT(*) FROM watchlist WHERE user_id = $2) as names_watching,
+          (SELECT COUNT(DISTINCT ens_name_id) FROM watchlist WHERE user_id = $2) as names_watching,
           (SELECT COUNT(*) FROM name_votes WHERE user_id = $2) as votes_cast,
           (SELECT COUNT(*) FROM offers WHERE buyer_address = (SELECT address FROM users WHERE id = $2)) as offers_made,
           (SELECT COUNT(*) FROM sales WHERE buyer_address = (SELECT address FROM users WHERE id = $2)) as names_purchased,

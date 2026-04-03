@@ -689,12 +689,12 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add watchers count filters
       if (minWatchersCount !== undefined) {
-        whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
+        whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
         params.push(parseInt(String(minWatchersCount)));
         paramCount++;
       }
       if (maxWatchersCount !== undefined) {
-        whereConditions.push(`(SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
+        whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
         params.push(parseInt(String(maxWatchersCount)));
         paramCount++;
       }
@@ -1025,7 +1025,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       const nameSelect = hasSpecificClubs ? `${nameCol} as name, (en.id IS NOT NULL) as is_registered` : 'DISTINCT en.name';
       let selectClause = nameSelect;
       if (sortBy === 'watchers_count') {
-        selectClause = `${nameSelect}, (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as sort_value`;
+        selectClause = `${nameSelect}, (SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) as sort_value`;
       } else if (sortBy === 'view_count') {
         selectClause = `${hasSpecificClubs ? nameSelect : 'DISTINCT en.name'}, COALESCE(en.view_count, 0) as sort_value`;
       } else if (sortBy === 'last_sale_price') {
@@ -1076,7 +1076,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
             FROM ${hasSpecificClubs ? clubFromWithListings : 'listings l JOIN ens_names en ON l.ens_name_id = en.id'}
             WHERE ${whereClause}
           )
-          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'listing_date' ? ', created_at as sort_value' : sortBy === 'listing_expiry' ? ', expires_at as sort_value' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
+          SELECT name${sortBy === 'price' ? ', CAST(price_wei AS NUMERIC) as sort_value' : sortBy === 'watchers_count' ? ', (SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = ranked_listings.ens_name_id) as sort_value' : sortBy === 'view_count' ? ', COALESCE(view_count, 0) as sort_value' : sortBy === 'last_sale_price' ? ', last_sale_price_usd' : sortBy === 'expiry_date' ? ', expiry_date' : sortBy === 'registration_date' ? ', registration_date' : sortBy === 'creation_date' ? ', creation_date' : sortBy === 'last_sale_date' ? ', last_sale_date' : sortBy === 'listing_date' ? ', created_at as sort_value' : sortBy === 'listing_expiry' ? ', expires_at as sort_value' : sortBy === 'character_count' ? ", LENGTH(REPLACE(name, '.eth', '')) as sort_value" : sortBy === 'clubs_count' ? ', COALESCE(array_length(clubs, 1), 0) as sort_value' : sortBy === 'offer' ? ', CAST(highest_offer_wei AS NUMERIC) as offer_sort' : sortBy === 'ranking' ? ', cm_rank.rank as sort_value' : ', created_at'}
           FROM ranked_listings
           ${sortBy === 'ranking' ? rankingJoin.replace('en.name', 'ranked_listings.name') : ''}
           WHERE rn = 1
@@ -1791,7 +1791,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Data query
         const dataQuery = `
           SELECT DISTINCT en.name,
-            (SELECT COUNT(*) FROM watchlist w WHERE w.ens_name_id = en.id) as watchers_count
+            (SELECT COUNT(DISTINCT w.user_id) FROM watchlist w WHERE w.ens_name_id = en.id) as watchers_count
           FROM ens_names en
           LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
           ${whereClause}
