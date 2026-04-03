@@ -4,128 +4,118 @@ import { getPostgresPool } from '../../../shared/src';
 import { requireAuth, requireMinTier } from '../middleware/auth';
 
 const MAX_DASHBOARDS_PER_USER = 10;
-const MAX_PANELS_PER_DASHBOARD = 20;
+const MAX_WIDGETS_PER_DASHBOARD = 20;
 
-// --- Panel type enum ---
+// --- Widget type enum (matches frontend DashboardComponentType) ---
 
-const PanelType = z.enum([
-  'registrations_chart',
-  'sales_chart',
-  'top_registrations',
+const WidgetType = z.enum([
   'domains',
-  'top_sales',
+  'top-sales',
+  'top-offers',
+  'top-registrations',
+  'sales-chart',
+  'offers-chart',
+  'registrations-chart',
+  'holders',
+  'leaderboard',
   'activity',
 ]);
 
-// --- Per-type config schemas ---
+// --- Per-type config schemas (matches frontend instance configs) ---
 
-const ChartPanelConfig = z.object({
-  defaultPeriod: z.enum(['1d', '7d', '30d']).default('7d'),
+const AnalyticsPeriod = z.enum(['24h', '7d', '30d', '1y', 'all']);
+const AnalyticsSource = z.enum(['all', 'grails', 'opensea']);
+
+const DomainsConfig = z.object({
+  type: z.literal('domains'),
+  viewType: z.enum(['grid', 'list']),
+  filters: z.record(z.unknown()), // MarketplaceFiltersState is complex; store as-is
+  filtersOpen: z.boolean(),
 });
 
-const RankedListPanelConfig = z.object({
-  defaultPeriod: z.enum(['1d', '7d', '30d']).default('7d'),
-  defaultMarketSource: z.enum(['all', 'grails', 'opensea']).default('all'),
+const AnalyticsListConfig = z.object({
+  type: z.enum(['top-sales', 'top-offers', 'top-registrations']),
+  period: AnalyticsPeriod,
+  source: AnalyticsSource,
+  category: z.string().nullable(),
 });
 
-const DomainsPanelConfig = z.object({
-  defaultCategory: z.string().max(50).optional(),
+const AnalyticsChartConfig = z.object({
+  type: z.enum(['sales-chart', 'offers-chart', 'registrations-chart']),
+  period: AnalyticsPeriod,
+  category: z.string().nullable(),
 });
 
-const ActivityPanelConfig = z.object({
-  defaultEventTypes: z.array(
-    z.enum(['sale', 'listing', 'offer', 'registration', 'renewal', 'transfer'])
-  ).optional(),
+const HoldersConfig = z.object({
+  type: z.literal('holders'),
+  categories: z.array(z.string()),
 });
 
-// --- Panel schema with per-type config validation ---
+const LeaderboardConfig = z.object({
+  type: z.literal('leaderboard'),
+  sortBy: z.enum(['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold', 'sales_volume']),
+  sortOrder: z.enum(['asc', 'desc']),
+  clubs: z.array(z.string()),
+});
 
-const PanelSchema = z.object({
-  id: z.string().min(1).max(50),
-  panelType: PanelType,
-  x: z.number().int().min(0).max(3),
+const ActivityConfig = z.object({
+  type: z.literal('activity'),
+  eventTypes: z.array(z.string()),
+  category: z.string().nullable(),
+});
+
+const ComponentConfig = z.discriminatedUnion('type', [
+  DomainsConfig,
+  AnalyticsListConfig,
+  AnalyticsChartConfig,
+  HoldersConfig,
+  LeaderboardConfig,
+  ActivityConfig,
+]);
+
+// --- Layout item schema (matches react-grid-layout LayoutItem) ---
+
+const LayoutItemSchema = z.object({
+  i: z.string().min(1),
+  x: z.number().int().min(0),
   y: z.number().int().min(0),
-  w: z.number().int().min(1).max(4),
-  h: z.number().int().min(1).max(4),
-  config: z.record(z.unknown()).optional(),
-}).superRefine((panel, ctx) => {
-  if (panel.x + panel.w > 4) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Panel extends beyond grid boundary (x + w must be <= 4)',
-      path: ['w'],
-    });
-  }
+  w: z.number().int().min(1),
+  h: z.number().int().min(1),
+  minW: z.number().int().min(1).optional(),
+  minH: z.number().int().min(1).optional(),
+});
 
-  if (panel.config) {
-    let configResult;
-    switch (panel.panelType) {
-      case 'registrations_chart':
-      case 'sales_chart':
-        configResult = ChartPanelConfig.safeParse(panel.config);
-        break;
-      case 'top_registrations':
-      case 'top_sales':
-        configResult = RankedListPanelConfig.safeParse(panel.config);
-        break;
-      case 'domains':
-        configResult = DomainsPanelConfig.safeParse(panel.config);
-        break;
-      case 'activity':
-        configResult = ActivityPanelConfig.safeParse(panel.config);
-        break;
-    }
-    if (configResult && !configResult.success) {
-      configResult.error.issues.forEach(issue => {
-        ctx.addIssue({ ...issue, path: ['config', ...issue.path] });
-      });
-    }
-  }
+const BreakpointLayouts = z.object({
+  lg: z.array(LayoutItemSchema).max(MAX_WIDGETS_PER_DASHBOARD),
+  md: z.array(LayoutItemSchema).max(MAX_WIDGETS_PER_DASHBOARD),
+  sm: z.array(LayoutItemSchema).max(MAX_WIDGETS_PER_DASHBOARD),
+  xs: z.array(LayoutItemSchema).max(MAX_WIDGETS_PER_DASHBOARD),
 });
 
 // --- Dashboard schemas ---
 
+const ComponentsMap = z.record(z.string(), ComponentConfig).refine(
+  (map) => Object.keys(map).length <= MAX_WIDGETS_PER_DASHBOARD,
+  { message: `Maximum of ${MAX_WIDGETS_PER_DASHBOARD} widgets allowed` }
+);
+
 const CreateDashboardSchema = z.object({
   name: z.string().min(1).max(100).trim(),
-  gridColumns: z.enum(['auto', '1', '2', '3', '4']).default('auto'),
-  panels: z.array(PanelSchema).max(MAX_PANELS_PER_DASHBOARD).default([]).refine(
-    (panels) => {
-      const ids = panels.map(p => p.id);
-      return new Set(ids).size === ids.length;
-    },
-    { message: 'Panel IDs must be unique within a dashboard' }
-  ),
+  colOverride: z.number().int().min(1).max(4).nullable().default(null),
+  layouts: BreakpointLayouts.default({ lg: [], md: [], sm: [], xs: [] }),
+  components: ComponentsMap.default({}),
+  nextId: z.number().int().min(1).default(1),
   isDefault: z.boolean().default(false),
 });
 
 const UpdateDashboardSchema = z.object({
   name: z.string().min(1).max(100).trim().optional(),
-  gridColumns: z.enum(['auto', '1', '2', '3', '4']).optional(),
-  panels: z.array(PanelSchema).max(MAX_PANELS_PER_DASHBOARD).optional().refine(
-    (panels) => {
-      if (!panels) return true;
-      const ids = panels.map(p => p.id);
-      return new Set(ids).size === ids.length;
-    },
-    { message: 'Panel IDs must be unique within a dashboard' }
-  ),
+  colOverride: z.number().int().min(1).max(4).nullable().optional(),
+  layouts: BreakpointLayouts.optional(),
+  components: ComponentsMap.optional(),
+  nextId: z.number().int().min(1).optional(),
   isDefault: z.boolean().optional(),
 });
-
-// --- Default layout template (returned when user has no saved dashboards) ---
-
-const DEFAULT_LAYOUT_TEMPLATE = {
-  name: 'Default',
-  gridColumns: 'auto',
-  panels: [
-    { id: 'default-reg-chart', panelType: 'registrations_chart', x: 0, y: 0, w: 1, h: 2, config: { defaultPeriod: '7d' } },
-    { id: 'default-sales-chart', panelType: 'sales_chart', x: 1, y: 0, w: 1, h: 2, config: { defaultPeriod: '7d' } },
-    { id: 'default-top-reg', panelType: 'top_registrations', x: 2, y: 0, w: 1, h: 2, config: { defaultPeriod: '7d', defaultMarketSource: 'all' } },
-    { id: 'default-domains', panelType: 'domains', x: 0, y: 2, w: 3, h: 2, config: {} },
-    { id: 'default-top-sales', panelType: 'top_sales', x: 3, y: 0, w: 1, h: 2, config: { defaultPeriod: '7d', defaultMarketSource: 'all' } },
-    { id: 'default-activity', panelType: 'activity', x: 3, y: 2, w: 1, h: 2, config: {} },
-  ],
-};
 
 // --- Helper to map DB rows to API response format ---
 
@@ -133,8 +123,10 @@ function formatLayout(row: any) {
   return {
     id: row.id,
     name: row.name,
-    gridColumns: row.grid_columns,
-    panels: row.panels,
+    colOverride: row.col_override,
+    layouts: row.layouts,
+    components: row.components,
+    nextId: row.next_id,
     isDefault: row.is_default,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -152,7 +144,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
     const userId = parseInt(request.user!.sub);
 
     const result = await pool.query(
-      `SELECT id, name, grid_columns, panels, is_default, created_at, updated_at
+      `SELECT id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at
        FROM dashboard_layouts
        WHERE user_id = $1
        ORDER BY is_default DESC, created_at ASC`,
@@ -163,7 +155,6 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       success: true,
       data: {
         layouts: result.rows.map(formatLayout),
-        defaultTemplate: DEFAULT_LAYOUT_TEMPLATE,
       },
       meta: { timestamp: new Date().toISOString() },
     });
@@ -184,7 +175,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
     }
 
     const result = await pool.query(
-      `SELECT id, user_id, name, grid_columns, panels, is_default, created_at, updated_at
+      `SELECT id, user_id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at
        FROM dashboard_layouts
        WHERE id = $1`,
       [layoutId]
@@ -252,7 +243,6 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       try {
         await client.query('BEGIN');
 
-        // Clear existing default if setting this one as default
         if (body.isDefault) {
           await client.query(
             'UPDATE dashboard_layouts SET is_default = FALSE WHERE user_id = $1 AND is_default = TRUE',
@@ -261,10 +251,10 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
         }
 
         const result = await client.query(
-          `INSERT INTO dashboard_layouts (user_id, name, grid_columns, panels, is_default)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, name, grid_columns, panels, is_default, created_at, updated_at`,
-          [userId, body.name, body.gridColumns, JSON.stringify(body.panels), body.isDefault]
+          `INSERT INTO dashboard_layouts (user_id, name, col_override, layouts, components, next_id, is_default)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at`,
+          [userId, body.name, body.colOverride, JSON.stringify(body.layouts), JSON.stringify(body.components), body.nextId, body.isDefault]
         );
 
         await client.query('COMMIT');
@@ -329,13 +319,21 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       setClauses.push(`name = $${paramIndex++}`);
       values.push(body.name);
     }
-    if (body.gridColumns !== undefined) {
-      setClauses.push(`grid_columns = $${paramIndex++}`);
-      values.push(body.gridColumns);
+    if (body.colOverride !== undefined) {
+      setClauses.push(`col_override = $${paramIndex++}`);
+      values.push(body.colOverride);
     }
-    if (body.panels !== undefined) {
-      setClauses.push(`panels = $${paramIndex++}`);
-      values.push(JSON.stringify(body.panels));
+    if (body.layouts !== undefined) {
+      setClauses.push(`layouts = $${paramIndex++}`);
+      values.push(JSON.stringify(body.layouts));
+    }
+    if (body.components !== undefined) {
+      setClauses.push(`components = $${paramIndex++}`);
+      values.push(JSON.stringify(body.components));
+    }
+    if (body.nextId !== undefined) {
+      setClauses.push(`next_id = $${paramIndex++}`);
+      values.push(body.nextId);
     }
     if (body.isDefault !== undefined) {
       setClauses.push(`is_default = $${paramIndex++}`);
@@ -377,7 +375,6 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Clear existing default if setting this one as default
         if (body.isDefault === true) {
           await client.query(
             'UPDATE dashboard_layouts SET is_default = FALSE WHERE user_id = $1 AND is_default = TRUE AND id != $2',
@@ -391,7 +388,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
           `UPDATE dashboard_layouts
            SET ${setClauses.join(', ')}
            WHERE id = $${paramIndex++} AND user_id = $${paramIndex}
-           RETURNING id, name, grid_columns, panels, is_default, created_at, updated_at`,
+           RETURNING id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at`,
           values
         );
 
