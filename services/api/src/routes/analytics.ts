@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 
 const TimeRangeSchema = z.object({
@@ -621,7 +621,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             r.total_cost_wei,
             r.name_length,
             r.registration_date,
-            en.clubs
+            en.clubs,
+            r.referrer
           FROM registrations r
           JOIN ens_names en ON r.ens_name_id = en.id
           WHERE r.registration_date > NOW() - INTERVAL '${interval}'
@@ -685,6 +686,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             name_length: row.name_length,
             registration_date: row.registration_date,
             clubs: row.clubs || [],
+            source: row.referrer ? getRegistrationSource(row.referrer) : null,
           })),
           pagination: {
             page,
