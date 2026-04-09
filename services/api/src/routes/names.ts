@@ -67,10 +67,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
 
     if (query.owner) {
-      whereConditions.push(`LOWER(owner_address) = LOWER($${paramCount})`);
+      whereConditions.push(`LOWER(en.owner_address) = LOWER($${paramCount})`);
       params.push(query.owner);
       paramCount++;
     }
@@ -79,57 +79,64 @@ export async function namesRoutes(fastify: FastifyInstance) {
       whereConditions.push(`
         EXISTS (
           SELECT 1 FROM listings
-          WHERE listings.ens_name_id = ens_names.id
+          WHERE listings.ens_name_id = en.id
           AND listings.status = 'active'
         )
       `);
     } else if (query.status === 'expiring') {
-      whereConditions.push(`expiry_date < NOW() + INTERVAL '30 days'`);
+      whereConditions.push(`en.expiry_date < NOW() + INTERVAL '30 days'`);
     }
 
     const whereClause = whereConditions.length > 0
       ? `WHERE ${whereConditions.join(' AND ')}`
       : '';
 
-    const orderByMap = {
-      name: 'name',
-      expiry: 'expiry_date',
-      created: 'created_at',
-      price: `(
-        SELECT price_wei FROM listings
-        WHERE listings.ens_name_id = ens_names.id
-        AND listings.status = 'active'
-        LIMIT 1
-      )`,
+    const orderByMap: Record<string, string> = {
+      name: 'en.name',
+      expiry: 'en.expiry_date',
+      created: 'en.created_at',
+      price: 'ap.price_wei::numeric',
     };
 
-    const orderBy = `${orderByMap[query.sort]} ${query.order.toUpperCase()}`;
+    const needsPriceCTE = query.sort === 'price';
+    const nullsLast = needsPriceCTE ? ' NULLS LAST' : '';
+    const orderBy = `${orderByMap[query.sort]} ${query.order.toUpperCase()}${nullsLast}`;
 
     const countQuery = `
-      SELECT COUNT(*) FROM ens_names ${whereClause}
+      SELECT COUNT(*) FROM ens_names en ${whereClause}
     `;
 
+    const priceCTE = needsPriceCTE ? `
+      WITH active_prices AS (
+        SELECT DISTINCT ON (ens_name_id) ens_name_id, price_wei
+        FROM listings WHERE status = 'active'
+        ORDER BY ens_name_id, created_at DESC
+      )` : '';
+
+    const priceJoin = needsPriceCTE ? `
+      LEFT JOIN active_prices ap ON ap.ens_name_id = en.id` : '';
+
     const dataQuery = `
-      SELECT
-        en.*,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', l.id,
-              'price_wei', l.price_wei,
-              'currency_address', l.currency_address,
-              'status', l.status,
-              'source', l.source,
-              'expires_at', l.expires_at,
-              'created_at', l.created_at
-            ) ORDER BY l.created_at DESC
-          ) FILTER (WHERE l.id IS NOT NULL),
-          '[]'::json
-        ) as listings
+      ${priceCTE}
+      SELECT en.*, COALESCE(listing_data.listings, '[]'::json) as listings
       FROM ens_names en
-      LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
+      ${priceJoin}
+      LEFT JOIN LATERAL (
+        SELECT json_agg(
+          json_build_object(
+            'id', l.id,
+            'price_wei', l.price_wei,
+            'currency_address', l.currency_address,
+            'status', l.status,
+            'source', l.source,
+            'expires_at', l.expires_at,
+            'created_at', l.created_at
+          ) ORDER BY l.created_at DESC
+        ) as listings
+        FROM listings l
+        WHERE l.ens_name_id = en.id AND l.status = 'active'
+      ) listing_data ON true
       ${whereClause}
-      GROUP BY en.id
       ORDER BY ${orderBy}
       LIMIT $${paramCount} OFFSET $${paramCount + 1}
     `;

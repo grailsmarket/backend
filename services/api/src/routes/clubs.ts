@@ -214,18 +214,9 @@ export async function clubsRoutes(fastify: FastifyInstance) {
           c.last_sales_update,
           c.created_at,
           c.updated_at,
-          COALESCE(h.holders_count, 0)::integer AS holders_count,
-          ROUND((COALESCE(h.holders_count, 0)::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS holders_ratio
+          c.holders_count,
+          ROUND((c.holders_count::numeric / NULLIF(c.member_count, 0)) * 100, 2)::double precision AS holders_ratio
         FROM clubs c
-        LEFT JOIN (
-          SELECT
-            unnest(clubs) as club_name,
-            COUNT(DISTINCT owner_address) as holders_count
-          FROM ens_names
-          WHERE owner_address IS NOT NULL
-            AND expiry_date > NOW() - INTERVAL '90 days'
-          GROUP BY unnest(clubs)
-        ) h ON h.club_name = c.name
         ${whereClause}
         ${orderByClause}
       `;
