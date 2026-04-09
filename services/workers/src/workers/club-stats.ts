@@ -393,6 +393,43 @@ async function recalculateStatusCounts(): Promise<void> {
       `
     );
 
+    // Calculate holders_count for all clubs
+    await pool.query(
+      `
+      WITH holders AS (
+        SELECT
+          unnest(clubs) as club_name,
+          COUNT(DISTINCT owner_address) as holders_count
+        FROM ens_names
+        WHERE owner_address IS NOT NULL
+          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND clubs IS NOT NULL
+          AND array_length(clubs, 1) > 0
+        GROUP BY unnest(clubs)
+      )
+      UPDATE clubs c
+      SET holders_count = COALESCE(h.holders_count, 0)
+      FROM holders h
+      WHERE c.name = h.club_name
+      `
+    );
+
+    // Set holders_count to 0 for clubs with no holders
+    await pool.query(
+      `
+      UPDATE clubs
+      SET holders_count = 0
+      WHERE name NOT IN (
+        SELECT DISTINCT unnest(clubs)
+        FROM ens_names
+        WHERE owner_address IS NOT NULL
+          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND clubs IS NOT NULL
+          AND array_length(clubs, 1) > 0
+      )
+      `
+    );
+
     logger.info('Successfully recalculated status counts for all clubs');
   } catch (error) {
     logger.error({ error }, 'Error recalculating status counts');

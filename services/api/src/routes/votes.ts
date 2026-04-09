@@ -228,42 +228,42 @@ export async function votesRoutes(fastify: FastifyInstance) {
                         sortBy === 'upvotes' ? 'upvotes' :
                         'downvotes';
 
-      // Get total count
-      const countResult = await pool.query(
-        'SELECT COUNT(*) FROM ens_names WHERE upvotes > 0 OR downvotes > 0'
-      );
+      // Run count and data queries in parallel
+      const countQuery = 'SELECT COUNT(*) FROM ens_names WHERE upvotes > 0 OR downvotes > 0';
+      const dataQuery = `SELECT
+          en.id,
+          en.name,
+          en.token_id,
+          en.owner_address,
+          en.upvotes,
+          en.downvotes,
+          en.net_score,
+          al.listing as active_listing
+        FROM ens_names en
+        LEFT JOIN LATERAL (
+          SELECT json_build_object(
+            'id', l.id,
+            'price_wei', l.price_wei,
+            'currency_address', l.currency_address,
+            'status', l.status,
+            'source', l.source
+          ) as listing
+          FROM listings l
+          WHERE l.ens_name_id = en.id AND l.status = 'active'
+          ORDER BY l.created_at DESC
+          LIMIT 1
+        ) al ON true
+        WHERE en.upvotes > 0 OR en.downvotes > 0
+        ORDER BY ${sortColumn} DESC, en.name ASC
+        LIMIT $1 OFFSET $2`;
+
+      const [countResult, leaderboardResult] = await Promise.all([
+        pool.query(countQuery),
+        pool.query(dataQuery, [limit, offset]),
+      ]);
+
       const total = parseInt(countResult.rows[0].count);
       const totalPages = Math.ceil(total / limit);
-
-      // Get leaderboard
-      const leaderboardResult = await pool.query(
-        `SELECT
-          id,
-          name,
-          token_id,
-          owner_address,
-          upvotes,
-          downvotes,
-          net_score,
-          (
-            SELECT json_build_object(
-              'id', l.id,
-              'price_wei', l.price_wei,
-              'currency_address', l.currency_address,
-              'status', l.status,
-              'source', l.source
-            )
-            FROM listings l
-            WHERE l.ens_name_id = ens_names.id AND l.status = 'active'
-            ORDER BY l.created_at DESC
-            LIMIT 1
-          ) as active_listing
-         FROM ens_names
-         WHERE upvotes > 0 OR downvotes > 0
-         ORDER BY ${sortColumn} DESC, name ASC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
-      );
 
       const response: APIResponse = {
         success: true,

@@ -7,6 +7,7 @@ const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 // In-memory cache with TTL (5 minutes)
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const rolesCache = new Map<string, { data: EnsRoles; timestamp: number }>();
+const manageableNamesCache = new Map<string, { allNames: ManageableNameSummary[]; total: number; timestamp: number }>();
 
 /**
  * ENS Name Wrapper fuse flags
@@ -309,6 +310,17 @@ export async function getManageableNames(
 ): Promise<ManageableNamesResult> {
   const normalizedAddress = address.toLowerCase();
 
+  // Check cache
+  const cached = manageableNamesCache.get(normalizedAddress);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    logger.debug({ address: normalizedAddress }, 'Returning cached manageable names');
+    const offset = (page - 1) * limit;
+    return {
+      names: cached.allNames.slice(offset, offset + limit),
+      total: cached.total,
+    };
+  }
+
   // Fetch all names from The Graph (we need all for accurate total count and deduplication)
   const query = `
     query GetManageableNames($address: String!) {
@@ -383,12 +395,19 @@ export async function getManageableNames(
     });
   }
 
-  // Convert to array and apply pagination
+  // Convert to array and sort
   const allNames = Array.from(namesMap.values());
   const total = allNames.length;
 
   // Sort by name for consistent ordering
   allNames.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Cache the full sorted result
+  manageableNamesCache.set(normalizedAddress, {
+    allNames,
+    total,
+    timestamp: Date.now(),
+  });
 
   // Apply pagination
   const offset = (page - 1) * limit;
