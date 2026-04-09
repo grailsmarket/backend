@@ -39,23 +39,12 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
         : 'names_owned';
       const sortOrder = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
 
-      // Build queries based on whether clubs filter is present
-      let countQuery: string;
+      // Build query based on whether clubs filter is present
       let dataQuery: string;
-      let countParams: unknown[];
       let dataParams: unknown[];
 
       if (hasClubFilter) {
         // With club filter: only include users who own active names in specified clubs
-        countQuery = `
-          SELECT COUNT(DISTINCT owner_address) as total
-          FROM ens_names
-          WHERE owner_address IS NOT NULL
-            AND expiry_date > NOW() - INTERVAL '90 days'
-            AND clubs && $1::text[]
-        `;
-        countParams = [clubs];
-
         dataQuery = `
           WITH filtered_owners AS (
             SELECT DISTINCT owner_address
@@ -77,6 +66,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             FROM ens_names e
             INNER JOIN filtered_owners fo ON fo.owner_address = e.owner_address
             GROUP BY e.owner_address
+            HAVING COUNT(*) FILTER (WHERE e.expiry_date > NOW() - INTERVAL '90 days') > 0
           ),
           owner_clubs AS (
             SELECT
@@ -116,26 +106,18 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
             COALESCE(ls.names_listed, 0)::int as names_listed,
             COALESCE(ss.names_sold, 0)::int as names_sold,
-            COALESCE(ss.sales_volume, 0)::text as sales_volume
+            COALESCE(ss.sales_volume, 0)::text as sales_volume,
+            COUNT(*) OVER() as total_count
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
           LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
           LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
-          WHERE s.names_owned > 0
           ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : sortBy === 'sales_volume' ? 'COALESCE(ss.sales_volume, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $2 OFFSET $3
         `;
         dataParams = [clubs, limitNum, offset];
       } else {
         // Without club filter: include all users with active names
-        countQuery = `
-          SELECT COUNT(DISTINCT owner_address) as total
-          FROM ens_names
-          WHERE owner_address IS NOT NULL
-            AND expiry_date > NOW() - INTERVAL '90 days'
-        `;
-        countParams = [];
-
         dataQuery = `
           WITH owner_stats AS (
             SELECT
@@ -150,6 +132,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             FROM ens_names
             WHERE owner_address IS NOT NULL
             GROUP BY owner_address
+            HAVING COUNT(*) FILTER (WHERE expiry_date > NOW() - INTERVAL '90 days') > 0
           ),
           owner_clubs AS (
             SELECT
@@ -190,25 +173,21 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             COALESCE(c.clubs, ARRAY[]::text[]) as clubs,
             COALESCE(ls.names_listed, 0)::int as names_listed,
             COALESCE(ss.names_sold, 0)::int as names_sold,
-            COALESCE(ss.sales_volume, 0)::text as sales_volume
+            COALESCE(ss.sales_volume, 0)::text as sales_volume,
+            COUNT(*) OVER() as total_count
           FROM owner_stats s
           LEFT JOIN owner_clubs c ON c.owner_address = s.owner_address
           LEFT JOIN listing_stats ls ON ls.owner_address = s.owner_address
           LEFT JOIN sales_stats ss ON ss.owner_address = s.owner_address
-          WHERE s.names_owned > 0
           ORDER BY ${sortBy === 'names_listed' ? 'COALESCE(ls.names_listed, 0)' : sortBy === 'names_sold' ? 'COALESCE(ss.names_sold, 0)' : sortBy === 'sales_volume' ? 'COALESCE(ss.sales_volume, 0)' : 's.' + sortBy} ${sortOrder} NULLS LAST, s.owner_address ASC
           LIMIT $1 OFFSET $2
         `;
         dataParams = [limitNum, offset];
       }
 
-      // Execute queries in parallel
-      const [countResult, dataResult] = await Promise.all([
-        pool.query(countQuery, countParams),
-        pool.query(dataQuery, dataParams),
-      ]);
+      const dataResult = await pool.query(dataQuery, dataParams);
 
-      const total = parseInt(countResult.rows[0].total);
+      const total = dataResult.rows.length > 0 ? parseInt(dataResult.rows[0].total_count) : 0;
 
       return reply.send({
         success: true,

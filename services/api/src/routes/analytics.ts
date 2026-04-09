@@ -92,20 +92,13 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     };
     const interval = periodMap[query.period];
 
-    const [statsResult, volumeResult, activityResult] = await Promise.all([
-      // Overall statistics
-      pool.query(
-        `SELECT
-          COUNT(DISTINCT en.id) as total_names,
-          COUNT(DISTINCT l.id) as active_listings,
-          COUNT(DISTINCT o.id) as active_offers,
-          COUNT(DISTINCT w.user_id) as total_watchers,
-          SUM(en.view_count) as total_views
-        FROM ens_names en
-        LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'
-        LEFT JOIN offers o ON o.ens_name_id = en.id AND o.status IN ('pending', 'active')
-        LEFT JOIN watchlist w ON w.ens_name_id = en.id`
-      ),
+    const [totalNamesResult, activeListingsResult, activeOffersResult, totalWatchersResult, totalViewsResult, volumeResult, activityResult] = await Promise.all([
+      // Individual stats queries (avoids cartesian product from JOINs)
+      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW()`),
+      pool.query(`SELECT COUNT(*) as active_listings FROM listings WHERE status = 'active'`),
+      pool.query(`SELECT COUNT(*) as active_offers FROM offers WHERE status IN ('pending', 'active')`),
+      pool.query(`SELECT COUNT(DISTINCT user_id) as total_watchers FROM watchlist`),
+      pool.query(`SELECT COALESCE(SUM(view_count), 0) as total_views FROM ens_names`),
 
       // Volume statistics for period
       pool.query(
@@ -120,8 +113,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           COUNT(DISTINCT seller_address) as unique_sellers
         FROM sales
         WHERE sale_date > NOW() - INTERVAL '${interval}'
-          AND (currency_address = $1 OR currency_address = $2)`,
-        [CURRENCY_ADDRESSES.ETH, CURRENCY_ADDRESSES.WETH]
+          AND currency_address = ANY($1::text[])`,
+        [[CURRENCY_ADDRESSES.ETH, CURRENCY_ADDRESSES.WETH]]
       ),
 
       // Activity statistics for period
@@ -135,7 +128,13 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       ),
     ]);
 
-    const stats = statsResult.rows[0];
+    const stats = {
+      total_names: totalNamesResult.rows[0].total_names,
+      active_listings: activeListingsResult.rows[0].active_listings,
+      active_offers: activeOffersResult.rows[0].active_offers,
+      total_watchers: totalWatchersResult.rows[0].total_watchers,
+      total_views: totalViewsResult.rows[0].total_views,
+    };
     const volume = volumeResult.rows[0];
     const activity = activityResult.rows[0];
 
