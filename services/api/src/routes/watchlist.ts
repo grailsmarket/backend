@@ -279,10 +279,6 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
       if (checkResult.rows[0].user_id !== userId) {
         return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'This list belongs to another user' }, meta: { timestamp: new Date().toISOString() } });
       }
-      if (checkResult.rows[0].is_default) {
-        return reply.status(400).send({ success: false, error: { code: 'CANNOT_RENAME_DEFAULT', message: 'The default watchlist cannot be renamed' }, meta: { timestamp: new Date().toISOString() } });
-      }
-
       const result = await pool.query(
         'UPDATE watchlist_lists SET name = $1 WHERE id = $2 RETURNING *',
         [data.name, parseInt(listId)]
@@ -347,6 +343,81 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
     } catch (error: any) {
       fastify.log.error('Error deleting watchlist list:', error);
       return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete list' }, meta: { timestamp: new Date().toISOString() } });
+    }
+  });
+
+  /**
+   * PUT /api/v1/watchlist/lists/:listId/default
+   * Set a watchlist as the user's default
+   */
+  fastify.put('/lists/:listId/default', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      const { listId } = request.params as { listId: string };
+      const userId = parseInt(request.user.sub);
+      const parsedListId = parseInt(listId);
+
+      // Verify ownership
+      const checkResult = await pool.query(
+        'SELECT user_id, is_default FROM watchlist_lists WHERE id = $1',
+        [parsedListId]
+      );
+      if (checkResult.rows.length === 0) {
+        return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'List not found' }, meta: { timestamp: new Date().toISOString() } });
+      }
+      if (checkResult.rows[0].user_id !== userId) {
+        return reply.status(403).send({ success: false, error: { code: 'FORBIDDEN', message: 'This list belongs to another user' }, meta: { timestamp: new Date().toISOString() } });
+      }
+
+      // Idempotent: if already default, return success immediately
+      if (checkResult.rows[0].is_default) {
+        return reply.send({
+          success: true,
+          data: { message: 'List is already the default' },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        });
+      }
+
+      // Transaction: unset old default, set new default
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        await client.query(
+          'UPDATE watchlist_lists SET is_default = FALSE WHERE user_id = $1 AND is_default = TRUE',
+          [userId]
+        );
+
+        const result = await client.query(
+          'UPDATE watchlist_lists SET is_default = TRUE WHERE id = $1 RETURNING *',
+          [parsedListId]
+        );
+
+        await client.query('COMMIT');
+
+        const list = result.rows[0];
+        return reply.send({
+          success: true,
+          data: {
+            id: list.id,
+            name: list.name,
+            isDefault: list.is_default,
+            createdAt: list.created_at,
+            updatedAt: list.updated_at,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    } catch (error: any) {
+      fastify.log.error('Error setting default watchlist:', error);
+      return reply.status(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to set default list' }, meta: { timestamp: new Date().toISOString() } });
     }
   });
 
