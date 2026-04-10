@@ -223,7 +223,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20, status = 'pending' } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id, token_id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {
@@ -240,30 +240,41 @@ export async function offersRoutes(fastify: FastifyInstance) {
     }
 
     const ensNameId = nameResult.rows[0].id;
+    const tokenId = nameResult.rows[0].token_id;
 
+    // Query includes both direct offers AND n-of-many offers where this name's
+    // token_id is in the group's candidate set
     const offersQuery = `
       SELECT o.*, e.name, e.token_id
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE o.ens_name_id = $1
-      ${status ? 'AND o.status = $4' : ''}
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        o.ens_name_id = $1
+        OR (g.id IS NOT NULL AND $4 = ANY(g.token_ids))
+      )
+      ${status ? 'AND o.status = $5' : ''}
       ORDER BY o.offer_amount_wei DESC, o.created_at DESC
       LIMIT $2 OFFSET $3
     `;
 
     const countQuery = `
-      SELECT COUNT(*) FROM offers
-      WHERE ens_name_id = $1
-      ${status ? 'AND status = $2' : ''}
+      SELECT COUNT(*) FROM offers o
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        o.ens_name_id = $1
+        OR (g.id IS NOT NULL AND $2 = ANY(g.token_ids))
+      )
+      ${status ? 'AND o.status = $3' : ''}
     `;
 
     const queryParams = status
-      ? [ensNameId, limit, offset, status]
-      : [ensNameId, limit, offset];
+      ? [ensNameId, limit, offset, tokenId, status]
+      : [ensNameId, limit, offset, tokenId];
 
     const countParams = status
-      ? [ensNameId, status]
-      : [ensNameId];
+      ? [ensNameId, tokenId, status]
+      : [ensNameId, tokenId];
 
     const [offersResult, countResult] = await Promise.all([
       pool.query(offersQuery, queryParams),
