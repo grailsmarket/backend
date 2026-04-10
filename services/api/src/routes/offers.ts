@@ -250,7 +250,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
         g.total_items as n_of_many_total_items,
         g.fulfilled_count as n_of_many_fulfilled_count,
         g.token_ids as n_of_many_token_ids,
-        g.status as n_of_many_group_status
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
@@ -533,7 +534,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
         g.total_items as n_of_many_total_items,
         g.fulfilled_count as n_of_many_fulfilled_count,
         g.token_ids as n_of_many_token_ids,
-        g.status as n_of_many_group_status
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
@@ -601,7 +603,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
         g.total_items as n_of_many_total_items,
         g.fulfilled_count as n_of_many_fulfilled_count,
         g.token_ids as n_of_many_token_ids,
-        g.status as n_of_many_group_status
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
