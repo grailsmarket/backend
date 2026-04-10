@@ -377,20 +377,42 @@ export class ENSIndexer {
       } else {
         // Name doesn't exist yet - create it with the namehash token_id
         const attributes = this.calculateNameAttributes(nameToStore);
-        const insertResult = await this.pool.query(
-          `INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
-          VALUES ($1, $2, $3, NOW(), $4, $5)
-          ON CONFLICT (token_id) DO UPDATE SET
-            owner_address = EXCLUDED.owner_address,
-            last_transfer_date = NOW(),
-            updated_at = NOW()
-          RETURNING id`,
-          [tokenIdStr, nameToStore, ownerToStore, attributes.has_numbers, attributes.has_emoji]
-        );
+        try {
+          const insertResult = await this.pool.query(
+            `INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
+            VALUES ($1, $2, $3, NOW(), $4, $5)
+            ON CONFLICT (token_id) DO UPDATE SET
+              owner_address = EXCLUDED.owner_address,
+              last_transfer_date = NOW(),
+              updated_at = NOW()
+            RETURNING id`,
+            [tokenIdStr, nameToStore, ownerToStore, attributes.has_numbers, attributes.has_emoji]
+          );
 
-        if (insertResult.rows.length > 0) {
-          ensNameId = insertResult.rows[0].id;
-          logger.info(`Created new record for wrapped name ${nameToStore} with owner ${ownerToStore}`);
+          if (insertResult.rows.length > 0) {
+            ensNameId = insertResult.rows[0].id;
+            logger.info(`Created new record for wrapped name ${nameToStore} with owner ${ownerToStore}`);
+          }
+        } catch (insertError: any) {
+          if (insertError.code === '23505') {
+            // Unique constraint violation on name - fall back to UPDATE by name
+            logger.warn(`Constraint violation during Name Wrapper insert for ${nameToStore}, falling back to UPDATE by name: ${insertError.detail}`);
+            const fallbackResult = await this.pool.query(
+              `UPDATE ens_names SET
+                owner_address = $1,
+                last_transfer_date = NOW(),
+                updated_at = NOW()
+              WHERE name = $2
+              RETURNING id`,
+              [ownerToStore, nameToStore]
+            );
+            if (fallbackResult.rows.length > 0) {
+              ensNameId = fallbackResult.rows[0].id;
+              logger.info(`Updated ownership for wrapped name ${nameToStore} to ${ownerToStore} (fallback)`);
+            }
+          } else {
+            throw insertError;
+          }
         }
       }
     } catch (error: any) {
@@ -1247,54 +1269,72 @@ export class ENSIndexer {
 
       let result;
 
-      if (duplicateName.rows.length > 0) {
-        // Name exists with different token_id - update the existing record by name
-        // Also update token_id to match the new wrapped/unwrapped state
-        logger.info(`Updating token_id for ${nameToStore} from ${duplicateName.rows[0].token_id} to ${correctTokenId} (wrap/unwrap transition)`);
-        result = await this.pool.query(
-          `UPDATE ens_names SET
-            token_id = $1,
-            owner_address = $2,
-            last_transfer_date = NOW(),
-            updated_at = NOW()
-          WHERE name = $3
-          RETURNING id`,
-          [correctTokenId, ownerToStore, nameToStore]
-        );
-      } else {
-        // Upsert by token_id
-        const upsertQuery = `
-          INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
-          VALUES ($1, $2, $3, NOW(), $4, $5)
-          ON CONFLICT (token_id) DO UPDATE SET
-            owner_address = EXCLUDED.owner_address,
-            name = CASE
-              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
-              ELSE ens_names.name
-            END,
-            has_numbers = CASE
-              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
-              ELSE ens_names.has_numbers
-            END,
-            has_emoji = CASE
-              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
-              ELSE ens_names.has_emoji
-            END,
-            last_transfer_date = NOW(),
-            updated_at = NOW()
-          RETURNING id
-        `;
+      try {
+        if (duplicateName.rows.length > 0) {
+          // Name exists with different token_id - update the existing record by name
+          // Also update token_id to match the new wrapped/unwrapped state
+          logger.info(`Updating token_id for ${nameToStore} from ${duplicateName.rows[0].token_id} to ${correctTokenId} (wrap/unwrap transition)`);
+          result = await this.pool.query(
+            `UPDATE ens_names SET
+              token_id = $1,
+              owner_address = $2,
+              last_transfer_date = NOW(),
+              updated_at = NOW()
+            WHERE name = $3
+            RETURNING id`,
+            [correctTokenId, ownerToStore, nameToStore]
+          );
+        } else {
+          // Upsert by token_id
+          const upsertQuery = `
+            INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, has_numbers, has_emoji)
+            VALUES ($1, $2, $3, NOW(), $4, $5)
+            ON CONFLICT (token_id) DO UPDATE SET
+              owner_address = EXCLUDED.owner_address,
+              name = CASE
+                WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+                ELSE ens_names.name
+              END,
+              has_numbers = CASE
+                WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
+                ELSE ens_names.has_numbers
+              END,
+              has_emoji = CASE
+                WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
+                ELSE ens_names.has_emoji
+              END,
+              last_transfer_date = NOW(),
+              updated_at = NOW()
+            RETURNING id
+          `;
 
-        result = await this.pool.query(upsertQuery, [
-          correctTokenId,
-          nameToStore,
-          ownerToStore,
-          has_numbers,
-          has_emoji
-        ]);
+          result = await this.pool.query(upsertQuery, [
+            correctTokenId,
+            nameToStore,
+            ownerToStore,
+            has_numbers,
+            has_emoji
+          ]);
+        }
+      } catch (upsertError: any) {
+        if (upsertError.code === '23505') {
+          // Unique constraint violation (token_id or name) - fall back to UPDATE by name
+          logger.warn(`Constraint violation during Transfer upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`);
+          result = await this.pool.query(
+            `UPDATE ens_names SET
+              owner_address = $1,
+              last_transfer_date = NOW(),
+              updated_at = NOW()
+            WHERE name = $2
+            RETURNING id`,
+            [ownerToStore, nameToStore]
+          );
+        } else {
+          throw upsertError;
+        }
       }
 
-      if (result.rows.length > 0) {
+      if (result && result.rows.length > 0) {
         ensNameId = result.rows[0].id;
       }
     } catch (error: any) {
@@ -1486,62 +1526,85 @@ export class ENSIndexer {
 
       let result;
 
-      if (duplicateName.rows.length > 0) {
-        // Name exists with different token_id - update the existing record by name
-        result = await this.pool.query(
-          `UPDATE ens_names SET
-            token_id = $1,
-            owner_address = $2,
-            registrant = $3,
-            expiry_date = $4,
-            registration_date = COALESCE(registration_date, $5),
-            creation_date = COALESCE(creation_date, $9),
-            has_numbers = $6,
-            has_emoji = $7,
+      try {
+        if (duplicateName.rows.length > 0) {
+          // Name exists with different token_id - update the existing record by name
+          result = await this.pool.query(
+            `UPDATE ens_names SET
+              token_id = $1,
+              owner_address = $2,
+              registrant = $3,
+              expiry_date = $4,
+              registration_date = COALESCE(registration_date, $5),
+              creation_date = COALESCE(creation_date, $9),
+              has_numbers = $6,
+              has_emoji = $7,
+              updated_at = NOW()
+            WHERE name = $8
+            RETURNING id`,
+            [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore, creationDate]
+          );
+        } else {
+          // Upsert by token_id
+          const upsertQuery = `
+            INSERT INTO ens_names (
+              token_id, owner_address, registrant,
+              expiry_date, registration_date, creation_date, name, has_numbers, has_emoji
+            ) VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8)
+            ON CONFLICT (token_id) DO UPDATE SET
+            owner_address = EXCLUDED.owner_address,
+            registrant = EXCLUDED.registrant,
+            expiry_date = EXCLUDED.expiry_date,
+            registration_date = COALESCE(ens_names.registration_date, EXCLUDED.registration_date),
+            creation_date = COALESCE(ens_names.creation_date, EXCLUDED.creation_date),
+            name = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+              ELSE ens_names.name
+            END,
+            has_numbers = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
+              ELSE ens_names.has_numbers
+            END,
+            has_emoji = CASE
+              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
+              ELSE ens_names.has_emoji
+            END,
             updated_at = NOW()
-          WHERE name = $8
-          RETURNING id`,
-          [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore, creationDate]
-        );
-      } else {
-        // Upsert by token_id
-        const upsertQuery = `
-          INSERT INTO ens_names (
-            token_id, owner_address, registrant,
-            expiry_date, registration_date, creation_date, name, has_numbers, has_emoji
-          ) VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8)
-          ON CONFLICT (token_id) DO UPDATE SET
-          owner_address = EXCLUDED.owner_address,
-          registrant = EXCLUDED.registrant,
-          expiry_date = EXCLUDED.expiry_date,
-          registration_date = COALESCE(ens_names.registration_date, EXCLUDED.registration_date),
-          creation_date = COALESCE(ens_names.creation_date, EXCLUDED.creation_date),
-          name = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
-            ELSE ens_names.name
-          END,
-          has_numbers = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_numbers
-            ELSE ens_names.has_numbers
-          END,
-          has_emoji = CASE
-            WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.has_emoji
-            ELSE ens_names.has_emoji
-          END,
-          updated_at = NOW()
-        `;
+          `;
 
-        result = await this.pool.query(upsertQuery + ' RETURNING id', [
-          correctTokenId,
-          ownerAddress,
-          registrantAddress,
-          expiryDate,
-          registrationDate,
-          nameToStore,
-          has_numbers,
-          has_emoji,
-          creationDate
-        ]);
+          result = await this.pool.query(upsertQuery + ' RETURNING id', [
+            correctTokenId,
+            ownerAddress,
+            registrantAddress,
+            expiryDate,
+            registrationDate,
+            nameToStore,
+            has_numbers,
+            has_emoji,
+            creationDate
+          ]);
+        }
+      } catch (upsertError: any) {
+        if (upsertError.code === '23505') {
+          // Unique constraint violation (token_id or name) - fall back to UPDATE by name
+          logger.warn(`Constraint violation during NameRegistered upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`);
+          result = await this.pool.query(
+            `UPDATE ens_names SET
+              owner_address = $1,
+              registrant = $2,
+              expiry_date = $3,
+              registration_date = COALESCE(registration_date, $4),
+              creation_date = COALESCE(creation_date, $7),
+              has_numbers = $5,
+              has_emoji = $6,
+              updated_at = NOW()
+            WHERE name = $8
+            RETURNING id`,
+            [ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, creationDate, nameToStore]
+          );
+        } else {
+          throw upsertError;
+        }
       }
 
       // Create mint activity record with the registration date as the event timestamp
