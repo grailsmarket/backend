@@ -39,12 +39,12 @@ export async function registerBulkOfferExposureWorker(boss: PgBoss): Promise<voi
                 SUM(offer_amount_wei::numeric) as total_exposure
          FROM offers
          WHERE status = 'pending'
-           AND offer_type IN ('bulk', 'criteria')
+           AND offer_type IN ('bulk', 'criteria', 'n_of_many')
          GROUP BY buyer_address`
       );
 
       if (buyersResult.rows.length === 0) {
-        logger.debug('No active bulk/criteria offers to check');
+        logger.debug('No active bulk/criteria/n_of_many offers to check');
         return;
       }
 
@@ -68,7 +68,7 @@ export async function registerBulkOfferExposureWorker(boss: PgBoss): Promise<voi
              FROM offers
              WHERE LOWER(buyer_address) = LOWER($1)
                AND status = 'pending'
-               AND offer_type IN ('bulk', 'criteria')`,
+               AND offer_type IN ('bulk', 'criteria', 'n_of_many')`,
             [buyer.buyer_address]
           );
 
@@ -80,7 +80,7 @@ export async function registerBulkOfferExposureWorker(boss: PgBoss): Promise<voi
               `UPDATE offers SET status = 'unfunded'
                WHERE LOWER(buyer_address) = LOWER($1)
                  AND status = 'pending'
-                 AND offer_type IN ('bulk', 'criteria')
+                 AND offer_type IN ('bulk', 'criteria', 'n_of_many')
                RETURNING id`,
               [buyer.buyer_address]
             );
