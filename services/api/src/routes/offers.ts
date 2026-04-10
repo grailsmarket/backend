@@ -245,7 +245,12 @@ export async function offersRoutes(fastify: FastifyInstance) {
     // Query includes both direct offers AND n-of-many offers where this name's
     // token_id is in the group's candidate set
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
@@ -523,9 +528,15 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
       WHERE LOWER(o.buyer_address) = LOWER($1)
       ${status ? 'AND o.status = $4' : ''}
       ORDER BY o.created_at DESC
@@ -585,7 +596,12 @@ export async function offersRoutes(fastify: FastifyInstance) {
     // Also include n-of-many offers where the owner holds any name
     // whose token_id is in the group's candidate set
     const offersQuery = `
-      SELECT DISTINCT ON (o.id) o.*, e.name, e.token_id
+      SELECT DISTINCT ON (o.id) o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
