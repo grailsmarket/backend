@@ -582,20 +582,44 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
 
+    // Also include n-of-many offers where the owner holds any name
+    // whose token_id is in the group's candidate set
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT DISTINCT ON (o.id) o.*, e.name, e.token_id
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE LOWER(e.owner_address) = LOWER($1)
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        LOWER(e.owner_address) = LOWER($1)
+        OR (
+          g.id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ens_names owned
+            WHERE LOWER(owned.owner_address) = LOWER($1)
+            AND owned.token_id = ANY(g.token_ids)
+          )
+        )
+      )
       ${status ? 'AND o.status = $4' : ''}
-      ORDER BY o.created_at DESC
+      ORDER BY o.id, o.created_at DESC
       LIMIT $2 OFFSET $3
     `;
 
     const countQuery = `
-      SELECT COUNT(*) FROM offers o
+      SELECT COUNT(DISTINCT o.id) FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE LOWER(e.owner_address) = LOWER($1)
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        LOWER(e.owner_address) = LOWER($1)
+        OR (
+          g.id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ens_names owned
+            WHERE LOWER(owned.owner_address) = LOWER($1)
+            AND owned.token_id = ANY(g.token_ids)
+          )
+        )
+      )
       ${status ? 'AND o.status = $2' : ''}
     `;
 
