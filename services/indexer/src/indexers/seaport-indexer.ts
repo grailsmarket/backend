@@ -529,6 +529,44 @@ export class SeaportIndexer {
         `;
 
         await this.pool.query(updateOwnerQuery, [buyerAddress.toLowerCase(), tokenId]);
+
+        // Track n-of-many group fulfillment
+        if (offerId) {
+          try {
+            const nOfManyResult = await this.pool.query(
+              'SELECT n_of_many_group_id FROM offers WHERE id = $1 AND n_of_many_group_id IS NOT NULL',
+              [offerId]
+            );
+
+            if (nOfManyResult.rows.length > 0) {
+              const nGroupId = nOfManyResult.rows[0].n_of_many_group_id;
+
+              // Atomically increment fulfilled_count
+              const updateResult = await this.pool.query(
+                `UPDATE n_of_many_groups
+                 SET fulfilled_count = fulfilled_count + 1
+                 WHERE id = $1
+                 RETURNING fulfilled_count, target_count`,
+                [nGroupId]
+              );
+
+              if (updateResult.rows.length > 0) {
+                const { fulfilled_count, target_count } = updateResult.rows[0];
+                logger.info(`N-of-many group ${nGroupId}: ${fulfilled_count}/${target_count} fulfilled (offerId=${offerId})`);
+
+                if (fulfilled_count >= target_count) {
+                  await this.pool.query(
+                    `UPDATE n_of_many_groups SET status = 'completed' WHERE id = $1`,
+                    [nGroupId]
+                  );
+                  logger.info(`N-of-many group ${nGroupId} completed`);
+                }
+              }
+            }
+          } catch (nErr: any) {
+            logger.error(`Failed to update n-of-many group for offerId ${offerId}: ${nErr.message}`);
+          }
+        }
       } catch (err: any) {
         logger.error(`Failed to process Seaport sale for token ${tokenId}: ${err.message}`);
         throw err; // Re-throw to be caught by outer handler
@@ -591,7 +629,7 @@ export class SeaportIndexer {
       SET status = 'cancelled'
       WHERE buyer_address = $1
         AND status = 'pending'
-      RETURNING id, order_hash, ens_name_id, bulk_offer_group_id
+      RETURNING id, order_hash, ens_name_id, bulk_offer_group_id, n_of_many_group_id
     `;
 
     const cancelledOffers = await this.pool.query(cancelOffersQuery, [offererAddress]);
@@ -620,6 +658,24 @@ export class SeaportIndexer {
                SELECT 1 FROM offers WHERE bulk_offer_group_id = bulk_offer_groups.id AND status = 'pending'
              )`,
           [affectedGroupIds]
+        );
+      }
+
+      // Cancel any n_of_many_groups that are now fully cancelled
+      const affectedNOfManyGroupIds = [...new Set(
+        cancelledOffers.rows
+          .map((r: any) => r.n_of_many_group_id)
+          .filter((id: any) => id != null)
+      )];
+
+      if (affectedNOfManyGroupIds.length > 0) {
+        await this.pool.query(
+          `UPDATE n_of_many_groups SET status = 'cancelled', cancelled_at = NOW()
+           WHERE id = ANY($1)
+             AND NOT EXISTS (
+               SELECT 1 FROM offers WHERE n_of_many_group_id = n_of_many_groups.id AND status = 'pending'
+             )`,
+          [affectedNOfManyGroupIds]
         );
       }
     }

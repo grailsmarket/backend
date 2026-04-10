@@ -203,3 +203,34 @@ export interface BuildCriteriaOfferOrderParams {
   /** Duration in days (default: 7) */
   durationDays?: number;
 }
+
+/**
+ * Parameters for building n-of-many offer orders.
+ * Creates N criteria offers, each valid for any of M candidate names.
+ */
+export interface BuildNOfManyOfferOrdersParams {
+  /** Array of acceptable ENS token IDs (M candidates) */
+  tokenIds: string[];
+  /** Offer amount in wei (WETH) — same price per fulfillment */
+  offerAmountWei: string;
+  /** Buyer address (offerer) */
+  offerer: string;
+  /** Number of offers to create (N, the target count) */
+  count: number;
+  /** Duration in days (default: 7) */
+  durationDays?: number;
+}
+
+/**
+ * Result from building n-of-many offer orders
+ */
+export interface NOfManyOrderResult {
+  /** Array of N criteria-based SeaportOrder structures */
+  orders: SeaportOrder[];
+  /** Shared merkle root of accepted token IDs */
+  merkleRoot: string;
+  /** Map of tokenId -> merkle proof for fulfillment */
+  proofs: Map<string, string[]>;
+  /** Sorted token IDs used in the tree */
+  sortedTokenIds: string[];
+}
