@@ -11,6 +11,8 @@ import {
   type BuildOfferOrderParams,
   type BuildBulkOfferOrdersParams,
   type BuildCriteriaOfferOrderParams,
+  type BuildNOfManyOfferOrdersParams,
+  type NOfManyOrderResult,
   OrderType,
   ItemType,
 } from './types.js';
@@ -306,6 +308,98 @@ export class SeaportOrderBuilder {
     const order = applyOfferCriteria(baseOrder, merkleRoot);
 
     return { order, merkleRoot, proofs, sortedTokenIds };
+  }
+
+  /**
+   * Build n-of-many offer orders.
+   * Creates N criteria-based offers, each valid for any of M candidate names.
+   * All N orders share the same merkle root but have unique salts.
+   *
+   * @param params - N-of-many offer parameters
+   * @returns N orders + shared merkle root + proofs for fulfillment
+   *
+   * @example
+   * ```ts
+   * const orderBuilder = new SeaportOrderBuilder();
+   * const result = orderBuilder.buildNOfManyOfferOrders({
+   *   tokenIds: ['123', '456', '789', '101', '202'],
+   *   offerAmountWei: '500000000000000000', // 0.5 WETH each
+   *   offerer: '0x...',
+   *   count: 3, // want 3 of the 5
+   * });
+   * // result.orders.length === 3
+   * // All 3 orders share result.merkleRoot covering all 5 token IDs
+   * ```
+   */
+  buildNOfManyOfferOrders(params: BuildNOfManyOfferOrdersParams): NOfManyOrderResult {
+    const { tokenIds, offerAmountWei, offerer, count, durationDays = 7 } = params;
+
+    if (tokenIds.length < 2) {
+      throw new Error('At least 2 token IDs required for n-of-many offers');
+    }
+    if (count < 1) {
+      throw new Error('Count must be at least 1');
+    }
+    if (count > tokenIds.length) {
+      throw new Error('Count cannot exceed the number of token IDs');
+    }
+
+    // Build criteria merkle tree from the full candidate set
+    const { merkleRoot, proofs, sortedTokenIds } = buildCriteriaMerkleTree(tokenIds);
+
+    // Calculate shared timing
+    const startTime = Math.floor(Date.now() / 1000);
+    const endTime = startTime + durationDays * 24 * 60 * 60;
+
+    // Build N criteria orders with unique salts
+    const orders: SeaportOrder[] = [];
+    for (let i = 0; i < count; i++) {
+      // Index-based salt for uniqueness across the N orders
+      const salt = keccak256(
+        encodeAbiParameters(parseAbiParameters('uint256, address, uint256'), [
+          BigInt(Date.now()),
+          offerer as `0x${string}`,
+          BigInt(i),
+        ])
+      );
+
+      const offer: SeaportOfferItem[] = [
+        {
+          itemType: ItemType.ERC20,
+          token: WETH_ADDRESS,
+          identifierOrCriteria: '0',
+          startAmount: offerAmountWei,
+          endAmount: offerAmountWei,
+        },
+      ];
+
+      const consideration: SeaportConsiderationItem[] = [
+        {
+          itemType: ItemType.ERC721_WITH_CRITERIA,
+          token: ENS_REGISTRAR_ADDRESS,
+          identifierOrCriteria: merkleRoot,
+          startAmount: '1',
+          endAmount: '1',
+          recipient: offerer,
+        },
+      ];
+
+      orders.push({
+        offerer,
+        zone: DEFAULT_ZONE,
+        offer,
+        consideration,
+        orderType: OrderType.FULL_OPEN,
+        startTime,
+        endTime,
+        zoneHash: DEFAULT_ZONE_HASH,
+        salt,
+        conduitKey: DEFAULT_CONDUIT_KEY,
+        totalOriginalConsiderationItems: consideration.length,
+      });
+    }
+
+    return { orders, merkleRoot, proofs, sortedTokenIds };
   }
 
   /**

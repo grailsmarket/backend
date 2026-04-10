@@ -8,6 +8,8 @@ interface OfferLimits {
   max_bulk_offer_names: number;
   max_criteria_offer_names: number;
   bulk_offers_enabled: boolean;
+  max_n_of_many_target_count: number;
+  max_n_of_many_items: number;
 }
 
 const DEFAULT_LIMITS: OfferLimits = {
@@ -18,6 +20,8 @@ const DEFAULT_LIMITS: OfferLimits = {
   max_bulk_offer_names: 10000,
   max_criteria_offer_names: 1000,
   bulk_offers_enabled: true,
+  max_n_of_many_target_count: 50,
+  max_n_of_many_items: 1000,
 };
 
 let cachedLimits: OfferLimits | null = null;
@@ -60,6 +64,12 @@ export async function getOfferLimits(): Promise<OfferLimits> {
           break;
         case 'bulk_offers_enabled':
           limits.bulk_offers_enabled = row.value === 'true';
+          break;
+        case 'max_n_of_many_target_count':
+          limits.max_n_of_many_target_count = parseInt(row.value);
+          break;
+        case 'max_n_of_many_items':
+          limits.max_n_of_many_items = parseInt(row.value);
           break;
       }
     }
@@ -120,6 +130,57 @@ export async function validateBulkOfferLimits(params: {
   const activeCount = parseInt(activeResult.rows[0].count);
 
   if (activeCount + params.offerCount > limits.max_active_offers_per_user) {
+    return `Would exceed maximum active offers (${limits.max_active_offers_per_user}). Currently have ${activeCount} active offers.`;
+  }
+
+  return null;
+}
+
+/**
+ * Validate an n-of-many offer request against limits.
+ *
+ * @returns null if valid, or an error message string
+ */
+export async function validateNOfManyOfferLimits(params: {
+  targetCount: number;
+  totalItems: number;
+  buyerAddress: string;
+  offerAmountWei: string;
+}): Promise<string | null> {
+  const limits = await getOfferLimits();
+
+  if (!limits.bulk_offers_enabled) {
+    return 'Bulk offers are currently disabled';
+  }
+
+  if (params.targetCount > limits.max_n_of_many_target_count) {
+    return `Maximum target count is ${limits.max_n_of_many_target_count}`;
+  }
+
+  if (params.totalItems > limits.max_n_of_many_items) {
+    return `Maximum candidate items is ${limits.max_n_of_many_items}`;
+  }
+
+  if (params.targetCount > params.totalItems) {
+    return 'Target count cannot exceed total items';
+  }
+
+  // Check minimum amount
+  const minAmount = BigInt(limits.min_offer_amount_wei);
+  if (BigInt(params.offerAmountWei) < minAmount) {
+    return `Offer amount below minimum (${limits.min_offer_amount_wei} wei)`;
+  }
+
+  // Check active offers cap
+  const pool = getPostgresPool();
+  const activeResult = await pool.query(
+    `SELECT COUNT(*) FROM offers
+     WHERE LOWER(buyer_address) = LOWER($1) AND status = 'pending'`,
+    [params.buyerAddress]
+  );
+  const activeCount = parseInt(activeResult.rows[0].count);
+
+  if (activeCount + params.targetCount > limits.max_active_offers_per_user) {
     return `Would exceed maximum active offers (${limits.max_active_offers_per_user}). Currently have ${activeCount} active offers.`;
   }
 
