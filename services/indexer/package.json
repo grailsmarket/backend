@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "backfill-names": "npx tsx src/scripts/backfill-ens-names.ts",
     "update-names": "npm run build && node --max-old-space-size=2048 dist/indexer/src/scripts/update-ens-names.js",
-    "repair-wrapper-owners": "npm run build && node dist/indexer/src/scripts/repair-wrapper-owners.js"
+    "repair-wrapper-owners": "npm run build && node dist/indexer/src/scripts/repair-wrapper-owners.js",
+    "import-listing": "npm run build && node dist/indexer/src/scripts/import-listing.js",
+    "import-listing:fix": "npm run build && node dist/indexer/src/scripts/import-listing.js --fix"
   },
   "dependencies": {
     "p-queue": "^6.6.2",

@@ -35,9 +35,15 @@ interface ReconcileResult {
   offersChecked: number;
   offersMissing: number;
   offersInserted: number;
+  offersSkippedNoToken: number;
+  offersSkippedNoEnsName: number;
   listingsChecked: number;
   listingsMissing: number;
   listingsInserted: number;
+  listingsSkippedNoToken: number;
+  listingsSkippedNoEnsName: number;
+  listingsResolvedViaName: number;
+  pagesFetched: number;
 }
 
 export async function registerReconcileOpenseaWorker(boss: PgBoss) {
@@ -72,73 +78,123 @@ export async function registerReconcileOpenseaWorker(boss: PgBoss) {
   logger.info('Registered OpenSea reconciliation worker (every 5 minutes)');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const MAX_PAGES = parseInt(process.env.RECONCILE_MAX_PAGES || '5', 10);
+
 async function reconcileOpenSea(pool: Pool): Promise<ReconcileResult> {
   const result: ReconcileResult = {
     offersChecked: 0,
     offersMissing: 0,
     offersInserted: 0,
+    offersSkippedNoToken: 0,
+    offersSkippedNoEnsName: 0,
     listingsChecked: 0,
     listingsMissing: 0,
     listingsInserted: 0,
+    listingsSkippedNoToken: 0,
+    listingsSkippedNoEnsName: 0,
+    listingsResolvedViaName: 0,
+    pagesFetched: 0,
   };
 
   const offersResult = await reconcileOffers(pool);
   result.offersChecked = offersResult.checked;
   result.offersMissing = offersResult.missing;
   result.offersInserted = offersResult.inserted;
+  result.offersSkippedNoToken = offersResult.skippedNoToken;
+  result.offersSkippedNoEnsName = offersResult.skippedNoEnsName;
 
   const listingsResult = await reconcileListings(pool);
   result.listingsChecked = listingsResult.checked;
   result.listingsMissing = listingsResult.missing;
   result.listingsInserted = listingsResult.inserted;
+  result.listingsSkippedNoToken = listingsResult.skippedNoToken;
+  result.listingsSkippedNoEnsName = listingsResult.skippedNoEnsName;
+  result.listingsResolvedViaName = listingsResult.resolvedViaName;
+  result.pagesFetched = listingsResult.pagesFetched;
 
   return result;
 }
 
-async function fetchOpenSeaOffers(): Promise<OpenSeaOffer[]> {
+async function fetchOpenSeaOffers(maxPages = MAX_PAGES): Promise<OpenSeaOffer[]> {
   if (!OPENSEA_API_KEY) {
     logger.warn('OPENSEA_API_KEY not configured, skipping offer reconciliation');
     return [];
   }
 
-  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/offers?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
+  const allOffers: OpenSeaOffer[] = [];
+  let cursor: string | null = null;
 
-  const response = await fetch(url, {
-    headers: {
-      'X-API-Key': OPENSEA_API_KEY,
-      'Content-Type': 'application/json',
-    },
-  });
+  for (let page = 0; page < maxPages; page++) {
+    let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/offers?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
+    if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  if (!response.ok) {
-    throw new Error(`OpenSea offers API error: ${response.status}`);
+    const response = await fetch(url, {
+      headers: {
+        'X-API-Key': OPENSEA_API_KEY,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenSea offers API error: ${response.status}`);
+    }
+
+    const data = await response.json() as { orders?: OpenSeaOffer[]; next?: string };
+    allOffers.push(...(data.orders || []));
+
+    cursor = data.next || null;
+    if (!cursor) break;
+
+    // Rate limit between pages
+    if (page < maxPages - 1) await sleep(300);
   }
 
-  const data = await response.json() as { orders?: OpenSeaOffer[] };
-  return data.orders || [];
+  logger.info({ pages: Math.min(maxPages, allOffers.length > 0 ? Math.ceil(allOffers.length / RECONCILE_LIMIT) : 1), total: allOffers.length }, 'Fetched offers from OpenSea');
+  return allOffers;
 }
 
-async function fetchOpenSeaListings(): Promise<OpenSeaListing[]> {
+async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: OpenSeaListing[]; pagesFetched: number }> {
   if (!OPENSEA_API_KEY) {
     logger.warn('OPENSEA_API_KEY not configured, skipping listing reconciliation');
-    return [];
+    return { listings: [], pagesFetched: 0 };
   }
 
-  const url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
+  const allListings: OpenSeaListing[] = [];
+  let cursor: string | null = null;
+  let pagesFetched = 0;
 
-  const response = await fetch(url, {
-    headers: {
-      'X-API-Key': OPENSEA_API_KEY,
-      'Content-Type': 'application/json',
-    },
-  });
+  for (let page = 0; page < maxPages; page++) {
+    let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?collection_slug=ens&limit=${RECONCILE_LIMIT}`;
+    if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
-  if (!response.ok) {
-    throw new Error(`OpenSea listings API error: ${response.status}`);
+    const response = await fetch(url, {
+      headers: {
+        'X-API-Key': OPENSEA_API_KEY,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenSea listings API error: ${response.status}`);
+    }
+
+    const data = await response.json() as { orders?: OpenSeaListing[]; next?: string };
+    allListings.push(...(data.orders || []));
+    pagesFetched++;
+
+    cursor = data.next || null;
+    if (!cursor) break;
+
+    // Rate limit between pages
+    if (page < maxPages - 1) await sleep(300);
   }
 
-  const data = await response.json() as { orders?: OpenSeaListing[] };
-  return data.orders || [];
+  logger.info({ pages: pagesFetched, total: allListings.length }, 'Fetched listings from OpenSea');
+  return { listings: allListings, pagesFetched };
 }
 
 async function reconcileOffers(pool: Pool) {
@@ -146,7 +202,7 @@ async function reconcileOffers(pool: Pool) {
   const activeOffers = osOffers.filter(o => !o.cancelled && !o.finalized);
 
   if (activeOffers.length === 0) {
-    return { checked: 0, missing: 0, inserted: 0 };
+    return { checked: 0, missing: 0, inserted: 0, skippedNoToken: 0, skippedNoEnsName: 0 };
   }
 
   const orderHashes = activeOffers.map(o => o.order_hash);
@@ -160,18 +216,47 @@ async function reconcileOffers(pool: Pool) {
   const missingOffers = activeOffers.filter(o => !existingHashes.has(o.order_hash));
 
   let inserted = 0;
+  let skippedNoToken = 0;
+  let skippedNoEnsName = 0;
+
   for (const offer of missingOffers) {
     try {
       const tokenId = offer.taker_asset_bundle?.assets?.[0]?.token_id;
-      if (!tokenId) continue;
+      if (!tokenId) {
+        skippedNoToken++;
+        continue;
+      }
 
+      // Try direct token_id lookup first
+      let ensNameId: number | null = null;
       const ensResult = await pool.query(
         'SELECT id FROM ens_names WHERE token_id = $1',
         [tokenId]
       );
-      if (ensResult.rows.length === 0) continue;
 
-      const ensNameId = ensResult.rows[0].id;
+      if (ensResult.rows.length > 0) {
+        ensNameId = ensResult.rows[0].id;
+      } else {
+        // Fallback: try name-based lookup using OpenSea metadata
+        const name = offer.taker_asset_bundle?.assets?.[0]?.name;
+        if (name) {
+          const nameResult = await pool.query(
+            'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+            [name]
+          );
+          if (nameResult.rows.length > 0) {
+            ensNameId = nameResult.rows[0].id;
+            logger.info({ tokenId, name, ensNameId }, 'Resolved offer via name fallback');
+          }
+        }
+      }
+
+      if (!ensNameId) {
+        skippedNoEnsName++;
+        logger.debug({ tokenId, orderHash: offer.order_hash }, 'Could not find ens_name for offer, skipping');
+        continue;
+      }
+
       const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
         '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 
@@ -200,15 +285,19 @@ async function reconcileOffers(pool: Pool) {
     }
   }
 
-  return { checked: activeOffers.length, missing: missingOffers.length, inserted };
+  if (skippedNoEnsName > 0) {
+    logger.warn({ skippedNoEnsName }, 'Offers skipped: ens_name not found by token_id or name');
+  }
+
+  return { checked: activeOffers.length, missing: missingOffers.length, inserted, skippedNoToken, skippedNoEnsName };
 }
 
 async function reconcileListings(pool: Pool) {
-  const osListings = await fetchOpenSeaListings();
+  const { listings: osListings, pagesFetched } = await fetchOpenSeaListings();
   const activeListings = osListings.filter(l => !l.cancelled && !l.finalized);
 
   if (activeListings.length === 0) {
-    return { checked: 0, missing: 0, inserted: 0 };
+    return { checked: 0, missing: 0, inserted: 0, skippedNoToken: 0, skippedNoEnsName: 0, resolvedViaName: 0, pagesFetched };
   }
 
   const orderHashes = activeListings.map(l => l.order_hash);
@@ -222,18 +311,48 @@ async function reconcileListings(pool: Pool) {
   const missingListings = activeListings.filter(l => !existingHashes.has(l.order_hash));
 
   let inserted = 0;
+  let skippedNoToken = 0;
+  let skippedNoEnsName = 0;
+  let resolvedViaName = 0;
+
   for (const listing of missingListings) {
     try {
       const tokenId = listing.maker_asset_bundle?.assets?.[0]?.token_id;
-      if (!tokenId) continue;
+      if (!tokenId) {
+        skippedNoToken++;
+        continue;
+      }
 
+      // Try direct token_id lookup first
+      let ensNameId: number | null = null;
       const ensResult = await pool.query(
         'SELECT id FROM ens_names WHERE token_id = $1',
         [tokenId]
       );
-      if (ensResult.rows.length === 0) continue;
 
-      const ensNameId = ensResult.rows[0].id;
+      if (ensResult.rows.length > 0) {
+        ensNameId = ensResult.rows[0].id;
+      } else {
+        // Fallback: try name-based lookup using OpenSea metadata
+        const name = listing.maker_asset_bundle?.assets?.[0]?.name;
+        if (name) {
+          const nameResult = await pool.query(
+            'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+            [name]
+          );
+          if (nameResult.rows.length > 0) {
+            ensNameId = nameResult.rows[0].id;
+            resolvedViaName++;
+            logger.info({ tokenId, name, ensNameId }, 'Resolved listing via name fallback');
+          }
+        }
+      }
+
+      if (!ensNameId) {
+        skippedNoEnsName++;
+        logger.debug({ tokenId, orderHash: listing.order_hash }, 'Could not find ens_name for listing, skipping');
+        continue;
+      }
 
       await pool.query(
         `INSERT INTO listings (
@@ -260,5 +379,9 @@ async function reconcileListings(pool: Pool) {
     }
   }
 
-  return { checked: activeListings.length, missing: missingListings.length, inserted };
+  if (skippedNoEnsName > 0) {
+    logger.warn({ skippedNoEnsName, resolvedViaName }, 'Listings skipped: ens_name not found by token_id or name');
+  }
+
+  return { checked: activeListings.length, missing: missingListings.length, inserted, skippedNoToken, skippedNoEnsName, resolvedViaName, pagesFetched };
 }
