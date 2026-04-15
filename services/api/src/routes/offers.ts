@@ -1811,6 +1811,50 @@ export async function offersRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // Validate fees and criteria structure in each order
+      for (let i = 0; i < body.targetCount; i++) {
+        const feeValidation = validateFeeInOrder(body.orderData[i], 'grails');
+        if (!feeValidation.valid) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_FEE', message: `Order ${i}: ${feeValidation.error || 'Invalid marketplace fee'}` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Validate criteria order structure
+        const orderData = body.orderData[i];
+        const params = orderData.protocol_data?.parameters || orderData.parameters || orderData;
+
+        if (!params?.consideration) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: missing consideration items` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        const criteriaItem = params.consideration.find(
+          (c: any) => Number(c.itemType) === 4 // ERC721_WITH_CRITERIA
+        );
+
+        if (!criteriaItem) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: must use ERC721_WITH_CRITERIA (itemType 4)` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        if (criteriaItem.identifierOrCriteria !== body.merkleRoot) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: identifierOrCriteria does not match merkleRoot` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+      }
+
       const currencyAddress =
         body.currencyAddress?.toLowerCase() ||
         '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';

@@ -72,6 +72,8 @@ export {
   ENS_REGISTRAR_ADDRESS,
   WETH_ADDRESS,
   FULFILL_BASIC_ORDER_ABI,
+  FULFILL_ADVANCED_ORDER_ABI,
+  GET_COUNTER_ABI,
   prepareBulkSignature,
   extractBulkSignatures,
   buildCriteriaMerkleTree,
@@ -89,9 +91,14 @@ export {
   type BuildOfferOrderParams,
   type BuildBulkOfferOrdersParams,
   type BuildCriteriaOfferOrderParams,
+  type BuildNOfManyOfferOrdersParams,
+  type NOfManyOrderResult,
   type BulkSignatureResult,
   type IndividualBulkSignature,
   type CriteriaOrderResult,
+  type CriteriaResolver,
+  type AdvancedOrderParameters,
+  type FulfillAdvancedOrderParams,
 } from './seaport/index.js';
 
 // Types

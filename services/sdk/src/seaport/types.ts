@@ -132,6 +132,49 @@ export enum BasicOrderType {
 }
 
 /**
+ * Criteria resolver for fulfillAdvancedOrder.
+ * Specifies which token ID to use for a criteria-based item.
+ */
+export interface CriteriaResolver {
+  /** Order index (0 for single order fulfillment) */
+  orderIndex: number;
+  /** 0 = OFFER, 1 = CONSIDERATION */
+  side: number;
+  /** Index of the criteria item within offer/consideration array */
+  index: number;
+  /** The chosen token ID */
+  identifier: bigint;
+  /** Merkle proof for the token ID */
+  criteriaProof: string[];
+}
+
+/**
+ * Advanced order parameters for fulfillAdvancedOrder
+ */
+export interface AdvancedOrderParameters {
+  /** Full order parameters */
+  parameters: SeaportOrderParameters;
+  /** Fraction numerator (1 for full fill) */
+  numerator: bigint;
+  /** Fraction denominator (1 for full fill) */
+  denominator: bigint;
+  /** Order signature */
+  signature: string;
+  /** Extra data (empty for standard orders) */
+  extraData: string;
+}
+
+/**
+ * Parameters for calling fulfillAdvancedOrder on-chain
+ */
+export interface FulfillAdvancedOrderParams {
+  advancedOrder: AdvancedOrderParameters;
+  criteriaResolvers: CriteriaResolver[];
+  fulfillerConduitKey: string;
+  recipient: string;
+}
+
+/**
  * Parameters for building a listing order
  */
 export interface BuildListingOrderParams {
@@ -171,6 +214,10 @@ export interface BuildOfferOrderParams {
   platformFeeRecipient?: string;
   /** Platform fee in basis points */
   platformFeeBps?: number;
+  /** Override start time (unix seconds) — used by buildBulkOfferOrders for consistency */
+  startTime?: number;
+  /** Override end time (unix seconds) — used by buildBulkOfferOrders for consistency */
+  endTime?: number;
 }
 
 /**
@@ -219,6 +266,10 @@ export interface BuildNOfManyOfferOrdersParams {
   count: number;
   /** Duration in days (default: 7) */
   durationDays?: number;
+  /** Platform fee recipient address */
+  platformFeeRecipient?: string;
+  /** Platform fee in basis points (e.g., 250 = 2.5%) */
+  platformFeeBps?: number;
 }
 
 /**

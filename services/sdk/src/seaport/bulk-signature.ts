@@ -8,9 +8,112 @@
  * Tree depths 1-24 supported (2 to 16M orders).
  */
 
-import { keccak256, encodeAbiParameters, parseAbiParameters } from 'viem';
+import { keccak256, encodeAbiParameters, parseAbiParameters, concat, toHex } from 'viem';
 import type { SeaportOrder } from './types.js';
 import { SEAPORT_ADDRESS, ZERO_BYTES32 } from './constants.js';
+
+// EIP-712 type hashes for OrderComponents struct hashing
+const ORDER_COMPONENTS_TYPEHASH = keccak256(
+  toHex(
+    'OrderComponents(address offerer,address zone,OfferItem[] offer,ConsiderationItem[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)OfferItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)',
+    { size: undefined }
+  )
+);
+
+const OFFER_ITEM_TYPEHASH = keccak256(
+  toHex(
+    'OfferItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)',
+    { size: undefined }
+  )
+);
+
+const CONSIDERATION_ITEM_TYPEHASH = keccak256(
+  toHex(
+    'ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)',
+    { size: undefined }
+  )
+);
+
+/**
+ * Hash a single OfferItem per EIP-712 struct hashing rules.
+ */
+function hashOfferItem(item: { itemType: number; token: string; identifierOrCriteria: string; startAmount: string; endAmount: string }): `0x${string}` {
+  return keccak256(
+    encodeAbiParameters(
+      parseAbiParameters('bytes32, uint8, address, uint256, uint256, uint256'),
+      [
+        OFFER_ITEM_TYPEHASH,
+        item.itemType,
+        item.token as `0x${string}`,
+        BigInt(item.identifierOrCriteria),
+        BigInt(item.startAmount),
+        BigInt(item.endAmount),
+      ]
+    )
+  );
+}
+
+/**
+ * Hash a single ConsiderationItem per EIP-712 struct hashing rules.
+ */
+function hashConsiderationItem(item: { itemType: number; token: string; identifierOrCriteria: string; startAmount: string; endAmount: string; recipient: string }): `0x${string}` {
+  return keccak256(
+    encodeAbiParameters(
+      parseAbiParameters('bytes32, uint8, address, uint256, uint256, uint256, address'),
+      [
+        CONSIDERATION_ITEM_TYPEHASH,
+        item.itemType,
+        item.token as `0x${string}`,
+        BigInt(item.identifierOrCriteria),
+        BigInt(item.startAmount),
+        BigInt(item.endAmount),
+        item.recipient as `0x${string}`,
+      ]
+    )
+  );
+}
+
+/**
+ * Compute the EIP-712 struct hash for an OrderComponents.
+ * This matches what Seaport computes internally for order verification.
+ */
+function hashOrderComponents(order: SeaportOrder, counter: bigint): `0x${string}` {
+  // Hash offer array: keccak256(concat(hash(item1), hash(item2), ...))
+  const offerHashes = order.offer.map(hashOfferItem);
+  const offerArrayHash = keccak256(
+    offerHashes.length > 0
+      ? concat(offerHashes)
+      : '0x' as `0x${string}`
+  );
+
+  // Hash consideration array
+  const considerationHashes = order.consideration.map(hashConsiderationItem);
+  const considerationArrayHash = keccak256(
+    considerationHashes.length > 0
+      ? concat(considerationHashes)
+      : '0x' as `0x${string}`
+  );
+
+  return keccak256(
+    encodeAbiParameters(
+      parseAbiParameters('bytes32, address, address, bytes32, bytes32, uint8, uint256, uint256, bytes32, uint256, bytes32, uint256'),
+      [
+        ORDER_COMPONENTS_TYPEHASH,
+        order.offerer as `0x${string}`,
+        order.zone as `0x${string}`,
+        offerArrayHash,
+        considerationArrayHash,
+        order.orderType,
+        BigInt(order.startTime),
+        BigInt(order.endTime),
+        order.zoneHash as `0x${string}`,
+        BigInt(order.salt),
+        order.conduitKey as `0x${string}`,
+        counter,
+      ]
+    )
+  );
+}
 
 /** Result from prepareBulkSignature */
 export interface BulkSignatureResult {
@@ -37,7 +140,7 @@ export interface IndividualBulkSignature {
   orderIndex: number;
   /** The order itself */
   order: SeaportOrder;
-  /** Encoded bulk signature: compact_sig + tree_height + index + proof */
+  /** Encoded bulk signature: compact_sig (64 bytes) + index (3 bytes) + proof (N*32 bytes) */
   signature: string;
 }
 
@@ -152,14 +255,6 @@ function getMerkleProof(layers: string[][], index: number): string[] {
 }
 
 /**
- * Create an unfulfillable dummy order hash for tree padding.
- * Uses startTime = endTime = 0 making it impossible to fulfill.
- */
-function createDummyLeafHash(): string {
-  return ZERO_BYTES32;
-}
-
-/**
  * Build the BulkOrder EIP-712 type name for a given tree height.
  * E.g., height=2 -> "BulkOrder" with "OrderComponents[2][2]"
  */
@@ -244,12 +339,12 @@ function buildTreeMessage(
  * Prepare a bulk signature for multiple orders.
  *
  * @param orders - Array of SeaportOrder objects to sign together
- * @param counter - The Seaport counter for the signer (default 0)
+ * @param counter - The Seaport counter for the signer (read from contract via getCounter)
  * @returns BulkSignatureResult with typed data for wallet signing
  */
 export function prepareBulkSignature(
   orders: SeaportOrder[],
-  counter: bigint = 0n
+  counter: bigint
 ): BulkSignatureResult {
   if (orders.length === 0) {
     throw new Error('At least one order required');
@@ -265,25 +360,27 @@ export function prepareBulkSignature(
     throw new Error('At least 2 orders required for bulk signing');
   }
 
-  // Build leaf hashes (EIP-712 order component hashes)
+  // Build leaf hashes — proper EIP-712 OrderComponents struct hashes
+  // These must match the hashes Seaport computes when verifying the bulk signature
   const leaves: string[] = [];
   for (let i = 0; i < paddedCount; i++) {
     if (i < orders.length) {
-      // Real order — we use a simplified hash here; the actual hash
-      // is computed by the wallet via signTypedData
-      leaves.push(keccak256(
-        encodeAbiParameters(
-          parseAbiParameters('address, uint256, uint256, bytes32'),
-          [
-            orders[i].offerer as `0x${string}`,
-            BigInt(orders[i].startTime),
-            BigInt(orders[i].endTime),
-            orders[i].salt as `0x${string}`,
-          ]
-        )
-      ));
+      leaves.push(hashOrderComponents(orders[i], counter));
     } else {
-      leaves.push(createDummyLeafHash());
+      // Dummy order: use the struct hash of the dummy order for consistency
+      leaves.push(hashOrderComponents({
+        offerer: '0x0000000000000000000000000000000000000000',
+        zone: '0x0000000000000000000000000000000000000000',
+        offer: [],
+        consideration: [],
+        orderType: 0,
+        startTime: 0,
+        endTime: 0,
+        zoneHash: ZERO_BYTES32,
+        salt: '0',
+        conduitKey: ZERO_BYTES32,
+        totalOriginalConsiderationItems: 0,
+      }, counter));
     }
   }
 
@@ -319,8 +416,10 @@ export function prepareBulkSignature(
 /**
  * Extract individual bulk signatures from a single wallet signature.
  *
- * Each per-order signature = compact_sig (64 bytes) + tree_height (1 byte)
- *                           + order_index (3 bytes) + proof_elements (32 bytes each)
+ * Each per-order signature = compact_sig (64 bytes) + order_index (3 bytes)
+ *                           + proof_elements (32 bytes each)
+ *
+ * Seaport derives tree height from the signature length — it is NOT encoded explicitly.
  *
  * @param signature - The raw signature from signTypedData (65 bytes hex)
  * @param result - The BulkSignatureResult from prepareBulkSignature
@@ -357,12 +456,11 @@ export function extractBulkSignatures(
   for (let i = 0; i < orders.length; i++) {
     const proof = getMerkleProof(layers, i);
 
-    // Encode: compact_sig (64 bytes) + height (1 byte) + index (3 bytes) + proof
-    const heightHex = result.treeHeight.toString(16).padStart(2, '0');
+    // Encode: compact_sig (64 bytes) + index (3 bytes) + proof (N*32 bytes)
     const indexHex = i.toString(16).padStart(6, '0');
     const proofHex = proof.map((p) => (p.startsWith('0x') ? p.slice(2) : p)).join('');
 
-    const bulkSig = '0x' + compactSig + heightHex + indexHex + proofHex;
+    const bulkSig = '0x' + compactSig + indexHex + proofHex;
 
     signatures.push({
       orderIndex: i,

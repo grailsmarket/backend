@@ -207,11 +207,13 @@ export class SeaportOrderBuilder {
       // Reserved for future use when offer fulfillment with fees is implemented
       platformFeeRecipient: _platformFeeRecipient,
       platformFeeBps: _platformFeeBps = 0,
+      startTime: providedStartTime,
+      endTime: providedEndTime,
     } = params;
 
-    // Calculate times
-    const startTime = Math.floor(Date.now() / 1000);
-    const endTime = startTime + durationDays * 24 * 60 * 60;
+    // Use provided times (for batch consistency) or compute from current time
+    const startTime = providedStartTime ?? Math.floor(Date.now() / 1000);
+    const endTime = providedEndTime ?? (startTime + durationDays * 24 * 60 * 60);
 
     // Generate salt
     const salt = generateSalt(offerer, tokenId);
@@ -273,12 +275,18 @@ export class SeaportOrderBuilder {
   buildBulkOfferOrders(params: BuildBulkOfferOrdersParams): SeaportOrder[] {
     const { offers, offerer, durationDays = 7 } = params;
 
+    // Compute timing once for consistency across all orders in the batch
+    const startTime = Math.floor(Date.now() / 1000);
+    const endTime = startTime + durationDays * 24 * 60 * 60;
+
     return offers.map((item) =>
       this.buildOfferOrder({
         tokenId: item.tokenId,
         offerAmountWei: item.offerAmountWei,
         offerer,
         durationDays,
+        startTime,
+        endTime,
       })
     );
   }
@@ -332,7 +340,10 @@ export class SeaportOrderBuilder {
    * ```
    */
   buildNOfManyOfferOrders(params: BuildNOfManyOfferOrdersParams): NOfManyOrderResult {
-    const { tokenIds, offerAmountWei, offerer, count, durationDays = 7 } = params;
+    const {
+      tokenIds, offerAmountWei, offerer, count, durationDays = 7,
+      platformFeeRecipient, platformFeeBps = 0,
+    } = params;
 
     if (tokenIds.length < 2) {
       throw new Error('At least 2 token IDs required for n-of-many offers');
@@ -384,6 +395,19 @@ export class SeaportOrderBuilder {
         },
       ];
 
+      // Add platform fee if applicable
+      if (platformFeeRecipient && platformFeeBps > 0) {
+        const fee = calculateFee(offerAmountWei, platformFeeBps);
+        consideration.push({
+          itemType: ItemType.ERC20,
+          token: WETH_ADDRESS,
+          identifierOrCriteria: '0',
+          startAmount: fee.toString(),
+          endAmount: fee.toString(),
+          recipient: platformFeeRecipient,
+        });
+      }
+
       orders.push({
         offerer,
         zone: DEFAULT_ZONE,
@@ -407,12 +431,12 @@ export class SeaportOrderBuilder {
    * Returns the typed data for a single wallet signTypedData call.
    *
    * @param orders - Array of SeaportOrder objects
-   * @param counter - Seaport counter for the signer (default 0)
+   * @param counter - Seaport counter for the signer (read from contract via getCounter)
    * @returns BulkSignatureResult with typed data
    */
   prepareBulkSignature(
     orders: SeaportOrder[],
-    counter: bigint = 0n
+    counter: bigint
   ): BulkSignatureResult {
     return prepareBulkSignature(orders, counter);
   }
