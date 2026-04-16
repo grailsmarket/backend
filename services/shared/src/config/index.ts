@@ -112,6 +112,10 @@ const ConfigSchema = z.object({
   subscription: z.object({
     contractAddress: z.string().optional(),
   }),
+  telegram: z.object({
+    botToken: z.string().optional(),
+    enabled: z.boolean().default(false),
+  }),
 });
 
 const rawConfig = {
@@ -214,6 +218,10 @@ const rawConfig = {
   },
   subscription: {
     contractAddress: process.env.SUBSCRIPTION_CONTRACT_ADDRESS,
+  },
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN,
+    enabled: !!process.env.TELEGRAM_BOT_TOKEN,
   },
 };
 

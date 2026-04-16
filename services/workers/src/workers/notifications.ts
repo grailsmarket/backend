@@ -12,6 +12,7 @@ import {
   buildOfferReceivedEmail,
   buildListingSoldEmail,
 } from '../services/email';
+import { sendTelegramMessage, buildTelegramNotification } from '../services/telegram';
 import { ethers } from 'ethers';
 
 const FRONTEND_URL = config.frontend.url;
@@ -19,7 +20,7 @@ const FRONTEND_URL = config.frontend.url;
 /**
  * Notification Worker
  *
- * Handles sending email notifications to users based on watchlist events
+ * Handles sending email and Telegram notifications to users based on watchlist events
  */
 
 export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
@@ -50,11 +51,17 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
 
         const ensName = ensResult.rows[0].name;
 
-        // Get recipient email if not provided
+        // Get recipient details (email + telegram)
         let recipientEmail = email;
-        if (!recipientEmail && userId) {
+        let telegramChatId: number | null = null;
+        let telegramConnected = false;
+        let isPro = false;
+
+        if (userId) {
           const userResult = await pool.query(
-            'SELECT email, email_verified FROM users WHERE id = $1',
+            `SELECT email, email_verified, telegram_connected, telegram_chat_id,
+                    tier, tier_expires_at
+             FROM users WHERE id = $1`,
             [userId]
           );
 
@@ -65,31 +72,35 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
 
           const user = userResult.rows[0];
 
-          // Check if email is verified
-          if (!user.email_verified) {
-            logger.info({ userId }, 'User email not verified, skipping notification');
-            return;
+          // Email path
+          if (!recipientEmail && user.email_verified) {
+            recipientEmail = user.email;
+          }
+          if (recipientEmail && !user.email_verified) {
+            recipientEmail = undefined;
           }
 
-          recipientEmail = user.email;
+          // Telegram path
+          telegramConnected = user.telegram_connected;
+          telegramChatId = user.telegram_chat_id ? Number(user.telegram_chat_id) : null;
+
+          // Pro tier check for Telegram
+          isPro = user.tier && user.tier !== 'free' &&
+            (!user.tier_expires_at || new Date(user.tier_expires_at) > new Date());
         }
 
-        if (!recipientEmail && recipientAddress) {
-          // For ownership change notifications to seller, we might not have email
-          // This is OK - we can add webhook support later
-          logger.info({ recipientAddress }, 'No email for recipient, skipping email notification');
-          return;
-        }
-
-        if (!recipientEmail) {
-          logger.warn({ type, userId, ensNameId }, 'No email found for notification recipient');
+        // If no email and no telegram, nothing to do
+        if (!recipientEmail && !(telegramConnected && telegramChatId && isPro)) {
+          if (recipientAddress) {
+            logger.info({ recipientAddress }, 'No email or telegram for recipient, skipping notification');
+          } else {
+            logger.warn({ type, userId, ensNameId }, 'No notification channel available for recipient');
+          }
           return;
         }
 
         // Check if we already sent this notification (deduplication)
-        // Note: Some notification types should allow duplicates
         if (userId) {
-          // Types that should allow multiple notifications within 12 hours
           const allowDuplicates = ['listing-sold'];
 
           if (!allowDuplicates.includes(type)) {
@@ -103,7 +114,6 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             );
 
             if (existingNotification.rows.length > 0) {
-              // If this is a new-listing notification and the price is different, allow it
               if (type === 'new-listing' && metadata?.priceWei) {
                 const lastNotificationPrice = existingNotification.rows[0].metadata?.priceWei;
                 if (lastNotificationPrice && lastNotificationPrice !== metadata.priceWei) {
@@ -129,108 +139,151 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           }
         }
 
-        // Build email based on notification type
-        let emailTemplate;
-        const unsubscribeUrl = `${FRONTEND_URL}/settings/notifications`;
+        // --- Send email notification ---
+        if (recipientEmail) {
+          let emailTemplate;
+          const unsubscribeUrl = `${FRONTEND_URL}/settings/notifications`;
 
-        switch (type) {
-          case 'new-listing': {
-            const priceWei = metadata?.priceWei || '0';
-            const priceEth = ethers.formatEther(priceWei);
+          switch (type) {
+            case 'new-listing': {
+              const priceWei = metadata?.priceWei || '0';
+              const priceEth = ethers.formatEther(priceWei);
 
-            emailTemplate = buildNewListingEmail({
-              ensName,
-              priceEth,
-              listingUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
+              emailTemplate = buildNewListingEmail({
+                ensName,
+                priceEth,
+                listingUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'price-change': {
+              const oldPriceWei = metadata?.oldPriceWei || '0';
+              const newPriceWei = metadata?.newPriceWei || '0';
+              const oldPriceEth = ethers.formatEther(oldPriceWei);
+              const newPriceEth = ethers.formatEther(newPriceWei);
+
+              emailTemplate = buildPriceChangeEmail({
+                ensName,
+                oldPriceEth,
+                newPriceEth,
+                listingUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'sale': {
+              const priceWei = metadata?.priceWei || '0';
+              const priceEth = ethers.formatEther(priceWei);
+
+              emailTemplate = buildSaleEmail({
+                ensName,
+                priceEth,
+                listingUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'new-offer': {
+              const offerAmountWei = metadata?.offerAmountWei || '0';
+              const priceEth = ethers.formatEther(offerAmountWei);
+
+              emailTemplate = buildNewOfferEmail({
+                ensName,
+                priceEth,
+                offerUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'listing-cancelled-ownership-change': {
+              emailTemplate = buildListingCancelledEmail({
+                ensName,
+                listingUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'offer-received': {
+              const offerAmountWei = metadata?.offerAmountWei || '0';
+              const priceEth = ethers.formatEther(offerAmountWei);
+
+              emailTemplate = buildOfferReceivedEmail({
+                ensName,
+                priceEth,
+                offerUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            case 'listing-sold': {
+              const priceWei = metadata?.priceWei || '0';
+              const priceEth = ethers.formatEther(priceWei);
+
+              emailTemplate = buildListingSoldEmail({
+                ensName,
+                priceEth,
+                saleUrl: `${FRONTEND_URL}/${ensName}`,
+                unsubscribeUrl,
+              });
+              break;
+            }
+
+            default:
+              logger.warn({ type }, 'Unknown notification type');
+              break;
           }
 
-          case 'price-change': {
-            const oldPriceWei = metadata?.oldPriceWei || '0';
-            const newPriceWei = metadata?.newPriceWei || '0';
-            const oldPriceEth = ethers.formatEther(oldPriceWei);
-            const newPriceEth = ethers.formatEther(newPriceWei);
-
-            emailTemplate = buildPriceChangeEmail({
-              ensName,
-              oldPriceEth,
-              newPriceEth,
-              listingUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
+          if (emailTemplate) {
+            await sendEmail(recipientEmail, emailTemplate);
+            logger.info({ userId, type, ensNameId, email: recipientEmail }, 'Email notification sent');
           }
-
-          case 'sale': {
-            const priceWei = metadata?.priceWei || '0';
-            const priceEth = ethers.formatEther(priceWei);
-
-            emailTemplate = buildSaleEmail({
-              ensName,
-              priceEth,
-              listingUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
-          }
-
-          case 'new-offer': {
-            const offerAmountWei = metadata?.offerAmountWei || '0';
-            const priceEth = ethers.formatEther(offerAmountWei);
-
-            emailTemplate = buildNewOfferEmail({
-              ensName,
-              priceEth,
-              offerUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
-          }
-
-          case 'listing-cancelled-ownership-change': {
-            emailTemplate = buildListingCancelledEmail({
-              ensName,
-              listingUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
-          }
-
-          case 'offer-received': {
-            const offerAmountWei = metadata?.offerAmountWei || '0';
-            const priceEth = ethers.formatEther(offerAmountWei);
-
-            emailTemplate = buildOfferReceivedEmail({
-              ensName,
-              priceEth,
-              offerUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
-          }
-
-          case 'listing-sold': {
-            const priceWei = metadata?.priceWei || '0';
-            const priceEth = ethers.formatEther(priceWei);
-
-            emailTemplate = buildListingSoldEmail({
-              ensName,
-              priceEth,
-              saleUrl: `${FRONTEND_URL}/${ensName}`,
-              unsubscribeUrl,
-            });
-            break;
-          }
-
-          default:
-            logger.warn({ type }, 'Unknown notification type');
-            return;
         }
 
-        // Send email
-        await sendEmail(recipientEmail, emailTemplate);
+        // --- Send Telegram notification ---
+        if (telegramConnected && telegramChatId && isPro) {
+          try {
+            const telegramText = buildTelegramNotification(
+              type,
+              ensName,
+              metadata,
+              ethers.formatEther,
+            );
+
+            if (telegramText) {
+              await sendTelegramMessage({
+                chatId: telegramChatId,
+                text: telegramText,
+              });
+              logger.info({ userId, type, ensNameId, chatId: telegramChatId }, 'Telegram notification sent');
+            }
+          } catch (telegramError: any) {
+            const errorMsg = telegramError?.message || String(telegramError);
+
+            // If the bot was blocked or chat not found, disconnect the user
+            if (
+              errorMsg.includes('bot was blocked') ||
+              errorMsg.includes('chat not found') ||
+              errorMsg.includes('user is deactivated') ||
+              errorMsg.includes('PEER_ID_INVALID')
+            ) {
+              logger.warn({ userId, telegramChatId }, 'Telegram bot blocked or chat not found, disconnecting');
+              await pool.query(
+                `UPDATE users SET telegram_connected = FALSE, telegram_chat_id = NULL WHERE id = $1`,
+                [userId]
+              );
+            } else {
+              logger.error({ error: telegramError, userId, telegramChatId }, 'Failed to send Telegram notification');
+            }
+            // Don't throw -- email may have already been sent
+          }
+        }
 
         // Log notification in database
         if (userId) {
@@ -240,9 +293,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             [userId, type, ensNameId, JSON.stringify(metadata || {})]
           );
 
-          logger.info({ userId, type, ensNameId, email: recipientEmail }, 'Notification sent and logged');
-        } else {
-          logger.info({ type, ensNameId, email: recipientEmail }, 'Notification sent (no user record)');
+          logger.info({ userId, type, ensNameId }, 'Notification logged');
         }
       } catch (error) {
         logger.error({ error, type, userId, ensNameId }, 'Error sending notification');
