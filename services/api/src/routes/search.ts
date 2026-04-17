@@ -16,6 +16,89 @@ const BulkExactSearchSchema = z.object({
 // Helper to properly parse boolean strings (unlike z.coerce.boolean which treats "false" as true)
 const booleanString = z.union([z.boolean(), z.string()]).optional();
 
+export const SearchSortBySchema = z.enum([
+  'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
+  'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer',
+  'listing_date', 'listing_expiry', 'google_monthly_searches', 'google_avg_cpc'
+]);
+
+export const SearchFiltersSchema = z.object({
+  // Price filters
+  minPrice: z.string().optional(),
+  maxPrice: z.string().optional(),
+  minOffer: z.string().optional(),
+  maxOffer: z.string().optional(),
+
+  // Length filters
+  minLength: z.coerce.number().optional(),
+  maxLength: z.coerce.number().optional(),
+
+  // Count filters (require PostgreSQL - not in ES index)
+  minWatchersCount: z.coerce.number().optional(),
+  maxWatchersCount: z.coerce.number().optional(),
+  minViewCount: z.coerce.number().optional(),
+  maxViewCount: z.coerce.number().optional(),
+  minClubsCount: z.coerce.number().optional(),
+  maxClubsCount: z.coerce.number().optional(),
+
+  // Legacy character filters
+  hasNumbers: booleanString,
+  hasEmoji: booleanString,
+
+  // Tri-state character filters
+  digits: z.enum(['include', 'exclude', 'only']).optional(),
+  letters: z.enum(['include', 'exclude', 'only']).optional(),
+  emoji: z.enum(['include', 'exclude', 'only']).optional(),
+  repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
+
+  // String pattern filters
+  contains: z.string().optional(),
+  startsWith: z.string().optional(),
+  endsWith: z.string().optional(),
+  doesNotContain: z.string().optional(),
+  doesNotStartWith: z.string().optional(),
+  doesNotEndWith: z.string().optional(),
+
+  // Listing/market filters
+  listed: booleanString,
+  hasOffer: booleanString,
+  showListings: booleanString,
+  showUnlisted: booleanString,
+  marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
+
+  // Club filters
+  clubs: z.array(z.string()).optional(),
+  excludeClubs: z.array(z.string()).optional(),
+  inAnyClub: booleanString,
+
+  // Unified status filter
+  status: z.union([
+    z.enum(['registered', 'grace', 'premium', 'available', 'all']),
+    z.array(z.enum(['registered', 'grace', 'premium', 'available', 'all']))
+  ]).optional(),
+
+  // Legacy expiration filters
+  isExpired: booleanString,
+  isGracePeriod: booleanString,
+  isPremiumPeriod: booleanString,
+  expiringWithinDays: z.coerce.number().optional(),
+  includeExpired: booleanString,
+
+  // Sale history filters
+  hasSales: booleanString,
+  lastSoldAfter: z.string().optional(),
+  lastSoldBefore: z.string().optional(),
+  minDaysSinceLastSale: z.coerce.number().optional(),
+  maxDaysSinceLastSale: z.coerce.number().optional(),
+
+  // Creation date filters
+  minCreationDate: z.string().optional(),
+  maxCreationDate: z.string().optional(),
+
+  // Owner filter
+  owner: z.string().optional(),
+});
+
 // Schema for bulk search with filters request
 const BulkFiltersSearchSchema = z.object({
   // Bulk search terms (required)
@@ -26,90 +109,11 @@ const BulkFiltersSearchSchema = z.object({
   limit: z.number().int().min(1).max(100).optional().default(20),
 
   // Sorting
-  sortBy: z.enum([
-    'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
-    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer',
-    'listing_date', 'listing_expiry', 'google_monthly_searches', 'google_avg_cpc'
-  ]).optional(),
+  sortBy: SearchSortBySchema.optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 
   // Filters object (same structure as GET /search filters parameter)
-  filters: z.object({
-    // Price filters
-    minPrice: z.string().optional(),
-    maxPrice: z.string().optional(),
-    minOffer: z.string().optional(),
-    maxOffer: z.string().optional(),
-
-    // Length filters
-    minLength: z.coerce.number().optional(),
-    maxLength: z.coerce.number().optional(),
-
-    // Count filters (require PostgreSQL - not in ES index)
-    minWatchersCount: z.coerce.number().optional(),
-    maxWatchersCount: z.coerce.number().optional(),
-    minViewCount: z.coerce.number().optional(),
-    maxViewCount: z.coerce.number().optional(),
-    minClubsCount: z.coerce.number().optional(),
-    maxClubsCount: z.coerce.number().optional(),
-
-    // Legacy character filters
-    hasNumbers: booleanString,
-    hasEmoji: booleanString,
-
-    // Tri-state character filters
-    digits: z.enum(['include', 'exclude', 'only']).optional(),
-    letters: z.enum(['include', 'exclude', 'only']).optional(),
-    emoji: z.enum(['include', 'exclude', 'only']).optional(),
-    repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
-
-    // String pattern filters
-    contains: z.string().optional(),
-    startsWith: z.string().optional(),
-    endsWith: z.string().optional(),
-    doesNotContain: z.string().optional(),
-    doesNotStartWith: z.string().optional(),
-    doesNotEndWith: z.string().optional(),
-
-    // Listing/market filters
-    listed: booleanString,
-    hasOffer: booleanString,
-    showListings: booleanString,
-    showUnlisted: booleanString,
-    marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
-
-    // Club filters
-    clubs: z.array(z.string()).optional(),
-    excludeClubs: z.array(z.string()).optional(),
-    inAnyClub: booleanString,
-
-    // Unified status filter
-    status: z.union([
-      z.enum(['registered', 'grace', 'premium', 'available', 'all']),
-      z.array(z.enum(['registered', 'grace', 'premium', 'available', 'all']))
-    ]).optional(),
-
-    // Legacy expiration filters
-    isExpired: booleanString,
-    isGracePeriod: booleanString,
-    isPremiumPeriod: booleanString,
-    expiringWithinDays: z.coerce.number().optional(),
-    includeExpired: booleanString,
-
-    // Sale history filters
-    hasSales: booleanString,
-    lastSoldAfter: z.string().optional(),
-    lastSoldBefore: z.string().optional(),
-    minDaysSinceLastSale: z.coerce.number().optional(),
-    maxDaysSinceLastSale: z.coerce.number().optional(),
-
-    // Creation date filters
-    minCreationDate: z.string().optional(),
-    maxCreationDate: z.string().optional(),
-
-    // Owner filter
-    owner: z.string().optional(),
-  }).optional(),
+  filters: SearchFiltersSchema.optional(),
 });
 
 // Placeholder result for terms not found in bulk exact search

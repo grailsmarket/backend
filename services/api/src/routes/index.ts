@@ -35,6 +35,7 @@ import { googleMetricsRoutes } from './google-metrics';
 import { personasRoutes } from './personas';
 import { subscriptionRoutes } from './subscription';
 import { dashboardLayoutsRoutes } from './dashboard-layouts';
+import { savedSearchesRoutes } from './saved-searches';
 import { adminRoutes } from './admin';
 
 export function registerRoutes(fastify: FastifyInstance) {
@@ -74,6 +75,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(personasRoutes, { prefix: '/api/v1/personas' });
   fastify.register(subscriptionRoutes, { prefix: '/api/v1/subscription' });
   fastify.register(dashboardLayoutsRoutes, { prefix: '/api/v1/dashboard-layouts' });
+  fastify.register(savedSearchesRoutes, { prefix: '/api/v1/saved-searches' });
   fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }
