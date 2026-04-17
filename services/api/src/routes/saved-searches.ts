@@ -2,17 +2,20 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool } from '../../../shared/src';
 import { requireAuth, requireMinTier } from '../middleware/auth';
-import { SearchFiltersSchema, SearchSortBySchema } from './search';
 
 const MAX_SAVED_SEARCHES_PER_USER = 25;
 
+// Filters and sortBy are stored as opaque config so the frontend can round-trip
+// its native filter shape without lossy translation — mirrors the dashboard
+// widget pattern (DomainsConfig.filters in dashboard-layouts.ts uses the same
+// z.record(z.unknown()) escape hatch). Backend only enforces envelope shape.
 const SortOrderSchema = z.enum(['asc', 'desc']);
 
 const CreateSavedSearchSchema = z.object({
   name: z.string().min(1).max(100).trim(),
   q: z.string().max(200).optional(),
-  filters: SearchFiltersSchema.optional(),
-  sortBy: SearchSortBySchema.optional(),
+  filters: z.record(z.unknown()).optional(),
+  sortBy: z.string().max(40).optional(),
   sortOrder: SortOrderSchema.optional(),
   isDefault: z.boolean().default(false),
 });
@@ -20,8 +23,8 @@ const CreateSavedSearchSchema = z.object({
 const UpdateSavedSearchSchema = z.object({
   name: z.string().min(1).max(100).trim().optional(),
   q: z.string().max(200).nullable().optional(),
-  filters: SearchFiltersSchema.optional(),
-  sortBy: SearchSortBySchema.nullable().optional(),
+  filters: z.record(z.unknown()).optional(),
+  sortBy: z.string().max(40).nullable().optional(),
   sortOrder: SortOrderSchema.nullable().optional(),
   isDefault: z.boolean().optional(),
 });
