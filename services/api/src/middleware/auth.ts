@@ -204,8 +204,8 @@ export function requireTier(...allowedTiers: string[]) {
 /**
  * Middleware to require a minimum tier level (hierarchical check).
  * Unlike requireTier() which is exact-match, this allows any tier
- * at or above the specified level (e.g., requireMinTier('pro') allows 'pro', 'plus', and 'gold').
- * Usage: { preHandler: [requireAuth, requireMinTier('pro')] }
+ * at or above the specified level (e.g., requireMinTier('plus') allows 'plus', 'pro', and 'gold').
+ * Usage: { preHandler: [requireAuth, requireMinTier('plus')] }
  */
 export function requireMinTier(minimumTier: string) {
   const minRank = TIER_RANK[minimumTier] ?? 0;

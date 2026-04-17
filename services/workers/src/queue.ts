@@ -94,6 +94,15 @@ export interface FetchOnchainActivityJob {
   address: string;
 }
 
+export interface SendAdminBroadcastJob {
+  broadcastId: number;
+  userId: number;
+  channels: ('in_app' | 'email' | 'telegram')[];
+  title: string;
+  body: string;
+  linkUrl?: string;
+}
+
 export interface BackfillGoogleMetricsJob {
   // Scheduled job — no payload needed
 }
@@ -108,6 +117,7 @@ export const QUEUE_NAMES = {
   BATCH_RESOLVE_NAMES: 'batch-resolve-names',
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
+  SEND_ADMIN_BROADCAST: 'send-admin-broadcast',
   RECONCILE_OPENSEA: 'reconcile-opensea',
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
   CLEANUP_API_REQUEST_LOGS: 'cleanup-api-request-logs',

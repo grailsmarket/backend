@@ -276,6 +276,17 @@ export function buildTelegramNotification(
   }
 }
 
+export function buildAdminBroadcastTelegram(params: {
+  title: string;
+  body: string;
+  linkUrl?: string;
+}): string {
+  const header = `<b>${escapeHtml(params.title)}</b>`;
+  const body = escapeHtml(params.body);
+  const link = params.linkUrl ? `\n\n<a href="${escapeHtml(params.linkUrl)}">Learn more</a>` : '';
+  return `${header}\n\n${body}${link}`;
+}
+
 /**
  * Escape HTML special characters for Telegram HTML parse mode.
  */

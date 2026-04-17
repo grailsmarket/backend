@@ -4,6 +4,7 @@ import { registerEnsSyncWorker, registerDailyEnsSyncScheduler, registerMetadataB
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
 import { registerNotificationWorker } from './workers/notifications';
+import { registerAdminBroadcastWorker } from './workers/admin-broadcast';
 import { registerPriceSyncWorker } from './workers/price-sync';
 import { registerVerificationWorker } from './workers/verification';
 import { registerClubStatsWorker } from './workers/club-stats';
@@ -40,6 +41,7 @@ async function start() {
     await registerBatchNameResolutionWorker(boss);
     await registerOwnershipWorker(boss);
     await registerNotificationWorker(boss);
+    await registerAdminBroadcastWorker(boss);
     await registerPriceSyncWorker(boss);
     await registerVerificationWorker(boss);
     await registerClubStatsWorker(boss);

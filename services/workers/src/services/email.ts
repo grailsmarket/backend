@@ -415,3 +415,55 @@ Manage notification preferences: ${unsubscribeUrl}
     `.trim(),
   };
 }
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Build email template for admin broadcast to paid subscribers
+ */
+export function buildAdminBroadcastEmail(params: {
+  title: string;
+  body: string;
+  linkUrl?: string;
+  unsubscribeUrl: string;
+}): EmailTemplate {
+  const { title, body, linkUrl, unsubscribeUrl } = params;
+  const safeTitle = escapeHtml(title);
+  const safeBodyHtml = escapeHtml(body).replace(/\n/g, '<br>');
+
+  const cta = linkUrl
+    ? `<p><a href="${encodeURI(linkUrl)}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">Learn more</a></p>`
+    : '';
+
+  return {
+    subject: title,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>${safeTitle}</h2>
+        <p>${safeBodyHtml}</p>
+        ${cta}
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+          You received this email as a Grails paid subscriber.
+          <a href="${unsubscribeUrl}">Manage notification preferences</a>
+        </p>
+      </div>
+    `,
+    text: `
+${title}
+
+${body}
+${linkUrl ? `\nLearn more: ${linkUrl}\n` : ''}
+---
+You received this email as a Grails paid subscriber.
+Manage notification preferences: ${unsubscribeUrl}
+    `.trim(),
+  };
+}

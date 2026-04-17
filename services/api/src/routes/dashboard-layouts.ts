@@ -137,7 +137,7 @@ function formatLayout(row: any) {
 
 export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
-  const preHandler = [requireAuth, requireMinTier('pro')];
+  const preHandler = [requireAuth, requireMinTier('plus')];
 
   // GET /  — list all dashboards for the authenticated user
   fastify.get('/', { preHandler }, async (request, reply) => {
