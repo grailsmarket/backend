@@ -13,10 +13,10 @@ const SortOrderSchema = z.enum(['asc', 'desc']);
 
 const CreateSavedSearchSchema = z.object({
   name: z.string().min(1).max(100).trim(),
-  q: z.string().max(200).optional(),
+  q: z.string().max(200).nullable().optional(),
   filters: z.record(z.unknown()).optional(),
-  sortBy: z.string().max(40).optional(),
-  sortOrder: SortOrderSchema.optional(),
+  sortBy: z.string().max(40).nullable().optional(),
+  sortOrder: SortOrderSchema.nullable().optional(),
   isDefault: z.boolean().default(false),
 });
 
