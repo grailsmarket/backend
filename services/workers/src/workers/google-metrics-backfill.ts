@@ -16,7 +16,7 @@ const ENABLED = process.env.GOOGLE_METRICS_ENABLED !== 'false';
 const BATCH_SIZE = Math.floor(DAILY_QUOTA / 144);
 
 /** Fraction of each batch dedicated to uncategorized names */
-const UNCATEGORIZED_RATIO = 0.6;
+const UNCATEGORIZED_RATIO = 1.0;
 /** Per-run slot counts for each pool */
 const CATEGORIZED_BATCH = Math.ceil(BATCH_SIZE * (1 - UNCATEGORIZED_RATIO));
 const UNCATEGORIZED_BATCH = BATCH_SIZE - CATEGORIZED_BATCH;
@@ -173,7 +173,7 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
       const categorizedShortfall = CATEGORIZED_BATCH - categorizedNames.length;
       const uncategorizedShortfall = UNCATEGORIZED_BATCH - uncategorizedNames.length;
 
-      if (uncategorizedShortfall > 0 && categorizedNames.length === CATEGORIZED_BATCH) {
+      if (uncategorizedShortfall > 0 && CATEGORIZED_BATCH > 0 && categorizedNames.length === CATEGORIZED_BATCH) {
         extraCategorized = await getCategorizedCandidates(uncategorizedShortfall);
       } else if (categorizedShortfall > 0 && uncategorizedNames.length === UNCATEGORIZED_BATCH) {
         extraUncategorized = await getUncategorizedCandidates(categorizedShortfall);
