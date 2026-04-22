@@ -22,3 +22,22 @@ export async function getAllBroadcastRecipients(): Promise<BroadcastRecipient[]>
     emailVerified: r.email_verified,
   }));
 }
+
+export async function getRecipientsByAddresses(
+  addresses: string[]
+): Promise<BroadcastRecipient[]> {
+  if (addresses.length === 0) return [];
+  const lowered = addresses.map((a) => a.toLowerCase());
+  const pool = getPostgresPool();
+  const result = await pool.query(
+    `SELECT id AS user_id, email, email_verified
+     FROM users
+     WHERE LOWER(address) = ANY($1::text[])`,
+    [lowered]
+  );
+  return result.rows.map((r) => ({
+    userId: r.user_id,
+    email: r.email,
+    emailVerified: r.email_verified,
+  }));
+}

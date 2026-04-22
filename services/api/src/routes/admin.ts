@@ -2,7 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
-import { getAllBroadcastRecipients } from '../services/broadcast-recipients';
+import {
+  getAllBroadcastRecipients,
+  getRecipientsByAddresses,
+  type BroadcastRecipient,
+} from '../services/broadcast-recipients';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
 
 const ChannelEnum = z.enum(['in_app', 'email', 'telegram']);
@@ -14,31 +18,53 @@ const BroadcastComposeSchema = z.object({
   channels: z.array(ChannelEnum).min(1),
 });
 
-// minTierId is accepted for compatibility with the admin UI but ignored —
-// admin broadcasts now address all users regardless of tier.
+// Phase 1: 'everyone' and 'specific'. Phase 2 adds 'unsubscribed' and 'tiers'.
+const AudienceSchema = z
+  .discriminatedUnion('type', [
+    z.object({ type: z.literal('everyone') }),
+    z.object({
+      type: z.literal('specific'),
+      addresses: z
+        .array(z.string().regex(/^0x[a-fA-F0-9]{40}$/))
+        .min(1)
+        .max(500),
+    }),
+  ])
+  .default({ type: 'everyone' });
+
 const BroadcastSendSchema = BroadcastComposeSchema.extend({
-  minTierId: z.number().int().min(0).max(3).optional(),
+  audience: AudienceSchema,
 });
 
 const BroadcastPreviewSchema = z.object({
-  minTierId: z.number().int().min(0).max(3).optional(),
   channels: z.array(ChannelEnum).min(1),
+  audience: AudienceSchema,
 });
+
+type Audience = z.infer<typeof AudienceSchema>;
+
+async function resolveAudience(audience: Audience): Promise<BroadcastRecipient[]> {
+  switch (audience.type) {
+    case 'everyone':
+      return getAllBroadcastRecipients();
+    case 'specific':
+      return getRecipientsByAddresses(audience.addresses);
+  }
+}
 
 export async function adminRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   /**
    * POST /api/v1/admin/notifications/preview
-   * Returns recipient counts for the given channel set across ALL users.
-   * minTierId is accepted but ignored.
+   * Returns recipient counts for the given channel set and audience filter.
    */
   fastify.post(
     '/notifications/preview',
     { preHandler: [requireAuth, requireAdmin] },
     async (request, reply) => {
-      const { channels } = BroadcastPreviewSchema.parse(request.body);
-      const recipients = await getAllBroadcastRecipients();
+      const { channels, audience } = BroadcastPreviewSchema.parse(request.body);
+      const recipients = await resolveAudience(audience);
 
       const reachable = recipients.filter((r) => {
         if (channels.includes('in_app')) return true;
@@ -111,8 +137,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   /**
    * POST /api/v1/admin/notifications/broadcast
-   * Fan-out a custom notification to ALL users via the requested channels.
-   * Stored with min_tier_id = 0 to indicate "all users".
+   * Fan-out a custom notification to the selected audience via the requested channels.
+   * min_tier_id stays 0 — superseded by the audience_* columns.
    */
   fastify.post(
     '/notifications/broadcast',
@@ -121,12 +147,15 @@ export async function adminRoutes(fastify: FastifyInstance) {
       const payload = BroadcastSendSchema.parse(request.body);
       const adminUserId = parseInt(request.user!.sub);
 
-      const allUsers = await getAllBroadcastRecipients();
-      const recipients = allUsers.filter((r) => {
+      const targeted = await resolveAudience(payload.audience);
+      const recipients = targeted.filter((r) => {
         if (payload.channels.includes('in_app')) return true;
         if (payload.channels.includes('email') && r.emailVerified && r.email) return true;
         return false;
       });
+
+      const audienceAddresses =
+        payload.audience.type === 'specific' ? payload.audience.addresses : null;
 
       const client = await pool.connect();
       let broadcastId: number;
@@ -134,8 +163,9 @@ export async function adminRoutes(fastify: FastifyInstance) {
         await client.query('BEGIN');
         const inserted = await client.query(
           `INSERT INTO admin_broadcasts
-           (title, body, link_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test)
-           VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE)
+           (title, body, link_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test,
+            audience_type, audience_addresses)
+           VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE, $7, $8)
            RETURNING id`,
           [
             payload.title,
@@ -144,6 +174,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
             JSON.stringify(payload.channels),
             recipients.length,
             adminUserId,
+            payload.audience.type,
+            audienceAddresses ? JSON.stringify(audienceAddresses) : null,
           ]
         );
         broadcastId = inserted.rows[0].id;
