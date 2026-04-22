@@ -312,7 +312,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const user = userResult.rows[0];
 
       // Generate JWT
-      const token = generateToken(user.id, user.address);
+      const token = generateToken(user);
 
       const response: APIResponse = {
         success: true,
