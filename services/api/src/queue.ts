@@ -51,5 +51,6 @@ export const QUEUE_NAMES = {
   SYNC_ENS_DATA: 'sync-ens-data',
   UPDATE_OWNERSHIP: 'update-ownership',
   SEND_NOTIFICATION: 'send-notification',
+  SEND_ADMIN_BROADCAST: 'send-admin-broadcast',
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
 } as const;

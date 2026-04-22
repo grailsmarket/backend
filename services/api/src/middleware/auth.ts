@@ -5,6 +5,7 @@ import { config } from '../../../shared/src';
 export interface JWTPayload {
   sub: string;      // User ID
   address: string;  // Ethereum address
+  isAdmin: boolean;
   iat: number;      // Issued at
   exp: number;      // Expires at
 }
@@ -18,15 +19,20 @@ declare module 'fastify' {
 /**
  * Generate JWT token for authenticated user
  */
-export function generateToken(userId: number, address: string): string {
+export function generateToken(user: {
+  id: number;
+  address: string;
+  is_admin?: boolean;
+}): string {
   const secret = config.jwt.secret;
   if (!secret) {
     throw new Error('JWT_SECRET is not configured');
   }
 
   const payload: Omit<JWTPayload, 'iat' | 'exp'> = {
-    sub: userId.toString(),
-    address: address.toLowerCase(),
+    sub: user.id.toString(),
+    address: user.address.toLowerCase(),
+    isAdmin: user.is_admin || false,
   };
 
   return jwt.sign(payload, secret, {
@@ -108,6 +114,37 @@ export async function requireAuth(
       meta: {
         timestamp: new Date().toISOString(),
       },
+    });
+  }
+}
+
+/**
+ * Middleware to require admin access.
+ * Usage: { preHandler: [requireAuth, requireAdmin] }
+ */
+export async function requireAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  if (!request.user) {
+    return reply.status(401).send({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      },
+      meta: { timestamp: new Date().toISOString() },
+    });
+  }
+
+  if (!request.user.isAdmin) {
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: 'ADMIN_REQUIRED',
+        message: 'Admin access required',
+      },
+      meta: { timestamp: new Date().toISOString() },
     });
   }
 }
