@@ -376,15 +376,17 @@ export async function activityRoutes(fastify: FastifyInstance) {
         LIMIT ${limitParam} OFFSET ${offsetParam}
       `;
 
-      const result = await pool.query(query, params);
-
       const countQuery = `
         SELECT COUNT(*) as total
         FROM activity_history ah
         JOIN ens_names en ON ah.ens_name_id = en.id
         ${whereClause}
       `;
-      const countResult = await pool.query(countQuery, params.slice(0, -2));
+
+      const [result, countResult] = await Promise.all([
+        pool.query(query, params),
+        pool.query(countQuery, params.slice(0, -2)),
+      ]);
 
       const total = parseInt(countResult.rows[0].total);
       const totalPages = Math.ceil(total / pageLimit);

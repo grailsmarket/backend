@@ -11,31 +11,25 @@ type ChartQuery = z.infer<typeof ChartQuerySchema>;
 
 interface TimeConfig {
   interval: string;
-  truncUnit: 'hour' | 'day';
+  truncUnit: 'hour' | 'day' | 'week' | 'month';
   seriesInterval: string;
 }
 
 function getTimeConfig(period: string): TimeConfig {
   if (period === '1d') {
-    return {
-      interval: '24 hours',
-      truncUnit: 'hour',
-      seriesInterval: '1 hour',
-    };
+    return { interval: '24 hours', truncUnit: 'hour', seriesInterval: '1 hour' };
   }
-
-  const intervalMap: Record<string, string> = {
-    '7d': '7 days',
-    '30d': '30 days',
-    '1y': '1 year',
-    'all': '8 years',
-  };
-
-  return {
-    interval: intervalMap[period] || '7 days',
-    truncUnit: 'day',
-    seriesInterval: '1 day',
-  };
+  if (period === '7d') {
+    return { interval: '7 days', truncUnit: 'day', seriesInterval: '1 day' };
+  }
+  if (period === '30d') {
+    return { interval: '30 days', truncUnit: 'day', seriesInterval: '1 day' };
+  }
+  if (period === '1y') {
+    return { interval: '1 year', truncUnit: 'week', seriesInterval: '1 week' };
+  }
+  // 'all'
+  return { interval: '8 years', truncUnit: 'month', seriesInterval: '1 month' };
 }
 
 /**
@@ -96,7 +90,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
     const clubs = parseClubFilter(query.club);
+    const hasClubFilter = clubs.length > 0;
     const clubCondition = buildClubCondition(clubs, 1);
+
+    const fromClause = hasClubFilter
+      ? `FROM sales s
+             JOIN ens_names en ON s.ens_name_id = en.id`
+      : `FROM sales s`;
 
     try {
       const result = await pool.query(
@@ -113,10 +113,9 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE s.source = 'grails') as grails,
             COUNT(*) FILTER (WHERE s.source = 'opensea') as opensea
-          FROM sales s
-          JOIN ens_names en ON s.ens_name_id = en.id
+          ${fromClause}
           WHERE s.sale_date > NOW() - INTERVAL '${timeConfig.interval}'
-          ${clubCondition.condition}
+          ${hasClubFilter ? clubCondition.condition : ''}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', s.sale_date)
         )
         SELECT
@@ -173,7 +172,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
     const clubs = parseClubFilter(query.club);
+    const hasClubFilter = clubs.length > 0;
     const clubCondition = buildClubCondition(clubs, 3);
+
+    const fromClause = hasClubFilter
+      ? `FROM sales s
+             JOIN ens_names en ON s.ens_name_id = en.id`
+      : `FROM sales s`;
 
     try {
       const result = await pool.query(
@@ -190,11 +195,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             SUM(s.sale_price_wei::numeric) as total,
             COALESCE(SUM(s.sale_price_wei::numeric) FILTER (WHERE s.source = 'grails'), 0) as grails,
             COALESCE(SUM(s.sale_price_wei::numeric) FILTER (WHERE s.source = 'opensea'), 0) as opensea
-          FROM sales s
-          JOIN ens_names en ON s.ens_name_id = en.id
+          ${fromClause}
           WHERE s.sale_date > NOW() - INTERVAL '${timeConfig.interval}'
             AND (s.currency_address = $1 OR s.currency_address = $2)
-          ${clubCondition.condition}
+          ${hasClubFilter ? clubCondition.condition : ''}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', s.sale_date)
         )
         SELECT
@@ -251,7 +255,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
     const clubs = parseClubFilter(query.club);
+    const hasClubFilter = clubs.length > 0;
     const clubCondition = buildClubCondition(clubs, 1);
+
+    const fromClause = hasClubFilter
+      ? `FROM listings l
+             JOIN ens_names en ON l.ens_name_id = en.id`
+      : `FROM listings l`;
 
     try {
       const result = await pool.query(
@@ -268,10 +278,9 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE l.source = 'grails') as grails,
             COUNT(*) FILTER (WHERE l.source = 'opensea') as opensea
-          FROM listings l
-          JOIN ens_names en ON l.ens_name_id = en.id
+          ${fromClause}
           WHERE l.created_at > NOW() - INTERVAL '${timeConfig.interval}'
-          ${clubCondition.condition}
+          ${hasClubFilter ? clubCondition.condition : ''}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', l.created_at)
         )
         SELECT
@@ -328,7 +337,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
     const clubs = parseClubFilter(query.club);
+    const hasClubFilter = clubs.length > 0;
     const clubCondition = buildClubCondition(clubs, 1);
+
+    const fromClause = hasClubFilter
+      ? `FROM registrations r
+             JOIN ens_names en ON r.ens_name_id = en.id`
+      : `FROM registrations r`;
 
     try {
       const result = await pool.query(
@@ -348,10 +363,9 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             SUM(r.base_cost_wei::numeric) as total_base_cost_wei,
             SUM(r.premium_wei::numeric) as total_premium_wei,
             COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count
-          FROM registrations r
-          JOIN ens_names en ON r.ens_name_id = en.id
+          ${fromClause}
           WHERE r.registration_date > NOW() - INTERVAL '${timeConfig.interval}'
-          ${clubCondition.condition}
+          ${hasClubFilter ? clubCondition.condition : ''}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date)
         )
         SELECT
@@ -414,7 +428,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
     const clubs = parseClubFilter(query.club);
+    const hasClubFilter = clubs.length > 0;
     const clubCondition = buildClubCondition(clubs, 1);
+
+    const fromClause = hasClubFilter
+      ? `FROM offers o
+             JOIN ens_names en ON o.ens_name_id = en.id`
+      : `FROM offers o`;
 
     try {
       const result = await pool.query(
@@ -431,10 +451,9 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE o.source = 'grails') as grails,
             COUNT(*) FILTER (WHERE o.source = 'opensea') as opensea
-          FROM offers o
-          JOIN ens_names en ON o.ens_name_id = en.id
+          ${fromClause}
           WHERE o.created_at > NOW() - INTERVAL '${timeConfig.interval}'
-          ${clubCondition.condition}
+          ${hasClubFilter ? clubCondition.condition : ''}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', o.created_at)
         )
         SELECT

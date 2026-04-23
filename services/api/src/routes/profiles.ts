@@ -291,102 +291,103 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Fetch primary name and ENS records from EFP API
-      // EFP API automatically returns the primary name for any address
-      let ensRecords = null;
-      try {
-        const efpResponse = await fetch(`https://api.ethfollow.xyz/api/v1/users/${ownerAddress}/details`);
-        if (efpResponse.ok) {
-          const efpData: any = await efpResponse.json();
-
-          // EFP API returns the primary name for this address
-          if (efpData.ens?.name) {
-            primaryName = efpData.ens.name;
-          }
-
-          // Extract ENS records
-          if (efpData.ens?.records) {
-            const records = efpData.ens.records;
-            ensRecords = {
-              avatar: records.avatar,
-              name: records.name,
-              description: records.description,
-              email: records.email,
-              url: records.url,
-              location: records.location,
-              twitter: records['com.twitter'],
-              github: records['com.github'],
-              header: records.header,
-              address: efpData.address,
-              records: records,
-            };
-          }
-        }
-      } catch (error: any) {
-        fastify.log.warn('Failed to fetch ENS records from EFP API:', error);
-      }
-
-      // Fetch owned ENS names with listing status
+      // Define all queries upfront
       const ownedNamesQuery = `
-        SELECT
-          en.id,
-          en.token_id,
-          en.name,
-          en.expiry_date,
-          en.registration_date,
-          en.created_at,
-          EXISTS (
-            SELECT 1 FROM listings l
-            WHERE l.ens_name_id = en.id AND l.status = 'active'
-          ) as is_listed,
-          (
-            SELECT json_build_object(
-              'id', l.id,
-              'price_wei', l.price_wei,
-              'currency_address', l.currency_address,
-              'source', l.source,
-              'created_at', l.created_at
-            )
-            FROM listings l
-            WHERE l.ens_name_id = en.id AND l.status = 'active'
-            ORDER BY l.created_at DESC
-            LIMIT 1
-          ) as active_listing
+        SELECT en.id, en.token_id, en.name, en.expiry_date, en.registration_date, en.created_at,
+          al.listing IS NOT NULL as is_listed,
+          al.listing as active_listing
         FROM ens_names en
+        LEFT JOIN LATERAL (
+          SELECT json_build_object(
+            'id', l.id,
+            'price_wei', l.price_wei,
+            'currency_address', l.currency_address,
+            'source', l.source,
+            'created_at', l.created_at
+          ) as listing
+          FROM listings l
+          WHERE l.ens_name_id = en.id AND l.status = 'active'
+          ORDER BY l.created_at DESC
+          LIMIT 1
+        ) al ON true
         WHERE LOWER(en.owner_address) = $1
         ORDER BY en.created_at DESC
       `;
-
-      const ownedNamesResult = await pool.query(ownedNamesQuery, [ownerAddress]);
-
-      // Get activity count for this address
-      const activityCountQuery = `
-        SELECT COUNT(*) as total
-        FROM activity_history
-        WHERE actor_address = $1 OR counterparty_address = $1
+      const activityCountQuery = `SELECT COUNT(*) as total FROM activity_history WHERE actor_address = $1 OR counterparty_address = $1`;
+      const personaQueryStr = `SELECT p.slug, p.name, p.icon, u.last_seen_at FROM users u LEFT JOIN personas p ON p.id = u.persona_id WHERE u.address = $1`;
+      const onchainCacheQuery = `SELECT last_transaction_at, last_checked_at FROM onchain_activity_cache WHERE address = $1`;
+      const ensTimestampsQuery = `
+        SELECT
+          (SELECT MAX(timestamp) FROM transactions WHERE from_address = $1 AND transaction_type = 'renewal') AS last_renewed_at,
+          (SELECT MAX(timestamp) FROM transactions WHERE to_address = $1 AND transaction_type = 'transfer') AS last_transfer_in_at,
+          (SELECT MAX(timestamp) FROM transactions WHERE from_address = $1 AND transaction_type = 'transfer') AS last_transfer_out_at
       `;
-      const activityCountResult = await pool.query(activityCountQuery, [ownerAddress]);
 
-      // Fetch persona and last_seen_at for this address
-      const personaQuery = `
-        SELECT p.slug, p.name, p.icon, u.last_seen_at
-        FROM users u
-        LEFT JOIN personas p ON p.id = u.persona_id
-        WHERE u.address = $1
-      `;
-      const personaResult = await pool.query(personaQuery, [ownerAddress]);
+      // Helper for EFP fetch that won't throw
+      async function fetchEnsRecords(address: string) {
+        try {
+          const efpResponse = await fetch(`https://api.ethfollow.xyz/api/v1/users/${address}/details`);
+          if (efpResponse.ok) {
+            return await efpResponse.json();
+          }
+        } catch (error: any) {
+          fastify.log.warn('Failed to fetch ENS records from EFP API:', error);
+        }
+        return null;
+      }
+
+      // Run all independent queries in parallel
+      const [
+        efpData,
+        ownedNamesResult,
+        activityCountResult,
+        personaResult,
+        cacheResult,
+        ensTimestampsResult,
+        viewCount,
+      ] = await Promise.all([
+        fetchEnsRecords(ownerAddress),
+        pool.query(ownedNamesQuery, [ownerAddress]),
+        pool.query(activityCountQuery, [ownerAddress]),
+        pool.query(personaQueryStr, [ownerAddress]),
+        pool.query(onchainCacheQuery, [ownerAddress]),
+        pool.query(ensTimestampsQuery, [ownerAddress]),
+        getProfileViewCount(ownerAddress),
+      ]);
+
+      // Process EFP data
+      let ensRecords = null;
+      if (efpData) {
+        const efpTyped = efpData as any;
+        if (efpTyped.ens?.name) {
+          primaryName = efpTyped.ens.name;
+        }
+        if (efpTyped.ens?.records) {
+          const records = efpTyped.ens.records;
+          ensRecords = {
+            avatar: records.avatar,
+            name: records.name,
+            description: records.description,
+            email: records.email,
+            url: records.url,
+            location: records.location,
+            twitter: records['com.twitter'],
+            github: records['com.github'],
+            header: records.header,
+            address: efpTyped.address,
+            records: records,
+          };
+        }
+      }
+
+      // Process persona result
       const persona = personaResult.rows.length > 0
         ? { slug: personaResult.rows[0].slug, name: personaResult.rows[0].name, icon: personaResult.rows[0].icon }
         : null;
       const lastSeenAt = personaResult.rows[0]?.last_seen_at || null;
 
-      // Fetch onchain activity cache and queue refresh if stale
+      // Process onchain activity cache and queue refresh if stale
       let lastSeenOnchain = null;
-      const cacheResult = await pool.query(
-        'SELECT last_transaction_at, last_checked_at FROM onchain_activity_cache WHERE address = $1',
-        [ownerAddress],
-      );
-
       if (cacheResult.rows.length > 0) {
         lastSeenOnchain = cacheResult.rows[0].last_transaction_at;
         const lastChecked = new Date(cacheResult.rows[0].last_checked_at);
@@ -414,21 +415,6 @@ export async function profilesRoutes(fastify: FastifyInstance) {
           fastify.log.warn({ err, address: ownerAddress }, 'Failed to queue onchain activity lookup');
         }
       }
-
-      // Fetch ENS activity timestamps from transactions table
-      const ensTimestampsQuery = `
-        SELECT
-          (SELECT MAX(timestamp) FROM transactions
-           WHERE from_address = $1 AND transaction_type = 'renewal') AS last_renewed_at,
-          (SELECT MAX(timestamp) FROM transactions
-           WHERE to_address = $1 AND transaction_type = 'transfer') AS last_transfer_in_at,
-          (SELECT MAX(timestamp) FROM transactions
-           WHERE from_address = $1 AND transaction_type = 'transfer') AS last_transfer_out_at
-      `;
-      const ensTimestampsResult = await pool.query(ensTimestampsQuery, [ownerAddress]);
-
-      // Fetch profile view count
-      const viewCount = await getProfileViewCount(ownerAddress);
 
       const response: APIResponse = {
         success: true,
