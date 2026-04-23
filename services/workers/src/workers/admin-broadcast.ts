@@ -21,7 +21,7 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
     QUEUE_NAMES.SEND_ADMIN_BROADCAST,
     { teamSize: 5, teamConcurrency: 2 },
     async (job) => {
-      const { broadcastId, userId, channels, title, body, linkUrl } = job.data;
+      const { broadcastId, userId, channels, title, body, linkUrl, imageUrl } = job.data;
 
       const pool = getPostgresPool();
 
@@ -86,13 +86,13 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
         await pool.query(
           `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
            VALUES ($1, 'admin-broadcast', NULL, $2, NOW())`,
-          [userId, JSON.stringify({ title, body, linkUrl, broadcastId })]
+          [userId, JSON.stringify({ title, body, linkUrl, imageUrl, broadcastId })]
         );
       }
 
       if (channels.includes('email') && user.email_verified && user.email) {
         try {
-          const template = buildAdminBroadcastEmail({ title, body, linkUrl, unsubscribeUrl });
+          const template = buildAdminBroadcastEmail({ title, body, linkUrl, imageUrl, unsubscribeUrl });
           await sendEmail(user.email, template);
         } catch (error) {
           logger.error({ error, userId, broadcastId }, 'Failed to send admin broadcast email');

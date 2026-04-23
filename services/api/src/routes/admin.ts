@@ -17,6 +17,7 @@ const BroadcastComposeSchema = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(5000),
   linkUrl: z.string().url().optional(),
+  imageUrl: z.string().url().optional(),
   channels: z.array(ChannelEnum).min(1),
 });
 
@@ -322,13 +323,14 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
       const inserted = await pool.query(
         `INSERT INTO admin_broadcasts
-         (title, body, link_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test)
-         VALUES ($1, $2, $3, 0, $4, 1, $5, TRUE)
+         (title, body, link_url, image_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test)
+         VALUES ($1, $2, $3, $4, 0, $5, 1, $6, TRUE)
          RETURNING id`,
         [
           payload.title,
           payload.body,
           payload.linkUrl || null,
+          payload.imageUrl || null,
           JSON.stringify(payload.channels),
           adminUserId,
         ]
@@ -343,6 +345,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
         title: payload.title,
         body: payload.body,
         linkUrl: payload.linkUrl,
+        imageUrl: payload.imageUrl,
       });
 
       const response: APIResponse = {
@@ -384,14 +387,15 @@ export async function adminRoutes(fastify: FastifyInstance) {
         await client.query('BEGIN');
         const inserted = await client.query(
           `INSERT INTO admin_broadcasts
-           (title, body, link_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test,
+           (title, body, link_url, image_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test,
             audience_type, audience_addresses, audience_tier_ids)
-           VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE, $7, $8, $9)
+           VALUES ($1, $2, $3, $4, 0, $5, $6, $7, FALSE, $8, $9, $10)
            RETURNING id`,
           [
             payload.title,
             payload.body,
             payload.linkUrl || null,
+            payload.imageUrl || null,
             JSON.stringify(payload.channels),
             recipients.length,
             adminUserId,
@@ -420,6 +424,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
             title: payload.title,
             body: payload.body,
             linkUrl: payload.linkUrl,
+            imageUrl: payload.imageUrl,
           },
         }));
         await boss.insert(jobs);
@@ -448,7 +453,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       const offset = (pageNum - 1) * limitNum;
 
       const rows = await pool.query(
-        `SELECT ab.id, ab.title, ab.body, ab.link_url, ab.min_tier_id,
+        `SELECT ab.id, ab.title, ab.body, ab.link_url, ab.image_url, ab.min_tier_id,
                 ab.channels, ab.recipient_count, ab.is_test, ab.created_at,
                 u.address AS sent_by_address
          FROM admin_broadcasts ab

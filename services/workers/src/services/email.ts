@@ -432,11 +432,16 @@ export function buildAdminBroadcastEmail(params: {
   title: string;
   body: string;
   linkUrl?: string;
+  imageUrl?: string;
   unsubscribeUrl: string;
 }): EmailTemplate {
-  const { title, body, linkUrl, unsubscribeUrl } = params;
+  const { title, body, linkUrl, imageUrl, unsubscribeUrl } = params;
   const safeTitle = escapeHtml(title);
   const safeBodyHtml = escapeHtml(body).replace(/\n/g, '<br>');
+
+  const image = imageUrl
+    ? `<img src="${encodeURI(imageUrl)}" alt="" style="max-width: 100%; height: auto; border-radius: 8px; margin: 10px 0; display: block;"/>`
+    : '';
 
   const cta = linkUrl
     ? `<p><a href="${encodeURI(linkUrl)}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">Learn more</a></p>`
@@ -447,6 +452,7 @@ export function buildAdminBroadcastEmail(params: {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>${safeTitle}</h2>
+        ${image}
         <p>${safeBodyHtml}</p>
         ${cta}
         <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
@@ -460,7 +466,7 @@ export function buildAdminBroadcastEmail(params: {
 ${title}
 
 ${body}
-${linkUrl ? `\nLearn more: ${linkUrl}\n` : ''}
+${imageUrl ? `\nImage: ${imageUrl}\n` : ''}${linkUrl ? `\nLearn more: ${linkUrl}\n` : ''}
 ---
 You received this email from Grails.
 Manage notification preferences: ${unsubscribeUrl}

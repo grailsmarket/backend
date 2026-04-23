@@ -101,6 +101,7 @@ export interface SendAdminBroadcastJob {
   title: string;
   body: string;
   linkUrl?: string;
+  imageUrl?: string;
 }
 
 export interface BackfillGoogleMetricsJob {
