@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { getPostgresPool } from '../../../shared/src';
-import { requireAuth, requireMinTier } from '../middleware/auth';
+import { requireAuth, requireMinTier, optionalAuth } from '../middleware/auth';
+import { getViewerIdentifier } from '../services/name-views';
+import { trackDashboardView } from '../services/dashboard-views';
 
 const MAX_DASHBOARDS_PER_USER = 10;
 const MAX_WIDGETS_PER_DASHBOARD = 20;
@@ -115,7 +118,13 @@ const UpdateDashboardSchema = z.object({
   components: ComponentsMap.optional(),
   nextId: z.number().int().min(1).optional(),
   isDefault: z.boolean().optional(),
+  isPublic: z.boolean().optional(),
 });
+
+// base64url alphabet is URL-safe, no padding at 10 chars
+function generatePublicSlug(): string {
+  return crypto.randomBytes(8).toString('base64url').slice(0, 10);
+}
 
 // --- Helper to map DB rows to API response format ---
 
@@ -128,10 +137,42 @@ function formatLayout(row: any) {
     components: row.components,
     nextId: row.next_id,
     isDefault: row.is_default,
+    isPublic: row.is_public,
+    publicSlug: row.public_slug,
+    publishedAt: row.published_at,
+    viewCount: row.view_count,
+    forkCount: row.fork_count,
+    forkedFromId: row.forked_from_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
+
+// Public view shape — omits owner-only fields like is_default
+function formatPublicLayout(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    colOverride: row.col_override,
+    layouts: row.layouts,
+    components: row.components,
+    nextId: row.next_id,
+    publicSlug: row.public_slug,
+    publishedAt: row.published_at,
+    viewCount: row.view_count,
+    forkCount: row.fork_count,
+    forkedFromId: row.forked_from_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    owner: {
+      address: row.owner_address,
+    },
+  };
+}
+
+const LAYOUT_COLUMNS = `id, name, col_override, layouts, components, next_id, is_default,
+  is_public, public_slug, published_at, view_count, fork_count, forked_from_id,
+  created_at, updated_at`;
 
 // --- Routes ---
 
@@ -144,7 +185,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
     const userId = parseInt(request.user!.sub);
 
     const result = await pool.query(
-      `SELECT id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at
+      `SELECT ${LAYOUT_COLUMNS}
        FROM dashboard_layouts
        WHERE user_id = $1
        ORDER BY is_default DESC, created_at ASC`,
@@ -175,7 +216,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
     }
 
     const result = await pool.query(
-      `SELECT id, user_id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at
+      `SELECT user_id, ${LAYOUT_COLUMNS}
        FROM dashboard_layouts
        WHERE id = $1`,
       [layoutId]
@@ -253,7 +294,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
         const result = await client.query(
           `INSERT INTO dashboard_layouts (user_id, name, col_override, layouts, components, next_id, is_default)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at`,
+           RETURNING ${LAYOUT_COLUMNS}`,
           [userId, body.name, body.colOverride, JSON.stringify(body.layouts), JSON.stringify(body.components), body.nextId, body.isDefault]
         );
 
@@ -340,7 +381,7 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       values.push(body.isDefault);
     }
 
-    if (setClauses.length === 0) {
+    if (setClauses.length === 0 && body.isPublic === undefined) {
       return reply.status(400).send({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: 'No fields to update' },
@@ -353,9 +394,9 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       try {
         await client.query('BEGIN');
 
-        // Ownership check
+        // Ownership check + pull current slug so we know whether we need to mint one
         const check = await client.query(
-          'SELECT user_id FROM dashboard_layouts WHERE id = $1',
+          'SELECT user_id, public_slug FROM dashboard_layouts WHERE id = $1',
           [layoutId]
         );
         if (check.rows.length === 0) {
@@ -382,13 +423,35 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
           );
         }
 
+        // Visibility toggle: publish mints a slug (once) and sets published_at;
+        // unpublish leaves slug intact so the share URL is stable on republish.
+        if (body.isPublic !== undefined) {
+          setClauses.push(`is_public = $${paramIndex++}`);
+          values.push(body.isPublic);
+
+          if (body.isPublic === true && !check.rows[0].public_slug) {
+            let slug = generatePublicSlug();
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const collision = await client.query(
+                'SELECT 1 FROM dashboard_layouts WHERE public_slug = $1',
+                [slug]
+              );
+              if (collision.rows.length === 0) break;
+              slug = generatePublicSlug();
+            }
+            setClauses.push(`public_slug = $${paramIndex++}`);
+            values.push(slug);
+            setClauses.push(`published_at = COALESCE(published_at, NOW())`);
+          }
+        }
+
         values.push(layoutId);
         values.push(userId);
         const result = await client.query(
           `UPDATE dashboard_layouts
            SET ${setClauses.join(', ')}
            WHERE id = $${paramIndex++} AND user_id = $${paramIndex}
-           RETURNING id, name, col_override, layouts, components, next_id, is_default, created_at, updated_at`,
+           RETURNING ${LAYOUT_COLUMNS}`,
           values
         );
 
@@ -450,4 +513,150 @@ export async function dashboardLayoutsRoutes(fastify: FastifyInstance) {
       meta: { timestamp: new Date().toISOString() },
     });
   });
+
+  // GET /public/:slug  — fetch a published dashboard by share slug (no auth required)
+  fastify.get('/public/:slug', { preHandler: [optionalAuth] }, async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+
+    const result = await pool.query(
+      `SELECT d.user_id, ${LAYOUT_COLUMNS.split(',').map((c) => `d.${c.trim()}`).join(', ')},
+              u.address AS owner_address
+       FROM dashboard_layouts d
+       JOIN users u ON u.id = d.user_id
+       WHERE d.public_slug = $1 AND d.is_public = TRUE`,
+      [slug]
+    );
+
+    if (result.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Dashboard not found or no longer public' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const row = result.rows[0];
+
+    // Fire-and-forget view tracking; owner self-views are skipped inside the service.
+    const viewer = getViewerIdentifier(request);
+    trackDashboardView(row.id, viewer.identifier, viewer.type, row.user_id).catch(() => {
+      // swallowed — tracking must never break the request
+    });
+
+    return reply.send({
+      success: true,
+      data: formatPublicLayout(row),
+      meta: { timestamp: new Date().toISOString() },
+    });
+  });
+
+  // POST /public/:slug/fork  — copy a public dashboard into forker's collection
+  fastify.post(
+    '/public/:slug/fork',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const forkerId = parseInt(request.user!.sub);
+      const { slug } = request.params as { slug: string };
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const sourceResult = await client.query(
+          `SELECT id, user_id, name, col_override, layouts, components, next_id
+           FROM dashboard_layouts
+           WHERE public_slug = $1 AND is_public = TRUE`,
+          [slug]
+        );
+
+        if (sourceResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Dashboard not found or no longer public' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        const source = sourceResult.rows[0];
+
+        if (source.user_id === forkerId) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            success: false,
+            error: { code: 'CANNOT_FORK_OWN', message: 'You cannot fork your own dashboard' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        const countResult = await client.query(
+          'SELECT COUNT(*)::int AS count FROM dashboard_layouts WHERE user_id = $1',
+          [forkerId]
+        );
+        if (countResult.rows[0].count >= MAX_DASHBOARDS_PER_USER) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'LIMIT_EXCEEDED',
+              message: `Maximum of ${MAX_DASHBOARDS_PER_USER} dashboards allowed`,
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Pick a non-colliding name: "<source.name> (forked)", "(forked 2)", …
+        const baseName = `${source.name} (forked)`.slice(0, 100);
+        let forkName = baseName;
+        for (let attempt = 2; attempt <= 10; attempt++) {
+          const exists = await client.query(
+            'SELECT 1 FROM dashboard_layouts WHERE user_id = $1 AND name = $2',
+            [forkerId, forkName]
+          );
+          if (exists.rows.length === 0) break;
+          const suffix = ` (forked ${attempt})`;
+          forkName = `${source.name.slice(0, 100 - suffix.length)}${suffix}`;
+        }
+
+        const insertResult = await client.query(
+          `INSERT INTO dashboard_layouts
+             (user_id, name, col_override, layouts, components, next_id,
+              is_default, is_public, forked_from_id)
+           VALUES ($1, $2, $3, $4, $5, $6, FALSE, FALSE, $7)
+           RETURNING ${LAYOUT_COLUMNS}`,
+          [
+            forkerId,
+            forkName,
+            source.col_override,
+            JSON.stringify(source.layouts),
+            JSON.stringify(source.components),
+            source.next_id,
+            source.id,
+          ]
+        );
+
+        const newDashboard = insertResult.rows[0];
+
+        // Audit row — trigger bumps source.fork_count
+        await client.query(
+          `INSERT INTO dashboard_forks (parent_dashboard_id, child_dashboard_id, forker_user_id)
+           VALUES ($1, $2, $3)`,
+          [source.id, newDashboard.id, forkerId]
+        );
+
+        await client.query('COMMIT');
+
+        return reply.status(201).send({
+          success: true,
+          data: formatLayout(newDashboard),
+          meta: { timestamp: new Date().toISOString() },
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
 }
