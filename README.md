@@ -147,7 +147,7 @@ SEAPORT_ADDRESS=0x0000000000000068F116a894984e2DB1123eB395
 OPENSEA_API_KEY=your_api_key
 ```
 
-See `.env.example` for all configuration options.
+See `.env.example` for all configuration options .
 
 ## Development
 
