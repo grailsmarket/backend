@@ -426,7 +426,7 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Build email template for admin broadcast to paid subscribers
+ * Build email template for an admin broadcast sent to all users.
  */
 export function buildAdminBroadcastEmail(params: {
   title: string;
@@ -451,7 +451,7 @@ export function buildAdminBroadcastEmail(params: {
         ${cta}
         <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
         <p style="font-size: 12px; color: #666;">
-          You received this email as a Grails paid subscriber.
+          You received this email from Grails.
           <a href="${unsubscribeUrl}">Manage notification preferences</a>
         </p>
       </div>
@@ -462,7 +462,7 @@ ${title}
 ${body}
 ${linkUrl ? `\nLearn more: ${linkUrl}\n` : ''}
 ---
-You received this email as a Grails paid subscriber.
+You received this email from Grails.
 Manage notification preferences: ${unsubscribeUrl}
     `.trim(),
   };

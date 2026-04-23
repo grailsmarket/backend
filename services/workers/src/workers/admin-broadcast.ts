@@ -9,8 +9,11 @@ const FRONTEND_URL = config.frontend.url;
 
 /**
  * Admin broadcast worker — fan-out per-recipient delivery of an admin-authored
- * notification to paid subscribers. Tier is re-checked at send time because
- * the recipient may have churned between enqueue and processing.
+ * notification. Delivers to in-app, email, and telegram channels.
+ *
+ * For tier-gated broadcasts (min_tier_id > 0), tier is re-checked at send time
+ * because the recipient may have churned between enqueue and processing.
+ * Phase 2 will replace this with an audience_type-aware check.
  */
 export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> {
   await boss.work<SendAdminBroadcastJob>(
@@ -43,7 +46,7 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
       }
       const user = userResult.rows[0];
 
-      if (!isTest) {
+      if (!isTest && minTierId > 0) {
         const userTierId = user.tier_id ?? 0;
         const notExpired = !user.tier_expires_at || new Date(user.tier_expires_at) > new Date();
         if (userTierId < minTierId || !notExpired) {

@@ -128,6 +128,37 @@ export async function requireAuth(
 }
 
 /**
+ * Middleware to require admin access.
+ * Usage: { preHandler: [requireAuth, requireAdmin] }
+ */
+export async function requireAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  if (!request.user) {
+    return reply.status(401).send({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      },
+      meta: { timestamp: new Date().toISOString() },
+    });
+  }
+
+  if (!request.user.isAdmin) {
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: 'ADMIN_REQUIRED',
+        message: 'Admin access required',
+      },
+      meta: { timestamp: new Date().toISOString() },
+    });
+  }
+}
+
+/**
  * Optional auth middleware - doesn't fail if no token provided
  * Attaches user if valid token present
  */
@@ -253,35 +284,4 @@ export function requireMinTier(minimumTier: string) {
       });
     }
   };
-}
-
-/**
- * Middleware to require admin access.
- * Usage: { preHandler: [requireAuth, requireAdmin] }
- */
-export async function requireAdmin(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  if (!request.user) {
-    return reply.status(401).send({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Authentication required',
-      },
-      meta: { timestamp: new Date().toISOString() },
-    });
-  }
-
-  if (!request.user.isAdmin) {
-    return reply.status(403).send({
-      success: false,
-      error: {
-        code: 'ADMIN_REQUIRED',
-        message: 'Admin access required',
-      },
-      meta: { timestamp: new Date().toISOString() },
-    });
-  }
 }
