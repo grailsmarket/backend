@@ -5,6 +5,8 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import {
   getAllBroadcastRecipients,
   getRecipientsByAddresses,
+  getRecipientsByTiers,
+  getUnsubscribedRecipients,
   type BroadcastRecipient,
 } from '../services/broadcast-recipients';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
@@ -18,7 +20,8 @@ const BroadcastComposeSchema = z.object({
   channels: z.array(ChannelEnum).min(1),
 });
 
-// Phase 1: 'everyone' and 'specific'. Phase 2 adds 'unsubscribed' and 'tiers'.
+// Audience targeting for admin broadcasts.
+// 'everyone' / 'specific' came in Phase 1; 'unsubscribed' / 'tiers' in Phase 2.
 const AudienceSchema = z
   .discriminatedUnion('type', [
     z.object({ type: z.literal('everyone') }),
@@ -28,6 +31,11 @@ const AudienceSchema = z
         .array(z.string().regex(/^0x[a-fA-F0-9]{40}$/))
         .min(1)
         .max(500),
+    }),
+    z.object({ type: z.literal('unsubscribed') }),
+    z.object({
+      type: z.literal('tiers'),
+      tierIds: z.array(z.number().int().min(1).max(3)).min(1),
     }),
   ])
   .default({ type: 'everyone' });
@@ -49,6 +57,10 @@ async function resolveAudience(audience: Audience): Promise<BroadcastRecipient[]
       return getAllBroadcastRecipients();
     case 'specific':
       return getRecipientsByAddresses(audience.addresses);
+    case 'unsubscribed':
+      return getUnsubscribedRecipients();
+    case 'tiers':
+      return getRecipientsByTiers(audience.tierIds);
   }
 }
 
@@ -363,6 +375,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
       const audienceAddresses =
         payload.audience.type === 'specific' ? payload.audience.addresses : null;
+      const audienceTierIds =
+        payload.audience.type === 'tiers' ? payload.audience.tierIds : null;
 
       const client = await pool.connect();
       let broadcastId: number;
@@ -371,8 +385,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
         const inserted = await client.query(
           `INSERT INTO admin_broadcasts
            (title, body, link_url, min_tier_id, channels, recipient_count, sent_by_user_id, is_test,
-            audience_type, audience_addresses)
-           VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE, $7, $8)
+            audience_type, audience_addresses, audience_tier_ids)
+           VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE, $7, $8, $9)
            RETURNING id`,
           [
             payload.title,
@@ -383,6 +397,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
             adminUserId,
             payload.audience.type,
             audienceAddresses ? JSON.stringify(audienceAddresses) : null,
+            audienceTierIds ? JSON.stringify(audienceTierIds) : null,
           ]
         );
         broadcastId = inserted.rows[0].id;
