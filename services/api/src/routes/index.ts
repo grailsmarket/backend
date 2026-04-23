@@ -34,6 +34,7 @@ import { aiSearchRoutes, aiRelatedSearchRoutes } from './ai-search';
 import { googleMetricsRoutes } from './google-metrics';
 import { personasRoutes } from './personas';
 import { adminRoutes } from './admin';
+import { broadcastImagesRoutes } from './broadcast-images';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -71,5 +72,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(googleMetricsRoutes, { prefix: '/api/v1/google-metrics' });
   fastify.register(personasRoutes, { prefix: '/api/v1/personas' });
   fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
+  fastify.register(broadcastImagesRoutes, { prefix: '/api/v1/broadcasts/images' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }
