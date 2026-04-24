@@ -1,5 +1,12 @@
 import { Client } from 'pg';
-import { config, getPostgresPool } from '../../../shared/src';
+import {
+  config,
+  getMetadataInvalidationNetwork,
+  getPostgresPool,
+  isMetadataInvalidationConfigured,
+  isPlaceholderName,
+  type MetadataInvalidationNetwork,
+} from '../../../shared/src';
 import { ElasticsearchSync } from './elasticsearch-sync';
 import { ActivityHistoryService } from './activity-history';
 import { logger } from '../utils/logger';
@@ -16,6 +23,10 @@ export class WALListener {
   private isRunning = false;
   private pool = getPostgresPool();
   private activityHistory: ActivityHistoryService;
+  private readonly metadataInvalidationConfigured = isMetadataInvalidationConfigured();
+  private readonly metadataInvalidationNetwork = getMetadataInvalidationNetwork(
+    config.blockchain.chainId,
+  );
 
   constructor(private esSync: ElasticsearchSync) {
     this.activityHistory = new ActivityHistoryService();
@@ -24,6 +35,17 @@ export class WALListener {
   async start() {
     logger.info('Starting WAL listener...');
     this.isRunning = true;
+
+    if (!this.metadataInvalidationConfigured) {
+      logger.info(
+        'ENS metadata invalidation publishing disabled; METADATA_INVALIDATION_BASE_URL or METADATA_INVALIDATION_AUTH_TOKEN missing',
+      );
+    } else if (!this.metadataInvalidationNetwork) {
+      logger.warn(
+        { chainId: config.blockchain.chainId },
+        'ENS metadata invalidation publishing disabled; unsupported CHAIN_ID',
+      );
+    }
 
     await this.setupReplication();
     await this.startListening();
@@ -193,6 +215,7 @@ export class WALListener {
         // Note: Mint events are now created by the ENS indexer with proper blockchain timestamps
         // when it processes NameRegistered events. We don't create them here to avoid duplicate
         // mint events or mint events with incorrect (current) timestamps.
+        await this.publishMetadataInvalidation(change);
         break;
 
       case 'UPDATE':
@@ -255,11 +278,125 @@ export class WALListener {
             }
           }
         }
+
+        await this.publishMetadataInvalidation(change);
         break;
 
       case 'DELETE':
         await this.esSync.deleteENSName(change.oldData?.id || change.data?.id);
         break;
+    }
+  }
+
+  private metadataInvalidationValueChanged(oldValue: unknown, newValue: unknown): boolean {
+    if (oldValue == null && newValue == null) {
+      return false;
+    }
+
+    return String(oldValue) !== String(newValue);
+  }
+
+  private shouldPublishMetadataInvalidation(change: Change): boolean {
+    if (!change.data) {
+      return false;
+    }
+
+    if (change.operation === 'INSERT') {
+      return true;
+    }
+
+    if (change.operation !== 'UPDATE') {
+      return false;
+    }
+
+    if (!change.oldData) {
+      // Polling fallback does not have OLD row state, so invalidate on any observed update.
+      return true;
+    }
+
+    return [
+      this.metadataInvalidationValueChanged(change.oldData.expiry_date, change.data.expiry_date),
+      this.metadataInvalidationValueChanged(
+        change.oldData.metadata_updated_at,
+        change.data.metadata_updated_at,
+      ),
+      this.metadataInvalidationValueChanged(change.oldData.name, change.data.name),
+      this.metadataInvalidationValueChanged(change.oldData.token_id, change.data.token_id),
+    ].some(Boolean);
+  }
+
+  private buildMetadataInvalidationPayload(
+    row: any,
+  ): { network: MetadataInvalidationNetwork; name?: string; tokenId?: string } | null {
+    if (!this.metadataInvalidationNetwork) {
+      return null;
+    }
+
+    const name = typeof row?.name === 'string' && row.name.length > 0 && !isPlaceholderName(row.name)
+      ? row.name.toLowerCase()
+      : undefined;
+    const tokenId = row?.token_id != null ? String(row.token_id) : undefined;
+
+    if (!name && !tokenId) {
+      return null;
+    }
+
+    return {
+      network: this.metadataInvalidationNetwork,
+      ...(name ? { name } : {}),
+      ...(tokenId ? { tokenId } : {}),
+    };
+  }
+
+  private async publishMetadataInvalidation(change: Change): Promise<void> {
+    if (!this.metadataInvalidationConfigured || !this.metadataInvalidationNetwork) {
+      return;
+    }
+
+    if (!this.shouldPublishMetadataInvalidation(change)) {
+      return;
+    }
+
+    const payload = this.buildMetadataInvalidationPayload(change.data);
+    if (!payload) {
+      return;
+    }
+
+    const singletonKey = payload.name
+      ? `${payload.network}:${payload.name}`
+      : `${payload.network}:${payload.tokenId}`;
+
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+
+      await boss.send(
+        QUEUE_NAMES.INVALIDATE_ENS_METADATA_CACHE,
+        payload,
+        {
+          singletonKey,
+          singletonSeconds: 5,
+        },
+      );
+
+      logger.info(
+        {
+          operation: change.operation,
+          singletonKey,
+          ...payload,
+        },
+        'Published ENS metadata invalidation job',
+      );
+    } catch (error: any) {
+      logger.error(
+        {
+          error,
+          operation: change.operation,
+          name: payload.name,
+          tokenId: payload.tokenId,
+        },
+        'Failed to publish ENS metadata invalidation job',
+      );
     }
   }
 
