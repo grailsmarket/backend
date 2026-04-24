@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, config, fetchKeywordMetrics, KeywordMetricsResponse } from '../../../shared/src';
+import { getPostgresPool, config, fetchKeywordMetrics, cacheGoogleMetrics } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const QUEUE_NAME = 'backfill-google-metrics';
@@ -28,19 +28,6 @@ const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Determine if a metrics response has real data or is effectively empty.
- * Google returns an object with all-null fields for unknown/profane keywords.
- */
-function hasRealData(metrics: KeywordMetricsResponse): boolean {
-  return (
-    metrics.avgMonthlySearches !== null ||
-    metrics.avgCpc !== null ||
-    metrics.competition !== null ||
-    metrics.monthlyTrend.length > 0
-  );
 }
 
 /**
@@ -117,30 +104,6 @@ async function getUncategorizedCandidates(limit: number): Promise<string[]> {
   return result.rows.map((r) => r.label);
 }
 
-/**
- * Upsert a google_metrics row with the given status and appropriate TTL.
- */
-async function upsertMetrics(
-  name: string,
-  metrics: KeywordMetricsResponse | Record<string, never>,
-  status: 'success' | 'no_data',
-): Promise<void> {
-  const pool = getPostgresPool();
-  const expiresAt = new Date(Date.now() + ONE_YEAR_MS);
-
-  await pool.query(
-    `INSERT INTO google_metrics (name, metrics, status, expires_at, updated_at)
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (name)
-     DO UPDATE SET
-       metrics = EXCLUDED.metrics,
-       status = EXCLUDED.status,
-       expires_at = EXCLUDED.expires_at,
-       updated_at = NOW()`,
-    [name, JSON.stringify(metrics), status, expiresAt],
-  );
-}
-
 export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
   // Kill switch
   if (!ENABLED) {
@@ -200,12 +163,13 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
 
       let processed = 0;
       let noData = 0;
+      let preserved = 0;
       let errors = 0;
       let consecutiveErrors = 0;
 
       for (const name of names) {
         // Delay between calls (skip delay before the first call)
-        if (processed > 0 || noData > 0 || errors > 0) {
+        if (processed > 0 || noData > 0 || preserved > 0 || errors > 0) {
           await sleep(DELAY_MS);
         }
 
@@ -220,7 +184,7 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
 
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
               logger.error(
-                { jobId: job.id, consecutiveErrors, processed, noData, errors },
+                { jobId: job.id, consecutiveErrors, processed, noData, preserved, errors },
                 'Aborting batch — too many consecutive errors (likely quota or auth issue)',
               );
               break;
@@ -231,12 +195,15 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
           // Reset consecutive error counter on any successful API call
           consecutiveErrors = 0;
 
-          if (hasRealData(metrics)) {
-            await upsertMetrics(name, metrics, 'success');
+          const result = await cacheGoogleMetrics(name, metrics, ONE_YEAR_MS);
+          if (result.status === 'success') {
             processed++;
-          } else {
-            await upsertMetrics(name, {}, 'no_data');
+          } else if (result.written) {
             noData++;
+          } else {
+            // Empty Google response, but existing success row protected from overwrite
+            preserved++;
+            logger.info({ name }, 'Skipped overwriting cached metrics with empty Google response');
           }
         } catch (error) {
           errors++;
@@ -254,11 +221,11 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
       }
 
       logger.info(
-        { jobId: job.id, processed, noData, errors, total: names.length, categorizedCount, uncategorizedCount },
+        { jobId: job.id, processed, noData, preserved, errors, total: names.length, categorizedCount, uncategorizedCount },
         'Google metrics backfill batch completed',
       );
 
-      return { success: true, processed, noData, errors };
+      return { success: true, processed, noData, preserved, errors };
     },
   );
 

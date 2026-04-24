@@ -7,6 +7,20 @@ export interface KeywordMetricsResponse {
   competition: string | null;
 }
 
+/**
+ * True when Google returned at least one non-null metric.
+ * Google returns an object with all-null fields for unknown/profane keywords
+ * and (anecdotally) for transient throttling.
+ */
+export function hasRealData(metrics: KeywordMetricsResponse): boolean {
+  return (
+    metrics.avgMonthlySearches !== null ||
+    metrics.avgCpc !== null ||
+    metrics.competition !== null ||
+    metrics.monthlyTrend.length > 0
+  );
+}
+
 interface MonthlyVolume {
   month: string;
   year: string;

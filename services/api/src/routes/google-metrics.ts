@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, normalizeEnsName, fetchKeywordMetrics } from '../../../shared/src';
+import { getPostgresPool, APIResponse, normalizeEnsName, fetchKeywordMetrics, hasRealData, cacheGoogleMetrics } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 import { optionalAuth } from '../middleware/auth';
 import { generateCacheKey, setCachedResponse } from '../utils/redis';
@@ -137,18 +137,27 @@ export async function googleMetricsRoutes(fastify: FastifyInstance) {
         return reply.header('X-Cache', 'MISS').send(response);
       }
 
-      // UPSERT to DB cache
-      const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
-      await pool.query(
-        `INSERT INTO google_metrics (name, metrics, expires_at, updated_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (name)
-         DO UPDATE SET
-           metrics = EXCLUDED.metrics,
-           expires_at = EXCLUDED.expires_at,
-           updated_at = NOW()`,
-        [baseName, JSON.stringify(metrics), expiresAt],
-      );
+      // Google responded with all-null fields (unknown keyword or transient hiccup).
+      // Let cacheGoogleMetrics decide: it will mark as no_data but won't overwrite
+      // an existing success row. Return last-known-good if we have one.
+      if (!hasRealData(metrics)) {
+        await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+        const lastKnownGood = await pool.query(
+          `SELECT metrics FROM google_metrics
+           WHERE name = $1 AND status = 'success'`,
+          [baseName],
+        );
+        const response: APIResponse = {
+          success: true,
+          data: lastKnownGood.rows[0]?.metrics ?? metrics,
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        return reply.header('X-Cache', 'MISS').send(response);
+      }
+
+      await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
 
       const response: APIResponse = {
         success: true,
