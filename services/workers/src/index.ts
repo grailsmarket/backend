@@ -17,6 +17,7 @@ import { registerOnchainActivityWorker } from './workers/onchain-activity';
 import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
 import { registerPersonaClassificationWorker } from './workers/persona-classification';
 import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-backfill';
+import { registerMetadataInvalidationWorker } from './workers/metadata-invalidation';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -67,6 +68,9 @@ async function start() {
 
     // Register Google metrics backfill worker
     await registerGoogleMetricsBackfillWorker(boss);
+
+    // Register ENS metadata invalidation worker
+    await registerMetadataInvalidationWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

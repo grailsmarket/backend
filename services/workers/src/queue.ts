@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { config } from '../../shared/src';
+import { config, type MetadataInvalidationNetwork } from '../../shared/src';
 import { logger } from './utils/logger';
 
 let boss: PgBoss | null = null;
@@ -108,6 +108,12 @@ export interface BackfillGoogleMetricsJob {
   // Scheduled job — no payload needed
 }
 
+export interface InvalidateEnsMetadataCacheJob {
+  network: MetadataInvalidationNetwork;
+  name?: string;
+  tokenId?: string;
+}
+
 // Queue names as constants
 export const QUEUE_NAMES = {
   EXPIRE_ORDERS: 'expire-orders',
@@ -121,6 +127,7 @@ export const QUEUE_NAMES = {
   SEND_ADMIN_BROADCAST: 'send-admin-broadcast',
   RECONCILE_OPENSEA: 'reconcile-opensea',
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
+  INVALIDATE_ENS_METADATA_CACHE: 'invalidate-ens-metadata-cache',
   CLEANUP_API_REQUEST_LOGS: 'cleanup-api-request-logs',
   BACKFILL_GOOGLE_METRICS: 'backfill-google-metrics',
 } as const;
