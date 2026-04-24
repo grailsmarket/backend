@@ -24,8 +24,7 @@ const UNCATEGORIZED_BATCH = BATCH_SIZE - CATEGORIZED_BATCH;
 /** Consecutive null returns before aborting batch (likely quota/auth issue) */
 const MAX_CONSECUTIVE_ERRORS = 3;
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,8 +126,7 @@ async function upsertMetrics(
   status: 'success' | 'no_data',
 ): Promise<void> {
   const pool = getPostgresPool();
-  const ttlMs = status === 'success' ? THIRTY_DAYS_MS : NINETY_DAYS_MS;
-  const expiresAt = new Date(Date.now() + ttlMs);
+  const expiresAt = new Date(Date.now() + ONE_YEAR_MS);
 
   await pool.query(
     `INSERT INTO google_metrics (name, metrics, status, expires_at, updated_at)

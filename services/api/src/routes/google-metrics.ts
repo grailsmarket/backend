@@ -6,7 +6,7 @@ import { optionalAuth } from '../middleware/auth';
 import { generateCacheKey, setCachedResponse } from '../utils/redis';
 
 /** Cache TTL in days */
-const CACHE_TTL_DAYS = 30;
+const CACHE_TTL_DAYS = 365;
 /** Short TTL for negative (name-not-found) cache entries */
 const NEGATIVE_CACHE_TTL_SECONDS = 300;
 
