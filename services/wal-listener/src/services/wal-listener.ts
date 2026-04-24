@@ -633,7 +633,7 @@ export class WALListener {
         FROM users u
         JOIN ens_names en ON LOWER(en.owner_address) = LOWER(u.address)
         WHERE en.id = $1
-          AND u.email_verified = TRUE
+          AND (u.email_verified = TRUE OR u.telegram_connected = TRUE)
           AND u.notify_on_offer_received = TRUE
           AND (u.min_offer_threshold IS NULL
                OR ($2::NUMERIC / 1e18) >= u.min_offer_threshold)
@@ -696,7 +696,7 @@ export class WALListener {
         SELECT id, email, email_verified, notify_on_listing_sold
         FROM users
         WHERE LOWER(address) = LOWER($1)
-          AND email_verified = TRUE
+          AND (email_verified = TRUE OR telegram_connected = TRUE)
           AND notify_on_listing_sold = TRUE
       `;
 

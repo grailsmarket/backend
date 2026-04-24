@@ -308,6 +308,54 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
           }
         }
 
+        // Expire overdue bulk offer groups
+        const bulkGroupResult = await pool.query(
+          `UPDATE bulk_offer_groups
+           SET status = 'expired'
+           WHERE status = 'active'
+             AND expires_at IS NOT NULL
+             AND expires_at <= NOW()
+           RETURNING id`
+        );
+
+        if (bulkGroupResult.rows.length > 0) {
+          const groupIds = bulkGroupResult.rows.map((r: any) => r.id);
+          // Expire all pending offers in these groups
+          await pool.query(
+            `UPDATE offers SET status = 'expired'
+             WHERE bulk_offer_group_id = ANY($1) AND status = 'pending'`,
+            [groupIds]
+          );
+          logger.info(
+            { expiredGroups: groupIds.length },
+            'Expired bulk offer groups and their pending offers'
+          );
+        }
+
+        // Expire overdue n-of-many groups
+        const nOfManyGroupResult = await pool.query(
+          `UPDATE n_of_many_groups
+           SET status = 'expired'
+           WHERE status = 'active'
+             AND expires_at IS NOT NULL
+             AND expires_at <= NOW()
+           RETURNING id`
+        );
+
+        if (nOfManyGroupResult.rows.length > 0) {
+          const groupIds = nOfManyGroupResult.rows.map((r: any) => r.id);
+          // Expire all pending offers in these groups
+          await pool.query(
+            `UPDATE offers SET status = 'expired'
+             WHERE n_of_many_group_id = ANY($1) AND status = 'pending'`,
+            [groupIds]
+          );
+          logger.info(
+            { expiredGroups: groupIds.length },
+            'Expired n-of-many groups and their pending offers'
+          );
+        }
+
         // Re-enable triggers (SET LOCAL will auto-reset at end of transaction anyway)
         await pool.query('SET LOCAL session_replication_role = DEFAULT');
 

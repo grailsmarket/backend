@@ -17,6 +17,9 @@ import { registerOnchainActivityWorker } from './workers/onchain-activity';
 import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
 import { registerPersonaClassificationWorker } from './workers/persona-classification';
 import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-backfill';
+import { registerSubscriptionExpiryWorker } from './workers/subscription-expiry';
+import { registerBulkOfferExposureWorker } from './workers/bulk-offer-exposure';
+import { initTelegramBot, stopTelegramBot } from './services/telegram';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -68,6 +71,15 @@ async function start() {
     // Register Google metrics backfill worker
     await registerGoogleMetricsBackfillWorker(boss);
 
+    // Register subscription expiry worker
+    await registerSubscriptionExpiryWorker(boss);
+
+    // Register bulk offer exposure worker
+    await registerBulkOfferExposureWorker(boss);
+
+    // Initialize Telegram bot (long polling)
+    await initTelegramBot();
+
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');
 
@@ -91,6 +103,7 @@ async function start() {
     logger.info({ signal }, 'Received shutdown signal, shutting down gracefully...');
 
     try {
+      await stopTelegramBot();
       await closeQueueClient();
       await closeAllConnections();
       logger.info('Shutdown complete');

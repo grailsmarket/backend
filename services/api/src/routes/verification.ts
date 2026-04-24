@@ -9,6 +9,10 @@ const VerifyEmailSchema = z.object({
   token: z.string().min(1),
 });
 
+const VerifyTelegramSchema = z.object({
+  code: z.string().min(1),
+});
+
 export async function verificationRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
@@ -204,6 +208,109 @@ export async function verificationRoutes(fastify: FastifyInstance) {
         error: {
           code: 'RESEND_FAILED',
           message: 'Failed to resend verification email',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /api/v1/verification/telegram/resend
+   * Generate a new Telegram verification code (requires auth)
+   */
+  fastify.post('/telegram/resend', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      if (!request.user) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const userId = parseInt(request.user.sub);
+
+      const userResult = await pool.query(
+        'SELECT telegram, telegram_connected FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const user = userResult.rows[0];
+
+      if (!user.telegram) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'NO_TELEGRAM',
+            message: 'No Telegram username on file',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      if (user.telegram_connected) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'ALREADY_CONNECTED',
+            message: 'Telegram already connected',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      const code = randomBytes(4).toString('hex');
+
+      await pool.query(
+        `INSERT INTO telegram_verification_codes (user_id, code, telegram_username, expires_at)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes')`,
+        [userId, code, user.telegram]
+      );
+
+      fastify.log.info({ userId, telegram: user.telegram }, 'Telegram verification code regenerated');
+
+      const response: APIResponse = {
+        success: true,
+        data: { telegramVerificationCode: code },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
+    } catch (error: any) {
+      fastify.log.error('Error generating telegram verification code:', error);
+
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'RESEND_FAILED',
+          message: 'Failed to generate telegram verification code',
         },
         meta: {
           timestamp: new Date().toISOString(),

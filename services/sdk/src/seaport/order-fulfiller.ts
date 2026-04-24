@@ -6,6 +6,9 @@ import {
   type BasicOrderParameters,
   type OrderData,
   type SeaportOrderParameters,
+  type FulfillAdvancedOrderParams,
+  type AdvancedOrderParameters,
+  type CriteriaResolver,
   BasicOrderType,
   ItemType,
 } from './types.js';
@@ -13,6 +16,8 @@ import {
   SEAPORT_ADDRESS,
   DEFAULT_CONDUIT_KEY,
   FULFILL_BASIC_ORDER_ABI,
+  FULFILL_ADVANCED_ORDER_ABI,
+  GET_COUNTER_ABI,
 } from './constants.js';
 
 /**
@@ -162,6 +167,94 @@ export class SeaportOrderFulfiller {
   }
 
   /**
+   * Build parameters for fulfilling a criteria-based order via fulfillAdvancedOrder.
+   *
+   * Use this for criteria/n-of-many offers that use ERC721_WITH_CRITERIA.
+   * fulfillBasicOrder does NOT support criteria-based items.
+   *
+   * @param orderData - The order data (criteria-based offer)
+   * @param tokenId - The specific token ID the seller is offering
+   * @param criteriaProof - Merkle proof for the token ID (from /offers/n-of-many/:groupId/proof/:tokenId)
+   * @param recipient - Address to receive the offer proceeds (seller)
+   * @param signature - Optional signature override
+   * @returns Parameters for fulfillAdvancedOrder
+   *
+   * @example
+   * ```ts
+   * const fulfiller = new SeaportOrderFulfiller();
+   *
+   * // Get proof from API
+   * const { proof } = await grails.offers.getNOfManyProof(groupId, tokenId);
+   *
+   * // Build fulfillment params
+   * const params = fulfiller.buildAdvancedOrderParameters(
+   *   offer.orderData,
+   *   BigInt(tokenId),
+   *   proof,
+   *   sellerAddress
+   * );
+   *
+   * await walletClient.writeContract({
+   *   address: fulfiller.getSeaportAddress(),
+   *   abi: SeaportOrderFulfiller.getFulfillAdvancedOrderAbi(),
+   *   functionName: 'fulfillAdvancedOrder',
+   *   args: [
+   *     params.advancedOrder,
+   *     params.criteriaResolvers,
+   *     params.fulfillerConduitKey,
+   *     params.recipient,
+   *   ],
+   * });
+   * ```
+   */
+  buildAdvancedOrderParameters(
+    orderData: OrderData | string,
+    tokenId: bigint,
+    criteriaProof: string[],
+    recipient: string,
+    signature?: string
+  ): FulfillAdvancedOrderParams {
+    const params = extractParameters(orderData);
+    const sig = signature || extractSignature(orderData);
+
+    const advancedOrder: AdvancedOrderParameters = {
+      parameters: params,
+      numerator: 1n,
+      denominator: 1n,
+      signature: sig,
+      extraData: '0x',
+    };
+
+    // Build criteria resolver for the ERC721_WITH_CRITERIA consideration item
+    // For offers: the criteria item is in consideration (side=1), typically at index 0
+    const criteriaItemIndex = params.consideration.findIndex(
+      (item) => item.itemType === ItemType.ERC721_WITH_CRITERIA ||
+                item.itemType === ItemType.ERC1155_WITH_CRITERIA
+    );
+
+    if (criteriaItemIndex === -1) {
+      throw new Error('No criteria-based item found in order consideration');
+    }
+
+    const criteriaResolvers: CriteriaResolver[] = [
+      {
+        orderIndex: 0,
+        side: 1, // CONSIDERATION
+        index: criteriaItemIndex,
+        identifier: tokenId,
+        criteriaProof,
+      },
+    ];
+
+    return {
+      advancedOrder,
+      criteriaResolvers,
+      fulfillerConduitKey: DEFAULT_CONDUIT_KEY,
+      recipient,
+    };
+  }
+
+  /**
    * Get the Seaport contract address
    */
   getSeaportAddress(): `0x${string}` {
@@ -173,6 +266,32 @@ export class SeaportOrderFulfiller {
    */
   static getFulfillBasicOrderAbi() {
     return FULFILL_BASIC_ORDER_ABI;
+  }
+
+  /**
+   * Get the fulfillAdvancedOrder ABI.
+   * Use this for criteria-based orders (n-of-many, pick-one).
+   */
+  static getFulfillAdvancedOrderAbi() {
+    return FULFILL_ADVANCED_ORDER_ABI;
+  }
+
+  /**
+   * Get the getCounter ABI.
+   * Use with readContract to fetch the current Seaport counter for an offerer.
+   *
+   * @example
+   * ```ts
+   * const counter = await publicClient.readContract({
+   *   address: fulfiller.getSeaportAddress(),
+   *   abi: SeaportOrderFulfiller.getCounterAbi(),
+   *   functionName: 'getCounter',
+   *   args: [offererAddress],
+   * });
+   * ```
+   */
+  static getCounterAbi() {
+    return GET_COUNTER_ABI;
   }
 
   /**

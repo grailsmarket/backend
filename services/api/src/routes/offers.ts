@@ -1,7 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import {
+  getPostgresPool,
+  type APIResponse,
+  type Offer,
+  validateFeeInOrder,
+  getOfferLimits,
+  validateBulkOfferLimits,
+  validateNOfManyOfferLimits,
+  invalidateOfferLimitsCache,
+} from '../../../shared/src';
+import { requireAuth, requireMinTier, requireAdmin } from '../middleware/auth';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -15,6 +24,74 @@ const CreateOfferSchema = z.object({
 const UpdateOfferSchema = z.object({
   offerAmountWei: z.string().optional(),
   status: z.enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded']).optional(),
+});
+
+const BulkOfferItemSchema = z.object({
+  ensNameId: z.number(),
+  offerAmountWei: z.string(),
+  orderData: z.any(),
+  orderHash: z.string().optional(),
+  signature: z.string(),
+});
+
+const CreateBulkOffersSchema = z.object({
+  offers: z.array(BulkOfferItemSchema).min(2).max(500),
+  buyerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  currencyAddress: z.string().optional(),
+  expiresAt: z.string().optional(),
+  treeHeight: z.number().int().min(1).max(24),
+  merkleRoot: z.string().optional(),
+});
+
+const CreateCriteriaOfferSchema = z.object({
+  buyerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  offerAmountWei: z.string(),
+  tokenIds: z.array(z.string()).min(2).max(1000),
+  merkleRoot: z.string(),
+  orderData: z.any(),
+  orderHash: z.string().optional(),
+  signature: z.string(),
+  currencyAddress: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+const EditOfferSchema = z.object({
+  offerAmountWei: z.string(),
+  orderData: z.any(),
+  orderHash: z.string().optional(),
+  signature: z.string(),
+  expiresAt: z.string().optional(),
+});
+
+const BulkEditOffersSchema = z.object({
+  cancelOfferIds: z.array(z.number()),
+  offers: z.array(BulkOfferItemSchema).min(1).max(500),
+  buyerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  currencyAddress: z.string().optional(),
+  expiresAt: z.string().optional(),
+  treeHeight: z.number().int().min(1).max(24),
+  merkleRoot: z.string().optional(),
+});
+
+const CreateNOfManySchema = z.object({
+  buyerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  offerAmountWei: z.string(),
+  tokenIds: z.array(z.string()).min(2).max(1000),
+  targetCount: z.number().int().min(1),
+  merkleRoot: z.string(),
+  orderData: z.array(z.any()),
+  signatures: z.array(z.string()),
+  orderHashes: z.array(z.string()).optional(),
+  treeHeight: z.number().int().min(1).max(24),
+  currencyAddress: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+const UpdateOfferLimitsSchema = z.object({
+  limits: z.array(z.object({
+    key: z.string(),
+    value: z.string(),
+  })),
 });
 
 export async function offersRoutes(fastify: FastifyInstance) {
@@ -146,7 +223,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20, status = 'pending' } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id, token_id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {
@@ -163,30 +240,47 @@ export async function offersRoutes(fastify: FastifyInstance) {
     }
 
     const ensNameId = nameResult.rows[0].id;
+    const tokenId = nameResult.rows[0].token_id;
 
+    // Query includes both direct offers AND n-of-many offers where this name's
+    // token_id is in the group's candidate set
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE o.ens_name_id = $1
-      ${status ? 'AND o.status = $4' : ''}
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        o.ens_name_id = $1
+        OR (g.id IS NOT NULL AND $4 = ANY(g.token_ids))
+      )
+      ${status ? 'AND o.status = $5' : ''}
       ORDER BY o.offer_amount_wei DESC, o.created_at DESC
       LIMIT $2 OFFSET $3
     `;
 
     const countQuery = `
-      SELECT COUNT(*) FROM offers
-      WHERE ens_name_id = $1
-      ${status ? 'AND status = $2' : ''}
+      SELECT COUNT(*) FROM offers o
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        o.ens_name_id = $1
+        OR (g.id IS NOT NULL AND $2 = ANY(g.token_ids))
+      )
+      ${status ? 'AND o.status = $3' : ''}
     `;
 
     const queryParams = status
-      ? [ensNameId, limit, offset, status]
-      : [ensNameId, limit, offset];
+      ? [ensNameId, limit, offset, tokenId, status]
+      : [ensNameId, limit, offset, tokenId];
 
     const countParams = status
-      ? [ensNameId, status]
-      : [ensNameId];
+      ? [ensNameId, tokenId, status]
+      : [ensNameId, tokenId];
 
     const [offersResult, countResult] = await Promise.all([
       pool.query(offersQuery, queryParams),
@@ -435,9 +529,16 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
       WHERE LOWER(o.buyer_address) = LOWER($1)
       ${status ? 'AND o.status = $4' : ''}
       ORDER BY o.created_at DESC
@@ -494,20 +595,50 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
 
+    // Also include n-of-many offers where the owner holds any name
+    // whose token_id is in the group's candidate set
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT DISTINCT ON (o.id) o.*, e.name, e.token_id,
+        g.target_count as n_of_many_target_count,
+        g.total_items as n_of_many_total_items,
+        g.fulfilled_count as n_of_many_fulfilled_count,
+        g.token_ids as n_of_many_token_ids,
+        g.status as n_of_many_group_status,
+        (SELECT array_agg(en2.name ORDER BY en2.name) FROM ens_names en2 WHERE en2.token_id = ANY(g.token_ids)) as n_of_many_names
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE LOWER(e.owner_address) = LOWER($1)
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        LOWER(e.owner_address) = LOWER($1)
+        OR (
+          g.id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ens_names owned
+            WHERE LOWER(owned.owner_address) = LOWER($1)
+            AND owned.token_id = ANY(g.token_ids)
+          )
+        )
+      )
       ${status ? 'AND o.status = $4' : ''}
-      ORDER BY o.created_at DESC
+      ORDER BY o.id, o.created_at DESC
       LIMIT $2 OFFSET $3
     `;
 
     const countQuery = `
-      SELECT COUNT(*) FROM offers o
+      SELECT COUNT(DISTINCT o.id) FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
-      WHERE LOWER(e.owner_address) = LOWER($1)
+      LEFT JOIN n_of_many_groups g ON o.n_of_many_group_id = g.id
+      WHERE (
+        LOWER(e.owner_address) = LOWER($1)
+        OR (
+          g.id IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ens_names owned
+            WHERE LOWER(owned.owner_address) = LOWER($1)
+            AND owned.token_id = ANY(g.token_ids)
+          )
+        )
+      )
       ${status ? 'AND o.status = $2' : ''}
     `;
 
@@ -548,4 +679,1586 @@ export async function offersRoutes(fastify: FastifyInstance) {
 
     return reply.send(response);
   });
+
+  // ========================
+  // Get offer limits (public with tier info)
+  // ========================
+  fastify.get('/limits', async (request, reply) => {
+    const limits = await getOfferLimits();
+
+    const response: APIResponse = {
+      success: true,
+      data: limits,
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  // ========================
+  // Bulk Cancellation
+  // ========================
+
+  /**
+   * POST /api/v1/offers/cancel
+   * Cancel specific offers by ID, return order data for on-chain cancellation
+   */
+  fastify.post(
+    '/cancel',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const CancelOffersSchema = z.object({
+        offerIds: z.array(z.number()).min(1).max(500),
+      });
+
+      const body = CancelOffersSchema.parse(request.body);
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel offers that belong to the authenticated user and are still pending
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE id = ANY($1) AND LOWER(buyer_address) = LOWER($2) AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data, bulk_offer_group_id, n_of_many_group_id`,
+          [body.offerIds, buyerAddress]
+        );
+
+        if (cancelResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NO_OFFERS_FOUND', message: 'No matching pending offers found for your address' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Update any bulk_offer_groups that are now fully cancelled
+        const affectedGroupIds = [...new Set(
+          cancelResult.rows
+            .map((r: any) => r.bulk_offer_group_id)
+            .filter((id: any) => id != null)
+        )];
+
+        let groupsCancelled: number[] = [];
+        if (affectedGroupIds.length > 0) {
+          const groupUpdateResult = await client.query(
+            `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW()
+             WHERE id = ANY($1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM offers WHERE bulk_offer_group_id = bulk_offer_groups.id AND status = 'pending'
+               )
+             RETURNING id`,
+            [affectedGroupIds]
+          );
+          groupsCancelled = groupUpdateResult.rows.map((r: any) => r.id);
+        }
+
+        // Update any n_of_many_groups that are now fully cancelled
+        const affectedNOfManyGroupIds = [...new Set(
+          cancelResult.rows
+            .map((r: any) => r.n_of_many_group_id)
+            .filter((id: any) => id != null)
+        )];
+
+        let nOfManyGroupsCancelled: number[] = [];
+        if (affectedNOfManyGroupIds.length > 0) {
+          const nGroupUpdateResult = await client.query(
+            `UPDATE n_of_many_groups SET status = 'cancelled', cancelled_at = NOW()
+             WHERE id = ANY($1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM offers WHERE n_of_many_group_id = n_of_many_groups.id AND status = 'pending'
+               )
+             RETURNING id`,
+            [affectedNOfManyGroupIds]
+          );
+          nOfManyGroupsCancelled = nGroupUpdateResult.rows.map((r: any) => r.id);
+        }
+
+        await client.query('COMMIT');
+
+        // Publish recalculate-highest-offer jobs for affected ENS names
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs for cancel');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            cancelledCount: cancelResult.rows.length,
+            orderComponents,
+            groupsAffected: groupsCancelled,
+            nOfManyGroupsAffected: nOfManyGroupsCancelled,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/offers/cancel-all
+   * Cancel all pending offers for the authenticated user
+   */
+  fastify.post(
+    '/cancel-all',
+    { preHandler: [requireAuth] },
+    async (request, reply) => {
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel all pending offers for this user
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE LOWER(buyer_address) = LOWER($1) AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data, bulk_offer_group_id, n_of_many_group_id`,
+          [buyerAddress]
+        );
+
+        // Cancel all active bulk_offer_groups for this user
+        const groupResult = await client.query(
+          `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW()
+           WHERE LOWER(buyer_address) = LOWER($1) AND status = 'active'
+           RETURNING id`,
+          [buyerAddress]
+        );
+
+        // Cancel all active n_of_many_groups for this user
+        const nOfManyGroupResult = await client.query(
+          `UPDATE n_of_many_groups SET status = 'cancelled', cancelled_at = NOW()
+           WHERE LOWER(buyer_address) = LOWER($1) AND status = 'active'
+           RETURNING id`,
+          [buyerAddress]
+        );
+
+        await client.query('COMMIT');
+
+        // Publish recalculate-highest-offer jobs for affected ENS names
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs for cancel-all');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            cancelledCount: cancelResult.rows.length,
+            orderComponents,
+            groupsCancelled: groupResult.rows.map((r: any) => r.id),
+            nOfManyGroupsCancelled: nOfManyGroupResult.rows.map((r: any) => r.id),
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  // ========================
+  // Bulk Offers (Mode 1: Shotgun) — PRO only
+  // ========================
+
+  /**
+   * POST /api/v1/offers/bulk
+   * Create multiple offers at once (up to 500)
+   */
+  fastify.post(
+    '/bulk',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const body = CreateBulkOffersSchema.parse(request.body);
+      const buyerAddress = body.buyerAddress.toLowerCase();
+
+      // Validate limits
+      const limitError = await validateBulkOfferLimits({
+        offerCount: body.offers.length,
+        buyerAddress,
+        offerAmounts: body.offers.map((o) => o.offerAmountWei),
+      });
+
+      if (limitError) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'LIMIT_EXCEEDED', message: limitError },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Validate fees in each order
+      for (let i = 0; i < body.offers.length; i++) {
+        const feeValidation = validateFeeInOrder(body.offers[i].orderData, 'grails');
+        if (!feeValidation.valid) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'INVALID_FEE',
+              message: `Offer ${i}: ${feeValidation.error || 'Invalid marketplace fee'}`,
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+      }
+
+      // Batch-verify ENS names exist
+      const ensNameIds = body.offers.map((o) => o.ensNameId);
+      const namesResult = await pool.query(
+        'SELECT id FROM ens_names WHERE id = ANY($1)',
+        [ensNameIds]
+      );
+      const existingIds = new Set(namesResult.rows.map((r: any) => r.id));
+      const missingIds = ensNameIds.filter((id) => !existingIds.has(id));
+
+      if (missingIds.length > 0) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'ENS_NAMES_NOT_FOUND',
+            message: `ENS name IDs not found: ${missingIds.join(', ')}`,
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Calculate total amount
+      const totalAmountWei = body.offers
+        .reduce((sum, o) => sum + BigInt(o.offerAmountWei), 0n)
+        .toString();
+
+      const currencyAddress =
+        body.currencyAddress?.toLowerCase() ||
+        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'; // WETH
+
+      const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Insert bulk offer group
+        const groupResult = await client.query(
+          `INSERT INTO bulk_offer_groups
+           (buyer_address, offer_count, tree_height, merkle_root, total_amount_wei, currency_address, status, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+           RETURNING id`,
+          [
+            buyerAddress,
+            body.offers.length,
+            body.treeHeight,
+            body.merkleRoot || null,
+            totalAmountWei,
+            currencyAddress,
+            expiresAt,
+          ]
+        );
+        const groupId = groupResult.rows[0].id;
+
+        // Batch insert offers
+        const results: any[] = [];
+        const errors: any[] = [];
+
+        for (let i = 0; i < body.offers.length; i++) {
+          const offerItem = body.offers[i];
+          try {
+            const offerResult = await client.query(
+              `INSERT INTO offers
+               (ens_name_id, buyer_address, offer_amount_wei, currency_address,
+                order_data, order_hash, status, expires_at,
+                bulk_offer_group_id, bulk_order_index, offer_type)
+               VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, 'bulk')
+               RETURNING id, ens_name_id`,
+              [
+                offerItem.ensNameId,
+                buyerAddress,
+                offerItem.offerAmountWei,
+                currencyAddress,
+                JSON.stringify(offerItem.orderData),
+                offerItem.orderHash || null,
+                expiresAt,
+                groupId,
+                i,
+              ]
+            );
+            results.push({ index: i, offerId: offerResult.rows[0].id, ensNameId: offerResult.rows[0].ens_name_id });
+          } catch (err: any) {
+            errors.push({ index: i, ensNameId: offerItem.ensNameId, error: err.message });
+          }
+        }
+
+        // Auto-cancel existing pending offers from same buyer on same names
+        const insertedEnsNameIds = results.map((r) => r.ensNameId);
+        const insertedOfferIds = results.map((r) => r.offerId);
+        if (insertedEnsNameIds.length > 0) {
+          await client.query(
+            `UPDATE offers
+             SET status = 'cancelled'
+             WHERE LOWER(buyer_address) = LOWER($1)
+               AND ens_name_id = ANY($2)
+               AND status = 'pending'
+               AND id != ALL($3)`,
+            [buyerAddress, insertedEnsNameIds, insertedOfferIds]
+          );
+        }
+
+        await client.query('COMMIT');
+
+        // Publish queue jobs (outside transaction)
+        try {
+          const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+          const boss = await getQueueClient();
+
+          // Batch schedule expiry jobs
+          if (expiresAt) {
+            const expiryJobs = results.map((r) => ({
+              name: QUEUE_NAMES.EXPIRE_ORDERS,
+              data: { type: 'offer' as const, id: r.offerId },
+              options: { startAfter: expiresAt },
+            }));
+            await boss.insert(expiryJobs);
+          }
+
+          // Batch publish highest offer update jobs (deduped by singletonKey)
+          const uniqueEnsNameIds = [...new Set(insertedEnsNameIds)];
+          const highestOfferJobs = uniqueEnsNameIds.map((ensNameId) => ({
+            name: 'update-highest-offer',
+            data: { ensNameId },
+            options: { singletonKey: `highest-offer-${ensNameId}` },
+          }));
+          await boss.insert(highestOfferJobs);
+
+          // Trigger batch balance validation
+          const validationJobs = results.map((r) => ({
+            name: 'validate-offer-balance',
+            data: { offerId: r.offerId },
+          }));
+          await boss.insert(validationJobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for bulk offers');
+        }
+
+        // 207 multi-status response
+        const response: APIResponse = {
+          success: true,
+          data: {
+            groupId,
+            totalOffers: body.offers.length,
+            created: results.length,
+            failed: errors.length,
+            results,
+            errors: errors.length > 0 ? errors : undefined,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.status(errors.length > 0 ? 207 : 201).send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * DELETE /api/v1/offers/bulk/:groupId
+   * Cancel all offers in a bulk group
+   */
+  fastify.delete(
+    '/bulk/:groupId',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const { groupId } = request.params as { groupId: string };
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Verify ownership
+        const groupResult = await client.query(
+          'SELECT * FROM bulk_offer_groups WHERE id = $1 AND LOWER(buyer_address) = LOWER($2)',
+          [groupId, buyerAddress]
+        );
+
+        if (groupResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'GROUP_NOT_FOUND', message: 'Bulk offer group not found' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Cancel all pending offers in group
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE bulk_offer_group_id = $1 AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data`,
+          [groupId]
+        );
+
+        // Update group status
+        await client.query(
+          `UPDATE bulk_offer_groups SET status = 'cancelled', cancelled_at = NOW() WHERE id = $1`,
+          [groupId]
+        );
+
+        await client.query('COMMIT');
+
+        // Recalculate highest offers for affected names
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: { groupId: parseInt(groupId), cancelledCount: cancelResult.rows.length, orderComponents },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/offers/bulk/:groupId
+   * Get bulk offer group + offers
+   */
+  fastify.get('/bulk/:groupId', async (request, reply) => {
+    const { groupId } = request.params as { groupId: string };
+
+    const groupResult = await pool.query(
+      'SELECT * FROM bulk_offer_groups WHERE id = $1',
+      [groupId]
+    );
+
+    if (groupResult.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'GROUP_NOT_FOUND', message: 'Bulk offer group not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const offersResult = await pool.query(
+      `SELECT o.*, e.name, e.token_id
+       FROM offers o
+       JOIN ens_names e ON o.ens_name_id = e.id
+       WHERE o.bulk_offer_group_id = $1
+       ORDER BY o.bulk_order_index`,
+      [groupId]
+    );
+
+    const response: APIResponse = {
+      success: true,
+      data: {
+        group: groupResult.rows[0],
+        offers: offersResult.rows,
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  /**
+   * GET /api/v1/offers/bulk/buyer/:address
+   * List buyer's bulk groups
+   */
+  fastify.get('/bulk/buyer/:address', async (request, reply) => {
+    const { address } = request.params as { address: string };
+    const { page = 1, limit = 20, status } = request.query as any;
+    const offset = (page - 1) * limit;
+
+    const statusFilter = status ? 'AND status = $4' : '';
+    const params: any[] = [address.toLowerCase(), limit, offset];
+    if (status) params.push(status);
+
+    const groupsResult = await pool.query(
+      `SELECT * FROM bulk_offer_groups
+       WHERE LOWER(buyer_address) = $1 ${statusFilter}
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      params
+    );
+
+    const countParams: any[] = [address.toLowerCase()];
+    if (status) countParams.push(status);
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM bulk_offer_groups
+       WHERE LOWER(buyer_address) = $1 ${status ? 'AND status = $2' : ''}`,
+      countParams
+    );
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    const response: APIResponse = {
+      success: true,
+      data: {
+        groups: groupsResult.rows,
+        pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  // ========================
+  // Criteria Offers (Mode 2: Pick-One) — PRO only
+  // ========================
+
+  /**
+   * POST /api/v1/offers/criteria
+   * Create a criteria-based (pick-one) offer
+   */
+  fastify.post(
+    '/criteria',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const body = CreateCriteriaOfferSchema.parse(request.body);
+      const buyerAddress = body.buyerAddress.toLowerCase();
+
+      // Check limits
+      const limits = await getOfferLimits();
+      if (!limits.bulk_offers_enabled) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'DISABLED', message: 'Bulk/criteria offers are currently disabled' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      if (body.tokenIds.length > limits.max_criteria_offer_names) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'LIMIT_EXCEEDED',
+            message: `Maximum ${limits.max_criteria_offer_names} names in a criteria offer`,
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      if (BigInt(body.offerAmountWei) < BigInt(limits.min_offer_amount_wei)) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'AMOUNT_TOO_LOW',
+            message: `Minimum offer amount is ${limits.min_offer_amount_wei} wei`,
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const currencyAddress =
+        body.currencyAddress?.toLowerCase() ||
+        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+      const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+
+      // We need an ens_name_id — use the first token in the set.
+      // Look up by token_id to find the ens_name
+      const firstNameResult = await pool.query(
+        'SELECT id FROM ens_names WHERE token_id = $1',
+        [body.tokenIds[0]]
+      );
+
+      if (firstNameResult.rows.length === 0) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'TOKEN_NOT_FOUND', message: `Token ID ${body.tokenIds[0]} not found` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Insert the offer
+        const offerResult = await client.query(
+          `INSERT INTO offers
+           (ens_name_id, buyer_address, offer_amount_wei, currency_address,
+            order_data, order_hash, status, expires_at, offer_type)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 'criteria')
+           RETURNING id`,
+          [
+            firstNameResult.rows[0].id,
+            buyerAddress,
+            body.offerAmountWei,
+            currencyAddress,
+            JSON.stringify(body.orderData),
+            body.orderHash || null,
+            expiresAt,
+          ]
+        );
+        const offerId = offerResult.rows[0].id;
+
+        // Insert criteria data
+        await client.query(
+          `INSERT INTO criteria_offers (offer_id, token_ids, merkle_root)
+           VALUES ($1, $2, $3)`,
+          [offerId, body.tokenIds, body.merkleRoot]
+        );
+
+        await client.query('COMMIT');
+
+        // Publish queue jobs
+        try {
+          const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+          const boss = await getQueueClient();
+
+          if (expiresAt) {
+            await boss.send(QUEUE_NAMES.EXPIRE_ORDERS, { type: 'offer', id: offerId }, { startAfter: expiresAt });
+          }
+
+          await boss.send('validate-offer-balance', { offerId });
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for criteria offer');
+        }
+
+        const response: APIResponse = {
+          success: true,
+          data: { offerId, merkleRoot: body.merkleRoot, tokenCount: body.tokenIds.length },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.status(201).send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * DELETE /api/v1/offers/criteria/:id
+   * Cancel a criteria offer
+   */
+  fastify.delete(
+    '/criteria/:id',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const buyerAddress = request.user!.address;
+
+      const result = await pool.query(
+        `UPDATE offers SET status = 'cancelled'
+         WHERE id = $1 AND LOWER(buyer_address) = LOWER($2) AND status = 'pending' AND offer_type = 'criteria'
+         RETURNING id`,
+        [id, buyerAddress]
+      );
+
+      if (result.rows.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'OFFER_NOT_FOUND', message: 'Criteria offer not found or already cancelled' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const response: APIResponse = {
+        success: true,
+        data: { offerId: parseInt(id), cancelled: true },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      };
+
+      return reply.send(response);
+    }
+  );
+
+  /**
+   * GET /api/v1/offers/criteria/:id/proof/:tokenId
+   * Get merkle proof for fulfilling a criteria offer
+   */
+  fastify.get('/criteria/:id/proof/:tokenId', async (request, reply) => {
+    const { id, tokenId } = request.params as { id: string; tokenId: string };
+
+    const criteriaResult = await pool.query(
+      `SELECT co.*, o.status
+       FROM criteria_offers co
+       JOIN offers o ON co.offer_id = o.id
+       WHERE co.offer_id = $1`,
+      [id]
+    );
+
+    if (criteriaResult.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'CRITERIA_OFFER_NOT_FOUND', message: 'Criteria offer not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const criteria = criteriaResult.rows[0];
+
+    if (!criteria.token_ids.includes(tokenId)) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'TOKEN_NOT_IN_SET', message: 'Token ID is not in the criteria set' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // Rebuild merkle tree to generate proof (inline to avoid SDK dependency)
+    const { keccak256, encodePacked } = await import('viem');
+
+    function hashTokenIdLeaf(tid: string): string {
+      return keccak256(encodePacked(['uint256'], [BigInt(tid)]));
+    }
+
+    function hashSortedPairLocal(a: string, b: string): string {
+      if (a.toLowerCase() <= b.toLowerCase()) {
+        return keccak256(encodePacked(['bytes32', 'bytes32'], [a as `0x${string}`, b as `0x${string}`]));
+      }
+      return keccak256(encodePacked(['bytes32', 'bytes32'], [b as `0x${string}`, a as `0x${string}`]));
+    }
+
+    const hashedLeaves = criteria.token_ids.map((tid: string) => ({
+      tokenId: tid,
+      hash: hashTokenIdLeaf(tid),
+    }));
+    hashedLeaves.sort((a: any, b: any) => a.hash.toLowerCase().localeCompare(b.hash.toLowerCase()));
+
+    const leafHashes = hashedLeaves.map((l: any) => l.hash);
+    // Pad to power of 2
+    let padded = leafHashes.length;
+    while (padded & (padded - 1)) padded++;
+    if (padded < leafHashes.length) padded = leafHashes.length;
+    while (leafHashes.length < padded) leafHashes.push('0x' + '00'.repeat(32));
+
+    // Build tree layers
+    const layers: string[][] = [leafHashes];
+    let cur = leafHashes;
+    while (cur.length > 1) {
+      const next: string[] = [];
+      for (let i = 0; i < cur.length; i += 2) {
+        next.push(hashSortedPairLocal(cur[i], cur[i + 1]));
+      }
+      layers.push(next);
+      cur = next;
+    }
+
+    // Find leaf index for requested token
+    const leafIndex = hashedLeaves.findIndex((l: any) => l.tokenId === tokenId);
+    const proof: string[] = [];
+    let idx = leafIndex;
+    for (let i = 0; i < layers.length - 1; i++) {
+      const sibIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+      if (sibIdx < layers[i].length) proof.push(layers[i][sibIdx]);
+      idx = Math.floor(idx / 2);
+    }
+
+    const response: APIResponse = {
+      success: true,
+      data: { proof, merkleRoot: criteria.merkle_root, tokenId },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  // ========================
+  // Edit Offers — PRO only
+  // ========================
+
+  /**
+   * PUT /api/v1/offers/:id/edit
+   * Edit offer (cancel old + create new with new signature)
+   */
+  fastify.put(
+    '/:id/edit',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = EditOfferSchema.parse(request.body);
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel old offer
+        const oldResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE id = $1 AND LOWER(buyer_address) = LOWER($2) AND status = 'pending'
+           RETURNING ens_name_id, currency_address, offer_type`,
+          [id, buyerAddress]
+        );
+
+        if (oldResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'OFFER_NOT_FOUND', message: 'Offer not found or already cancelled' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        const old = oldResult.rows[0];
+        const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+
+        // Create new offer
+        const newResult = await client.query(
+          `INSERT INTO offers
+           (ens_name_id, buyer_address, offer_amount_wei, currency_address,
+            order_data, order_hash, status, expires_at, offer_type)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
+           RETURNING *`,
+          [
+            old.ens_name_id,
+            buyerAddress.toLowerCase(),
+            body.offerAmountWei,
+            old.currency_address,
+            JSON.stringify(body.orderData),
+            body.orderHash || null,
+            expiresAt,
+            old.offer_type || 'individual',
+          ]
+        );
+
+        await client.query('COMMIT');
+
+        const newOffer = newResult.rows[0];
+
+        // Publish queue jobs
+        try {
+          const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+          const boss = await getQueueClient();
+
+          if (expiresAt) {
+            await boss.send(QUEUE_NAMES.EXPIRE_ORDERS, { type: 'offer', id: newOffer.id }, { startAfter: expiresAt });
+          }
+
+          await boss.send('update-highest-offer', { ensNameId: newOffer.ens_name_id });
+          await boss.send('validate-offer-balance', { offerId: newOffer.id });
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for edited offer');
+        }
+
+        const response: APIResponse = {
+          success: true,
+          data: { cancelledOfferId: parseInt(id), newOffer },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * PUT /api/v1/offers/bulk/edit
+   * Bulk edit: cancel old offers + create new bulk offers
+   */
+  fastify.put(
+    '/bulk/edit',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const body = BulkEditOffersSchema.parse(request.body);
+      const buyerAddress = body.buyerAddress.toLowerCase();
+
+      // Validate limits
+      const limitError = await validateBulkOfferLimits({
+        offerCount: body.offers.length,
+        buyerAddress,
+        offerAmounts: body.offers.map((o) => o.offerAmountWei),
+      });
+
+      if (limitError) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'LIMIT_EXCEEDED', message: limitError },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Cancel old offers
+        if (body.cancelOfferIds.length > 0) {
+          await client.query(
+            `UPDATE offers SET status = 'cancelled'
+             WHERE id = ANY($1) AND LOWER(buyer_address) = LOWER($2) AND status = 'pending'`,
+            [body.cancelOfferIds, buyerAddress]
+          );
+        }
+
+        // Calculate total
+        const totalAmountWei = body.offers
+          .reduce((sum, o) => sum + BigInt(o.offerAmountWei), 0n)
+          .toString();
+        const currencyAddress =
+          body.currencyAddress?.toLowerCase() || '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+        const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+
+        // Create new bulk group
+        const groupResult = await client.query(
+          `INSERT INTO bulk_offer_groups
+           (buyer_address, offer_count, tree_height, merkle_root, total_amount_wei, currency_address, status, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+           RETURNING id`,
+          [buyerAddress, body.offers.length, body.treeHeight, body.merkleRoot || null, totalAmountWei, currencyAddress, expiresAt]
+        );
+        const groupId = groupResult.rows[0].id;
+
+        // Insert new offers
+        const results: any[] = [];
+        for (let i = 0; i < body.offers.length; i++) {
+          const item = body.offers[i];
+          const r = await client.query(
+            `INSERT INTO offers
+             (ens_name_id, buyer_address, offer_amount_wei, currency_address,
+              order_data, order_hash, status, expires_at,
+              bulk_offer_group_id, bulk_order_index, offer_type)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, 'bulk')
+             RETURNING id, ens_name_id`,
+            [item.ensNameId, buyerAddress, item.offerAmountWei, currencyAddress,
+             JSON.stringify(item.orderData), item.orderHash || null, expiresAt, groupId, i]
+          );
+          results.push({ index: i, offerId: r.rows[0].id, ensNameId: r.rows[0].ens_name_id });
+        }
+
+        await client.query('COMMIT');
+
+        // Publish queue jobs
+        try {
+          const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+          const boss = await getQueueClient();
+
+          if (expiresAt) {
+            const expiryJobs = results.map((r) => ({
+              name: QUEUE_NAMES.EXPIRE_ORDERS,
+              data: { type: 'offer' as const, id: r.offerId },
+              options: { startAfter: expiresAt },
+            }));
+            await boss.insert(expiryJobs);
+          }
+
+          const ensNameIds = [...new Set(results.map((r) => r.ensNameId))];
+          const highestOfferJobs = ensNameIds.map((ensNameId) => ({
+            name: 'update-highest-offer',
+            data: { ensNameId },
+          }));
+          await boss.insert(highestOfferJobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for bulk edit');
+        }
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            cancelledCount: body.cancelOfferIds.length,
+            groupId,
+            created: results.length,
+            results,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  // ========================
+  // N-of-Many Offers — PRO only
+  // ========================
+
+  /**
+   * POST /api/v1/offers/n-of-many
+   * Create N criteria-based offers, each valid for any of M candidate names
+   */
+  fastify.post(
+    '/n-of-many',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const body = CreateNOfManySchema.parse(request.body);
+      const buyerAddress = body.buyerAddress.toLowerCase();
+
+      // Verify buyer address matches authenticated user
+      if (buyerAddress !== request.user!.address.toLowerCase()) {
+        return reply.status(403).send({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Buyer address does not match authenticated user' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Validate array lengths match targetCount
+      if (body.orderData.length !== body.targetCount) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: `orderData length (${body.orderData.length}) must match targetCount (${body.targetCount})` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+      if (body.signatures.length !== body.targetCount) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: `signatures length (${body.signatures.length}) must match targetCount (${body.targetCount})` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+      if (body.orderHashes && body.orderHashes.length !== body.targetCount) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: `orderHashes length must match targetCount` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Validate limits
+      const limitError = await validateNOfManyOfferLimits({
+        targetCount: body.targetCount,
+        totalItems: body.tokenIds.length,
+        buyerAddress,
+        offerAmountWei: body.offerAmountWei,
+      });
+
+      if (limitError) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'LIMIT_EXCEEDED', message: limitError },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Validate fees and criteria structure in each order
+      for (let i = 0; i < body.targetCount; i++) {
+        const feeValidation = validateFeeInOrder(body.orderData[i], 'grails');
+        if (!feeValidation.valid) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_FEE', message: `Order ${i}: ${feeValidation.error || 'Invalid marketplace fee'}` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Validate criteria order structure
+        const orderData = body.orderData[i];
+        const params = orderData.protocol_data?.parameters || orderData.parameters || orderData;
+
+        if (!params?.consideration) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: missing consideration items` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        const criteriaItem = params.consideration.find(
+          (c: any) => Number(c.itemType) === 4 // ERC721_WITH_CRITERIA
+        );
+
+        if (!criteriaItem) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: must use ERC721_WITH_CRITERIA (itemType 4)` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        if (criteriaItem.identifierOrCriteria !== body.merkleRoot) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_ORDER', message: `Order ${i}: identifierOrCriteria does not match merkleRoot` },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+      }
+
+      const currencyAddress =
+        body.currencyAddress?.toLowerCase() ||
+        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+      const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+
+      // Look up a placeholder ens_name_id from the first token
+      const firstNameResult = await pool.query(
+        'SELECT id FROM ens_names WHERE token_id = $1',
+        [body.tokenIds[0]]
+      );
+
+      if (firstNameResult.rows.length === 0) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'TOKEN_NOT_FOUND', message: `Token ID ${body.tokenIds[0]} not found` },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      const placeholderEnsNameId = firstNameResult.rows[0].id;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Insert n_of_many group
+        const groupResult = await client.query(
+          `INSERT INTO n_of_many_groups
+           (buyer_address, target_count, total_items, offer_amount_wei,
+            merkle_root, token_ids, currency_address, tree_height, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id`,
+          [
+            buyerAddress,
+            body.targetCount,
+            body.tokenIds.length,
+            body.offerAmountWei,
+            body.merkleRoot,
+            body.tokenIds,
+            currencyAddress,
+            body.treeHeight,
+            expiresAt,
+          ]
+        );
+        const groupId = groupResult.rows[0].id;
+
+        // Insert N criteria offers
+        const results: any[] = [];
+        for (let i = 0; i < body.targetCount; i++) {
+          const offerResult = await client.query(
+            `INSERT INTO offers
+             (ens_name_id, buyer_address, offer_amount_wei, currency_address,
+              order_data, order_hash, status, expires_at,
+              offer_type, n_of_many_group_id, bulk_order_index)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 'n_of_many', $8, $9)
+             RETURNING id`,
+            [
+              placeholderEnsNameId,
+              buyerAddress,
+              body.offerAmountWei,
+              currencyAddress,
+              JSON.stringify(body.orderData[i]),
+              body.orderHashes?.[i] || null,
+              expiresAt,
+              groupId,
+              i,
+            ]
+          );
+          results.push({ index: i, offerId: offerResult.rows[0].id });
+        }
+
+        await client.query('COMMIT');
+
+        // Publish queue jobs
+        try {
+          const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+          const boss = await getQueueClient();
+
+          // Schedule expiry jobs
+          if (expiresAt) {
+            const expiryJobs = results.map((r) => ({
+              name: QUEUE_NAMES.EXPIRE_ORDERS,
+              data: { type: 'offer' as const, id: r.offerId },
+              options: { startAfter: expiresAt },
+            }));
+            await boss.insert(expiryJobs);
+          }
+
+          // Trigger balance validation for each offer
+          const validationJobs = results.map((r) => ({
+            name: 'validate-offer-balance',
+            data: { offerId: r.offerId },
+          }));
+          await boss.insert(validationJobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for n-of-many offers');
+        }
+
+        const response: APIResponse = {
+          success: true,
+          data: {
+            groupId,
+            targetCount: body.targetCount,
+            totalItems: body.tokenIds.length,
+            created: results.length,
+            results,
+          },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.status(201).send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/offers/n-of-many/:groupId
+   * Get n-of-many group + all offers
+   */
+  fastify.get('/n-of-many/:groupId', async (request, reply) => {
+    const { groupId } = request.params as { groupId: string };
+
+    const groupResult = await pool.query(
+      'SELECT * FROM n_of_many_groups WHERE id = $1',
+      [groupId]
+    );
+
+    if (groupResult.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'GROUP_NOT_FOUND', message: 'N-of-many group not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const offersResult = await pool.query(
+      `SELECT o.*, e.name, e.token_id
+       FROM offers o
+       JOIN ens_names e ON o.ens_name_id = e.id
+       WHERE o.n_of_many_group_id = $1
+       ORDER BY o.bulk_order_index`,
+      [groupId]
+    );
+
+    const response: APIResponse = {
+      success: true,
+      data: {
+        group: groupResult.rows[0],
+        offers: offersResult.rows,
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  /**
+   * GET /api/v1/offers/n-of-many/:groupId/proof/:tokenId
+   * Get merkle proof for fulfilling an n-of-many offer
+   */
+  fastify.get('/n-of-many/:groupId/proof/:tokenId', async (request, reply) => {
+    const { groupId, tokenId } = request.params as { groupId: string; tokenId: string };
+
+    const groupResult = await pool.query(
+      'SELECT token_ids, merkle_root, status FROM n_of_many_groups WHERE id = $1',
+      [groupId]
+    );
+
+    if (groupResult.rows.length === 0) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'GROUP_NOT_FOUND', message: 'N-of-many group not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    const group = groupResult.rows[0];
+
+    if (!group.token_ids.includes(tokenId)) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'TOKEN_NOT_IN_SET', message: 'Token ID is not in the candidate set' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // Rebuild merkle tree to generate proof
+    const { keccak256, encodePacked } = await import('viem');
+
+    function hashTokenIdLeaf(tid: string): string {
+      return keccak256(encodePacked(['uint256'], [BigInt(tid)]));
+    }
+
+    function hashSortedPairLocal(a: string, b: string): string {
+      if (a.toLowerCase() <= b.toLowerCase()) {
+        return keccak256(encodePacked(['bytes32', 'bytes32'], [a as `0x${string}`, b as `0x${string}`]));
+      }
+      return keccak256(encodePacked(['bytes32', 'bytes32'], [b as `0x${string}`, a as `0x${string}`]));
+    }
+
+    const hashedLeaves = group.token_ids.map((tid: string) => ({
+      tokenId: tid,
+      hash: hashTokenIdLeaf(tid),
+    }));
+    hashedLeaves.sort((a: any, b: any) => a.hash.toLowerCase().localeCompare(b.hash.toLowerCase()));
+
+    const leafHashes = hashedLeaves.map((l: any) => l.hash);
+    let padded = leafHashes.length;
+    while (padded & (padded - 1)) padded++;
+    if (padded < leafHashes.length) padded = leafHashes.length;
+    while (leafHashes.length < padded) leafHashes.push('0x' + '00'.repeat(32));
+
+    const layers: string[][] = [leafHashes];
+    let cur = leafHashes;
+    while (cur.length > 1) {
+      const next: string[] = [];
+      for (let i = 0; i < cur.length; i += 2) {
+        next.push(hashSortedPairLocal(cur[i], cur[i + 1]));
+      }
+      layers.push(next);
+      cur = next;
+    }
+
+    const leafIndex = hashedLeaves.findIndex((l: any) => l.tokenId === tokenId);
+    const proof: string[] = [];
+    let idx = leafIndex;
+    for (let i = 0; i < layers.length - 1; i++) {
+      const sibIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+      if (sibIdx < layers[i].length) proof.push(layers[i][sibIdx]);
+      idx = Math.floor(idx / 2);
+    }
+
+    const response: APIResponse = {
+      success: true,
+      data: { proof, merkleRoot: group.merkle_root, tokenId },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  /**
+   * GET /api/v1/offers/n-of-many/buyer/:address
+   * List buyer's n-of-many groups
+   */
+  fastify.get('/n-of-many/buyer/:address', async (request, reply) => {
+    const { address } = request.params as { address: string };
+    const { page = 1, limit = 20, status } = request.query as any;
+    const offset = (page - 1) * limit;
+
+    const statusFilter = status ? 'AND status = $4' : '';
+    const params: any[] = [address.toLowerCase(), limit, offset];
+    if (status) params.push(status);
+
+    const groupsResult = await pool.query(
+      `SELECT * FROM n_of_many_groups
+       WHERE LOWER(buyer_address) = $1 ${statusFilter}
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      params
+    );
+
+    const countParams: any[] = [address.toLowerCase()];
+    if (status) countParams.push(status);
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM n_of_many_groups
+       WHERE LOWER(buyer_address) = $1 ${status ? 'AND status = $2' : ''}`,
+      countParams
+    );
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    const response: APIResponse = {
+      success: true,
+      data: {
+        groups: groupsResult.rows,
+        pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    };
+
+    return reply.send(response);
+  });
+
+  /**
+   * DELETE /api/v1/offers/n-of-many/:groupId
+   * Cancel all offers in an n-of-many group
+   */
+  fastify.delete(
+    '/n-of-many/:groupId',
+    { preHandler: [requireAuth, requireMinTier('plus')] },
+    async (request, reply) => {
+      const { groupId } = request.params as { groupId: string };
+      const buyerAddress = request.user!.address;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Verify ownership
+        const groupResult = await client.query(
+          'SELECT * FROM n_of_many_groups WHERE id = $1 AND LOWER(buyer_address) = LOWER($2)',
+          [groupId, buyerAddress]
+        );
+
+        if (groupResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'GROUP_NOT_FOUND', message: 'N-of-many group not found' },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        // Cancel all pending offers in group
+        const cancelResult = await client.query(
+          `UPDATE offers SET status = 'cancelled'
+           WHERE n_of_many_group_id = $1 AND status = 'pending'
+           RETURNING id, ens_name_id, order_hash, order_data`,
+          [groupId]
+        );
+
+        // Update group status
+        await client.query(
+          `UPDATE n_of_many_groups SET status = 'cancelled', cancelled_at = NOW() WHERE id = $1`,
+          [groupId]
+        );
+
+        await client.query('COMMIT');
+
+        // Publish recalculate jobs
+        try {
+          const { getQueueClient } = await import('../queue');
+          const boss = await getQueueClient();
+
+          const ensNameIds = [...new Set(cancelResult.rows.map((r: any) => r.ens_name_id))];
+          const jobs = ensNameIds.map((ensNameId) => ({
+            name: 'recalculate-highest-offer',
+            data: { ensNameId },
+          }));
+          if (jobs.length > 0) await boss.insert(jobs);
+        } catch (queueError) {
+          fastify.log.error({ error: queueError }, 'Failed to publish recalculate jobs');
+        }
+
+        const orderComponents = cancelResult.rows.map((r: any) => ({
+          offerId: r.id,
+          orderHash: r.order_hash,
+          orderData: r.order_data,
+        }));
+
+        const response: APIResponse = {
+          success: true,
+          data: { groupId: parseInt(groupId), cancelledCount: cancelResult.rows.length, orderComponents },
+          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+        };
+
+        return reply.send(response);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  );
+
+  // ========================
+  // Admin — Offer Limits
+  // ========================
+
+  /**
+   * PUT /api/v1/offers/admin/limits
+   * Update global offer limits
+   */
+  fastify.put(
+    '/admin/limits',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      const body = UpdateOfferLimitsSchema.parse(request.body);
+
+      for (const { key, value } of body.limits) {
+        await pool.query(
+          `UPDATE offer_limits SET value = $2, updated_at = NOW() WHERE key = $1`,
+          [key, value]
+        );
+      }
+
+      invalidateOfferLimitsCache();
+
+      const response: APIResponse = {
+        success: true,
+        data: { updated: body.limits.length },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      };
+
+      return reply.send(response);
+    }
+  );
 }

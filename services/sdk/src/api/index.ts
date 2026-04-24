@@ -4,7 +4,20 @@
 
 export { AuthAPI } from './auth.js';
 export { ListingsAPI, type CreateListingParams, type UpdateListingParams, type CancelListingResponse } from './listings.js';
-export { OffersAPI, type CreateOfferParams, type UpdateOfferParams, type CancelOfferResponse } from './offers.js';
+export {
+  OffersAPI,
+  type CreateOfferParams,
+  type UpdateOfferParams,
+  type CancelOfferResponse,
+  type CreateBulkOffersParams,
+  type CreateCriteriaOfferParams,
+  type BulkOfferResponse,
+  type BulkOfferGroup,
+  type CriteriaOfferResponse,
+  type EditOfferParams,
+  type BulkEditParams,
+  type OfferLimits,
+} from './offers.js';
 export {
   OrdersAPI,
   type OrderType,

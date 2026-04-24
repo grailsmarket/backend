@@ -3,14 +3,18 @@ import { getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { QUEUE_NAMES, type SendAdminBroadcastJob } from '../queue';
 import { sendEmail, buildAdminBroadcastEmail } from '../services/email';
+import { sendTelegramMessage, buildAdminBroadcastTelegram } from '../services/telegram';
 
 const FRONTEND_URL = config.frontend.url;
 
 /**
- * Admin broadcast worker — per-recipient delivery of an admin-authored
- * notification. Delivers to in-app and email channels; telegram is accepted
- * in the payload but silently skipped (no telegram infrastructure on this
- * deployment yet).
+ * Admin broadcast worker — fan-out per-recipient delivery of an admin-authored
+ * notification. Delivers to in-app, email, and telegram channels.
+ *
+ * For audience-gated broadcasts ('tiers' / 'unsubscribed'), eligibility is
+ * re-checked at send time because the recipient's tier may have changed
+ * between enqueue and processing. 'everyone' / 'specific' don't need a
+ * re-check: the admin targeted those users explicitly at enqueue time.
  */
 export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> {
   await boss.work<SendAdminBroadcastJob>(
@@ -22,16 +26,24 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
       const pool = getPostgresPool();
 
       const broadcastResult = await pool.query(
-        'SELECT id FROM admin_broadcasts WHERE id = $1',
+        `SELECT audience_type, audience_tier_ids, is_test
+         FROM admin_broadcasts WHERE id = $1`,
         [broadcastId]
       );
       if (broadcastResult.rows.length === 0) {
         logger.warn({ broadcastId }, 'Admin broadcast not found, skipping');
         return;
       }
+      const {
+        audience_type: audienceType,
+        audience_tier_ids: audienceTierIds,
+        is_test: isTest,
+      } = broadcastResult.rows[0];
 
       const userResult = await pool.query(
-        `SELECT id, email, email_verified FROM users WHERE id = $1`,
+        `SELECT id, email, email_verified, telegram_connected, telegram_chat_id,
+                tier_id, tier_expires_at
+         FROM users WHERE id = $1`,
         [userId]
       );
       if (userResult.rows.length === 0) {
@@ -39,6 +51,34 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
         return;
       }
       const user = userResult.rows[0];
+
+      if (!isTest) {
+        const userTierId = user.tier_id ?? 0;
+        const notExpired =
+          !user.tier_expires_at || new Date(user.tier_expires_at) > new Date();
+        const tierActive = userTierId > 0 && notExpired;
+
+        if (audienceType === 'tiers') {
+          // audience_tier_ids is JSONB — pg returns a parsed array
+          const allowedTiers: number[] = Array.isArray(audienceTierIds) ? audienceTierIds : [];
+          if (!allowedTiers.includes(userTierId) || !notExpired) {
+            logger.info(
+              { userId, userTierId, allowedTiers, broadcastId },
+              'User no longer matches target tiers at send time, skipping'
+            );
+            return;
+          }
+        } else if (audienceType === 'unsubscribed') {
+          if (tierActive) {
+            logger.info(
+              { userId, userTierId, broadcastId },
+              'User is now on an active paid tier, skipping unsubscribed broadcast'
+            );
+            return;
+          }
+        }
+        // 'everyone' and 'specific' — admin targeted these users explicitly; no re-check.
+      }
 
       const unsubscribeUrl = `${FRONTEND_URL}/settings/notifications`;
 
@@ -60,7 +100,17 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
         }
       }
 
-      logger.info({ userId, broadcastId, channels }, 'Admin broadcast delivered');
+      if (channels.includes('telegram') && user.telegram_connected && user.telegram_chat_id) {
+        try {
+          const text = buildAdminBroadcastTelegram({ title, body, linkUrl });
+          await sendTelegramMessage({ chatId: Number(user.telegram_chat_id), text });
+        } catch (error) {
+          logger.error({ error, userId, broadcastId }, 'Failed to send admin broadcast telegram');
+          throw error;
+        }
+      }
+
+      logger.info({ userId, broadcastId, channels, audienceType }, 'Admin broadcast delivered');
     }
   );
 

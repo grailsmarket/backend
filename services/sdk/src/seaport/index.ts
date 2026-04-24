@@ -15,6 +15,13 @@ export {
   type BasicOrderParameters,
   type BuildListingOrderParams,
   type BuildOfferOrderParams,
+  type BuildBulkOfferOrdersParams,
+  type BuildCriteriaOfferOrderParams,
+  type BuildNOfManyOfferOrdersParams,
+  type NOfManyOrderResult,
+  type CriteriaResolver,
+  type AdvancedOrderParameters,
+  type FulfillAdvancedOrderParams,
 } from './types.js';
 
 export {
@@ -27,7 +34,24 @@ export {
   DEFAULT_ZONE,
   DEFAULT_ZONE_HASH,
   FULFILL_BASIC_ORDER_ABI,
+  FULFILL_ADVANCED_ORDER_ABI,
+  GET_COUNTER_ABI,
 } from './constants.js';
 
 export { SeaportOrderBuilder } from './order-builder.js';
 export { SeaportOrderFulfiller } from './order-fulfiller.js';
+
+export {
+  prepareBulkSignature,
+  extractBulkSignatures,
+  type BulkSignatureResult,
+  type IndividualBulkSignature,
+} from './bulk-signature.js';
+
+export {
+  buildCriteriaMerkleTree,
+  applyOfferCriteria,
+  getCriteriaProof,
+  verifyCriteriaProof,
+  type CriteriaOrderResult,
+} from './criteria-order.js';

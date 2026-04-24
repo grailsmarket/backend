@@ -245,9 +245,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const updates = UpdateProfileSchema.parse(request.body);
       const userId = parseInt(request.user.sub);
 
-      // Get current user data to check if email changed
+      // Get current user data to check if email or telegram changed
       const currentUserResult = await pool.query(
-        'SELECT email FROM users WHERE id = $1',
+        'SELECT email, telegram, telegram_connected FROM users WHERE id = $1',
         [userId]
       );
 
@@ -264,8 +264,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const currentEmail = currentUserResult.rows[0].email;
+      const currentUser = currentUserResult.rows[0];
+      const currentEmail = currentUser.email;
       const emailChanged = updates.email !== undefined && updates.email !== currentEmail;
+      const currentTelegram = currentUser.telegram;
+      const telegramChanged = updates.telegram !== undefined && updates.telegram !== currentTelegram;
 
       // Build dynamic UPDATE query
       const updateFields: string[] = [];
@@ -285,8 +288,14 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       if (updates.telegram !== undefined) {
         updateFields.push(`telegram = $${paramCount}`);
-        values.push(updates.telegram);
+        values.push(updates.telegram || null);
         paramCount++;
+
+        // Reset telegram verification if telegram changed
+        if (telegramChanged) {
+          updateFields.push(`telegram_connected = FALSE`);
+          updateFields.push(`telegram_chat_id = NULL`);
+        }
       }
 
       if (updates.discord !== undefined) {
@@ -381,20 +390,46 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // If telegram changed, generate a verification code
+      let telegramVerificationCode: string | null = null;
+      if (telegramChanged && updates.telegram) {
+        try {
+          telegramVerificationCode = randomBytes(4).toString('hex');
+
+          await pool.query(
+            `INSERT INTO telegram_verification_codes (user_id, code, telegram_username, expires_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes')`,
+            [userId, telegramVerificationCode, updates.telegram]
+          );
+
+          fastify.log.info({ userId, telegram: updates.telegram }, 'Telegram verification code generated');
+        } catch (telegramError) {
+          fastify.log.error({ error: telegramError, userId }, 'Failed to generate telegram verification code');
+          telegramVerificationCode = null;
+        }
+      }
+
+      const responseData: Record<string, any> = {
+        id: user.id,
+        address: user.address,
+        email: user.email,
+        emailVerified: user.email_verified,
+        telegram: user.telegram,
+        telegramConnected: user.telegram_connected,
+        discord: user.discord,
+        notifyOnOfferReceived: user.notify_on_offer_received,
+        notifyOnListingSold: user.notify_on_listing_sold,
+        minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+        updatedAt: user.updated_at,
+      };
+
+      if (telegramVerificationCode) {
+        responseData.telegramVerificationCode = telegramVerificationCode;
+      }
+
       const response: APIResponse = {
         success: true,
-        data: {
-          id: user.id,
-          address: user.address,
-          email: user.email,
-          emailVerified: user.email_verified,
-          telegram: user.telegram,
-          discord: user.discord,
-          notifyOnOfferReceived: user.notify_on_offer_received,
-          notifyOnListingSold: user.notify_on_listing_sold,
-          minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
-          updatedAt: user.updated_at,
-        },
+        data: responseData,
         meta: {
           timestamp: new Date().toISOString(),
           version: '1.0.0',
