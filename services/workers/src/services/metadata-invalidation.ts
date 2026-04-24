@@ -118,9 +118,12 @@ export async function sendMetadataInvalidationBatch(
       const isRetryable = RETRYABLE_STATUS_CODES.has(response.status);
       const error = new Error(
         `metadata invalidation failed (${response.status}): ${body}`,
-      );
+      ) as Error & { nonRetryable?: boolean };
 
       if (!isRetryable || attempt === RETRY_DELAYS_MS.length - 1) {
+        if (!isRetryable) {
+          error.nonRetryable = true;
+        }
         throw error;
       }
 
@@ -134,6 +137,10 @@ export async function sendMetadataInvalidationBatch(
         'Retrying ENS metadata invalidation batch after HTTP error',
       );
     } catch (error) {
+      if ((error as { nonRetryable?: boolean }).nonRetryable) {
+        throw error;
+      }
+
       if (attempt === RETRY_DELAYS_MS.length - 1) {
         throw error;
       }
