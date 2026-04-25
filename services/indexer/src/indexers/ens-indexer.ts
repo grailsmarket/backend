@@ -71,6 +71,10 @@ const TEXT_RESOLVER_ABI = parseAbi([
   'event TextChanged(bytes32 indexed node, string indexed indexedKey, string key, string value)',
 ]);
 
+const LEGACY_TEXT_RESOLVER_ABI = parseAbi([
+  'event TextChanged(bytes32 indexed node, string indexed indexedKey, string key)',
+]);
+
 const ENS_EVENTS = {
   Transfer: ENS_ABI[0],
   NameRegistered: ENS_ABI[1],
@@ -95,14 +99,17 @@ const NAME_WRAPPER_EVENTS = {
 
 const TEXT_RESOLVER_EVENTS = {
   TextChanged: TEXT_RESOLVER_ABI[0],
+  LegacyTextChanged: LEGACY_TEXT_RESOLVER_ABI[0],
 } as const;
 
 // ENS docs list the current, previous, and legacy public resolvers on mainnet.
-const KNOWN_PUBLIC_RESOLVER_ADDRESSES = [
+const CURRENT_PUBLIC_RESOLVER_ADDRESSES = [
   '0xF29100983E058B709F3D539b0c765937B804AC15',
   '0x231b0Ee14048e9dCcD1d247744d114a4EB5E8E63',
-  '0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41',
 ] as const satisfies readonly `0x${string}`[];
+
+const LEGACY_PUBLIC_RESOLVER_ADDRESS =
+  '0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41' as const satisfies `0x${string}`;
 
 export class ENSIndexer {
   private client: PublicClient;
@@ -208,8 +215,18 @@ export class ENSIndexer {
 
     const resolverLogs = this.metadataInvalidationEnabled
       ? await this.client.getLogs({
-          address: [...KNOWN_PUBLIC_RESOLVER_ADDRESSES],
+          address: [...CURRENT_PUBLIC_RESOLVER_ADDRESSES],
           event: TEXT_RESOLVER_EVENTS.TextChanged,
+          fromBlock,
+          toBlock,
+          args: { indexedKey: 'avatar' },
+        })
+      : [];
+
+    const legacyResolverLogs = this.metadataInvalidationEnabled
+      ? await this.client.getLogs({
+          address: LEGACY_PUBLIC_RESOLVER_ADDRESS,
+          event: TEXT_RESOLVER_EVENTS.LegacyTextChanged,
           fromBlock,
           toBlock,
           args: { indexedKey: 'avatar' },
@@ -221,12 +238,22 @@ export class ENSIndexer {
     // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
     // The Controller handler guards against reading an already-updated expiry by decoding the
     // duration from transaction calldata, falling back to treating duration <= 0 as null.
-    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' | 'resolver' }[] = [
+    const allLogs: {
+      log: Log;
+      source:
+        | 'registrar'
+        | 'nameWrapper'
+        | 'controller'
+        | 'eventEmitter'
+        | 'resolver'
+        | 'legacyResolver';
+    }[] = [
       ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
       ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
       ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
       ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
       ...resolverLogs.map(log => ({ log: log as Log, source: 'resolver' as const })),
+      ...legacyResolverLogs.map(log => ({ log: log as Log, source: 'legacyResolver' as const })),
     ];
 
     allLogs.sort((a, b) => {
@@ -255,6 +282,9 @@ export class ENSIndexer {
             break;
           case 'resolver':
             await this.processResolverLog(log);
+            break;
+          case 'legacyResolver':
+            await this.processResolverLog(log, true);
             break;
         }
       });
@@ -312,10 +342,10 @@ export class ENSIndexer {
     }
   }
 
-  private async processResolverLog(log: Log) {
+  private async processResolverLog(log: Log, isLegacy: boolean = false) {
     try {
       const decodedLog = decodeEventLog({
-        abi: [TEXT_RESOLVER_EVENTS.TextChanged],
+        abi: [isLegacy ? TEXT_RESOLVER_EVENTS.LegacyTextChanged : TEXT_RESOLVER_EVENTS.TextChanged],
         data: log.data,
         topics: log.topics as any,
       });
