@@ -13,6 +13,7 @@ import {
   config,
   getMetadataInvalidationNetwork,
   getPostgresPool,
+  isMetadataInvalidationConfigured,
   type BlockchainEvent,
   hasEmoji,
   getRegistrationSource,
@@ -96,6 +97,13 @@ const TEXT_RESOLVER_EVENTS = {
   TextChanged: TEXT_RESOLVER_ABI[0],
 } as const;
 
+// ENS docs list the current, previous, and legacy public resolvers on mainnet.
+const KNOWN_PUBLIC_RESOLVER_ADDRESSES = [
+  '0xF29100983E058B709F3D539b0c765937B804AC15',
+  '0x231b0Ee14048e9dCcD1d247744d114a4EB5E8E63',
+  '0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41',
+] as const satisfies readonly `0x${string}`[];
+
 export class ENSIndexer {
   private client: PublicClient;
   private pool = getPostgresPool();
@@ -108,6 +116,8 @@ export class ENSIndexer {
   private readonly metadataInvalidationNetwork = getMetadataInvalidationNetwork(
     config.blockchain.chainId,
   );
+  private readonly metadataInvalidationEnabled =
+    isMetadataInvalidationConfigured() && this.metadataInvalidationNetwork !== null;
 
   constructor() {
     this.client = createPublicClient({
@@ -196,12 +206,15 @@ export class ENSIndexer {
       toBlock,
     });
 
-    const resolverLogs = await this.client.getLogs({
-      event: TEXT_RESOLVER_EVENTS.TextChanged,
-      fromBlock,
-      toBlock,
-      args: { indexedKey: 'avatar' },
-    });
+    const resolverLogs = this.metadataInvalidationEnabled
+      ? await this.client.getLogs({
+          address: [...KNOWN_PUBLIC_RESOLVER_ADDRESSES],
+          event: TEXT_RESOLVER_EVENTS.TextChanged,
+          fromBlock,
+          toBlock,
+          args: { indexedKey: 'avatar' },
+        })
+      : [];
 
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
     // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
@@ -312,17 +325,27 @@ export class ENSIndexer {
         return;
       }
 
-      if (!this.metadataInvalidationNetwork) {
-        logger.warn(
-          { chainId: config.blockchain.chainId },
-          'Skipping avatar cache invalidation for TextChanged event: unsupported CHAIN_ID',
+      if (!this.metadataInvalidationEnabled || !this.metadataInvalidationNetwork) {
+        return;
+      }
+
+      const nodeTokenId = BigInt(decodedLog.args.node).toString();
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(nodeTokenId);
+
+      if (!resolvedData?.name) {
+        logger.debug(
+          {
+            resolverAddress: log.address,
+            nodeTokenId,
+            transactionHash: log.transactionHash,
+          },
+          'Skipping avatar TextChanged invalidation for unresolved ENS node',
         );
         return;
       }
 
-      const tokenId = BigInt(decodedLog.args.node).toString();
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
-      const name = resolvedData?.name?.toLowerCase();
+      const name = resolvedData.name.toLowerCase();
+      const tokenId = resolvedData.correctTokenId || nodeTokenId;
 
       const published = await safePublishJob(
         QUEUE_NAMES.INVALIDATE_ENS_METADATA_CACHE,
@@ -333,7 +356,7 @@ export class ENSIndexer {
         },
         'resolver-avatar-text-changed',
         {
-          singletonKey: `${this.metadataInvalidationNetwork}:${name || tokenId}`,
+          singletonKey: `${this.metadataInvalidationNetwork}:${name}`,
           singletonSeconds: 5,
         },
       );

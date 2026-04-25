@@ -2,7 +2,7 @@ import { config, isMetadataInvalidationConfigured } from '../../../shared/src';
 import type { InvalidateEnsMetadataCacheJob } from '../queue';
 import { logger } from '../utils/logger';
 
-const RETRYABLE_STATUS_CODES = new Set([429, 502]);
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 
 function sleep(ms: number): Promise<void> {
