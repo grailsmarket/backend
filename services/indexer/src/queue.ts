@@ -6,6 +6,11 @@ let boss: PgBoss | null = null;
 let isStarting = false;
 let startPromise: Promise<PgBoss> | null = null;
 
+interface QueueJobOptions {
+  singletonKey?: string;
+  singletonSeconds?: number;
+}
+
 /**
  * Get or create the queue client for publishing jobs
  * This is a lightweight client - it only publishes, doesn't consume
@@ -74,11 +79,16 @@ export async function getQueueClient(): Promise<PgBoss> {
 export async function safePublishJob(
   queueName: string,
   data: Record<string, any>,
-  context?: string
+  context?: string,
+  options?: QueueJobOptions,
 ): Promise<boolean> {
   try {
     const client = await getQueueClient();
-    await client.send(queueName, data);
+    if (options) {
+      await client.send(queueName, data, options as any);
+    } else {
+      await client.send(queueName, data);
+    }
     return true;
   } catch (error: any) {
     logger.error({
@@ -105,4 +115,5 @@ export const QUEUE_NAMES = {
   UPDATE_CLUB_FLOOR_PRICE: 'update-club-floor-price',
   UPDATE_CLUB_SALES_STATS: 'update-club-sales-stats',
   UPDATE_HIGHEST_OFFER: 'update-highest-offer',
+  INVALIDATE_ENS_METADATA_CACHE: 'invalidate-ens-metadata-cache',
 } as const;

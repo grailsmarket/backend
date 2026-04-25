@@ -9,7 +9,15 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource } from '../../../shared/src';
+import {
+  config,
+  getMetadataInvalidationNetwork,
+  getPostgresPool,
+  type BlockchainEvent,
+  hasEmoji,
+  getRegistrationSource,
+} from '../../../shared/src';
+import { QUEUE_NAMES, safePublishJob } from '../queue';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -58,6 +66,10 @@ const NAME_WRAPPER_ABI = parseAbi([
   'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
 ]);
 
+const TEXT_RESOLVER_ABI = parseAbi([
+  'event TextChanged(bytes32 indexed node, string indexed indexedKey, string key, string value)',
+]);
+
 const ENS_EVENTS = {
   Transfer: ENS_ABI[0],
   NameRegistered: ENS_ABI[1],
@@ -80,6 +92,10 @@ const NAME_WRAPPER_EVENTS = {
   TransferBatch: NAME_WRAPPER_ABI[1],
 } as const;
 
+const TEXT_RESOLVER_EVENTS = {
+  TextChanged: TEXT_RESOLVER_ABI[0],
+} as const;
+
 export class ENSIndexer {
   private client: PublicClient;
   private pool = getPostgresPool();
@@ -89,6 +105,9 @@ export class ENSIndexer {
   private currentBlock = 0n;
   private readonly batchSize = 100; // Reduced for better RPC compatibility
   private readonly confirmations = BigInt(config.blockchain.confirmations);
+  private readonly metadataInvalidationNetwork = getMetadataInvalidationNetwork(
+    config.blockchain.chainId,
+  );
 
   constructor() {
     this.client = createPublicClient({
@@ -177,16 +196,24 @@ export class ENSIndexer {
       toBlock,
     });
 
+    const resolverLogs = await this.client.getLogs({
+      event: TEXT_RESOLVER_EVENTS.TextChanged,
+      fromBlock,
+      toBlock,
+      args: { indexedKey: 'avatar' },
+    });
+
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
     // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
     // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
     // The Controller handler guards against reading an already-updated expiry by decoding the
     // duration from transaction calldata, falling back to treating duration <= 0 as null.
-    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
+    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' | 'resolver' }[] = [
       ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
       ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
       ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
       ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
+      ...resolverLogs.map(log => ({ log: log as Log, source: 'resolver' as const })),
     ];
 
     allLogs.sort((a, b) => {
@@ -212,6 +239,9 @@ export class ENSIndexer {
             break;
           case 'eventEmitter':
             await this.processRenewalReferredLog(log);
+            break;
+          case 'resolver':
+            await this.processResolverLog(log);
             break;
         }
       });
@@ -266,6 +296,67 @@ export class ENSIndexer {
         transactionHash: log.transactionHash,
         topics: log.topics?.slice(0, 2),
       }, `Error processing log at block ${log.blockNumber}`);
+    }
+  }
+
+  private async processResolverLog(log: Log) {
+    try {
+      const decodedLog = decodeEventLog({
+        abi: [TEXT_RESOLVER_EVENTS.TextChanged],
+        data: log.data,
+        topics: log.topics as any,
+      });
+
+      const key = decodedLog.args.key;
+      if (typeof key !== 'string' || key.toLowerCase() !== 'avatar') {
+        return;
+      }
+
+      if (!this.metadataInvalidationNetwork) {
+        logger.warn(
+          { chainId: config.blockchain.chainId },
+          'Skipping avatar cache invalidation for TextChanged event: unsupported CHAIN_ID',
+        );
+        return;
+      }
+
+      const tokenId = BigInt(decodedLog.args.node).toString();
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+      const name = resolvedData?.name?.toLowerCase();
+
+      const published = await safePublishJob(
+        QUEUE_NAMES.INVALIDATE_ENS_METADATA_CACHE,
+        {
+          network: this.metadataInvalidationNetwork,
+          ...(name ? { name } : {}),
+          tokenId,
+        },
+        'resolver-avatar-text-changed',
+        {
+          singletonKey: `${this.metadataInvalidationNetwork}:${name || tokenId}`,
+          singletonSeconds: 5,
+        },
+      );
+
+      if (published) {
+        logger.info(
+          {
+            key,
+            name,
+            tokenId,
+            transactionHash: log.transactionHash,
+          },
+          'Published ENS metadata invalidation for avatar TextChanged event',
+        );
+      }
+    } catch (error: any) {
+      logger.error(
+        {
+          err: error,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to process resolver TextChanged log',
+      );
     }
   }
 
