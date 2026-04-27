@@ -81,11 +81,19 @@ export interface UpdateOwnershipJob {
 }
 
 export interface SendNotificationJob {
-  type: 'new-listing' | 'price-change' | 'sale' | 'new-offer' | 'listing-cancelled-ownership-change' | 'offer-received' | 'listing-sold';
+  type:
+    | 'new-listing'
+    | 'price-change'
+    | 'sale'
+    | 'new-offer'
+    | 'listing-cancelled-ownership-change'
+    | 'offer-received'
+    | 'listing-sold'
+    | 'support-ticket-update';
   userId?: number;
   email?: string;
   recipientAddress?: string;
-  ensNameId: number;
+  ensNameId: number | null;
   metadata?: Record<string, any>;
   transactionHash?: string;
 }

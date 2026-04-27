@@ -11,8 +11,13 @@ import {
   buildListingCancelledEmail,
   buildOfferReceivedEmail,
   buildListingSoldEmail,
+  buildSupportTicketUpdateEmail,
 } from '../services/email';
-import { sendTelegramMessage, buildTelegramNotification } from '../services/telegram';
+import {
+  sendTelegramMessage,
+  buildTelegramNotification,
+  buildSupportTicketUpdateTelegram,
+} from '../services/telegram';
 import { ethers } from 'ethers';
 
 const FRONTEND_URL = config.frontend.url;
@@ -36,6 +41,14 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
       logger.info({ type, userId, ensNameId }, 'Processing notification');
 
       const pool = getPostgresPool();
+
+      // Support tickets follow a separate path: no ENS name lookup, no
+      // dedupe window, and the in-app notification row is always written
+      // even when no email/Telegram channel is available.
+      if (type === 'support-ticket-update') {
+        await processSupportTicketNotification({ userId, metadata });
+        return;
+      }
 
       try {
         // Get ENS name details
@@ -303,4 +316,94 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
   );
 
   logger.info('Notification worker registered');
+}
+
+/**
+ * Handle a support ticket notification: write the in-app row, then best-effort
+ * email and Telegram. Recipients can be the ticket owner (admin reply, status
+ * change) or an admin (user reopen).
+ */
+async function processSupportTicketNotification(params: {
+  userId?: number;
+  metadata?: Record<string, any>;
+}): Promise<void> {
+  const { userId, metadata } = params;
+  if (!userId) {
+    logger.warn({ metadata }, 'support-ticket-update missing userId');
+    return;
+  }
+
+  const kind = metadata?.kind as 'admin_reply' | 'status_changed' | 'reopened' | undefined;
+  const ticketId = metadata?.ticketId;
+  const subject = metadata?.subject ?? 'your support ticket';
+  const newStatus = metadata?.newStatus ?? metadata?.status;
+  if (!kind || !ticketId) {
+    logger.warn({ userId, metadata }, 'support-ticket-update missing kind/ticketId');
+    return;
+  }
+
+  const pool = getPostgresPool();
+
+  // 1. Always write the in-app notification row.
+  await pool.query(
+    `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
+     VALUES ($1, 'support-ticket-update', NULL, $2, NOW())`,
+    [userId, JSON.stringify(metadata || {})]
+  );
+
+  // 2. Look up delivery channels.
+  const userRes = await pool.query(
+    `SELECT email, email_verified, telegram_connected, telegram_chat_id,
+            tier, tier_expires_at
+       FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (userRes.rows.length === 0) {
+    logger.warn({ userId }, 'User not found for support ticket notification');
+    return;
+  }
+  const user = userRes.rows[0];
+
+  const ticketUrl = `${FRONTEND_URL}/support?ticket=${ticketId}`;
+  const unsubscribeUrl = `${FRONTEND_URL}/settings/notifications`;
+
+  // 3. Email (if verified address on file).
+  if (user.email && user.email_verified) {
+    try {
+      const template = buildSupportTicketUpdateEmail({
+        kind,
+        subject,
+        ticketUrl,
+        newStatus,
+        unsubscribeUrl,
+      });
+      await sendEmail(user.email, template);
+      logger.info({ userId, kind, ticketId }, 'Support ticket email sent');
+    } catch (err) {
+      logger.error({ err, userId, ticketId }, 'Failed to send support ticket email');
+    }
+  }
+
+  // 4. Telegram (paid users with a connected chat).
+  const tier = user.tier;
+  const tierActive =
+    tier && tier !== 'free' &&
+    (!user.tier_expires_at || new Date(user.tier_expires_at) > new Date());
+  if (user.telegram_connected && user.telegram_chat_id && tierActive) {
+    try {
+      const text = buildSupportTicketUpdateTelegram({
+        kind,
+        subject,
+        ticketUrl,
+        newStatus,
+      });
+      await sendTelegramMessage({
+        chatId: Number(user.telegram_chat_id),
+        text,
+      });
+      logger.info({ userId, kind, ticketId }, 'Support ticket Telegram sent');
+    } catch (err) {
+      logger.error({ err, userId, ticketId }, 'Failed to send support ticket Telegram');
+    }
+  }
 }

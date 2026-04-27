@@ -38,6 +38,7 @@ import { dashboardLayoutsRoutes } from './dashboard-layouts';
 import { savedSearchesRoutes } from './saved-searches';
 import { adminRoutes } from './admin';
 import { broadcastImagesRoutes } from './broadcast-images';
+import { supportRoutes, adminSupportRoutes } from './support';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -79,5 +80,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(savedSearchesRoutes, { prefix: '/api/v1/saved-searches' });
   fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
   fastify.register(broadcastImagesRoutes, { prefix: '/api/v1/broadcasts/images' });
+  fastify.register(supportRoutes, { prefix: '/api/v1/support' });
+  fastify.register(adminSupportRoutes, { prefix: '/api/v1/admin/support' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }

@@ -276,6 +276,29 @@ export function buildTelegramNotification(
   }
 }
 
+export function buildSupportTicketUpdateTelegram(params: {
+  kind: 'admin_reply' | 'status_changed' | 'reopened';
+  subject: string;
+  ticketUrl: string;
+  newStatus?: string;
+}): string {
+  const { kind, subject, ticketUrl, newStatus } = params;
+  const safe = escapeHtml(subject);
+  let header = '<b>Support Ticket Update</b>';
+  let body = `There's an update on <b>${safe}</b>.`;
+  if (kind === 'admin_reply') {
+    header = '<b>New reply on your ticket</b>';
+    body = `Our team replied to <b>${safe}</b>.`;
+  } else if (kind === 'status_changed' && newStatus) {
+    header = '<b>Ticket status changed</b>';
+    body = `<b>${safe}</b> is now <b>${escapeHtml(newStatus)}</b>.`;
+  } else if (kind === 'reopened') {
+    header = '<b>Ticket reopened</b>';
+    body = `Support ticket <b>${safe}</b> has been reopened.`;
+  }
+  return `${header}\n\n${body}\n\n<a href="${ticketUrl}">View Ticket</a>`;
+}
+
 export function buildAdminBroadcastTelegram(params: {
   title: string;
   body: string;

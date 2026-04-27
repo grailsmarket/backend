@@ -416,6 +416,65 @@ Manage notification preferences: ${unsubscribeUrl}
   };
 }
 
+/**
+ * Build email template for a support ticket update (admin reply, status change, or reopen).
+ */
+export function buildSupportTicketUpdateEmail(params: {
+  kind: 'admin_reply' | 'status_changed' | 'reopened';
+  subject: string;
+  ticketUrl: string;
+  newStatus?: string;
+  unsubscribeUrl: string;
+}): EmailTemplate {
+  const { kind, subject, ticketUrl, newStatus, unsubscribeUrl } = params;
+  const safeSubject = escapeHtml(subject);
+
+  let heading = 'Update on your support ticket';
+  let intro = `There's an update on your support ticket "${safeSubject}".`;
+  let mailSubject = `Update on your support ticket: ${subject}`;
+
+  if (kind === 'admin_reply') {
+    heading = 'New reply on your support ticket';
+    intro = `Our team replied to your support ticket "${safeSubject}".`;
+    mailSubject = `New reply: ${subject}`;
+  } else if (kind === 'status_changed' && newStatus) {
+    heading = 'Support ticket status changed';
+    intro = `Your support ticket "${safeSubject}" is now marked <b>${escapeHtml(newStatus)}</b>.`;
+    mailSubject = `Ticket ${newStatus}: ${subject}`;
+  } else if (kind === 'reopened') {
+    heading = 'Support ticket reopened';
+    intro = `Support ticket "${safeSubject}" has been reopened.`;
+    mailSubject = `Ticket reopened: ${subject}`;
+  }
+
+  return {
+    subject: mailSubject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>${heading}</h2>
+        <p>${intro}</p>
+        <p><a href="${encodeURI(ticketUrl)}" style="background-color: #7C3AED; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">View Ticket</a></p>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+          You received this email because you have an active support ticket on Grails.
+          <a href="${unsubscribeUrl}">Manage notification preferences</a>
+        </p>
+      </div>
+    `,
+    text: `
+${heading}
+
+${intro.replace(/<[^>]*>/g, '')}
+
+View ticket: ${ticketUrl}
+
+---
+You received this email because you have an active support ticket on Grails.
+Manage notification preferences: ${unsubscribeUrl}
+    `.trim(),
+  };
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
