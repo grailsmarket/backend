@@ -53,6 +53,46 @@ type MessageRow = {
   created_at: Date;
 };
 
+type StatusChangeRow = {
+  id: number;
+  ticket_id: number;
+  actor_user_id: number;
+  actor_role: 'user' | 'admin';
+  from_status: TicketStatus | null;
+  to_status: TicketStatus;
+  created_at: Date;
+};
+
+function serializeStatusChange(row: StatusChangeRow & { actor_address?: string }) {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    actorUserId: row.actor_user_id,
+    actorAddress: row.actor_address ?? null,
+    actorRole: row.actor_role,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    createdAt: row.created_at,
+  };
+}
+
+async function loadStatusChanges(
+  pool: ReturnType<typeof getPostgresPool>,
+  ticketId: number
+) {
+  const res = await pool.query<StatusChangeRow & { actor_address: string }>(
+    `SELECT s.id, s.ticket_id, s.actor_user_id, s.actor_role,
+            s.from_status, s.to_status, s.created_at,
+            u.address AS actor_address
+       FROM support_ticket_status_changes s
+       LEFT JOIN users u ON u.id = s.actor_user_id
+      WHERE s.ticket_id = $1
+      ORDER BY s.created_at DESC, s.id DESC`,
+    [ticketId]
+  );
+  return res.rows.map(serializeStatusChange);
+}
+
 function serializeTicket(row: TicketRow & { user_address?: string }) {
   return {
     id: row.id,
@@ -344,13 +384,32 @@ export async function supportRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user!.sub);
       const ticketId = parseInt((request.params as { id: string }).id);
 
-      const updateRes = await pool.query<TicketRow>(
-        `UPDATE support_tickets
-            SET status = 'open'
-          WHERE id = $1 AND user_id = $2 AND status = 'closed'
-          RETURNING *`,
-        [ticketId, userId]
-      );
+      const client = await pool.connect();
+      let updateRes;
+      try {
+        await client.query('BEGIN');
+        updateRes = await client.query<TicketRow>(
+          `UPDATE support_tickets
+              SET status = 'open'
+            WHERE id = $1 AND user_id = $2 AND status = 'closed'
+            RETURNING *`,
+          [ticketId, userId]
+        );
+        if (updateRes.rows.length > 0) {
+          await client.query(
+            `INSERT INTO support_ticket_status_changes
+               (ticket_id, actor_user_id, actor_role, from_status, to_status)
+             VALUES ($1, $2, 'user', 'closed', 'open')`,
+            [ticketId, userId]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
 
       if (updateRes.rows.length === 0) {
         // Disambiguate 404 vs invalid status
@@ -486,10 +545,13 @@ export async function adminSupportRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const messages = await loadTicketMessages(pool, ticketId);
+    const [messages, statusChanges] = await Promise.all([
+      loadTicketMessages(pool, ticketId),
+      loadStatusChanges(pool, ticketId),
+    ]);
     return reply.send({
       success: true,
-      data: { ticket: serializeTicket(ticketRes.rows[0]), messages },
+      data: { ticket: serializeTicket(ticketRes.rows[0]), messages, statusChanges },
       meta: metaResponse(),
     } as APIResponse);
   });
@@ -552,19 +614,45 @@ export async function adminSupportRoutes(fastify: FastifyInstance) {
     '/tickets/:id',
     { preHandler: adminPreHandlers },
     async (request, reply) => {
+      const adminUserId = parseInt(request.user!.sub);
       const ticketId = parseInt((request.params as { id: string }).id);
       const { status } = UpdateStatusSchema.parse(request.body);
 
-      const updateRes = await pool.query<TicketRow>(
-        `UPDATE support_tickets SET status = $1 WHERE id = $2 RETURNING *`,
-        [status, ticketId]
-      );
-      if (updateRes.rows.length === 0) {
-        return reply.status(404).send({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Ticket not found' },
-          meta: metaResponse(),
-        });
+      const client = await pool.connect();
+      let updateRes;
+      try {
+        await client.query('BEGIN');
+        const existing = await client.query<{ status: TicketStatus }>(
+          `SELECT status FROM support_tickets WHERE id = $1 FOR UPDATE`,
+          [ticketId]
+        );
+        if (existing.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Ticket not found' },
+            meta: metaResponse(),
+          });
+        }
+        const fromStatus = existing.rows[0].status;
+        updateRes = await client.query<TicketRow>(
+          `UPDATE support_tickets SET status = $1 WHERE id = $2 RETURNING *`,
+          [status, ticketId]
+        );
+        if (fromStatus !== status) {
+          await client.query(
+            `INSERT INTO support_ticket_status_changes
+               (ticket_id, actor_user_id, actor_role, from_status, to_status)
+             VALUES ($1, $2, 'admin', $3, $4)`,
+            [ticketId, adminUserId, fromStatus, status]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
       }
       const ticket = updateRes.rows[0];
 
