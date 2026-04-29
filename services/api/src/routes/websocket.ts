@@ -1,10 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
+import { getPostgresPool } from '../../../shared/src';
+import { verifyToken } from '../middleware/auth';
 
 interface WSClient {
   id: string;
   ws: WebSocket;
   subscriptions: Set<string>;
+}
+
+interface ChatWSClient {
+  id: string;
+  ws: WebSocket;
+  userId: number;
+  address: string;
+  /** Set true after the client sends `{type:'subscribe'}`. Until then they get nothing. */
+  subscribed: boolean;
 }
 
 interface ActivityWSClient {
@@ -22,6 +33,11 @@ interface ActivityWSClient {
 
 const clients = new Map<string, WSClient>();
 const activityClients = new Map<string, ActivityWSClient>();
+const chatClients = new Map<string, ChatWSClient>();
+
+// Server-side typing-event throttle: drop bursts faster than ~5/sec per (user, chat).
+const typingThrottle = new Map<string, number>();
+const TYPING_MIN_INTERVAL_MS = 200;
 
 // Track broadcast stats for debugging
 let broadcastStats = {
@@ -44,6 +60,12 @@ export function getWebSocketStats() {
         include: c.eventTypeFilters.include ? Array.from(c.eventTypeFilters.include) : null,
         exclude: c.eventTypeFilters.exclude ? Array.from(c.eventTypeFilters.exclude) : null,
       },
+    })),
+    chatClients: chatClients.size,
+    chatClientDetails: Array.from(chatClients.values()).map(c => ({
+      id: c.id,
+      userId: c.userId,
+      subscribed: c.subscribed,
     })),
     broadcastStats,
   };
@@ -129,6 +151,72 @@ export async function websocketRoutes(fastify: FastifyInstance) {
 
     connection.socket.on('close', () => {
       req.log.info(`WebSocket closed: ${clientId}`);
+    });
+  });
+
+  fastify.get('/chats', { websocket: true }, async (connection, req) => {
+    const clientId = req.id;
+
+    // Auth via ?token=... query param (browser WS APIs cannot set Authorization header)
+    const token = (req.query as { token?: string })?.token;
+    if (!token) {
+      connection.socket.send(JSON.stringify({ type: 'error', message: 'Missing token' }));
+      connection.socket.close(4401, 'Unauthorized');
+      return;
+    }
+
+    let userId: number;
+    let address: string;
+    try {
+      const decoded = verifyToken(token);
+      userId = parseInt(decoded.sub, 10);
+      address = decoded.address;
+    } catch {
+      connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
+      connection.socket.close(4401, 'Unauthorized');
+      return;
+    }
+
+    const client: ChatWSClient = {
+      id: clientId,
+      ws: connection.socket as WebSocket,
+      userId,
+      address,
+      subscribed: false,
+    };
+    chatClients.set(clientId, client);
+    console.log(`[WebSocket] Chat client connected: ${clientId} (user ${userId}), total: ${chatClients.size}`);
+
+    connection.socket.send(JSON.stringify({
+      type: 'connected',
+      channel: 'chats',
+      clientId,
+      userId,
+      timestamp: new Date().toISOString(),
+    }));
+
+    connection.socket.on('message', (raw: Buffer) => {
+      try {
+        const data = JSON.parse(raw.toString());
+        handleChatMessage(client, data).catch((err) => {
+          req.log.error({ err }, 'Chat WS message handler error');
+        });
+      } catch {
+        connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
+      }
+    });
+
+    connection.socket.on('close', () => {
+      chatClients.delete(clientId);
+      // GC throttle keys for this user (cheap; only this user's keys)
+      for (const key of typingThrottle.keys()) {
+        if (key.startsWith(`${userId}:`)) typingThrottle.delete(key);
+      }
+    });
+
+    connection.socket.on('error', (error) => {
+      req.log.error({ error }, 'Chat WebSocket error');
+      chatClients.delete(clientId);
     });
   });
 
@@ -449,5 +537,154 @@ export function broadcastActivityEvent(activityData: any) {
         console.error('Error sending activity event to client:', error);
       }
     }
+  });
+}
+
+// ============================================================================
+// Chat WS handler + broadcast helpers
+// ============================================================================
+
+async function handleChatMessage(client: ChatWSClient, data: any) {
+  switch (data.type) {
+    case 'subscribe':
+      client.subscribed = true;
+      client.ws.send(JSON.stringify({
+        type: 'subscribed',
+        channel: 'chats',
+        timestamp: new Date().toISOString(),
+      }));
+      return;
+
+    case 'unsubscribe':
+      client.subscribed = false;
+      client.ws.send(JSON.stringify({
+        type: 'unsubscribed',
+        channel: 'chats',
+        timestamp: new Date().toISOString(),
+      }));
+      return;
+
+    case 'typing':
+    case 'stop_typing': {
+      const chatId: string | undefined = data.chat_id;
+      if (!chatId || typeof chatId !== 'string') {
+        client.ws.send(JSON.stringify({ type: 'error', message: 'chat_id required' }));
+        return;
+      }
+
+      const throttleKey = `${client.userId}:${chatId}`;
+      const now = Date.now();
+      const last = typingThrottle.get(throttleKey) ?? 0;
+      if (now - last < TYPING_MIN_INTERVAL_MS) return;
+      typingThrottle.set(throttleKey, now);
+
+      // Look up other participants (and verify caller is a member). Cheap query.
+      const pool = getPostgresPool();
+      const result = await pool.query(
+        `SELECT user_id FROM chat_participants WHERE chat_id = $1 AND left_at IS NULL`,
+        [chatId]
+      );
+      const participantIds = result.rows.map((r) => r.user_id as number);
+      if (!participantIds.includes(client.userId)) {
+        client.ws.send(JSON.stringify({ type: 'error', message: 'Not a participant' }));
+        return;
+      }
+
+      const eventType = data.type === 'typing' ? 'chat:typing' : 'chat:typing_stop';
+      const payload = JSON.stringify({
+        type: eventType,
+        data: { chat_id: chatId, user_id: client.userId },
+        timestamp: new Date().toISOString(),
+      });
+
+      chatClients.forEach((c) => {
+        if (c.userId === client.userId) return;
+        if (!c.subscribed) return;
+        if (!participantIds.includes(c.userId)) return;
+        try { c.ws.send(payload); } catch { /* socket closed mid-send */ }
+      });
+      return;
+    }
+
+    case 'ping':
+      client.ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+      return;
+
+    default:
+      client.ws.send(JSON.stringify({ type: 'error', message: `Unknown message type: ${data.type}` }));
+  }
+}
+
+interface ChatMessageRecord {
+  id: string;
+  chat_id: string;
+  sender_user_id: number;
+  body: string;
+  content_type: string;
+  metadata: unknown;
+  created_at: string | Date;
+  edited_at: string | Date | null;
+  deleted_at: string | Date | null;
+  sender_address?: string;
+}
+
+/** Send a JSON event to every connected, subscribed chat client whose userId is in `participantUserIds`. */
+function fanOutToParticipants(participantUserIds: number[], payload: object) {
+  const json = JSON.stringify(payload);
+  chatClients.forEach((c) => {
+    if (!c.subscribed) return;
+    if (!participantUserIds.includes(c.userId)) return;
+    try { c.ws.send(json); } catch { /* socket closed mid-send */ }
+  });
+}
+
+export function broadcastChatEvent(args: {
+  message: ChatMessageRecord;
+  participantUserIds: number[];
+}) {
+  fanOutToParticipants(args.participantUserIds, {
+    type: 'chat:message_new',
+    data: { chat_id: args.message.chat_id, message: args.message },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastChatReadEvent(args: {
+  chatId: string;
+  userId: number;
+  lastReadMessageId: string;
+  participantUserIds: number[];
+}) {
+  fanOutToParticipants(args.participantUserIds, {
+    type: 'chat:read',
+    data: {
+      chat_id: args.chatId,
+      user_id: args.userId,
+      last_read_message_id: args.lastReadMessageId,
+    },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastChatDeletedEvent(args: {
+  chatId: string;
+  messageId: string;
+  participantUserIds: number[];
+}) {
+  fanOutToParticipants(args.participantUserIds, {
+    type: 'chat:message_deleted',
+    data: { chat_id: args.chatId, message_id: args.messageId },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastChatCreatedEvent(args: {
+  chat: unknown;
+  participantUserIds: number[];
+}) {
+  fanOutToParticipants(args.participantUserIds, {
+    type: 'chat:created',
+    data: { chat: args.chat },
+    timestamp: new Date().toISOString(),
   });
 }

@@ -14,6 +14,7 @@ const UpdateProfileSchema = z.object({
   notifyOnOfferReceived: z.boolean().optional(),
   notifyOnListingSold: z.boolean().optional(),
   minOfferThreshold: z.number().min(0).nullable().optional(),
+  acceptMessages: z.boolean().optional(),
 });
 
 const AddressParamsSchema = z.object({
@@ -313,6 +314,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
+      if (updates.acceptMessages !== undefined) {
+        updateFields.push(`accept_messages = $${paramCount}`);
+        values.push(updates.acceptMessages);
+        paramCount++;
+      }
+
       if (updateFields.length === 0) {
         return reply.status(400).send({
           success: false,
@@ -393,6 +400,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
           notifyOnOfferReceived: user.notify_on_offer_received,
           notifyOnListingSold: user.notify_on_listing_sold,
           minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+          acceptMessages: user.accept_messages,
           updatedAt: user.updated_at,
         },
         meta: {

@@ -45,6 +45,8 @@ src/
     poap.ts             # POAP claim endpoints
     verification.ts     # Email verification endpoints
     websocket.ts        # WebSocket handlers
+    chats.ts            # Chat / direct messaging endpoints
+    blocks.ts           # Per-user message block list endpoints
     health.ts           # Health check endpoints
   services/
     seaport.ts          # Seaport order creation/validation
@@ -52,6 +54,7 @@ src/
     openai.ts           # OpenAI similar-name generation service
     search.ts           # Elasticsearch query builder
     activity-notifier.ts # Real-time activity broadcasts
+    chat-notifier.ts    # Real-time chat message broadcasts (LISTEN chat_message_created)
     name-views.ts       # View tracking service
     mutelist.ts         # Address filtering service
   middleware/
@@ -251,15 +254,62 @@ Query parameters: `period` (24h, 7d, 30d, 90d, all)
 | POST | `/verification/email` | No | Verify email with token |
 | POST | `/verification/resend` | Yes | Resend verification email |
 
+### Chats (Auth Required)
+Direct (1:1) messaging in v1. Schema is group-chat-ready; group endpoints are deferred.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST   | `/chats` | Yes | Create or fetch a direct chat: `{ recipient: address \| ens }`. Idempotent via `dm_key`. 501 for `recipients.length > 1`. |
+| GET    | `/chats` | Yes | Inbox: paginated, last message preview + unread count + participant list. |
+| GET    | `/chats/:id` | Yes | Chat detail with participants and each participant's `last_read_message_id`. |
+| GET    | `/chats/:id/messages` | Yes | Cursor pagination via `?before=<message-uuid>&limit=<1-100>`. |
+| POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars). Per-route rate limit: 30/min. |
+| POST   | `/chats/:id/read` | Yes | Mark read: `{ up_to_message_id }`. Broadcasts `chat:read` over WS. |
+| DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message. |
+| PATCH  | `/chats/:id` | Yes | `{ muted? }` per-chat mute. |
+
+Send-message enforcement: caller must be a participant; nobody in the chat may have blocked the caller; all other participants must have `accept_messages = TRUE`.
+
+`PATCH /users/me` accepts `acceptMessages: boolean` to globally opt out (hard block).
+
+### Message Blocks (Auth Required)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET    | `/me/blocks` | Yes | List the caller's blocks. |
+| POST   | `/me/blocks` | Yes | Block a user: `{ user: address \| ens }`. |
+| DELETE | `/me/blocks/:userId` | Yes | Unblock. |
+
 ### WebSocket Endpoints
 | Path | Description |
 |------|-------------|
 | `/ws/events` | General event subscriptions |
 | `/ws/orders` | Order status updates |
 | `/ws/activity` | Real-time activity feed |
+| `/ws/chats` | Chat events (auth required via `?token=<jwt>`) |
 | `/ws/status` | WebSocket connection stats |
 
 ## WebSocket Protocol
+
+### /ws/chats
+Real-time chat events. Requires JWT via query param: `wss://host/ws/chats?token=<jwt>`.
+
+Client → server:
+```json
+{ "type": "subscribe" }                        // enroll for all of caller's chats
+{ "type": "unsubscribe" }
+{ "type": "typing",      "chat_id": "<uuid>" } // ephemeral; not stored in DB
+{ "type": "stop_typing", "chat_id": "<uuid>" }
+{ "type": "ping" }
+```
+
+Server → client (event types):
+- `chat:message_new` — `{ chat_id, message }`
+- `chat:message_deleted` — `{ chat_id, message_id }`
+- `chat:read` — `{ chat_id, user_id, last_read_message_id }`
+- `chat:typing` / `chat:typing_stop` — `{ chat_id, user_id }`
+- `chat:created` — `{ chat }` (sent to participants when a new chat is created)
+
+Typing events are server-throttled to ~5/sec per (user, chat). New-message fan-out is driven by an `AFTER INSERT` trigger on `messages` that emits `pg_notify('chat_message_created', …)`; the in-process `ChatNotifier` listens and calls `broadcastChatEvent()` on the relevant participant sockets.
 
 ### /ws/activity
 Real-time activity feed with filters:
@@ -361,6 +411,10 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `poap_links` | POAP claim links |
 | `mutelist` | Addresses to filter from activity broadcasts |
 | `ai_recommendations` | Cached AI similar-name suggestions (label, recommendations JSONB, model, expires_at) |
+| `chats` | Chat threads (direct or group). UUID PK; `dm_key` unique for idempotent direct creation |
+| `chat_participants` | Per-(chat,user) state: read position, mute, role, soft-leave |
+| `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`) |
+| `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
 
 ## Environment Variables
 
@@ -433,6 +487,12 @@ LOG_LEVEL=info
 - Broadcasts activity events to WebSocket clients
 - Filters out muted addresses
 - Uses direct database connection (bypasses PgBouncer)
+
+### Chat Notifier (`src/services/chat-notifier.ts`)
+- Listens for PostgreSQL `chat_message_created` notifications (emitted by trigger on `messages` insert)
+- Loads the message + participants and calls `broadcastChatEvent` on `/ws/chats` clients
+- Uses direct database connection (bypasses PgBouncer), same pattern as Activity Notifier
+- Chat is intentionally isolated from the `notifications` table and `send-notification` queue
 
 ### Name Views Service (`src/services/name-views.ts`)
 - Tracks unique views per user/IP per ENS name
