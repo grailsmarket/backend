@@ -299,12 +299,13 @@ export async function authRoutes(fastify: FastifyInstance) {
         [siweMessage.nonce]
       );
 
-      // Upsert user record
+      // Upsert user record. Also clear is_stub: chat-system stubs are upgraded to
+      // real users on first SIWE auth.
       const userResult = await pool.query(
         `INSERT INTO users (address, last_sign_in)
          VALUES ($1, NOW())
          ON CONFLICT (address)
-         DO UPDATE SET last_sign_in = NOW()
+         DO UPDATE SET last_sign_in = NOW(), is_stub = FALSE
          RETURNING *`,
         [normalizedAddress]
       );

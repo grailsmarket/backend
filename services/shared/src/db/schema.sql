@@ -133,3 +133,91 @@ CREATE TRIGGER update_indexer_state_updated_at BEFORE UPDATE ON indexer_state
 -- ALTER SYSTEM SET wal_level = logical;
 -- ALTER SYSTEM SET max_replication_slots = 10;
 -- ALTER SYSTEM SET max_wal_senders = 10;
+
+-- ============================================================================
+-- Chat / messaging (added by migrations 0844–0849)
+-- The `users` table is created in services/api/migrations/seq/0011_create_users_table.sql
+-- and extended over time. Below are only the chat-specific additions; mirror
+-- of migrations 0844–0849 for reference.
+-- ============================================================================
+
+-- users.accept_messages and users.is_stub (from 0844)
+-- ALTER TABLE users
+--   ADD COLUMN accept_messages BOOLEAN NOT NULL DEFAULT TRUE,
+--   ADD COLUMN is_stub          BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS chats (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type               VARCHAR(16) NOT NULL DEFAULT 'direct'
+                         CHECK (type IN ('direct', 'group')),
+    title              VARCHAR(120),
+    dm_key             VARCHAR(80) UNIQUE,
+    created_by_user_id INTEGER NOT NULL,
+    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_message_at    TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chats_last_message_at ON chats(last_message_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_chats_created_by_user_id ON chats(created_by_user_id);
+
+CREATE TABLE IF NOT EXISTS chat_participants (
+    chat_id              UUID    NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id              INTEGER NOT NULL,
+    joined_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+    left_at              TIMESTAMP,
+    role                 VARCHAR(16) NOT NULL DEFAULT 'member'
+                           CHECK (role IN ('member', 'admin')),
+    last_read_message_id UUID,
+    muted                BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chat_id         UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    sender_user_id  INTEGER NOT NULL,
+    body            TEXT NOT NULL,
+    content_type    VARCHAR(16) NOT NULL DEFAULT 'text'
+                      CHECK (content_type IN ('text')),
+    metadata        JSONB,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    edited_at       TIMESTAMP,
+    deleted_at      TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS message_blocks (
+    blocker_user_id INTEGER NOT NULL,
+    blocked_user_id INTEGER NOT NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (blocker_user_id, blocked_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_blocks_blocked ON message_blocks(blocked_user_id);
+
+-- AFTER INSERT trigger on messages: updates chats.last_message_at and emits
+-- pg_notify('chat_message_created', {message_id, chat_id}) for the in-process
+-- ChatNotifier WebSocket fan-out (see services/api/src/services/chat-notifier.ts).
+CREATE OR REPLACE FUNCTION notify_chat_message_created()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE chats SET last_message_at = NEW.created_at WHERE id = NEW.chat_id;
+    PERFORM pg_notify(
+        'chat_message_created',
+        json_build_object('message_id', NEW.id, 'chat_id', NEW.chat_id)::text
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS chat_message_created_trigger ON messages;
+CREATE TRIGGER chat_message_created_trigger
+    AFTER INSERT ON messages
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_chat_message_created();
