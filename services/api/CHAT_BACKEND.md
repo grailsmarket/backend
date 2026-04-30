@@ -161,8 +161,8 @@ All routes are prefixed with `/api/v1`, all require `requireAuth`, all return th
 | Method | Path | Description |
 |---|---|---|
 | `POST`   | `/chats` | `{ recipient: address \| ens }` — create or fetch a direct chat (idempotent via `dm_key`). 501 for `recipients.length > 1`. Rate limit: 30/min. |
-| `GET`    | `/chats` | Paginated inbox sorted by `last_message_at DESC NULLS LAST`. Each chat row includes `last_message`, `unread_count`, and full `participants` JSON. Query: `page`, `limit ≤ 100`. |
-| `GET`    | `/chats/:id` | Chat detail + all participants and their `last_read_message_id`. 404 if caller is not a participant. |
+| `GET`    | `/chats` | Paginated inbox sorted by `last_message_at DESC NULLS LAST`. Each chat row includes `last_message`, `unread_count`, full `participants` JSON, and `is_blocked_by_me` (TRUE when the caller has the other participant in `message_blocks`). Query: `page`, `limit ≤ 100`. |
+| `GET`    | `/chats/:id` | Chat detail + all participants and their `last_read_message_id`. Also returns `is_blocked_by_me` for the caller. 404 if caller is not a participant. |
 | `PATCH`  | `/chats/:id` | `{ muted? }` — per-chat mute on caller's `chat_participants` row. |
 | `GET`    | `/chats/:id/messages` | Cursor pagination. Query: `before=<message-uuid>`, `limit ≤ 100` (default 50). Returns `{ messages, nextCursor }`. `body` is nulled for soft-deleted messages. |
 | `POST`   | `/chats/:id/messages` | `{ body }` — 1–4000 chars after trim. Rate limit: 30/min. |
