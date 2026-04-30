@@ -315,7 +315,15 @@ export async function chatsRoutes(fastify: FastifyInstance) {
                FROM chat_participants cp2
                JOIN users u ON u.id = cp2.user_id
               WHERE cp2.chat_id = mc.id
-           ) AS participants
+           ) AS participants,
+           EXISTS (
+             SELECT 1
+               FROM message_blocks mb
+               JOIN chat_participants cp_other ON cp_other.user_id = mb.blocked_user_id
+              WHERE mb.blocker_user_id = $1
+                AND cp_other.chat_id   = mc.id
+                AND cp_other.user_id  <> $1
+           ) AS is_blocked_by_me
          FROM my_chats mc
          ORDER BY mc.last_message_at DESC NULLS LAST, mc.created_at DESC
          LIMIT $2 OFFSET $3`,
@@ -372,10 +380,18 @@ export async function chatsRoutes(fastify: FastifyInstance) {
                FROM chat_participants cp
                JOIN users u ON u.id = cp.user_id
               WHERE cp.chat_id = c.id
-           ) AS participants
+           ) AS participants,
+           EXISTS (
+             SELECT 1
+               FROM message_blocks mb
+               JOIN chat_participants cp_other ON cp_other.user_id = mb.blocked_user_id
+              WHERE mb.blocker_user_id = $2
+                AND cp_other.chat_id   = c.id
+                AND cp_other.user_id  <> $2
+           ) AS is_blocked_by_me
          FROM chats c
          WHERE c.id = $1`,
-        [id]
+        [id, callerId]
       );
 
       return reply.send(ok({ chat: chatResult.rows[0] }));
