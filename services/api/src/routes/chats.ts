@@ -103,7 +103,15 @@ async function resolveRecipientToUserId(
 }
 
 function dmKeyForUserPair(a: number, b: number): string {
-  const [lo, hi] = a < b ? [a, b] : [b, a];
+  // Defensive: coerce to numeric. If either id arrives as a string (e.g. from
+  // a non-numeric JWT.sub or a pg driver quirk), `<` would fall back to string
+  // comparison and produce non-symmetric keys like "10:2", breaking idempotency.
+  const aNum = Number(a);
+  const bNum = Number(b);
+  if (!Number.isFinite(aNum) || !Number.isFinite(bNum)) {
+    throw new Error(`Invalid user ids for dm_key: a=${a}, b=${b}`);
+  }
+  const [lo, hi] = aNum < bNum ? [aNum, bNum] : [bNum, aNum];
   return `${lo}:${hi}`;
 }
 
@@ -151,6 +159,25 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
 
       const callerId = parseInt(request.user!.sub, 10);
+      if (!Number.isFinite(callerId)) {
+        fastify.log.error({ sub: request.user!.sub }, 'POST /chats: non-numeric JWT sub');
+        return sendError(reply, 401, 'INVALID_TOKEN', 'Authenticated user id is invalid');
+      }
+
+      // Confirm the caller's user row actually exists before we try to use the
+      // id as a foreign key. In normal operation SIWE verify committed it before
+      // the JWT was issued, but if the row was deleted between sign-in and now
+      // (or the JWT is stale), the chat_participants insert below would fail
+      // with a confusing FK violation. Surface a clearer error instead.
+      const callerCheck = await pool.query(
+        `SELECT 1 FROM users WHERE id = $1`,
+        [callerId]
+      );
+      if (callerCheck.rows.length === 0) {
+        fastify.log.error({ callerId }, 'POST /chats: caller user row missing');
+        return sendError(reply, 401, 'USER_NOT_FOUND', 'Your user record was not found — please sign in again');
+      }
+
       const resolved = await resolveRecipientToUserId(pool, recipients[0]);
       if ('error' in resolved) {
         return sendError(reply, 404, 'RECIPIENT_NOT_FOUND', resolved.error);
@@ -215,8 +242,26 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request body', error.errors);
       }
-      fastify.log.error({ error }, 'Error creating chat');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to create chat');
+      // Translate common Postgres errors so the frontend can show something
+      // meaningful and so we can diagnose without server-log access.
+      // 23503 = foreign_key_violation, 23505 = unique_violation, 23514 = check_violation
+      const pgCode = error?.code as string | undefined;
+      const detail = error?.detail as string | undefined;
+      fastify.log.error({ error, pgCode, detail }, 'Error creating chat');
+      if (pgCode === '23503') {
+        return sendError(
+          reply,
+          409,
+          'FOREIGN_KEY_VIOLATION',
+          'Could not create chat: referenced user no longer exists',
+          { detail }
+        );
+      }
+      if (pgCode === '23505') {
+        return sendError(reply, 409, 'CONFLICT', 'A conflicting chat row already exists', { detail });
+      }
+      const message = error?.message ? `Failed to create chat: ${error.message}` : 'Failed to create chat';
+      return sendError(reply, 500, 'INTERNAL_ERROR', message, { pgCode, detail });
     }
   });
 
