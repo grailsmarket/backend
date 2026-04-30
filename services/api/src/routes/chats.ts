@@ -484,10 +484,18 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // CTE: insert + join users so we return sender_address alongside the row.
+      // Without this, the frontend's optimistic-replace step loses sender_address
+      // and renders the message on the wrong side until the next refresh.
       const inserted = await pool.query(
-        `INSERT INTO messages (chat_id, sender_user_id, body, content_type)
-         VALUES ($1, $2, $3, 'text')
-         RETURNING *`,
+        `WITH new_msg AS (
+           INSERT INTO messages (chat_id, sender_user_id, body, content_type)
+           VALUES ($1, $2, $3, 'text')
+           RETURNING *
+         )
+         SELECT m.*, u.address AS sender_address
+           FROM new_msg m
+           JOIN users u ON u.id = m.sender_user_id`,
         [id, callerId, body]
       );
 
