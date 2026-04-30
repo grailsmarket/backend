@@ -8,10 +8,12 @@ import { registerRoutes } from './routes';
 import { errorHandler } from './middleware/error-handler';
 import { logger } from './utils/logger';
 import { ActivityNotifier } from './services/activity-notifier';
+import { ChatNotifier } from './services/chat-notifier';
 import { ActivityLogger } from './services/activity-logger';
 import { mutelistService } from './services/mutelist';
 
 const activityNotifier = new ActivityNotifier();
+const chatNotifier = new ChatNotifier();
 let activityLogger: ActivityLogger | null = null;
 
 async function start() {
@@ -74,6 +76,9 @@ async function start() {
 
     // Start activity notifier for real-time WebSocket broadcasts
     await activityNotifier.start();
+
+    // Start chat notifier for real-time message fan-out
+    await chatNotifier.start();
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
@@ -83,6 +88,7 @@ async function start() {
     console.log('Received SIGINT, shutting down gracefully...');
     if (activityLogger) await activityLogger.shutdown();
     await activityNotifier.stop();
+    await chatNotifier.stop();
     await fastify.close();
     process.exit(0);
   });
@@ -91,6 +97,7 @@ async function start() {
     console.log('Received SIGTERM, shutting down gracefully...');
     if (activityLogger) await activityLogger.shutdown();
     await activityNotifier.stop();
+    await chatNotifier.stop();
     await fastify.close();
     process.exit(0);
   });
