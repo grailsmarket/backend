@@ -133,11 +133,14 @@ async function recomputeDeletionCount(
   userId: number,
   windowDays: number
 ): Promise<number> {
+  // Self-deletes (deleted_by = user_id) are user-initiated and don't count
+  // against moderation thresholds — only mod actions inflate this number.
   const r = await pool.query(
     `SELECT COUNT(*)::int AS c FROM comments
       WHERE user_id = $1
         AND status = 'deleted'
-        AND deleted_at > NOW() - ($2 || ' days')::interval`,
+        AND deleted_at > NOW() - ($2 || ' days')::interval
+        AND (deleted_by IS NULL OR deleted_by <> user_id)`,
     [userId, windowDays]
   );
   return r.rows[0]?.c ?? 0;
@@ -430,6 +433,59 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         }
         fastify.log.error({ error }, 'Error creating comment');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to create comment');
+      }
+    }
+  );
+
+  /**
+   * DELETE /api/v1/comments/:id
+   * Self-delete: the comment author can remove their own comment. Soft-delete
+   * with deleted_by = the author themselves, which the moderation counter
+   * specifically excludes — so users can clean up their own comments freely
+   * without affecting their moderation reputation.
+   */
+  fastify.delete(
+    '/:id',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      try {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const userId = parseInt(request.user!.sub, 10);
+        if (!Number.isFinite(userId)) {
+          return sendError(reply, 401, 'INVALID_TOKEN', 'Invalid user id');
+        }
+
+        const result = await pool.query(
+          `UPDATE comments
+              SET status = 'deleted',
+                  deleted_at = NOW(),
+                  deleted_by = $1,
+                  deleted_reason = 'self-delete',
+                  updated_at = NOW()
+            WHERE id = $2 AND user_id = $1 AND status <> 'deleted'
+            RETURNING id`,
+          [userId, id]
+        );
+
+        if (result.rows.length === 0) {
+          // Either the comment doesn't exist, the caller isn't the author, or
+          // it was already deleted. Same response either way — don't leak
+          // existence to non-authors.
+          return sendError(
+            reply,
+            404,
+            'COMMENT_NOT_FOUND',
+            'Comment not found or not deletable'
+          );
+        }
+
+        return reply.send(ok({ id, deleted: true }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid id', error.errors);
+        }
+        fastify.log.error({ error }, 'Error self-deleting comment');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete comment');
       }
     }
   );
