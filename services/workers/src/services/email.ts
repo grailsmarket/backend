@@ -426,6 +426,46 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * Build email template for "your watched/owned name received a comment".
+ * Body intentionally generic per product spec — no comment text leaked into
+ * email since it's untrusted user input.
+ */
+export function buildCommentReceivedEmail(params: {
+  ensName: string;
+  nameUrl: string;
+  unsubscribeUrl: string;
+}): EmailTemplate {
+  const { ensName, nameUrl, unsubscribeUrl } = params;
+
+  return {
+    subject: `New comment on ${ensName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>${ensName} received a comment</h2>
+        <p>A new comment was posted on <strong>${ensName}</strong>.</p>
+        <p><a href="${nameUrl}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0;">View on Grails</a></p>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="font-size: 12px; color: #666;">
+          You received this email because of your notification preferences on Grails.
+          <a href="${unsubscribeUrl}">Manage notification preferences</a>
+        </p>
+      </div>
+    `,
+    text: `
+${ensName} received a comment
+
+A new comment was posted on ${ensName}.
+
+View: ${nameUrl}
+
+---
+You received this email because of your notification preferences on Grails.
+Manage notification preferences: ${unsubscribeUrl}
+    `.trim(),
+  };
+}
+
+/**
  * Build email template for an admin broadcast sent to all users.
  */
 export function buildAdminBroadcastEmail(params: {

@@ -12,6 +12,7 @@ import {
   getQuotaSnapshot,
   getQuotaUsed,
 } from '../services/commentQuota';
+import { getQueueClient, QUEUE_NAMES } from '../queue';
 
 const ENS_NAME_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
 
@@ -360,6 +361,52 @@ export async function commentsRoutes(fastify: FastifyInstance) {
           author_address: userRow.rows[0]?.address,
           author_persona_id: userRow.rows[0]?.persona_id,
         };
+
+        // Fan out notifications: name owner (if opted in) + watchlist subscribers
+        // (if their entry has notify_on_comment). Both checks exclude the
+        // commenter themselves so you never get pinged for your own comments.
+        // Errors here are swallowed — a notification fan-out failure must not
+        // fail the comment-post itself.
+        try {
+          const recipients = await pool.query<{ user_id: number }>(
+            `(
+              SELECT u.id AS user_id
+                FROM ens_names en
+                JOIN users u ON LOWER(u.address) = LOWER(en.owner_address)
+               WHERE en.id = $1
+                 AND u.id <> $2
+                 AND u.notify_on_comment_received = TRUE
+            )
+            UNION
+            (
+              SELECT w.user_id
+                FROM watchlist w
+               WHERE w.ens_name_id = $1
+                 AND w.user_id <> $2
+                 AND w.notify_on_comment = TRUE
+            )`,
+            [ensNameId, userId]
+          );
+
+          if (recipients.rows.length > 0) {
+            const boss = await getQueueClient();
+            const jobs = recipients.rows.map((r) => ({
+              name: QUEUE_NAMES.SEND_NOTIFICATION,
+              data: {
+                type: 'comment-received' as const,
+                userId: r.user_id,
+                ensNameId,
+                metadata: { commentId: inserted.rows[0].id },
+              },
+            }));
+            await boss.insert(jobs);
+          }
+        } catch (notifyError) {
+          fastify.log.error(
+            { error: notifyError, ensNameId, commentId: inserted.rows[0].id },
+            'Failed to enqueue comment notifications'
+          );
+        }
 
         return reply.status(201).send(
           ok({
