@@ -77,6 +77,11 @@ export async function sanitizeCommentBody(
     return { status: 'rejected', reason: 'Comment body must be a string' };
   }
 
+  const rawTrimmed = raw.trim();
+  if (rawTrimmed.length === 0) {
+    return { status: 'rejected', reason: 'Comment cannot be empty' };
+  }
+
   // Strip HTML defensively first; even though our allowlist would reject
   // angle brackets, this gives us a guaranteed-clean baseline.
   const stripped = sanitizeHtml(raw, {
@@ -87,7 +92,13 @@ export async function sanitizeCommentBody(
 
   const trimmed = stripped.trim();
   if (trimmed.length === 0) {
-    return { status: 'rejected', reason: 'Comment cannot be empty' };
+    // The user *did* send something — it just consisted entirely of HTML/script
+    // that got stripped. Surface a specific message so they aren't told their
+    // input was empty when it wasn't.
+    return {
+      status: 'rejected',
+      reason: 'HTML and script tags are not allowed in comments',
+    };
   }
   if (trimmed.length > opts.maxLength) {
     return {
