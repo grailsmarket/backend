@@ -81,7 +81,15 @@ export interface UpdateOwnershipJob {
 }
 
 export interface SendNotificationJob {
-  type: 'new-listing' | 'price-change' | 'sale' | 'new-offer' | 'listing-cancelled-ownership-change' | 'offer-received' | 'listing-sold';
+  type:
+    | 'new-listing'
+    | 'price-change'
+    | 'sale'
+    | 'new-offer'
+    | 'listing-cancelled-ownership-change'
+    | 'offer-received'
+    | 'listing-sold'
+    | 'comment-received';
   userId?: number;
   email?: string;
   recipientAddress?: string;

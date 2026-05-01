@@ -13,6 +13,7 @@ const UpdateProfileSchema = z.object({
   discord: z.string().max(100).optional(),
   notifyOnOfferReceived: z.boolean().optional(),
   notifyOnListingSold: z.boolean().optional(),
+  notifyOnCommentReceived: z.boolean().optional(),
   minOfferThreshold: z.number().min(0).nullable().optional(),
   acceptMessages: z.boolean().optional(),
 });
@@ -308,6 +309,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
         paramCount++;
       }
 
+      if (updates.notifyOnCommentReceived !== undefined) {
+        updateFields.push(`notify_on_comment_received = $${paramCount}`);
+        values.push(updates.notifyOnCommentReceived);
+        paramCount++;
+      }
+
       if (updates.minOfferThreshold !== undefined) {
         updateFields.push(`min_offer_threshold = $${paramCount}`);
         values.push(updates.minOfferThreshold);
@@ -399,6 +406,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
           discord: user.discord,
           notifyOnOfferReceived: user.notify_on_offer_received,
           notifyOnListingSold: user.notify_on_listing_sold,
+          notifyOnCommentReceived: user.notify_on_comment_received,
           minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
           acceptMessages: user.accept_messages,
           updatedAt: user.updated_at,

@@ -11,6 +11,7 @@ import {
   buildListingCancelledEmail,
   buildOfferReceivedEmail,
   buildListingSoldEmail,
+  buildCommentReceivedEmail,
 } from '../services/email';
 import { ethers } from 'ethers';
 
@@ -89,8 +90,10 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         // Check if we already sent this notification (deduplication)
         // Note: Some notification types should allow duplicates
         if (userId) {
-          // Types that should allow multiple notifications within 12 hours
-          const allowDuplicates = ['listing-sold'];
+          // Types that should allow multiple notifications within 12 hours.
+          // Comments are explicitly opt-in via user prefs, and users who turn
+          // them on want one ping per comment, not one per 12 hours.
+          const allowDuplicates = ['listing-sold', 'comment-received'];
 
           if (!allowDuplicates.includes(type)) {
             const existingNotification = await pool.query(
@@ -219,6 +222,15 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
               ensName,
               priceEth,
               saleUrl: `${FRONTEND_URL}/${ensName}`,
+              unsubscribeUrl,
+            });
+            break;
+          }
+
+          case 'comment-received': {
+            emailTemplate = buildCommentReceivedEmail({
+              ensName,
+              nameUrl: `${FRONTEND_URL}/${ensName}`,
               unsubscribeUrl,
             });
             break;

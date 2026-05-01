@@ -99,7 +99,8 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
           w.notify_on_sale,
           w.notify_on_offer,
           w.notify_on_listing,
-          w.notify_on_price_change
+          w.notify_on_price_change,
+          w.notify_on_comment
         FROM watchlist w
         JOIN ens_names en ON w.ens_name_id = en.id
         WHERE w.user_id = $1
@@ -127,6 +128,7 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
           on_offer: watchEntry?.notify_on_offer || false,
           on_listing: watchEntry?.notify_on_listing || false,
           on_price_change: watchEntry?.notify_on_price_change || false,
+          on_comment: watchEntry?.notify_on_comment || false,
         },
       };
     });

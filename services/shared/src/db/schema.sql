@@ -305,3 +305,9 @@ CREATE INDEX IF NOT EXISTS idx_comment_moderation_log_user
   ON comment_moderation_log(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_comment_moderation_log_admin
   ON comment_moderation_log(admin_id, created_at DESC);
+
+-- Comment notification preferences (mirror of migration 0862)
+-- ALTER TABLE users
+--   ADD COLUMN notify_on_comment_received BOOLEAN NOT NULL DEFAULT TRUE;
+-- ALTER TABLE watchlist
+--   ADD COLUMN notify_on_comment BOOLEAN NOT NULL DEFAULT FALSE;
