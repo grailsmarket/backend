@@ -221,3 +221,87 @@ CREATE TRIGGER chat_message_created_trigger
     AFTER INSERT ON messages
     FOR EACH ROW
     EXECUTE FUNCTION notify_chat_message_created();
+
+-- ============================================================================
+-- Comments feature (mirror of migration 0861_create_comments.sql)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS comments (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ens_name_id     INTEGER NOT NULL REFERENCES ens_names(id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL,
+    body            TEXT NOT NULL,
+    body_censored   TEXT,
+    status          VARCHAR(16) NOT NULL DEFAULT 'visible'
+                      CHECK (status IN ('visible', 'deleted', 'hidden')),
+    deleted_at      TIMESTAMP,
+    deleted_by      INTEGER,
+    deleted_reason  TEXT,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_ens_name_created
+  ON comments(ens_name_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_user_created
+  ON comments(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_visible_ens_name_created
+  ON comments(ens_name_id, created_at DESC) WHERE status = 'visible';
+CREATE INDEX IF NOT EXISTS idx_comments_status_created
+  ON comments(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS comment_user_status (
+    user_id              INTEGER PRIMARY KEY,
+    status               VARCHAR(16) NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active', 'warned', 'suspended', 'banned')),
+    suspended_until      TIMESTAMP,
+    deletion_count_30d   INTEGER NOT NULL DEFAULT 0,
+    last_warned_at       TIMESTAMP,
+    last_action_by       INTEGER,
+    last_action_reason   TEXT,
+    updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comment_blacklist_terms (
+    id          SERIAL PRIMARY KEY,
+    term        TEXT NOT NULL,
+    action      VARCHAR(16) NOT NULL DEFAULT 'censor'
+                  CHECK (action IN ('censor', 'block')),
+    created_by  INTEGER,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_comment_blacklist_terms_lower
+  ON comment_blacklist_terms (LOWER(term));
+
+CREATE TABLE IF NOT EXISTS comment_config (
+    id                       INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    warning_threshold        INTEGER NOT NULL DEFAULT 3,
+    suspension_threshold     INTEGER NOT NULL DEFAULT 5,
+    suspension_window_days   INTEGER NOT NULL DEFAULT 30,
+    default_suspension_days  INTEGER NOT NULL DEFAULT 7,
+    quota_cap                INTEGER NOT NULL DEFAULT 50,
+    quota_floor              INTEGER NOT NULL DEFAULT 1,
+    quota_names_weight       NUMERIC(8,2) NOT NULL DEFAULT 1.0,
+    quota_listings_weight    NUMERIC(8,2) NOT NULL DEFAULT 2.0,
+    quota_eth_weight         NUMERIC(8,2) NOT NULL DEFAULT 5.0,
+    max_comment_length       INTEGER NOT NULL DEFAULT 500,
+    updated_at               TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comment_moderation_log (
+    id           SERIAL PRIMARY KEY,
+    comment_id   UUID,
+    user_id      INTEGER,
+    admin_id     INTEGER,
+    action       VARCHAR(32) NOT NULL
+                   CHECK (action IN ('delete', 'warn', 'suspend', 'ban', 'unban',
+                                     'blacklist_add', 'blacklist_remove',
+                                     'config_update', 'auto_warn', 'auto_suspend')),
+    reason       TEXT,
+    metadata     JSONB,
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_comment_moderation_log_user
+  ON comment_moderation_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comment_moderation_log_admin
+  ON comment_moderation_log(admin_id, created_at DESC);
