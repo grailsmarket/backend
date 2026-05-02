@@ -1,0 +1,134 @@
+---
+title: "Comments Live Feed"
+description: "Global feed of comments site-wide, with optional owner and club filters"
+order: 12
+---
+
+import APIEndpoint from '../../components/APIEndpoint.astro';
+
+# Comments Live Feed
+
+A public, paginated feed of every visible comment posted across the site,
+newest first. Optional filters narrow the feed to comments on names owned by
+a specific address, or comments on names that belong to one or more clubs
+(categories like `999`, `10k`, `100k`).
+
+This endpoint is read-only and requires no authentication. Only comments with
+`status = 'visible'` are returned — moderated and self-deleted comments are
+excluded.
+
+## Endpoint
+
+<APIEndpoint method="GET" path="/api/v1/comments/feed" description="Global feed of comments, newest first">
+
+**Query Parameters (all optional):**
+
+| Param   | Type            | Default | Notes                                                                                                                       |
+|---------|-----------------|---------|-----------------------------------------------------------------------------------------------------------------------------|
+| `owner` | address (`0x…`) | —       | Limits to comments on names where the current owner is this address. Lowercased server-side.                                |
+| `clubs` | string (CSV)    | —       | Comma-separated list of club slugs, e.g. `999,10k`. A comment is included if its name belongs to **any** of the listed clubs. Max 10 entries. |
+| `page`  | integer ≥ 1     | `1`     | Page number.                                                                                                                |
+| `limit` | integer 1–100   | `20`    | Page size.                                                                                                                  |
+
+</APIEndpoint>
+
+## Example: unfiltered feed
+
+```bash
+curl -s 'http://localhost:3000/api/v1/comments/feed?page=1&limit=25'
+```
+
+## Example: filtered by owner and clubs
+
+```bash
+curl -s 'http://localhost:3000/api/v1/comments/feed?owner=0xabc1234567890abcdef1234567890abcdef12345&clubs=999,10k&page=1&limit=25'
+```
+
+## Response shape
+
+```json
+{
+  "success": true,
+  "data": {
+    "comments": [
+      {
+        "id": "f6d2c4f7-7e8c-4b8f-9b5c-1234567890ab",
+        "ens_name_id": 12345,
+        "name": "vitalik.eth",
+        "body": "nice name",
+        "created_at": "2026-05-01T12:34:56.789Z",
+        "author_address": "0xabc1234567890abcdef1234567890abcdef12345",
+        "owner_address": "0xdef1234567890abcdef1234567890abcdef12345",
+        "clubs": ["10k", "999"]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 25,
+      "total": 1342,
+      "totalPages": 54,
+      "hasNext": true,
+      "hasPrev": false
+    }
+  },
+  "meta": {
+    "timestamp": "2026-05-01T12:35:00.000Z",
+    "version": "1.0.0"
+  }
+}
+```
+
+This shape matches `/api/v1/listings`, `/api/v1/names`, and the other paginated endpoints in the API.
+
+## Polling pattern (live updates)
+
+Because the feed is sorted newest-first, polling is just "re-fetch page 1
+periodically." Diff against the IDs you've already rendered and prepend any
+new rows.
+
+```js
+const seen = new Set();
+let rendered = [];
+
+async function tick() {
+  const res = await fetch(`${API_BASE}/api/v1/comments/feed?page=1&limit=25`).then((r) => r.json());
+  const fresh = res.data.comments.filter((c) => !seen.has(c.id));
+  fresh.forEach((c) => seen.add(c.id));
+  rendered = [...fresh, ...rendered];
+  render(rendered);
+}
+
+setInterval(tick, 10_000); // poll every 10s
+```
+
+## Pagination ("load more")
+
+For initial load, request `page=1`. To load older comments when the user
+scrolls to the bottom, increment `page` and append the result.
+
+```js
+async function loadPage(page) {
+  const url = new URL(`${API_BASE}/api/v1/comments/feed`);
+  url.searchParams.set('page', String(page));
+  url.searchParams.set('limit', '25');
+  const res = await fetch(url).then((r) => r.json());
+  return res.data; // { comments, pagination }
+}
+```
+
+## Errors
+
+| Status | Code               | When                                                  |
+|--------|--------------------|-------------------------------------------------------|
+| 400    | `VALIDATION_ERROR` | Bad address, malformed `page`/`limit`, or `clubs` outside the 1–10 entry cap. |
+| 500    | `INTERNAL_ERROR`   | Unexpected server failure.                            |
+
+## Notes
+
+- This endpoint streams **`status = 'visible'`** comments only. Anything an
+  admin has soft-deleted, hidden, or that the author has self-deleted will
+  not appear.
+- Banned authors' historical comments are not stripped retroactively — only
+  new posts are blocked at write time.
+- The endpoint is intentionally REST-based; a WebSocket variant may be
+  added later if polling proves insufficient.

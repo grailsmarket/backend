@@ -22,6 +22,32 @@ const ListCommentsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+const FeedQuerySchema = z.object({
+  owner: z
+    .string()
+    .regex(ADDRESS_RE, 'Invalid address')
+    .transform((s) => s.toLowerCase())
+    .optional(),
+  clubs: z
+    .string()
+    .trim()
+    .min(1)
+    .transform((s) =>
+      s
+        .split(',')
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0)
+    )
+    .refine((arr) => arr.length > 0 && arr.length <= 10, {
+      message: 'clubs must contain 1–10 entries',
+    })
+    .optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 const CreateCommentSchema = z.object({
   name: z.string().regex(ENS_NAME_RE, 'Invalid ENS name'),
   body: z.string().min(1).max(2000),
@@ -245,6 +271,85 @@ export async function commentsRoutes(fastify: FastifyInstance) {
       }
       fastify.log.error({ error }, 'Error listing comments');
       return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list comments');
+    }
+  });
+
+  /**
+   * GET /api/v1/comments/feed
+   * Global page-paginated feed of visible comments site-wide. Newest first.
+   * Optional filters: owner address, clubs (comma-separated). Public, no auth.
+   */
+  fastify.get('/feed', async (request, reply) => {
+    try {
+      const { owner, clubs, page, limit } = FeedQuerySchema.parse(request.query);
+      const offset = (page - 1) * limit;
+
+      const filterParams: unknown[] = [];
+      const where: string[] = [`c.status = 'visible'`];
+
+      if (owner) {
+        filterParams.push(owner);
+        where.push(`en.owner_address = $${filterParams.length}`);
+      }
+      if (clubs) {
+        filterParams.push(clubs);
+        where.push(`en.clubs && $${filterParams.length}::text[]`);
+      }
+      const whereClause = where.join(' AND ');
+
+      const dataParams = [...filterParams, limit, offset];
+      const limitIdx = dataParams.length - 1;
+      const offsetIdx = dataParams.length;
+
+      const [countResult, dataResult] = await Promise.all([
+        pool.query(
+          `SELECT COUNT(*)::bigint AS count
+             FROM comments c
+             JOIN ens_names en ON en.id = c.ens_name_id
+            WHERE ${whereClause}`,
+          filterParams
+        ),
+        pool.query(
+          `SELECT c.id,
+                  c.ens_name_id,
+                  en.name AS name,
+                  COALESCE(c.body_censored, c.body) AS body,
+                  c.created_at,
+                  u.address AS author_address,
+                  en.owner_address AS owner_address,
+                  en.clubs AS clubs
+             FROM comments c
+             JOIN users u ON u.id = c.user_id
+             JOIN ens_names en ON en.id = c.ens_name_id
+            WHERE ${whereClause}
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+          dataParams
+        ),
+      ]);
+
+      const total = parseInt(countResult.rows[0].count, 10);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      return reply.send(
+        ok({
+          comments: dataResult.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        })
+      );
+    } catch (error: unknown) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);
+      }
+      fastify.log.error({ error }, 'Error fetching comments feed');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to fetch feed');
     }
   });
 
