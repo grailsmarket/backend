@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",
-    "script:bootstrap-validation": "tsx src/scripts/bootstrap-validation.ts"
+    "script:bootstrap-validation": "tsx src/scripts/bootstrap-validation.ts",
+    "preview-emails": "npm run build && node dist/workers/src/scripts/preview-emails.js"
   },
   "dependencies": {
     "ethers": "^6.13.0",
