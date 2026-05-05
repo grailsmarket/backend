@@ -1,0 +1,389 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { requireAuth, requireAdmin } from '../middleware/auth';
+import { broadcastChatDeletedEvent } from './websocket';
+
+const sendError = (reply: any, status: number, code: string, message: string, details?: unknown) =>
+  reply.status(status).send({
+    success: false,
+    error: { code, message, ...(details ? { details } : {}) },
+    meta: { timestamp: new Date().toISOString() },
+  });
+
+const ok = <T>(data: T): APIResponse<T> => ({
+  success: true,
+  data,
+  meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+});
+
+const UserIdParamsSchema = z.object({
+  userId: z.coerce.number().int().positive(),
+});
+
+const BanSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
+const UnbanSchema = z.object({
+  reason: z.string().trim().max(500).optional().default(''),
+});
+
+const DeleteMessagesSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
+interface ChatStatusRow {
+  user_id: number;
+  status: 'active' | 'banned';
+  banned_at: Date | null;
+  last_action_by: number | null;
+  last_action_reason: string | null;
+}
+
+async function getChatModStatus(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number
+): Promise<ChatStatusRow | null> {
+  const r = await pool.query<ChatStatusRow>(
+    `SELECT user_id, status, banned_at, last_action_by, last_action_reason
+       FROM chat_user_status WHERE user_id = $1`,
+    [userId]
+  );
+  return r.rows[0] ?? null;
+}
+
+async function setChatStatus(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number,
+  status: 'active' | 'banned',
+  adminId: number,
+  reason: string
+): Promise<void> {
+  const bannedAt = status === 'banned' ? new Date() : null;
+  await pool.query(
+    `INSERT INTO chat_user_status (user_id, status, banned_at, last_action_by, last_action_reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id) DO UPDATE SET
+       status = EXCLUDED.status,
+       banned_at = EXCLUDED.banned_at,
+       last_action_by = EXCLUDED.last_action_by,
+       last_action_reason = EXCLUDED.last_action_reason,
+       updated_at = NOW()`,
+    [userId, status, bannedAt, adminId, reason]
+  );
+}
+
+async function insertChatModNotification(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number,
+  type: 'chat_banned' | 'chat_unbanned' | 'chat_messages_deleted',
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
+     VALUES ($1, $2, NULL, $3, NOW())`,
+    [userId, type, JSON.stringify(metadata)]
+  );
+}
+
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
+
+const LookupQuerySchema = z.object({
+  q: z.string().trim().min(1),
+});
+
+export async function chatsAdminRoutes(fastify: FastifyInstance) {
+  const pool = getPostgresPool();
+
+  /**
+   * GET /api/v1/chats/admin/users/lookup?q=<address|ens>
+   * Resolve an address or .eth name to a users.id so the admin UI can navigate
+   * to the per-user moderation page. Returns 404 when the user has never been
+   * recorded in the users table (no chats, no sign-in, no stub).
+   */
+  fastify.get(
+    '/users/lookup',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { q } = LookupQuerySchema.parse(request.query);
+
+        let address: string | null = null;
+        if (ADDRESS_RE.test(q)) {
+          address = q.toLowerCase();
+        } else if (ENS_RE.test(q)) {
+          const ensResult = await pool.query(
+            `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+            [q]
+          );
+          if (ensResult.rows.length === 0) {
+            return sendError(reply, 404, 'ENS_NOT_FOUND', 'ENS name not found');
+          }
+          address = (ensResult.rows[0].owner_address as string | null)?.toLowerCase() ?? null;
+          if (!address) {
+            return sendError(reply, 404, 'ENS_NO_OWNER', 'ENS name has no owner');
+          }
+        } else {
+          return sendError(reply, 400, 'INVALID_QUERY', 'Provide an address or .eth name');
+        }
+
+        const userResult = await pool.query(
+          `SELECT id, address FROM users WHERE address = $1`,
+          [address]
+        );
+        if (userResult.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'No user record for this address');
+        }
+
+        return reply.send(ok({ user: userResult.rows[0] }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error looking up user');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to look up user');
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/chats/admin/users/:userId
+   * Per-user chat moderation view: status, recent messages (incl. deleted), full mod log.
+   */
+  fastify.get(
+    '/users/:userId',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+
+        const userResult = await pool.query(
+          `SELECT id, address, persona_id, email, created_at FROM users WHERE id = $1`,
+          [userId]
+        );
+        if (userResult.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        const status = await getChatModStatus(pool, userId);
+
+        const messageStats = await pool.query(
+          `SELECT
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE deleted_at IS NULL)::int AS visible,
+             COUNT(*) FILTER (WHERE deleted_at IS NOT NULL)::int AS deleted
+           FROM messages WHERE sender_user_id = $1`,
+          [userId]
+        );
+
+        const recent = await pool.query(
+          `SELECT id, chat_id, body, created_at, deleted_at
+             FROM messages
+            WHERE sender_user_id = $1
+            ORDER BY created_at DESC
+            LIMIT 100`,
+          [userId]
+        );
+
+        const log = await pool.query(
+          `SELECT id, action, reason, metadata, created_at, admin_id
+             FROM chat_moderation_log
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT 50`,
+          [userId]
+        );
+
+        return reply.send(
+          ok({
+            user: userResult.rows[0],
+            status: status ?? {
+              user_id: userId,
+              status: 'active',
+              banned_at: null,
+              last_action_by: null,
+              last_action_reason: null,
+            },
+            messageStats: messageStats.rows[0],
+            messages: recent.rows,
+            log: log.rows,
+          })
+        );
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error fetching chat user mod info');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to fetch user');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/users/:userId/ban
+   * Ban a user from sending or starting any chats.
+   */
+  fastify.post(
+    '/users/:userId/ban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = BanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setChatStatus(pool, userId, 'banned', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'ban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'chat_banned', { reason });
+
+        return reply.send(ok({ userId, status: 'banned' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error banning user from chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to ban user');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/users/:userId/unban
+   * Restore messaging access.
+   */
+  fastify.post(
+    '/users/:userId/unban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = UnbanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setChatStatus(pool, userId, 'active', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'unban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'chat_unbanned', { reason });
+
+        return reply.send(ok({ userId, status: 'active' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error unbanning user from chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to unban user');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/users/:userId/delete-messages
+   * Soft-delete every message the user has sent. Broadcasts chat:message_deleted
+   * to connected clients per affected chat so live conversations update.
+   */
+  fastify.post(
+    '/users/:userId/delete-messages',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = DeleteMessagesSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        const updated = await pool.query<{ id: string; chat_id: string }>(
+          `UPDATE messages SET deleted_at = NOW()
+            WHERE sender_user_id = $1 AND deleted_at IS NULL
+          RETURNING id, chat_id`,
+          [userId]
+        );
+
+        const messageIds = updated.rows.map((r) => r.id);
+        const affectedChatIds = Array.from(new Set(updated.rows.map((r) => r.chat_id)));
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)
+           VALUES ($1, $2, 'delete_messages', $3, $4)`,
+          [
+            userId,
+            adminId,
+            reason,
+            JSON.stringify({ count: updated.rowCount, chat_ids: affectedChatIds }),
+          ]
+        );
+
+        if (updated.rowCount && updated.rowCount > 0) {
+          // Notify the affected user once with a summary, not per-message.
+          await insertChatModNotification(pool, userId, 'chat_messages_deleted', {
+            count: updated.rowCount,
+            reason,
+          });
+
+          // Fan out per-message deletion events so connected clients update live.
+          // Group rows by chat to fetch participant lists once per chat.
+          const byChat = new Map<string, string[]>();
+          for (const row of updated.rows) {
+            if (!byChat.has(row.chat_id)) byChat.set(row.chat_id, []);
+            byChat.get(row.chat_id)!.push(row.id);
+          }
+          for (const [chatId, ids] of byChat.entries()) {
+            const partRes = await pool.query(
+              `SELECT user_id FROM chat_participants WHERE chat_id = $1 AND left_at IS NULL`,
+              [chatId]
+            );
+            const participantUserIds = partRes.rows.map((r: any) => r.user_id);
+            for (const messageId of ids) {
+              broadcastChatDeletedEvent({
+                chatId,
+                messageId,
+                participantUserIds,
+              });
+            }
+          }
+        }
+
+        return reply.send(
+          ok({
+            userId,
+            deletedCount: updated.rowCount ?? 0,
+            affectedChatIds,
+            messageIds,
+          })
+        );
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error deleting user chat messages');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete messages');
+      }
+    }
+  );
+}
