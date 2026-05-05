@@ -115,6 +115,17 @@ function dmKeyForUserPair(a: number, b: number): string {
   return `${lo}:${hi}`;
 }
 
+async function callerIsBannedFromChat(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number
+): Promise<boolean> {
+  const r = await pool.query(
+    `SELECT 1 FROM chat_user_status WHERE user_id = $1 AND status = 'banned' LIMIT 1`,
+    [userId]
+  );
+  return r.rows.length > 0;
+}
+
 async function userIsParticipant(
   pool: ReturnType<typeof getPostgresPool>,
   chatId: string,
@@ -176,6 +187,10 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       if (callerCheck.rows.length === 0) {
         fastify.log.error({ callerId }, 'POST /chats: caller user row missing');
         return sendError(reply, 401, 'USER_NOT_FOUND', 'Your user record was not found — please sign in again');
+      }
+
+      if (await callerIsBannedFromChat(pool, callerId)) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
       }
 
       const resolved = await resolveRecipientToUserId(pool, recipients[0]);
@@ -512,6 +527,10 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const { id } = ChatIdParamsSchema.parse(request.params);
       const { body } = SendMessageSchema.parse(request.body);
       const callerId = parseInt(request.user!.sub, 10);
+
+      if (await callerIsBannedFromChat(pool, callerId)) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+      }
 
       const others = await pool.query(
         `SELECT cp.user_id, u.accept_messages

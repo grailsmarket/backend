@@ -36,6 +36,7 @@ import { personasRoutes } from './personas';
 import { adminRoutes } from './admin';
 import { broadcastImagesRoutes } from './broadcast-images';
 import { chatsRoutes } from './chats';
+import { chatsAdminRoutes } from './chats-admin';
 import { blocksRoutes } from './blocks';
 import { commentsRoutes } from './comments';
 
@@ -76,6 +77,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(personasRoutes, { prefix: '/api/v1/personas' });
   fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
   fastify.register(broadcastImagesRoutes, { prefix: '/api/v1/broadcasts/images' });
+  fastify.register(chatsAdminRoutes, { prefix: '/api/v1/chats/admin' });
   fastify.register(chatsRoutes, { prefix: '/api/v1/chats' });
   fastify.register(blocksRoutes, { prefix: '/api/v1/me/blocks' });
   fastify.register(commentsRoutes, { prefix: '/api/v1/comments' });
