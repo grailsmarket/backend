@@ -13,6 +13,7 @@ const MAX_WIDGETS_PER_DASHBOARD = 20;
 
 const WidgetType = z.enum([
   'domains',
+  'ai-search',
   'top-sales',
   'top-offers',
   'top-registrations',
@@ -22,6 +23,17 @@ const WidgetType = z.enum([
   'holders',
   'leaderboard',
   'activity',
+  'name-view',
+  'profile-view',
+  'watchlist',
+  'category-holders',
+  'category-stats',
+  'portfolio-summary',
+  'expiring-domains',
+  'recent-sales',
+  'recent-premium',
+  'recent-registrations',
+  'twitter-feed',
 ]);
 
 // --- Per-type config schemas (matches frontend instance configs) ---
@@ -29,8 +41,10 @@ const WidgetType = z.enum([
 const AnalyticsPeriod = z.enum(['24h', '7d', '30d', '1y', 'all']);
 const AnalyticsSource = z.enum(['all', 'grails', 'opensea']);
 
+// `domains` and `ai-search` share this shape; only their default filters differ.
 const DomainsConfig = z.object({
-  type: z.literal('domains'),
+  type: z.enum(['domains', 'ai-search']),
+  name: z.string().default(''),
   viewType: z.enum(['grid', 'list']),
   filters: z.record(z.unknown()), // MarketplaceFiltersState is complex; store as-is
   filtersOpen: z.boolean(),
@@ -38,6 +52,7 @@ const DomainsConfig = z.object({
 
 const AnalyticsListConfig = z.object({
   type: z.enum(['top-sales', 'top-offers', 'top-registrations']),
+  name: z.string().default(''),
   period: AnalyticsPeriod,
   source: AnalyticsSource,
   category: z.string().nullable(),
@@ -45,17 +60,20 @@ const AnalyticsListConfig = z.object({
 
 const AnalyticsChartConfig = z.object({
   type: z.enum(['sales-chart', 'offers-chart', 'registrations-chart']),
+  name: z.string().default(''),
   period: AnalyticsPeriod,
   category: z.string().nullable(),
 });
 
 const HoldersConfig = z.object({
   type: z.literal('holders'),
+  name: z.string().default(''),
   categories: z.array(z.string()),
 });
 
 const LeaderboardConfig = z.object({
   type: z.literal('leaderboard'),
+  name: z.string().default(''),
   sortBy: z.enum(['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold', 'sales_volume']),
   sortOrder: z.enum(['asc', 'desc']),
   clubs: z.array(z.string()),
@@ -63,8 +81,62 @@ const LeaderboardConfig = z.object({
 
 const ActivityConfig = z.object({
   type: z.literal('activity'),
+  name: z.string().default(''),
   eventTypes: z.array(z.string()),
   category: z.string().nullable(),
+});
+
+const NameViewConfig = z.object({
+  type: z.literal('name-view'),
+  name: z.string().default(''),
+  query: z.string(),
+  submittedName: z.string().nullable(),
+});
+
+const ProfileViewConfig = z.object({
+  type: z.literal('profile-view'),
+  name: z.string().default(''),
+  query: z.string(),
+  submittedUser: z.string().nullable(),
+});
+
+const WatchlistWidgetConfig = z.object({
+  type: z.literal('watchlist'),
+  name: z.string().default(''),
+  viewType: z.enum(['grid', 'list']),
+});
+
+const CategoryHoldersConfig = z.object({
+  type: z.literal('category-holders'),
+  name: z.string().default(''),
+  category: z.string().nullable(),
+});
+
+const CategoryStatsConfig = z.object({
+  type: z.literal('category-stats'),
+  name: z.string().default(''),
+  category: z.string().nullable(),
+});
+
+const PortfolioSummaryConfig = z.object({
+  type: z.literal('portfolio-summary'),
+  name: z.string().default(''),
+});
+
+const ExpiringDomainsConfig = z.object({
+  type: z.literal('expiring-domains'),
+  name: z.string().default(''),
+});
+
+const RecentConfig = z.object({
+  type: z.enum(['recent-sales', 'recent-premium', 'recent-registrations']),
+  name: z.string().default(''),
+});
+
+const TwitterFeedConfig = z.object({
+  type: z.literal('twitter-feed'),
+  name: z.string().default(''),
+  handle: z.string(),
 });
 
 const ComponentConfig = z.discriminatedUnion('type', [
@@ -74,6 +146,15 @@ const ComponentConfig = z.discriminatedUnion('type', [
   HoldersConfig,
   LeaderboardConfig,
   ActivityConfig,
+  NameViewConfig,
+  ProfileViewConfig,
+  WatchlistWidgetConfig,
+  CategoryHoldersConfig,
+  CategoryStatsConfig,
+  PortfolioSummaryConfig,
+  ExpiringDomainsConfig,
+  RecentConfig,
+  TwitterFeedConfig,
 ]);
 
 // --- Layout item schema (matches react-grid-layout LayoutItem) ---
