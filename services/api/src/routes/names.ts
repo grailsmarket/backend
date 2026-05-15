@@ -8,6 +8,8 @@ import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
 import { fetchFreshMetadata } from '../services/ens-metadata';
 import { resolveNameDetails } from '../services/name-details';
+import { getNameRoles, type EnsRoles } from '../services/ens-roles';
+import type { SearchResult } from '../utils/response-builder';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -30,6 +32,31 @@ const ListNamesQuerySchema = z.object({
   sort: z.enum(['name', 'price', 'expiry', 'created']).default('created'),
   order: z.enum(['asc', 'desc']).default('desc'),
 });
+
+// FE-focused bundle endpoint: details + offers + roles in one response
+const NameBundleParamsSchema = z.object({
+  name: z.string().min(1).refine(
+    (val) => val.endsWith('.eth') || val.includes('.'),
+    { message: 'Must be a valid ENS name (e.g., name.eth)' }
+  ),
+});
+
+const NameBundleQuerySchema = z.object({
+  offersLimit: z.coerce.number().min(1).max(100).default(20),
+  offersStatus: z.enum(['pending', 'accepted', 'rejected', 'expired']).default('pending'),
+});
+
+/**
+ * Combined payload for the name page. Mirrors what the FE previously fetched via
+ * three separate calls (name details, name offers, name roles) so the client can
+ * seed the ['name','details'|'offers'|'roles', name] react-query caches from one
+ * request.
+ */
+export interface NameBundleData {
+  details: SearchResult;
+  offers: any[];
+  roles: EnsRoles | null;
+}
 
 export async function namesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -220,6 +247,113 @@ export async function namesRoutes(fastify: FastifyInstance) {
           'Failed to track name view asynchronously'
         );
       });
+    }
+  });
+
+  /**
+   * GET /api/v1/names/:name/bundle
+   * FE-focused aggregate: returns name details, offers, and roles in a single
+   * response so the name page can do one fetch instead of three. Behaves like
+   * calling GET /names/:name, GET /offers/name/:name, and
+   * GET /ens-roles/names/:name/roles individually.
+   *
+   * Not cached (mirrors GET /:name): optionalAuth produces per-user detail
+   * fields, the handler tracks views, and metadata freshness must run per
+   * request. Downstream load is absorbed by getNameRoles' in-memory cache and
+   * the metadata DB TTL.
+   */
+  fastify.get('/:name/bundle', { preHandler: optionalAuth }, async (request, reply) => {
+    try {
+      const { name } = NameBundleParamsSchema.parse(request.params);
+      const query = NameBundleQuerySchema.parse(request.query);
+
+      // Get user ID if authenticated
+      const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+      // details is authoritative: a 404 here matches the contract of all 3
+      // source endpoints. Unexpected errors propagate to the global handler
+      // (500), exactly like GET /:name.
+      const details = await resolveNameDetails(name, userId);
+
+      if (!details) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'NAME_NOT_FOUND',
+            message: `ENS name "${name}" not found`,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      // roles + offers are fault-isolated: a degraded dependency still returns
+      // 200 with details (the FE already tolerates roles=null / offers=[]).
+      // offers are keyed on the resolved ens_names.id (no second name lookup;
+      // works for Graph cold-imported names; id===0 placeholder => []).
+      const [roles, offers] = await Promise.all([
+        getNameRoles(name).catch((error) => {
+          fastify.log.error({ error, name }, 'Failed to fetch ENS roles for bundle');
+          return null;
+        }),
+        details.id
+          ? pool
+              .query(
+                `SELECT o.*, e.name, e.token_id
+                   FROM offers o
+                   JOIN ens_names e ON o.ens_name_id = e.id
+                  WHERE o.ens_name_id = $1 AND o.status = $2
+                  ORDER BY o.offer_amount_wei DESC, o.created_at DESC
+                  LIMIT $3`,
+                [details.id, query.offersStatus, query.offersLimit]
+              )
+              .then((result) => result.rows)
+              .catch((error) => {
+                fastify.log.error({ error, name }, 'Failed to fetch offers for bundle');
+                return [] as any[];
+              })
+          : Promise.resolve([] as any[]),
+      ]);
+
+      const response: APIResponse<NameBundleData> = {
+        success: true,
+        data: { details, offers, roles },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      // Send response immediately
+      reply.send(response);
+
+      // Track view asynchronously (fire-and-forget) - same as GET /:name
+      if (details.id) {
+        const viewer = getViewerIdentifier(request);
+        trackNameView(details.id, viewer.identifier, viewer.type).catch((error) => {
+          fastify.log.error(
+            { error, ensNameId: details.id, name, viewerType: viewer.type },
+            'Failed to track name view asynchronously'
+          );
+        });
+      }
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request parameters',
+            details: error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      throw error;
     }
   });
 
