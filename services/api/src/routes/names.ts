@@ -270,6 +270,17 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // Get user ID if authenticated
       const userId = request.user ? parseInt(request.user.sub) : undefined;
 
+      // Kick off roles immediately: getNameRoles only needs `name` (a
+      // cache-backed Graph call) and is independent of details, so overlap it
+      // with the details resolution (a DB query + possible Graph fallback)
+      // instead of starting it afterwards. The pre-attached .catch guarantees
+      // this promise always settles, so the early 404 return below can leave
+      // it running in the background without orphaning a rejection.
+      const rolesPromise: Promise<EnsRoles | null> = getNameRoles(name).catch((error) => {
+        fastify.log.error({ error, name }, 'Failed to fetch ENS roles for bundle');
+        return null;
+      });
+
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
@@ -293,10 +304,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // offers are keyed on the resolved ens_names.id (no second name lookup;
       // works for Graph cold-imported names; id===0 placeholder => []).
       const [roles, offers] = await Promise.all([
-        getNameRoles(name).catch((error) => {
-          fastify.log.error({ error, name }, 'Failed to fetch ENS roles for bundle');
-          return null;
-        }),
+        rolesPromise,
         details.id
           ? pool
               .query(
