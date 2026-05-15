@@ -195,8 +195,10 @@ export async function resolveNameDetails(
   );
 
   if (refreshed) {
-    // Merge fresh metadata into result
-    nameResult.metadata = { ...nameResult.metadata, ...freshMetadata };
+    // Merge fresh metadata into result. metadata can be null (e.g. the
+    // unregistered placeholder); object spread of null is a no-op, but the
+    // explicit ?? {} makes the intent clear.
+    nameResult.metadata = { ...(nameResult.metadata ?? {}), ...freshMetadata };
     nameResult.metadata_updated_at = new Date();
   }
 
