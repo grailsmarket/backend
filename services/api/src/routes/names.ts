@@ -43,7 +43,9 @@ const NameBundleParamsSchema = z.object({
 
 const NameBundleQuerySchema = z.object({
   offersLimit: z.coerce.number().min(1).max(100).default(20),
-  offersStatus: z.enum(['pending', 'accepted', 'rejected', 'expired']).default('pending'),
+  // Mirrors the SDK OfferStatus contract; the standalone offers endpoint does
+  // not restrict status, so the bundle must accept the same set (incl. unfunded).
+  offersStatus: z.enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded']).default('pending'),
 });
 
 /**
@@ -308,11 +310,13 @@ export async function namesRoutes(fastify: FastifyInstance) {
         details.id
           ? pool
               .query(
+                // offer_amount_wei is VARCHAR(78); cast to numeric so the
+                // top-N sort is by value, not lexicographic ("9..." vs "10...").
                 `SELECT o.*, e.name, e.token_id
                    FROM offers o
                    JOIN ens_names e ON o.ens_name_id = e.id
                   WHERE o.ens_name_id = $1 AND o.status = $2
-                  ORDER BY o.offer_amount_wei DESC, o.created_at DESC
+                  ORDER BY o.offer_amount_wei::numeric DESC, o.created_at DESC
                   LIMIT $3`,
                 [details.id, query.offersStatus, query.offersLimit]
               )

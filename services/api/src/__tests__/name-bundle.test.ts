@@ -122,10 +122,25 @@ describe('GET /names/:name/bundle', () => {
     }
   });
 
-  it('offers matches the standalone GET /offers/name/:name (top 20 pending)', async () => {
+  it('returns offers sorted by amount numerically descending', async () => {
+    const { status, data } = await getJSON<NameBundleData>(`/names/${TEST_NAME}/bundle`);
+
+    expect(status).toBe(200);
+    const offers = data.data!.offers;
+    for (let i = 1; i < offers.length; i++) {
+      // BigInt compare: amounts are wei strings in a VARCHAR column, so the
+      // ordering must be numeric, not lexicographic.
+      expect(
+        BigInt(offers[i - 1].offer_amount_wei) >= BigInt(offers[i].offer_amount_wei)
+      ).toBe(true);
+    }
+  });
+
+  it('returns the same set of offers as the standalone endpoint when not limit-truncated', async () => {
+    const LIMIT = 20;
     const [bundle, standalone] = await Promise.all([
-      getJSON<NameBundleData>(`/names/${TEST_NAME}/bundle`),
-      getJSON<{ offers: any[] }>(`/offers/name/${TEST_NAME}?status=pending&limit=20`),
+      getJSON<NameBundleData>(`/names/${TEST_NAME}/bundle?offersLimit=${LIMIT}`),
+      getJSON<{ offers: any[] }>(`/offers/name/${TEST_NAME}?status=pending&limit=${LIMIT}`),
     ]);
 
     expect(bundle.status).toBe(200);
@@ -133,9 +148,25 @@ describe('GET /names/:name/bundle', () => {
     const bundleOffers = bundle.data.data!.offers;
     if (standalone.status === 200 && standalone.data.data) {
       const standaloneOffers = standalone.data.data.offers;
-      expect(bundleOffers.length).toBe(standaloneOffers.length);
-      expect(bundleOffers.map((o) => o.id)).toEqual(standaloneOffers.map((o) => o.id));
+      // The standalone endpoint still sorts lexicographically (a pre-existing
+      // bug out of scope here), so order can differ. Only compare content when
+      // neither side hit the limit; then both return the same set regardless
+      // of sort. Order-independent comparison via sorted id lists.
+      if (bundleOffers.length < LIMIT && standaloneOffers.length < LIMIT) {
+        const ids = (arr: any[]) => arr.map((o) => o.id).sort((a, b) => a - b);
+        expect(ids(bundleOffers)).toEqual(ids(standaloneOffers));
+      }
     }
+  });
+
+  it('accepts offersStatus=unfunded (matches SDK OfferStatus contract)', async () => {
+    const { status, data } = await getJSON<NameBundleData>(
+      `/names/${TEST_NAME}/bundle?offersStatus=unfunded`
+    );
+
+    expect(status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(Array.isArray(data.data!.offers)).toBe(true);
   });
 
   it('honors offersLimit and offersStatus query params', async () => {
