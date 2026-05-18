@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type ENSName, config, processAddressRecords } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type ENSName, config } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
-import { buildNameResult } from '../utils/response-builder';
 import { optionalAuth } from '../middleware/auth';
 import { trackNameView, getViewerIdentifier } from '../services/name-views';
 import { cacheHandler } from '../middleware/cache';
-import { ensureMetadataFresh, fetchFreshMetadata, type EnsMetadata } from '../services/ens-metadata';
+import { fetchFreshMetadata } from '../services/ens-metadata';
+import { resolveNameDetails } from '../services/name-details';
+import { getNameRoles, type EnsRoles } from '../services/ens-roles';
+import type { SearchResult } from '../utils/response-builder';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -30,6 +32,33 @@ const ListNamesQuerySchema = z.object({
   sort: z.enum(['name', 'price', 'expiry', 'created']).default('created'),
   order: z.enum(['asc', 'desc']).default('desc'),
 });
+
+// FE-focused bundle endpoint: details + offers + roles in one response
+const NameBundleParamsSchema = z.object({
+  name: z.string().min(1).refine(
+    (val) => val.endsWith('.eth') || val.includes('.'),
+    { message: 'Must be a valid ENS name (e.g., name.eth)' }
+  ),
+});
+
+const NameBundleQuerySchema = z.object({
+  offersLimit: z.coerce.number().min(1).max(100).default(20),
+  // Mirrors the SDK OfferStatus contract; the standalone offers endpoint does
+  // not restrict status, so the bundle must accept the same set (incl. unfunded).
+  offersStatus: z.enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded']).default('pending'),
+});
+
+/**
+ * Combined payload for the name page. Mirrors what the FE previously fetched via
+ * three separate calls (name details, name offers, name roles) so the client can
+ * seed the ['name','details'|'offers'|'roles', name] react-query caches from one
+ * request.
+ */
+export interface NameBundleData {
+  details: SearchResult;
+  offers: any[];
+  roles: EnsRoles | null;
+}
 
 export async function namesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -182,162 +211,9 @@ export async function namesRoutes(fastify: FastifyInstance) {
     // Get user ID if authenticated
     const userId = request.user ? parseInt(request.user.sub) : undefined;
 
-    // Use buildNameResult helper to get name with vote data
-    let nameResult = await buildNameResult(name, userId);
-
-    // If name doesn't exist in database, try to fetch from The Graph
-    if (!nameResult) {
-      try {
-        fastify.log.info({ name }, 'Name not found in database, querying The Graph');
-
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-
-        if (config.theGraph?.apiKey) {
-          headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
-        }
-
-        const graphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            query: `
-              query GetDomain($name: String!) {
-                domains(where: { name: $name }) {
-                  id
-                  name
-                  labelhash
-                  registrant {
-                    id
-                  }
-                  wrappedOwner {
-                    id
-                  }
-                  resolver {
-                    textChangeds {
-                      key
-                      value
-                    }
-                    addr {
-                      id
-                    }
-                    coinTypes
-                    multicoinAddrChangeds {
-                      coinType
-                      addr
-                    }
-                  }
-                  registration {
-                    expiryDate
-                    registrationDate
-                  }
-                }
-              }
-            `,
-            variables: {
-              name: name.toLowerCase(),
-            },
-          }),
-        });
-
-        const graphData: any = await graphResponse.json();
-        const domain = graphData?.data?.domains?.[0];
-
-        if (domain) {
-          // Convert labelhash to token ID
-          const tokenId = domain.labelhash ? BigInt(domain.labelhash).toString() : null;
-
-          if (tokenId) {
-            // Process text records - keep the last value for each key
-            // If a record's most recent value is null/empty, it means the user unset it
-            const metadata: EnsMetadata = {};
-            if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
-              for (const record of domain.resolver.textChangeds) {
-                if (record.key) {
-                  if (record.value) {
-                    metadata[record.key] = record.value;
-                  } else {
-                    // Value is null/empty - record was unset, remove it
-                    delete metadata[record.key];
-                  }
-                }
-              }
-            }
-
-            // Process address records (multicoinAddrChangeds)
-            if (domain.resolver?.multicoinAddrChangeds) {
-              const chains = processAddressRecords(domain.resolver.multicoinAddrChangeds);
-              if (chains.length > 0) {
-                metadata.chains = chains;
-              }
-            }
-
-            // Get owner address based on registrant
-            // If registrant is NameWrapper, use wrappedOwner; otherwise use registrant
-            let ownerAddress: string | null = null;
-            if (domain.registrant?.id) {
-              const registrant = domain.registrant.id.toLowerCase();
-              if (registrant === NAME_WRAPPER_ADDRESS) {
-                // Wrapped name: use wrappedOwner
-                ownerAddress = domain.wrappedOwner?.id?.toLowerCase() || null;
-              } else {
-                // Unwrapped name: use registrant
-                ownerAddress = registrant;
-              }
-            }
-
-            let expiryDate: Date | null = null;
-            if (domain.registration?.expiryDate) {
-              expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
-            }
-
-            const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : null;
-
-            // Insert name into database
-            const upsertQuery = `
-              INSERT INTO ens_names (
-                token_id,
-                name,
-                owner_address,
-                expiry_date,
-                registration_date,
-                metadata,
-                metadata_updated_at,
-                created_at,
-                updated_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
-              ON CONFLICT (token_id)
-              DO UPDATE SET
-                name = EXCLUDED.name,
-                owner_address = EXCLUDED.owner_address,
-                expiry_date = EXCLUDED.expiry_date,
-                registration_date = EXCLUDED.registration_date,
-                metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
-                metadata_updated_at = NOW(),
-                updated_at = NOW()
-              RETURNING id
-            `;
-
-            await pool.query(upsertQuery, [
-              tokenId,
-              domain.name,
-              ownerAddress,
-              expiryDate,
-              registrationDate,
-              JSON.stringify(metadata),
-            ]);
-
-            fastify.log.info({ name, tokenId }, 'Successfully imported name from The Graph');
-
-            // Query again to get full data with buildNameResult
-            nameResult = await buildNameResult(name, userId);
-          }
-        }
-      } catch (error: any) {
-        fastify.log.error({ error, name }, 'Error fetching from The Graph');
-      }
-    }
+    // Resolve full name details: DB lookup, The Graph cold-import fallback,
+    // and metadata-freshness refresh (shared with the /:name/bundle endpoint)
+    const nameResult = await resolveNameDetails(name, userId);
 
     if (!nameResult) {
       return reply.status(404).send({
@@ -350,19 +226,6 @@ export async function namesRoutes(fastify: FastifyInstance) {
           timestamp: new Date().toISOString(),
         },
       });
-    }
-
-    // Check if metadata needs refresh (synchronous - fetches from Graph if stale)
-    const { refreshed, metadata: freshMetadata } = await ensureMetadataFresh(
-      nameResult.id,
-      nameResult.name,
-      nameResult.metadata_updated_at
-    );
-
-    if (refreshed) {
-      // Merge fresh metadata into result
-      nameResult.metadata = { ...nameResult.metadata, ...freshMetadata };
-      nameResult.metadata_updated_at = new Date();
     }
 
     const response: APIResponse = {
@@ -386,6 +249,123 @@ export async function namesRoutes(fastify: FastifyInstance) {
           'Failed to track name view asynchronously'
         );
       });
+    }
+  });
+
+  /**
+   * GET /api/v1/names/:name/bundle
+   * FE-focused aggregate: returns name details, offers, and roles in a single
+   * response so the name page can do one fetch instead of three. Behaves like
+   * calling GET /names/:name, GET /offers/name/:name, and
+   * GET /ens-roles/names/:name/roles individually.
+   *
+   * Not cached (mirrors GET /:name): optionalAuth produces per-user detail
+   * fields, the handler tracks views, and metadata freshness must run per
+   * request. Downstream load is absorbed by getNameRoles' in-memory cache and
+   * the metadata DB TTL.
+   */
+  fastify.get('/:name/bundle', { preHandler: optionalAuth }, async (request, reply) => {
+    try {
+      const { name } = NameBundleParamsSchema.parse(request.params);
+      const query = NameBundleQuerySchema.parse(request.query);
+
+      // Get user ID if authenticated
+      const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+      // Kick off roles immediately: getNameRoles only needs `name` (a
+      // cache-backed Graph call) and is independent of details, so overlap it
+      // with the details resolution (a DB query + possible Graph fallback)
+      // instead of starting it afterwards. The pre-attached .catch guarantees
+      // this promise always settles, so the early 404 return below can leave
+      // it running in the background without orphaning a rejection.
+      const rolesPromise: Promise<EnsRoles | null> = getNameRoles(name).catch((error) => {
+        fastify.log.error({ error, name }, 'Failed to fetch ENS roles for bundle');
+        return null;
+      });
+
+      // details is authoritative: a 404 here matches the contract of all 3
+      // source endpoints. Unexpected errors propagate to the global handler
+      // (500), exactly like GET /:name.
+      const details = await resolveNameDetails(name, userId);
+
+      if (!details) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'NAME_NOT_FOUND',
+            message: `ENS name "${name}" not found`,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      // roles + offers are fault-isolated: a degraded dependency still returns
+      // 200 with details (the FE already tolerates roles=null / offers=[]).
+      // offers are keyed on the resolved ens_names.id (no second name lookup;
+      // works for Graph cold-imported names; id===0 placeholder => []).
+      const [roles, offers] = await Promise.all([
+        rolesPromise,
+        details.id
+          ? pool
+              .query(
+                // offer_amount_wei is VARCHAR(78); cast to numeric so the
+                // top-N sort is by value, not lexicographic ("9..." vs "10...").
+                `SELECT o.*, e.name, e.token_id
+                   FROM offers o
+                   JOIN ens_names e ON o.ens_name_id = e.id
+                  WHERE o.ens_name_id = $1 AND o.status = $2
+                  ORDER BY o.offer_amount_wei::numeric DESC, o.created_at DESC
+                  LIMIT $3`,
+                [details.id, query.offersStatus, query.offersLimit]
+              )
+              .then((result) => result.rows)
+              .catch((error) => {
+                fastify.log.error({ error, name }, 'Failed to fetch offers for bundle');
+                return [] as any[];
+              })
+          : Promise.resolve([] as any[]),
+      ]);
+
+      const response: APIResponse<NameBundleData> = {
+        success: true,
+        data: { details, offers, roles },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      // Send response immediately
+      reply.send(response);
+
+      // Track view asynchronously (fire-and-forget) - same as GET /:name
+      if (details.id) {
+        const viewer = getViewerIdentifier(request);
+        trackNameView(details.id, viewer.identifier, viewer.type).catch((error) => {
+          fastify.log.error(
+            { error, ensNameId: details.id, name, viewerType: viewer.type },
+            'Failed to track name view asynchronously'
+          );
+        });
+      }
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid request parameters',
+            details: error.errors,
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      throw error;
     }
   });
 
