@@ -23,6 +23,20 @@ export async function getAllBroadcastRecipients(): Promise<BroadcastRecipient[]>
   }));
 }
 
+export async function getUnverifiedEmailRecipients(): Promise<BroadcastRecipient[]> {
+  const pool = getPostgresPool();
+  const result = await pool.query(
+    `SELECT id AS user_id, email, email_verified
+     FROM users
+     WHERE email IS NOT NULL AND email_verified = FALSE`
+  );
+  return result.rows.map((r) => ({
+    userId: r.user_id,
+    email: r.email,
+    emailVerified: r.email_verified,
+  }));
+}
+
 export async function getRecipientsByAddresses(
   addresses: string[]
 ): Promise<BroadcastRecipient[]> {
