@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import {
   getAllBroadcastRecipients,
   getRecipientsByAddresses,
+  getUnverifiedEmailRecipients,
   type BroadcastRecipient,
 } from '../services/broadcast-recipients';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
@@ -30,6 +31,7 @@ const AudienceSchema = z
         .min(1)
         .max(500),
     }),
+    z.object({ type: z.literal('unverified_email') }),
   ])
   .default({ type: 'everyone' });
 
@@ -50,6 +52,8 @@ async function resolveAudience(audience: Audience): Promise<BroadcastRecipient[]
       return getAllBroadcastRecipients();
     case 'specific':
       return getRecipientsByAddresses(audience.addresses);
+    case 'unverified_email':
+      return getUnverifiedEmailRecipients();
   }
 }
 
