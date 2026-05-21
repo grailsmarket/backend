@@ -29,6 +29,10 @@ interface ActivityWSClient {
     include?: Set<string>;            // If set, only include these event types
     exclude?: Set<string>;            // If set, exclude these event types
   };
+  platformFilters: {
+    include?: Set<string>;            // If set, only include these platforms
+    exclude?: Set<string>;            // If set, exclude these platforms
+  };
 }
 
 const clients = new Map<string, WSClient>();
@@ -59,6 +63,10 @@ export function getWebSocketStats() {
       eventTypeFilters: {
         include: c.eventTypeFilters.include ? Array.from(c.eventTypeFilters.include) : null,
         exclude: c.eventTypeFilters.exclude ? Array.from(c.eventTypeFilters.exclude) : null,
+      },
+      platformFilters: {
+        include: c.platformFilters.include ? Array.from(c.platformFilters.include) : null,
+        exclude: c.platformFilters.exclude ? Array.from(c.platformFilters.exclude) : null,
       },
     })),
     chatClients: chatClients.size,
@@ -230,6 +238,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       subscribeAll: false,
       clubSubscription: null,
       eventTypeFilters: {},
+      platformFilters: {},
     };
 
     activityClients.set(clientId, client);
@@ -431,6 +440,7 @@ function handleActivityMessage(client: ActivityWSClient, data: any) {
         }
         client.ws.send(JSON.stringify({
           type: 'filter_set',
+          filter_kind: 'event_type',
           filter_type: data.filter_type,
           event_types: data.event_types,
           timestamp: new Date().toISOString(),
@@ -447,6 +457,41 @@ function handleActivityMessage(client: ActivityWSClient, data: any) {
       client.eventTypeFilters = {};
       client.ws.send(JSON.stringify({
         type: 'filter_cleared',
+        filter_kind: 'event_type',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
+    case 'set_platform_filter':
+      // Set platform filter - can be 'include' or 'exclude'
+      if (data.filter_type && data.platforms && Array.isArray(data.platforms)) {
+        if (data.filter_type === 'include') {
+          client.platformFilters.include = new Set(data.platforms);
+          client.platformFilters.exclude = undefined;
+        } else if (data.filter_type === 'exclude') {
+          client.platformFilters.exclude = new Set(data.platforms);
+          client.platformFilters.include = undefined;
+        }
+        client.ws.send(JSON.stringify({
+          type: 'filter_set',
+          filter_kind: 'platform',
+          filter_type: data.filter_type,
+          platforms: data.platforms,
+          timestamp: new Date().toISOString(),
+        }));
+      } else {
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid filter format. Expected: { type: "set_platform_filter", filter_type: "include"|"exclude", platforms: string[] }',
+        }));
+      }
+      break;
+
+    case 'clear_platform_filter':
+      client.platformFilters = {};
+      client.ws.send(JSON.stringify({
+        type: 'filter_cleared',
+        filter_kind: 'platform',
         timestamp: new Date().toISOString(),
       }));
       break;
@@ -522,6 +567,15 @@ export function broadcastActivityEvent(activityData: any) {
       // If exclude filter is set, don't send if event_type is in the exclude set
       else if (client.eventTypeFilters.exclude) {
         shouldSend = !client.eventTypeFilters.exclude.has(event_type);
+      }
+    }
+
+    // Apply platform filters
+    if (shouldSend) {
+      if (client.platformFilters.include) {
+        shouldSend = !!activityData.platform && client.platformFilters.include.has(activityData.platform);
+      } else if (client.platformFilters.exclude) {
+        shouldSend = !activityData.platform || !client.platformFilters.exclude.has(activityData.platform);
       }
     }
 
