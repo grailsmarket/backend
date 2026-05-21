@@ -10,7 +10,7 @@ interface ActivityQueryParams {
   page?: string;
   limit?: string;
   event_type?: string | string[];
-  platform?: string;
+  platform?: string | string[];
   actor_address?: string;
   club?: string;
 }
@@ -70,9 +70,16 @@ export async function activityRoutes(fastify: FastifyInstance) {
       }
 
       if (platform) {
-        paramCount++;
-        conditions.push(`platform = $${paramCount}`);
-        params.push(platform);
+        // Accept ?platform=opensea&platform=grails OR ?platform=opensea,grails
+        const platforms = (Array.isArray(platform) ? platform : platform.split(','))
+          .map(p => p.trim())
+          .filter(Boolean);
+        if (platforms.length > 0) {
+          const placeholders = platforms.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+          paramCount += platforms.length;
+          conditions.push(`platform IN (${placeholders})`);
+          params.push(...platforms);
+        }
       }
 
       const whereClause = conditions.join(' AND ');
@@ -191,9 +198,16 @@ export async function activityRoutes(fastify: FastifyInstance) {
       }
 
       if (platform) {
-        paramCount++;
-        conditions.push(`platform = $${paramCount}`);
-        params.push(platform);
+        // Accept ?platform=opensea&platform=grails OR ?platform=opensea,grails
+        const platforms = (Array.isArray(platform) ? platform : platform.split(','))
+          .map(p => p.trim())
+          .filter(Boolean);
+        if (platforms.length > 0) {
+          const placeholders = platforms.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+          paramCount += platforms.length;
+          conditions.push(`platform IN (${placeholders})`);
+          params.push(...platforms);
+        }
       }
 
       const whereClause = conditions.join(' AND ');
@@ -312,9 +326,16 @@ export async function activityRoutes(fastify: FastifyInstance) {
       }
 
       if (platform) {
-        paramCount++;
-        conditions.push(`platform = $${paramCount}`);
-        params.push(platform);
+        // Accept ?platform=opensea&platform=grails OR ?platform=opensea,grails
+        const platforms = (Array.isArray(platform) ? platform : platform.split(','))
+          .map(p => p.trim())
+          .filter(Boolean);
+        if (platforms.length > 0) {
+          const placeholders = platforms.map((_, i) => `$${paramCount + i + 1}`).join(', ');
+          paramCount += platforms.length;
+          conditions.push(`platform IN (${placeholders})`);
+          params.push(...platforms);
+        }
       }
 
       if (club) {

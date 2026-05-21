@@ -153,7 +153,13 @@ All endpoints are prefixed with `/api/v1/`
 ### Activity
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET | `/activity` | Optional | Global activity feed |
 | GET | `/activity/:name` | Optional | Get activity history for ENS name |
+| GET | `/activity/address/:address` | Optional | Get activity history for an address (actor or counterparty) |
+
+Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The global feed also accepts `club`.
+
+`event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `other`.
 
 ### Clubs
 | Method | Path | Auth | Description |
@@ -324,12 +330,20 @@ Real-time activity feed with filters:
 // Subscribe to specific ENS name
 { "type": "subscribe_name", "name": "vitalik.eth" }
 
+// Subscribe to a club (single subscription, replaces previous)
+{ "type": "subscribe_club", "club": "10k" }
+
 // Filter by event types
 { "type": "set_event_filter", "filter_type": "include", "event_types": ["sale", "listing"] }
-
-// Clear filters
 { "type": "clear_event_filter" }
+
+// Filter by platform/source (opensea, grails, blockchain, vision, blur, looksrare, x2y2, snipezone, enstools, rotki, other)
+{ "type": "set_platform_filter", "filter_type": "include", "platforms": ["opensea", "grails"] }
+{ "type": "set_platform_filter", "filter_type": "exclude", "platforms": ["blockchain"] }
+{ "type": "clear_platform_filter" }
 ```
+
+Event-type and platform filters are independent — both must pass for an event to be sent. Filter ACKs include a `filter_kind` of `event_type` or `platform` so clients can disambiguate.
 
 ## Search & Filtering
 
