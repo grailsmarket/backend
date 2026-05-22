@@ -17,18 +17,20 @@ export interface BlacklistTerm {
   action: 'censor' | 'block';
 }
 
-// Domains/protocols that look like links. Kept intentionally broad so we
-// don't have to keep adding TLDs — if a comment contains anything that
-// vaguely resembles a URL it is rejected.
+// Block anything that looks like an actual link — a protocol, a `www.`
+// prefix, or known shortlink hosts. We deliberately do NOT block bare
+// `word.tld` strings: users routinely reference ENS names (brantly.eth,
+// foo.box) in comments and the frontend renders comment bodies as plain
+// text, so a bare domain mention is just a string. Script-injection is
+// independently blocked by the HTML stripper + ALLOWED_CHARS_RE, which
+// rejects `/`, `=`, `<`, `>`, `&`, etc.
 const URL_PATTERNS: RegExp[] = [
   /https?:\/\//i,
   /\bwww\./i,
   /\bipfs:\/\//i,
   /\bens:\/\//i,
   /\bftp:\/\//i,
-  /\b[a-z0-9-]+\.(com|net|org|io|xyz|eth|app|co|me|gg|fi|art|finance|tech|dev|sh|cc|tv|so|to|club|info|biz)\b/i,
   /\bt\.me\b/i,
-  /@[a-z0-9._-]+\.(com|net|org|io|xyz|eth)/i,
 ];
 
 // Allowed characters: any Unicode letter (\p{L}), number (\p{N}), whitespace,
