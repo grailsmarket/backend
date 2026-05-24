@@ -48,4 +48,5 @@ export async function closeQueueClient(): Promise<void> {
 // Queue names (imported from worker service for consistency)
 export const QUEUE_NAMES = {
   SEND_NOTIFICATION: 'send-notification',
+  INVALIDATE_ENS_METADATA_CACHE: 'invalidate-ens-metadata-cache',
 } as const;

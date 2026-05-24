@@ -9,7 +9,16 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource } from '../../../shared/src';
+import {
+  config,
+  getMetadataInvalidationNetwork,
+  getPostgresPool,
+  isMetadataInvalidationConfigured,
+  type BlockchainEvent,
+  hasEmoji,
+  getRegistrationSource,
+} from '../../../shared/src';
+import { QUEUE_NAMES, safePublishJob } from '../queue';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -58,6 +67,14 @@ const NAME_WRAPPER_ABI = parseAbi([
   'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
 ]);
 
+const TEXT_RESOLVER_ABI = parseAbi([
+  'event TextChanged(bytes32 indexed node, string indexed indexedKey, string key, string value)',
+]);
+
+const LEGACY_TEXT_RESOLVER_ABI = parseAbi([
+  'event TextChanged(bytes32 indexed node, string indexed indexedKey, string key)',
+]);
+
 const ENS_EVENTS = {
   Transfer: ENS_ABI[0],
   NameRegistered: ENS_ABI[1],
@@ -80,6 +97,20 @@ const NAME_WRAPPER_EVENTS = {
   TransferBatch: NAME_WRAPPER_ABI[1],
 } as const;
 
+const TEXT_RESOLVER_EVENTS = {
+  TextChanged: TEXT_RESOLVER_ABI[0],
+  LegacyTextChanged: LEGACY_TEXT_RESOLVER_ABI[0],
+} as const;
+
+// ENS docs list the current, previous, and legacy public resolvers on mainnet.
+const CURRENT_PUBLIC_RESOLVER_ADDRESSES = [
+  '0xF29100983E058B709F3D539b0c765937B804AC15',
+  '0x231b0Ee14048e9dCcD1d247744d114a4EB5E8E63',
+] as const satisfies readonly `0x${string}`[];
+
+const LEGACY_PUBLIC_RESOLVER_ADDRESS =
+  '0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41' as const satisfies `0x${string}`;
+
 export class ENSIndexer {
   private client: PublicClient;
   private pool = getPostgresPool();
@@ -89,6 +120,11 @@ export class ENSIndexer {
   private currentBlock = 0n;
   private readonly batchSize = 100; // Reduced for better RPC compatibility
   private readonly confirmations = BigInt(config.blockchain.confirmations);
+  private readonly metadataInvalidationNetwork = getMetadataInvalidationNetwork(
+    config.blockchain.chainId,
+  );
+  private readonly metadataInvalidationEnabled =
+    isMetadataInvalidationConfigured() && this.metadataInvalidationNetwork !== null;
 
   constructor() {
     this.client = createPublicClient({
@@ -177,16 +213,47 @@ export class ENSIndexer {
       toBlock,
     });
 
+    const resolverLogs = this.metadataInvalidationEnabled
+      ? await this.client.getLogs({
+          address: [...CURRENT_PUBLIC_RESOLVER_ADDRESSES],
+          event: TEXT_RESOLVER_EVENTS.TextChanged,
+          fromBlock,
+          toBlock,
+          args: { indexedKey: 'avatar' },
+        })
+      : [];
+
+    const legacyResolverLogs = this.metadataInvalidationEnabled
+      ? await this.client.getLogs({
+          address: LEGACY_PUBLIC_RESOLVER_ADDRESS,
+          event: TEXT_RESOLVER_EVENTS.LegacyTextChanged,
+          fromBlock,
+          toBlock,
+          args: { indexedKey: 'avatar' },
+        })
+      : [];
+
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
     // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
     // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
     // The Controller handler guards against reading an already-updated expiry by decoding the
     // duration from transaction calldata, falling back to treating duration <= 0 as null.
-    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
+    const allLogs: {
+      log: Log;
+      source:
+        | 'registrar'
+        | 'nameWrapper'
+        | 'controller'
+        | 'eventEmitter'
+        | 'resolver'
+        | 'legacyResolver';
+    }[] = [
       ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
       ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
       ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
       ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
+      ...resolverLogs.map(log => ({ log: log as Log, source: 'resolver' as const })),
+      ...legacyResolverLogs.map(log => ({ log: log as Log, source: 'legacyResolver' as const })),
     ];
 
     allLogs.sort((a, b) => {
@@ -212,6 +279,12 @@ export class ENSIndexer {
             break;
           case 'eventEmitter':
             await this.processRenewalReferredLog(log);
+            break;
+          case 'resolver':
+            await this.processResolverLog(log);
+            break;
+          case 'legacyResolver':
+            await this.processResolverLog(log, true);
             break;
         }
       });
@@ -266,6 +339,77 @@ export class ENSIndexer {
         transactionHash: log.transactionHash,
         topics: log.topics?.slice(0, 2),
       }, `Error processing log at block ${log.blockNumber}`);
+    }
+  }
+
+  private async processResolverLog(log: Log, isLegacy: boolean = false) {
+    try {
+      const decodedLog = decodeEventLog({
+        abi: [isLegacy ? TEXT_RESOLVER_EVENTS.LegacyTextChanged : TEXT_RESOLVER_EVENTS.TextChanged],
+        data: log.data,
+        topics: log.topics as any,
+      });
+
+      const key = decodedLog.args.key;
+      if (typeof key !== 'string' || key.toLowerCase() !== 'avatar') {
+        return;
+      }
+
+      if (!this.metadataInvalidationEnabled || !this.metadataInvalidationNetwork) {
+        return;
+      }
+
+      const nodeTokenId = BigInt(decodedLog.args.node).toString();
+      const resolvedData = await this.resolver.resolveTokenIdToNameData(nodeTokenId);
+
+      if (!resolvedData?.name) {
+        logger.debug(
+          {
+            resolverAddress: log.address,
+            nodeTokenId,
+            transactionHash: log.transactionHash,
+          },
+          'Skipping avatar TextChanged invalidation for unresolved ENS node',
+        );
+        return;
+      }
+
+      const name = resolvedData.name.toLowerCase();
+      const tokenId = resolvedData.correctTokenId || nodeTokenId;
+
+      const published = await safePublishJob(
+        QUEUE_NAMES.INVALIDATE_ENS_METADATA_CACHE,
+        {
+          network: this.metadataInvalidationNetwork,
+          ...(name ? { name } : {}),
+          tokenId,
+        },
+        'resolver-avatar-text-changed',
+        {
+          singletonKey: `${this.metadataInvalidationNetwork}:${name}`,
+          singletonSeconds: 5,
+        },
+      );
+
+      if (published) {
+        logger.info(
+          {
+            key,
+            name,
+            tokenId,
+            transactionHash: log.transactionHash,
+          },
+          'Published ENS metadata invalidation for avatar TextChanged event',
+        );
+      }
+    } catch (error: any) {
+      logger.error(
+        {
+          err: error,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to process resolver TextChanged log',
+      );
     }
   }
 

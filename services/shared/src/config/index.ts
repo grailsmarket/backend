@@ -45,6 +45,10 @@ const ConfigSchema = z.object({
     apiKey: z.string().optional(),
     ensWorkerUrl: z.string().default('https://ens.ethfollow.xyz'),
   }),
+  metadataInvalidation: z.object({
+    baseUrl: z.string().optional(),
+    authToken: z.string().optional(),
+  }),
   api: z.object({
     port: z.number().default(3000),
     host: z.string().default('0.0.0.0'),
@@ -137,6 +141,10 @@ const rawConfig = {
     ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL,
     apiKey: process.env.THE_GRAPH_API_KEY,
     ensWorkerUrl: process.env.ENS_WORKER_URL,
+  },
+  metadataInvalidation: {
+    baseUrl: process.env.METADATA_INVALIDATION_BASE_URL,
+    authToken: process.env.METADATA_INVALIDATION_AUTH_TOKEN,
   },
   api: {
     port: parseInt(process.env.API_PORT || '3000'),
@@ -245,6 +253,25 @@ export const ENS_REFERRER_CODES: Record<string, string> = {
 // Look up a bytes32 referrer value and return the human-readable source name, or null
 export function getRegistrationSource(referrer: string): string | null {
   return ENS_REFERRER_CODES[referrer.toLowerCase()] ?? null;
+}
+
+export type MetadataInvalidationNetwork = 'mainnet' | 'sepolia' | 'holesky';
+
+export function getMetadataInvalidationNetwork(chainId: number): MetadataInvalidationNetwork | null {
+  switch (chainId) {
+    case 1:
+      return 'mainnet';
+    case 11155111:
+      return 'sepolia';
+    case 17000:
+      return 'holesky';
+    default:
+      return null;
+  }
+}
+
+export function isMetadataInvalidationConfigured(): boolean {
+  return Boolean(config.metadataInvalidation.baseUrl && config.metadataInvalidation.authToken);
 }
 
 export default config;

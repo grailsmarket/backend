@@ -81,7 +81,7 @@ async function syncMetadataToDatabase(
 
   await pool.query(
     `UPDATE ens_names
-     SET metadata = $1, metadata_updated_at = NOW()
+     SET metadata = $1, metadata_updated_at = NOW(), updated_at = NOW()
      WHERE id = $2`,
     [JSON.stringify(metadata), ensNameId]
   );
@@ -126,7 +126,7 @@ export async function ensureMetadataFresh(
     const pool = getPostgresPool();
     await pool.query(
       `UPDATE ens_names
-       SET metadata = $1, metadata_updated_at = NOW()
+       SET metadata = $1, metadata_updated_at = NOW(), updated_at = NOW()
        WHERE id = $2`,
       [JSON.stringify(metadata), ensNameId]
     );
