@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
+import { optionalAuth } from '../middleware/auth';
 import { mutelistService } from '../services/mutelist';
 
 const pool = getPostgresPool();
@@ -13,6 +14,10 @@ interface ActivityQueryParams {
   platform?: string | string[];
   actor_address?: string;
   club?: string;
+  watchlist?: string;
+  list_id?: string;
+  min_price_wei?: string;
+  max_price_wei?: string;
 }
 
 export async function activityRoutes(fastify: FastifyInstance) {
@@ -297,16 +302,49 @@ export async function activityRoutes(fastify: FastifyInstance) {
    * GET /api/v1/activity
    * Get recent activity across all ENS names (global feed)
    */
-  fastify.get('/', { preHandler: cacheHandler }, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/', { preHandler: [optionalAuth, cacheHandler] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const {
       page = '1',
       limit = '50',
       event_type,
       platform,
       club,
+      watchlist,
+      list_id,
+      min_price_wei,
+      max_price_wei,
     } = request.query as ActivityQueryParams;
 
     try {
+      // The watchlist filter needs an authenticated user to resolve their list.
+      const userId = request.user ? parseInt(request.user.sub, 10) : null;
+      if (watchlist === 'true' && userId == null) {
+        return reply.status(401).send({
+          success: false,
+          error: {
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required to filter activity by watchlist',
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
+      // Validate price thresholds up front (decimal wei strings only)
+      if (min_price_wei !== undefined && !/^\d+$/.test(min_price_wei)) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'min_price_wei must be a decimal wei string' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+      if (max_price_wei !== undefined && !/^\d+$/.test(max_price_wei)) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'max_price_wei must be a decimal wei string' },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+
       // Parse pagination params
       const currentPage = parseInt(page);
       const pageLimit = parseInt(limit);
@@ -360,6 +398,52 @@ export async function activityRoutes(fastify: FastifyInstance) {
         paramCount++;
         conditions.push(`(ah.counterparty_address IS NULL OR ah.counterparty_address != ALL($${paramCount}))`);
         params.push(mutedAddresses);
+      }
+
+      // Watchlist filter - restrict to names on the authenticated user's watchlist.
+      // Optional list_id scopes to a single list; omitted = union of all the user's lists.
+      if (watchlist === 'true' && userId != null) {
+        paramCount++;
+        const userParam = `$${paramCount}`;
+        params.push(userId);
+        const listId = list_id ? parseInt(list_id, 10) : null;
+        if (listId != null && !Number.isNaN(listId)) {
+          paramCount++;
+          conditions.push(
+            `ah.ens_name_id IN (SELECT ens_name_id FROM watchlist WHERE user_id = ${userParam} AND list_id = $${paramCount})`
+          );
+          params.push(listId);
+        } else {
+          conditions.push(
+            `ah.ens_name_id IN (SELECT ens_name_id FROM watchlist WHERE user_id = ${userParam})`
+          );
+        }
+      }
+
+      // Price threshold filter - applies only to ETH/WETH-denominated priced events.
+      // Events with no price (price_wei IS NULL: pure transfers, etc.) always pass through.
+      // currency_address IS NULL means a blockchain mint/renewal cost, which is ETH-denominated.
+      const priceConds: string[] = [];
+      if (min_price_wei !== undefined) {
+        paramCount++;
+        priceConds.push(`CAST(ah.price_wei AS NUMERIC) >= $${paramCount}`);
+        params.push(min_price_wei);
+      }
+      if (max_price_wei !== undefined) {
+        paramCount++;
+        priceConds.push(`CAST(ah.price_wei AS NUMERIC) <= $${paramCount}`);
+        params.push(max_price_wei);
+      }
+      if (priceConds.length > 0) {
+        paramCount++;
+        const ethParam = `$${paramCount}`;
+        params.push(CURRENCY_ADDRESSES.ETH.toLowerCase());
+        paramCount++;
+        const wethParam = `$${paramCount}`;
+        params.push(CURRENCY_ADDRESSES.WETH.toLowerCase());
+        conditions.push(
+          `(ah.price_wei IS NULL OR ((ah.currency_address IS NULL OR LOWER(ah.currency_address) IN (${ethParam}, ${wethParam})) AND ${priceConds.join(' AND ')}))`
+        );
       }
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
 import { verifyToken } from '../middleware/auth';
 
 interface WSClient {
@@ -33,6 +33,9 @@ interface ActivityWSClient {
     include?: Set<string>;            // If set, only include these platforms
     exclude?: Set<string>;            // If set, exclude these platforms
   };
+  userId: number | null;             // Authenticated user id (from ?token=), required for watchlist filter
+  priceFilter: { minWei?: bigint; maxWei?: bigint }; // ETH/WETH price threshold (wei)
+  watchlistFilter: { active: boolean; ensNameIds: Set<number> }; // Restrict to watchlisted names
 }
 
 const clients = new Map<string, WSClient>();
@@ -230,6 +233,19 @@ export async function websocketRoutes(fastify: FastifyInstance) {
 
   fastify.get('/activity', { websocket: true }, (connection, req) => {
     const clientId = req.id;
+
+    // Optional auth: a ?token=<jwt> lets the client use the watchlist filter.
+    // Connections without a token are still allowed (the watchlist filter just won't be available).
+    let userId: number | null = null;
+    const token = (req.query as { token?: string })?.token;
+    if (token) {
+      try {
+        userId = parseInt(verifyToken(token).sub, 10);
+      } catch {
+        userId = null;
+      }
+    }
+
     const client: ActivityWSClient = {
       id: clientId,
       ws: connection.socket as WebSocket,
@@ -239,6 +255,9 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       clubSubscription: null,
       eventTypeFilters: {},
       platformFilters: {},
+      userId,
+      priceFilter: {},
+      watchlistFilter: { active: false, ensNameIds: new Set() },
     };
 
     activityClients.set(clientId, client);
@@ -254,7 +273,9 @@ export async function websocketRoutes(fastify: FastifyInstance) {
     connection.socket.on('message', (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString());
-        handleActivityMessage(client, data);
+        void handleActivityMessage(client, data).catch((error) => {
+          req.log.error({ error }, 'Error handling activity WS message');
+        });
       } catch (error) {
         connection.socket.send(JSON.stringify({
           type: 'error',
@@ -337,7 +358,7 @@ export function broadcastToAll(data: any) {
   });
 }
 
-function handleActivityMessage(client: ActivityWSClient, data: any) {
+async function handleActivityMessage(client: ActivityWSClient, data: any) {
   switch (data.type) {
     case 'subscribe_all':
       client.subscribeAll = true;
@@ -496,6 +517,94 @@ function handleActivityMessage(client: ActivityWSClient, data: any) {
       }));
       break;
 
+    case 'set_price_filter': {
+      // { type:'set_price_filter', min_price_wei?: string, max_price_wei?: string } (decimal wei strings)
+      const parseWei = (v: any): bigint | undefined => {
+        if (typeof v !== 'string' || !/^\d+$/.test(v)) return undefined;
+        return BigInt(v);
+      };
+      const minWei = parseWei(data.min_price_wei);
+      const maxWei = parseWei(data.max_price_wei);
+      if (minWei === undefined && maxWei === undefined) {
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid price filter. Expected min_price_wei and/or max_price_wei as decimal wei strings',
+        }));
+        break;
+      }
+      client.priceFilter = { minWei, maxWei };
+      client.ws.send(JSON.stringify({
+        type: 'filter_set',
+        filter_kind: 'price',
+        min_price_wei: minWei?.toString() ?? null,
+        max_price_wei: maxWei?.toString() ?? null,
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+    }
+
+    case 'clear_price_filter':
+      client.priceFilter = {};
+      client.ws.send(JSON.stringify({
+        type: 'filter_cleared',
+        filter_kind: 'price',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
+    case 'set_watchlist_filter': {
+      // { type:'set_watchlist_filter', list_id?: number } - requires an authenticated connection (?token=)
+      // Snapshots the user's watchlisted name ids; the client re-sends this to refresh.
+      if (client.userId == null) {
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Authentication required for watchlist filter. Connect with ?token=<jwt>',
+        }));
+        break;
+      }
+      try {
+        const pool = getPostgresPool();
+        const listId =
+          typeof data.list_id === 'number' && Number.isInteger(data.list_id) ? data.list_id : null;
+        const result = listId != null
+          ? await pool.query(
+              'SELECT ens_name_id FROM watchlist WHERE user_id = $1 AND list_id = $2',
+              [client.userId, listId]
+            )
+          : await pool.query(
+              'SELECT ens_name_id FROM watchlist WHERE user_id = $1',
+              [client.userId]
+            );
+        client.watchlistFilter = {
+          active: true,
+          ensNameIds: new Set(result.rows.map((r) => Number(r.ens_name_id))),
+        };
+        client.ws.send(JSON.stringify({
+          type: 'filter_set',
+          filter_kind: 'watchlist',
+          list_id: listId,
+          count: client.watchlistFilter.ensNameIds.size,
+          timestamp: new Date().toISOString(),
+        }));
+      } catch (error) {
+        console.error('Error loading watchlist for activity WS filter:', error);
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Failed to load watchlist filter',
+        }));
+      }
+      break;
+    }
+
+    case 'clear_watchlist_filter':
+      client.watchlistFilter = { active: false, ensNameIds: new Set() };
+      client.ws.send(JSON.stringify({
+        type: 'filter_cleared',
+        filter_kind: 'watchlist',
+        timestamp: new Date().toISOString(),
+      }));
+      break;
+
     case 'ping':
       client.ws.send(JSON.stringify({
         type: 'pong',
@@ -521,6 +630,9 @@ export function broadcastActivityEvent(activityData: any) {
     counterparty_address,
     name,
     event_type,
+    ens_name_id,
+    price_wei,
+    currency_address,
   } = activityData;
 
   // Update broadcast stats
@@ -576,6 +688,34 @@ export function broadcastActivityEvent(activityData: any) {
         shouldSend = !!activityData.platform && client.platformFilters.include.has(activityData.platform);
       } else if (client.platformFilters.exclude) {
         shouldSend = !activityData.platform || !client.platformFilters.exclude.has(activityData.platform);
+      }
+    }
+
+    // Apply watchlist filter (AND): keep only events for the user's watchlisted names.
+    if (shouldSend && client.watchlistFilter.active) {
+      shouldSend = ens_name_id != null && client.watchlistFilter.ensNameIds.has(Number(ens_name_id));
+    }
+
+    // Apply price threshold filter (AND). No-price events always pass; priced events must be
+    // ETH/WETH-denominated (null currency = ETH-denominated mint/renewal) and within range.
+    if (shouldSend && (client.priceFilter.minWei !== undefined || client.priceFilter.maxWei !== undefined)) {
+      if (price_wei == null || price_wei === '') {
+        // always include no-price events
+      } else if (!(currency_address == null || isEthOrWeth(currency_address))) {
+        shouldSend = false;
+      } else {
+        let priceWei: bigint | null = null;
+        try {
+          priceWei = BigInt(price_wei);
+        } catch {
+          priceWei = null;
+        }
+        if (priceWei == null) {
+          shouldSend = false;
+        } else {
+          if (client.priceFilter.minWei !== undefined && priceWei < client.priceFilter.minWei) shouldSend = false;
+          if (client.priceFilter.maxWei !== undefined && priceWei > client.priceFilter.maxWei) shouldSend = false;
+        }
       }
     }
 

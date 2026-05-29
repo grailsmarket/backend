@@ -157,7 +157,11 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/activity/:name` | Optional | Get activity history for ENS name |
 | GET | `/activity/address/:address` | Optional | Get activity history for an address (actor or counterparty) |
 
-Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The global feed also accepts `club`.
+Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The global feed also accepts `club` plus these filters:
+
+- `watchlist=true` — restrict the feed to ENS names on the caller's watchlist. **Requires auth** (send `Authorization: Bearer <jwt>`); returns 401 if `watchlist=true` without a valid token. Authenticated requests bypass the response cache.
+- `list_id=<id>` — with `watchlist=true`, scope to a single watchlist list; omitted = union of all the caller's lists.
+- `min_price_wei` / `max_price_wei` — decimal wei strings. Applies only to ETH/WETH-denominated priced events (others excluded while active); events with no price (e.g. pure transfers) always pass through.
 
 `event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `other`.
 
@@ -341,9 +345,19 @@ Real-time activity feed with filters:
 { "type": "set_platform_filter", "filter_type": "include", "platforms": ["opensea", "grails"] }
 { "type": "set_platform_filter", "filter_type": "exclude", "platforms": ["blockchain"] }
 { "type": "clear_platform_filter" }
+
+// Filter by price threshold (decimal wei strings; either bound optional)
+{ "type": "set_price_filter", "min_price_wei": "1000000000000000000", "max_price_wei": "5000000000000000000" }
+{ "type": "clear_price_filter" }
+
+// Filter to the caller's watchlisted names (requires connecting with ?token=<jwt>)
+{ "type": "set_watchlist_filter", "list_id": 42 }   // list_id optional; omitted = all lists
+{ "type": "clear_watchlist_filter" }
 ```
 
-Event-type and platform filters are independent — both must pass for an event to be sent. Filter ACKs include a `filter_kind` of `event_type` or `platform` so clients can disambiguate.
+To use the watchlist filter, connect with a JWT: `wss://host/ws/activity?token=<jwt>` (same as `/ws/chats`). Connections without a token still work for every other filter; `set_watchlist_filter` returns an `error` if the socket isn't authenticated.
+
+Event-type, platform, price, and watchlist filters are independent — all must pass for an event to be sent. Filter ACKs include a `filter_kind` (`event_type`, `platform`, `price`, or `watchlist`) so clients can disambiguate. The price filter applies only to ETH/WETH-denominated priced events; no-price events (e.g. pure transfers) always pass. The watchlist set is snapshotted when `set_watchlist_filter` is received — re-send it to refresh after the user edits their watchlist.
 
 ## Search & Filtering
 
