@@ -44,6 +44,11 @@ const FeedQuerySchema = z.object({
       message: 'clubs must contain 1–10 entries',
     })
     .optional(),
+  watchlist: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  list_id: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -279,10 +284,21 @@ export async function commentsRoutes(fastify: FastifyInstance) {
    * Global page-paginated feed of visible comments site-wide. Newest first.
    * Optional filters: owner address, clubs (comma-separated). Public, no auth.
    */
-  fastify.get('/feed', async (request, reply) => {
+  fastify.get('/feed', { preHandler: optionalAuth }, async (request, reply) => {
     try {
-      const { owner, clubs, page, limit } = FeedQuerySchema.parse(request.query);
+      const { owner, clubs, watchlist, list_id, page, limit } = FeedQuerySchema.parse(request.query);
       const offset = (page - 1) * limit;
+
+      // The watchlist filter needs an authenticated user to resolve their list.
+      const userId = request.user ? parseInt(request.user.sub, 10) : null;
+      if (watchlist && userId == null) {
+        return sendError(
+          reply,
+          401,
+          'UNAUTHORIZED',
+          'Authentication required to filter the feed by watchlist'
+        );
+      }
 
       const filterParams: unknown[] = [];
       const where: string[] = [`c.status = 'visible'`];
@@ -294,6 +310,22 @@ export async function commentsRoutes(fastify: FastifyInstance) {
       if (clubs) {
         filterParams.push(clubs);
         where.push(`en.clubs && $${filterParams.length}::text[]`);
+      }
+      // Restrict to names on the authenticated user's watchlist.
+      // Optional list_id scopes to a single list; omitted = union of all the user's lists.
+      if (watchlist && userId != null) {
+        filterParams.push(userId);
+        const userIdx = filterParams.length;
+        if (list_id != null) {
+          filterParams.push(list_id);
+          where.push(
+            `c.ens_name_id IN (SELECT ens_name_id FROM watchlist WHERE user_id = $${userIdx} AND list_id = $${filterParams.length})`
+          );
+        } else {
+          where.push(
+            `c.ens_name_id IN (SELECT ens_name_id FROM watchlist WHERE user_id = $${userIdx})`
+          );
+        }
       }
       const whereClause = where.join(' AND ');
 
