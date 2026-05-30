@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { REGISTRATION_NAME_BLOCKLIST } from '../config/name-blocklist';
 
 const TimeRangeSchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d', 'all']).default('7d'),
@@ -535,6 +536,13 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
         countParams.push(clubs);
       }
+    }
+
+    // Hide blocklisted names from the displayed results (results-only scope;
+    // aggregate stats/counts are intentionally left untouched).
+    if (REGISTRATION_NAME_BLOCKLIST.length > 0) {
+      dataConditions.push(`LOWER(en.name) <> ALL($${dataParamNum++}::text[])`);
+      dataParams.push(REGISTRATION_NAME_BLOCKLIST.map(n => n.toLowerCase()));
     }
 
     const summaryFilterClause = summaryConditions.length > 0 ? 'AND ' + summaryConditions.join(' AND ') : '';
