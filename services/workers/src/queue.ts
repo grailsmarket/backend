@@ -129,6 +129,7 @@ export const QUEUE_NAMES = {
   SEND_ADMIN_BROADCAST: 'send-admin-broadcast',
   RECONCILE_OPENSEA: 'reconcile-opensea',
   RECONCILE_VISION: 'reconcile-vision',
+  UPDATE_HIGHEST_OFFER: 'update-highest-offer',
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
   CLEANUP_API_REQUEST_LOGS: 'cleanup-api-request-logs',
   BACKFILL_GOOGLE_METRICS: 'backfill-google-metrics',

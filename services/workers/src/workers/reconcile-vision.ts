@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { config, getPostgresPool } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
+import { WETH_ADDRESS } from './types';
 
 /**
  * ENS Vision offer reconciliation.
@@ -17,10 +18,10 @@ import { logger } from '../utils/logger';
  * (order_data shaped { parameters, signature } to match OpenSea/Grails offers).
  */
 
-const WETH_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 const ACTIVITY_LIMIT = 50;
 const MAX_PAGES = parseInt(process.env.RECONCILE_VISION_MAX_PAGES || '3', 10);
 const FULFILL_DELAY_MS = parseInt(process.env.RECONCILE_VISION_DELAY_MS || '250', 10);
+const FETCH_TIMEOUT_MS = parseInt(process.env.RECONCILE_VISION_FETCH_TIMEOUT_MS || '15000', 10);
 
 // offer-<0x…64hex>-<uuid>
 const ORDER_HASH_RE = /^offer-(0x[0-9a-fA-F]{64})-/;
@@ -93,6 +94,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * fetch with an abort-based timeout so a hung Vision API response can't block a
+ * pg-boss worker slot indefinitely.
+ */
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchVisionActivity(maxPages = MAX_PAGES): Promise<VisionActivity[]> {
   const base = config.ensvision.apiBaseUrl;
   const all: VisionActivity[] = [];
@@ -102,7 +120,7 @@ async function fetchVisionActivity(maxPages = MAX_PAGES): Promise<VisionActivity
     const url = `${base}/activity?eventTypes=OFFER_CREATED&limit=${ACTIVITY_LIMIT}` +
       `&sortBy=timestamp&sortOrder=desc&isSubdomain=false&resolve=true&offset=${offset}`;
 
-    const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       throw new Error(`Vision activity API error: ${response.status}`);
     }
@@ -122,7 +140,7 @@ async function fetchVisionActivity(maxPages = MAX_PAGES): Promise<VisionActivity
 
 async function fetchFulfillment(orderHash: string): Promise<VisionFulfillment | null> {
   const url = `${config.ensvision.apiBaseUrl}/orderbook/offers-fulfill?id=${orderHash}`;
-  const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+  const response = await fetchWithTimeout(url);
 
   if (!response.ok) {
     logger.warn({ orderHash, status: response.status }, 'Vision offers-fulfill returned non-200, skipping offer');
@@ -203,7 +221,10 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
       const params = fulfillment.orderData;
       const buyerAddress = (params.offerer || offer.maker).toLowerCase();
       const currencyAddress = (params.offer?.[0]?.token || offer.currency || WETH_ADDRESS).toLowerCase();
-      const offerAmountWei = offer.price || params.offer?.[0]?.startAmount;
+      // Prefer the amount hashed into the signed order — it is the canonical on-chain
+      // value the balance validator compares against. `offer.price` from the activity
+      // feed is advisory metadata and can diverge from the actual order.
+      const offerAmountWei = params.offer?.[0]?.startAmount || offer.price;
       const expiresAt = params.endTime
         ? new Date(Number(params.endTime) * 1000)
         : (offer.expiry ? new Date(offer.expiry * 1000) : null);
@@ -228,7 +249,7 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
 
       // Let the new offer compete for the name's highest offer (same as opensea-stream)
       if (insertResult.rows.length > 0 && offerAmountWei) {
-        await boss.send('update-highest-offer', {
+        await boss.send(QUEUE_NAMES.UPDATE_HIGHEST_OFFER, {
           ensNameId,
           offerId: insertResult.rows[0].id,
           offerAmountWei,
