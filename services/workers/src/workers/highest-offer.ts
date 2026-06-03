@@ -1,5 +1,6 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
+import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
 
@@ -151,7 +152,7 @@ async function recalculateHighestOffer(data: RecalculateHighestOfferJob): Promis
 export async function registerHighestOfferWorker(boss: PgBoss): Promise<void> {
   // Worker 1: Update highest offer (optimistic - new offer might be higher)
   await boss.work<UpdateHighestOfferJob>(
-    'update-highest-offer',
+    QUEUE_NAMES.UPDATE_HIGHEST_OFFER,
     { teamSize: 5, teamConcurrency: 2 },
     async (job) => {
       const { ensNameId, offerId, offerAmountWei, currencyAddress } = job.data;
@@ -174,7 +175,7 @@ export async function registerHighestOfferWorker(boss: PgBoss): Promise<void> {
 
   // Worker 2: Recalculate highest offer (when offer removed)
   await boss.work<RecalculateHighestOfferJob>(
-    'recalculate-highest-offer',
+    QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER,
     { teamSize: 5, teamConcurrency: 2 },
     async (job) => {
       const { ensNameId } = job.data;
