@@ -376,14 +376,24 @@ export async function activityRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // The club filter is the only predicate that touches ens_names. We render it two
+      // ways: the main query keeps the JOIN (it selects en.* columns anyway), while the
+      // COUNT query expresses it as a semi-join subquery on ens_name_id so it can drop
+      // the JOIN entirely. The subquery resolves via the GIN index on ens_names.clubs and
+      // avoids the full activity_history⋈ens_names hash join + sort that was driving
+      // Postgres into parallel plans (and exhausting /dev/shm under concurrent requests).
+      let clubJoinCond: string | null = null; // main query: predicate on the joined en.*
+      let clubCountCond: string | null = null; // count query: semi-join on ah.ens_name_id
       if (club) {
         if (club.toLowerCase() === 'any') {
           // Return activity for any name that's in at least one club
-          conditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
+          clubJoinCond = `en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`;
+          clubCountCond = `ah.ens_name_id IN (SELECT id FROM ens_names WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0)`;
         } else {
           // Return activity for names in a specific club
           paramCount++;
-          conditions.push(`$${paramCount} = ANY(en.clubs)`);
+          clubJoinCond = `$${paramCount} = ANY(en.clubs)`;
+          clubCountCond = `ah.ens_name_id IN (SELECT id FROM ens_names WHERE $${paramCount} = ANY(clubs))`;
           params.push(club);
         }
       }
@@ -446,7 +456,14 @@ export async function activityRoutes(fastify: FastifyInstance) {
         );
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      // Main query joins ens_names and uses the en.* form of the club predicate.
+      const mainConditions = clubJoinCond ? [...conditions, clubJoinCond] : conditions;
+      const whereClause = mainConditions.length > 0 ? `WHERE ${mainConditions.join(' AND ')}` : '';
+
+      // Count query drops the JOIN: every other condition is already on activity_history
+      // (ah.*), and the club predicate becomes a semi-join subquery. Same params/positions.
+      const countConditions = clubCountCond ? [...conditions, clubCountCond] : conditions;
+      const countWhere = countConditions.length > 0 ? `WHERE ${countConditions.join(' AND ')}` : '';
 
       // Add limit and offset
       paramCount++;
@@ -484,14 +501,31 @@ export async function activityRoutes(fastify: FastifyInstance) {
       const countQuery = `
         SELECT COUNT(*) as total
         FROM activity_history ah
-        JOIN ens_names en ON ah.ens_name_id = en.id
-        ${whereClause}
+        ${countWhere}
       `;
 
-      const [result, countResult] = await Promise.all([
-        pool.query(query, params),
-        pool.query(countQuery, params.slice(0, -2)),
-      ]);
+      // Run both queries on a single connection inside a transaction with parallel query
+      // disabled (SET LOCAL auto-reverts on COMMIT, leaving the pooled connection clean).
+      // This is a surgical, endpoint-scoped guard against the "could not resize shared
+      // memory segment / No space left on device" failures that hit when several of these
+      // requests fire concurrently: parallel-query workers allocate DSM in the container's
+      // small /dev/shm. Disabling parallelism here removes that allocation without a
+      // database-wide setting. Single connection also halves pool usage under bursts.
+      const client = await pool.connect();
+      let result;
+      let countResult;
+      try {
+        await client.query('BEGIN');
+        await client.query('SET LOCAL max_parallel_workers_per_gather = 0');
+        result = await client.query(query, params);
+        countResult = await client.query(countQuery, params.slice(0, -2));
+        await client.query('COMMIT');
+      } catch (txError) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txError;
+      } finally {
+        client.release();
+      }
 
       const total = parseInt(countResult.rows[0].total);
       const totalPages = Math.ceil(total / pageLimit);
@@ -517,12 +551,14 @@ export async function activityRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
+      // Log the full error server-side; never leak raw Postgres error text to clients
+      // (information disclosure + opaque UX). Return a generic, stable message instead.
       fastify.log.error('Error fetching global activity history:', error);
       return reply.status(500).send({
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message || 'Failed to fetch activity history',
+          message: 'Failed to fetch activity history',
         },
         meta: {
           timestamp: new Date().toISOString(),
