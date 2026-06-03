@@ -16,7 +16,8 @@ import {
   USDC_ADDRESS,
   MULTICALL3_ADDRESS,
   OPENSEA_CONDUIT_ADDRESS,
-  MARKETPLACE_CONDUIT_ADDRESS
+  MARKETPLACE_CONDUIT_ADDRESS,
+  SEAPORT_ADDRESS
 } from './types';
 
 const pool = getPostgresPool();
@@ -74,6 +75,7 @@ async function fetchOffers(offerIds: number[]): Promise<OfferWithBalance[]> {
       o.status,
       o.ens_name_id,
       o.source,
+      o.order_data,
       en.name
     FROM offers o
     JOIN ens_names en ON en.id = o.ens_name_id
@@ -106,6 +108,19 @@ function getConduitAddress(source: string | undefined): string {
   }
   // Default for 'grails' and other sources
   return MARKETPLACE_CONDUIT_ADDRESS;
+}
+
+/**
+ * Resolve the address the ERC20 approval must target for this offer. A zero
+ * Seaport conduitKey (e.g. ENS Vision offers) means tokens move through the
+ * Seaport contract directly, so the approval must be set to Seaport itself.
+ */
+function getSpenderAddress(offer: OfferWithBalance): string {
+  const conduitKey: unknown = (offer as any).order_data?.parameters?.conduitKey;
+  if (typeof conduitKey === 'string' && /^0x0+$/i.test(conduitKey)) {
+    return SEAPORT_ADDRESS;
+  }
+  return getConduitAddress(offer.source);
 }
 
 /**
@@ -212,7 +227,7 @@ async function batchValidateTokenOffers(
     try {
       // Build paired calls: [balanceOf, allowance, balanceOf, allowance, ...]
       const calls = chunk.flatMap(offer => {
-        const conduitAddress = getConduitAddress(offer.source);
+        const conduitAddress = getSpenderAddress(offer);
         return [
           {
             target: tokenAddress,

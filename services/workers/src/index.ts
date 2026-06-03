@@ -12,6 +12,7 @@ import { registerHighestOfferWorker } from './workers/highest-offer';
 import { refreshAnalytics, scheduleAnalyticsRefresh } from './workers/refresh-analytics';
 import { registerValidationWorkers, registerValidationSchedulers } from './workers/validation';
 import { registerReconcileOpenseaWorker } from './workers/reconcile-opensea';
+import { registerReconcileVisionWorker } from './workers/reconcile-vision';
 import { registerAiCacheCleanupWorker } from './workers/ai-cache-cleanup';
 import { registerOnchainActivityWorker } from './workers/onchain-activity';
 import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
@@ -54,6 +55,9 @@ async function start() {
 
     // Register OpenSea reconciliation worker
     await registerReconcileOpenseaWorker(boss);
+
+    // Register ENS Vision reconciliation worker
+    await registerReconcileVisionWorker(boss);
 
     // Register AI recommendations cache cleanup worker
     await registerAiCacheCleanupWorker(boss);
