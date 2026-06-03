@@ -100,7 +100,7 @@ export async function registerExpiryWorker(boss: PgBoss): Promise<void> {
               );
 
               if (checkHighest.rows[0]?.highest_offer_id === id) {
-                await boss.send('recalculate-highest-offer', {
+                await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, {
                   ensNameId: expiredOffer.ens_name_id,
                 });
                 logger.info({ offerId: id, ensNameId: expiredOffer.ens_name_id }, 'Published recalculate highest offer (expired offer was highest)');
@@ -290,7 +290,7 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
                   );
 
                   if (wasHighest) {
-                    await boss.send('recalculate-highest-offer', { ensNameId });
+                    await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, { ensNameId });
                     logger.info({ ensNameId }, 'Published recalculate highest offer (batch expiry)');
                   }
                 }
