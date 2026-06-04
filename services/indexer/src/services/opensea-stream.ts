@@ -8,7 +8,9 @@ import { safePublishJob, QUEUE_NAMES } from '../queue';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface PhoenixMessage {
-  topic: string;
+  // OpenSea occasionally sends messages without a topic (e.g. control/keepalive
+  // frames), so this is optional and must be guarded before use.
+  topic?: string;
   event: string;
   payload: any;
   ref: number;
@@ -168,27 +170,32 @@ export class OpenSeaStreamListener {
 
     this.ws.on('message', (data: Buffer) => {
       try {
-        const message: PhoenixMessage = JSON.parse(data.toString());
+        const message = this.normalizePhoenixMessage(JSON.parse(data.toString()));
 
         // Log the message structure for debugging
         logger.debug(`Received Phoenix message - Topic: ${message.topic}, Event: ${message.event}`);
 
         // Handle Phoenix protocol messages
         if (message.event === 'phx_reply') {
-          // This is a reply to our subscription
-          if (message.payload?.status === 'ok') {
-            logger.info('Successfully subscribed to topic:', message.topic);
-          } else if (message.payload?.status === 'error') {
+          // Replies to our own phx_join (collection:ens) and heartbeat (phoenix) sends.
+          // Heartbeat replies arrive every ~30s, so only surface subscription replies.
+          if (message.payload?.status === 'error') {
             logger.error('Failed to subscribe to topic:', message.topic, message.payload);
+          } else if (message.topic !== 'phoenix') {
+            logger.info('Successfully subscribed to topic:', message.topic);
           }
         } else if (message.event === 'phx_error') {
           logger.error('Phoenix error:', message.payload);
         } else if (message.event === 'phx_close') {
           logger.warn('Phoenix channel closed:', message.topic);
-        } else if (message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
-          // Filter out item_metadata_updated events early - we don't use them and they can flood
-          // the stream during bulk metadata refreshes, blocking important events like transfers
-          if (message.event === 'item_metadata_updated') {
+        } else if (typeof message.topic === 'string' && message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
+          // Filter out high-volume events we don't act on, early, so they can't flood the
+          // stream and block important events like transfers:
+          //  - item_metadata_updated: bulk metadata refreshes
+          //  - order_revalidate: an order became fulfillable again. We don't act on it;
+          //    the next worker validation / item_sold corrects state. (order_invalidate
+          //    IS handled below — it re-triggers chain validation.)
+          if (message.event === 'item_metadata_updated' || message.event === 'order_revalidate') {
             return;
           }
 
@@ -202,10 +209,21 @@ export class OpenSeaStreamListener {
               code: err?.code,
             }, `Error handling OpenSea event ${message.event}`);
           });
+        } else {
+          // Catch-all for unrecognized messages — including frames with no topic,
+          // which previously crashed `message.topic.startsWith(...)` and produced a
+          // flood of "Failed to parse OpenSea message" errors. Surface the shape so
+          // we can identify new/changed OpenSea message types from production logs.
+          logger.warn(
+            { topic: message?.topic, event: message?.event, raw: data.toString().slice(0, 500) },
+            'Unrecognized OpenSea message (no matching handler)'
+          );
         }
       } catch (error: any) {
-        logger.error(`Failed to parse OpenSea message: ${error.message}`);
-        logger.debug('Raw message:', data.toString());
+        logger.error(
+          { error: error?.message, raw: data.toString().slice(0, 500) },
+          `Failed to parse OpenSea message: ${error?.message}`
+        );
       }
     });
 
@@ -229,6 +247,33 @@ export class OpenSeaStreamListener {
     this.ws.on('ping', () => {
       this.ws?.pong();
     });
+  }
+
+  /**
+   * Normalizes an incoming Phoenix frame into the object shape the handlers expect.
+   *
+   * OpenSea upgraded their Phoenix socket to the v2 serializer, which encodes
+   * messages as arrays `[join_ref, ref, topic, event, payload]` instead of the
+   * v1 object `{ topic, event, payload, ref }`. Reading `.topic`/`.event` off an
+   * array yields `undefined`, which silently dropped every event (listings, sales,
+   * transfers, bids, cancellations) and crashed `topic.startsWith(...)`.
+   *
+   * We accept both formats so the indexer keeps working regardless of which
+   * serializer OpenSea sends.
+   */
+  private normalizePhoenixMessage(parsed: any): PhoenixMessage {
+    if (Array.isArray(parsed)) {
+      // Phoenix v2 array serializer: [join_ref, ref, topic, event, payload]
+      const [joinRef, ref, topic, event, payload] = parsed;
+      return {
+        topic,
+        event,
+        payload,
+        ref: ref ?? joinRef,
+      };
+    }
+    // Phoenix v1 object serializer (legacy)
+    return parsed as PhoenixMessage;
   }
 
   private subscribe() {
@@ -318,6 +363,9 @@ export class OpenSeaStreamListener {
           break;
         case 'collection_offer':
           await this.handleCollectionOffer(message.payload);
+          break;
+        case 'order_invalidate':
+          await this.handleOrderInvalidate(message.payload);
           break;
         // Note: item_metadata_updated events are filtered out early in the message handler
         // to prevent flooding during bulk metadata refreshes
@@ -1037,6 +1085,69 @@ export class OpenSeaStreamListener {
       }
     } catch (error: any) {
       logger.error(`Failed to handle item_cancelled: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  /**
+   * Handles OpenSea's order_invalidate event (Stream API v2).
+   *
+   * OpenSea signals that an order can no longer be fulfilled — but this is reversible
+   * (order_revalidate) and fires for many reasons (filled, expired, asset moved, balance
+   * dropped). Rather than trust OpenSea and blindly flip status, we look up the affected
+   * listing/offer by order_hash and re-trigger the existing blockchain-authoritative
+   * validation worker, which cancels it only if it's genuinely invalid on-chain.
+   *
+   * The payload carries order_hash + protocol_address + item, but NO maker address, so we
+   * key purely on order_hash (UNIQUE on both listings and offers).
+   */
+  private async handleOrderInvalidate(payload: any) {
+    try {
+      const eventData = payload?.payload || payload;
+      const orderHash = eventData?.order_hash;
+
+      if (!orderHash) {
+        logger.warn('Missing order_hash in order_invalidate event, skipping');
+        return;
+      }
+
+      // An order_hash belongs to exactly one listing OR one offer (both columns are UNIQUE).
+      // Re-validate whichever active/pending order it maps to.
+      const listingResult = await this.pool.query(
+        `SELECT id FROM listings WHERE order_hash = $1 AND status = 'active'`,
+        [orderHash]
+      );
+
+      if (listingResult.rowCount && listingResult.rowCount > 0) {
+        const listingId = listingResult.rows[0].id;
+        await safePublishJob(
+          QUEUE_NAMES.VALIDATE_LISTING_OWNERSHIP,
+          { listingId },
+          'order_invalidate'
+        );
+        logger.info({ orderHash, listingId }, 'order_invalidate: queued listing re-validation');
+        return;
+      }
+
+      const offerResult = await this.pool.query(
+        `SELECT id FROM offers WHERE order_hash = $1 AND status = 'pending'`,
+        [orderHash]
+      );
+
+      if (offerResult.rowCount && offerResult.rowCount > 0) {
+        const offerId = offerResult.rows[0].id;
+        await safePublishJob(
+          QUEUE_NAMES.VALIDATE_OFFER_BALANCE,
+          { offerId },
+          'order_invalidate'
+        );
+        logger.info({ orderHash, offerId }, 'order_invalidate: queued offer re-validation');
+        return;
+      }
+
+      logger.debug(`order_invalidate: no active listing or pending offer for order_hash ${orderHash}`);
+    } catch (error: any) {
+      logger.error(`Failed to handle order_invalidate: ${error.message}`);
       logger.debug('Full payload:', JSON.stringify(payload, null, 2));
     }
   }
