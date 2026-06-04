@@ -228,21 +228,26 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
       const expiresAt = params.endTime
         ? new Date(Number(params.endTime) * 1000)
         : (offer.expiry ? new Date(offer.expiry * 1000) : null);
-      const createdAt = activity.blockTimestamp ? new Date(activity.blockTimestamp * 1000) : new Date();
       const orderData = JSON.stringify({ parameters: params, signature: fulfillment.signature });
 
+      // created_at is the ingestion time (NOW), NOT the Vision blockTimestamp. The
+      // WAL listener detects new offers via `created_at > lastProcessed` and fires the
+      // offer_made activity-history event; a past-dated created_at would always sort
+      // below already-processed live offers and be skipped, so the activity (and
+      // watcher notifications) would never fire. The true offer-creation time is still
+      // preserved in order_data.parameters.startTime.
       const insertResult = await pool.query(
         `INSERT INTO offers (
           ens_name_id, buyer_address, offer_amount_wei, currency_address,
           order_hash, order_data, status, source, expires_at, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', 'vision', $7, $8)
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', 'vision', $7, NOW())
         ON CONFLICT (order_hash, source) DO UPDATE SET
           offer_amount_wei = EXCLUDED.offer_amount_wei,
           expires_at = EXCLUDED.expires_at,
           order_data = EXCLUDED.order_data,
           status = 'pending'
         RETURNING id`,
-        [ensNameId, buyerAddress, offerAmountWei, currencyAddress, orderHash, orderData, expiresAt, createdAt]
+        [ensNameId, buyerAddress, offerAmountWei, currencyAddress, orderHash, orderData, expiresAt]
       );
       result.inserted++;
       logger.info({ orderHash, ensNameId, name: offer.domainName }, 'Inserted Vision offer');
