@@ -282,6 +282,12 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const userAddr = request.user!.address.toLowerCase();
     const isBuyer = offer.buyer_address.toLowerCase() === userAddr;
     const isOwner = offer.owner_address.toLowerCase() === userAddr;
+    // Accepting an offer transfers the name to the buyer, so by the time the
+    // frontend's confirmation-gated PUT arrives the indexer may have already flipped
+    // ens_names.owner_address to the buyer — making the seller no longer the "owner".
+    // If the name is now owned by the offer's buyer, the offer was filled on-chain, so
+    // marking it accepted is legitimate regardless of who calls.
+    const ownerIsBuyer = offer.owner_address.toLowerCase() === offer.buyer_address.toLowerCase();
 
     if (body.status === 'rejected') {
       // Only the buyer (offer creator) can reject/cancel their own offer
@@ -296,8 +302,9 @@ export async function offersRoutes(fastify: FastifyInstance) {
         });
       }
     } else if (body.status === 'accepted') {
-      // Only the ENS name owner can accept an offer on their name
-      if (!isOwner) {
+      // The ENS name owner accepts an offer; also allow it once ownership has already
+      // transferred to the offer's buyer (the on-chain fill completed mid-request).
+      if (!isOwner && !ownerIsBuyer) {
         return reply.status(403).send({
           success: false,
           error: {
