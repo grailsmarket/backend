@@ -170,27 +170,35 @@ export class OpenSeaStreamListener {
 
     this.ws.on('message', (data: Buffer) => {
       try {
-        const message: PhoenixMessage = JSON.parse(data.toString());
+        const message = this.normalizePhoenixMessage(JSON.parse(data.toString()));
 
         // Log the message structure for debugging
         logger.debug(`Received Phoenix message - Topic: ${message.topic}, Event: ${message.event}`);
 
         // Handle Phoenix protocol messages
         if (message.event === 'phx_reply') {
-          // This is a reply to our subscription
-          if (message.payload?.status === 'ok') {
-            logger.info('Successfully subscribed to topic:', message.topic);
-          } else if (message.payload?.status === 'error') {
+          // Replies to our own phx_join (collection:ens) and heartbeat (phoenix) sends.
+          // Heartbeat replies arrive every ~30s, so only surface subscription replies.
+          if (message.payload?.status === 'error') {
             logger.error('Failed to subscribe to topic:', message.topic, message.payload);
+          } else if (message.topic !== 'phoenix') {
+            logger.info('Successfully subscribed to topic:', message.topic);
           }
         } else if (message.event === 'phx_error') {
           logger.error('Phoenix error:', message.payload);
         } else if (message.event === 'phx_close') {
           logger.warn('Phoenix channel closed:', message.topic);
         } else if (typeof message.topic === 'string' && message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
-          // Filter out item_metadata_updated events early - we don't use them and they can flood
-          // the stream during bulk metadata refreshes, blocking important events like transfers
-          if (message.event === 'item_metadata_updated') {
+          // Filter out high-volume events we don't act on, early, so they can't flood
+          // the stream and block important events like transfers:
+          //  - item_metadata_updated: bulk metadata refreshes
+          //  - order_invalidate / order_revalidate: order fulfillability changes we
+          //    intentionally don't track yet (see OpenSea v2 stream events)
+          if (
+            message.event === 'item_metadata_updated' ||
+            message.event === 'order_invalidate' ||
+            message.event === 'order_revalidate'
+          ) {
             return;
           }
 
@@ -242,6 +250,33 @@ export class OpenSeaStreamListener {
     this.ws.on('ping', () => {
       this.ws?.pong();
     });
+  }
+
+  /**
+   * Normalizes an incoming Phoenix frame into the object shape the handlers expect.
+   *
+   * OpenSea upgraded their Phoenix socket to the v2 serializer, which encodes
+   * messages as arrays `[join_ref, ref, topic, event, payload]` instead of the
+   * v1 object `{ topic, event, payload, ref }`. Reading `.topic`/`.event` off an
+   * array yields `undefined`, which silently dropped every event (listings, sales,
+   * transfers, bids, cancellations) and crashed `topic.startsWith(...)`.
+   *
+   * We accept both formats so the indexer keeps working regardless of which
+   * serializer OpenSea sends.
+   */
+  private normalizePhoenixMessage(parsed: any): PhoenixMessage {
+    if (Array.isArray(parsed)) {
+      // Phoenix v2 array serializer: [join_ref, ref, topic, event, payload]
+      const [joinRef, ref, topic, event, payload] = parsed;
+      return {
+        topic,
+        event,
+        payload,
+        ref: ref ?? joinRef,
+      };
+    }
+    // Phoenix v1 object serializer (legacy)
+    return parsed as PhoenixMessage;
   }
 
   private subscribe() {
