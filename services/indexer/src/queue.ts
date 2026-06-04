@@ -105,4 +105,8 @@ export const QUEUE_NAMES = {
   UPDATE_CLUB_FLOOR_PRICE: 'update-club-floor-price',
   UPDATE_CLUB_SALES_STATS: 'update-club-sales-stats',
   UPDATE_HIGHEST_OFFER: 'update-highest-offer',
+  // Workers-side validation queues, re-triggered on OpenSea order_invalidate so the
+  // chain (not OpenSea) decides whether a listing/offer is still fulfillable.
+  VALIDATE_LISTING_OWNERSHIP: 'validate-listing-ownership',
+  VALIDATE_OFFER_BALANCE: 'validate-offer-balance',
 } as const;
