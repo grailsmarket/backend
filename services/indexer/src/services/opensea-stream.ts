@@ -8,7 +8,9 @@ import { safePublishJob, QUEUE_NAMES } from '../queue';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface PhoenixMessage {
-  topic: string;
+  // OpenSea occasionally sends messages without a topic (e.g. control/keepalive
+  // frames), so this is optional and must be guarded before use.
+  topic?: string;
   event: string;
   payload: any;
   ref: number;
@@ -185,7 +187,7 @@ export class OpenSeaStreamListener {
           logger.error('Phoenix error:', message.payload);
         } else if (message.event === 'phx_close') {
           logger.warn('Phoenix channel closed:', message.topic);
-        } else if (message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
+        } else if (typeof message.topic === 'string' && message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
           // Filter out item_metadata_updated events early - we don't use them and they can flood
           // the stream during bulk metadata refreshes, blocking important events like transfers
           if (message.event === 'item_metadata_updated') {
@@ -202,10 +204,21 @@ export class OpenSeaStreamListener {
               code: err?.code,
             }, `Error handling OpenSea event ${message.event}`);
           });
+        } else {
+          // Catch-all for unrecognized messages — including frames with no topic,
+          // which previously crashed `message.topic.startsWith(...)` and produced a
+          // flood of "Failed to parse OpenSea message" errors. Surface the shape so
+          // we can identify new/changed OpenSea message types from production logs.
+          logger.warn(
+            { topic: message?.topic, event: message?.event, raw: data.toString().slice(0, 500) },
+            'Unrecognized OpenSea message (no matching handler)'
+          );
         }
       } catch (error: any) {
-        logger.error(`Failed to parse OpenSea message: ${error.message}`);
-        logger.debug('Raw message:', data.toString());
+        logger.error(
+          { error: error?.message, raw: data.toString().slice(0, 500) },
+          `Failed to parse OpenSea message: ${error?.message}`
+        );
       }
     });
 
