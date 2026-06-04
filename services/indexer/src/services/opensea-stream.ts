@@ -189,16 +189,13 @@ export class OpenSeaStreamListener {
         } else if (message.event === 'phx_close') {
           logger.warn('Phoenix channel closed:', message.topic);
         } else if (typeof message.topic === 'string' && message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
-          // Filter out high-volume events we don't act on, early, so they can't flood
-          // the stream and block important events like transfers:
+          // Filter out high-volume events we don't act on, early, so they can't flood the
+          // stream and block important events like transfers:
           //  - item_metadata_updated: bulk metadata refreshes
-          //  - order_invalidate / order_revalidate: order fulfillability changes we
-          //    intentionally don't track yet (see OpenSea v2 stream events)
-          if (
-            message.event === 'item_metadata_updated' ||
-            message.event === 'order_invalidate' ||
-            message.event === 'order_revalidate'
-          ) {
+          //  - order_revalidate: an order became fulfillable again. We don't act on it;
+          //    the next worker validation / item_sold corrects state. (order_invalidate
+          //    IS handled below — it re-triggers chain validation.)
+          if (message.event === 'item_metadata_updated' || message.event === 'order_revalidate') {
             return;
           }
 
@@ -366,6 +363,9 @@ export class OpenSeaStreamListener {
           break;
         case 'collection_offer':
           await this.handleCollectionOffer(message.payload);
+          break;
+        case 'order_invalidate':
+          await this.handleOrderInvalidate(message.payload);
           break;
         // Note: item_metadata_updated events are filtered out early in the message handler
         // to prevent flooding during bulk metadata refreshes
@@ -1085,6 +1085,69 @@ export class OpenSeaStreamListener {
       }
     } catch (error: any) {
       logger.error(`Failed to handle item_cancelled: ${error.message}`);
+      logger.debug('Full payload:', JSON.stringify(payload, null, 2));
+    }
+  }
+
+  /**
+   * Handles OpenSea's order_invalidate event (Stream API v2).
+   *
+   * OpenSea signals that an order can no longer be fulfilled — but this is reversible
+   * (order_revalidate) and fires for many reasons (filled, expired, asset moved, balance
+   * dropped). Rather than trust OpenSea and blindly flip status, we look up the affected
+   * listing/offer by order_hash and re-trigger the existing blockchain-authoritative
+   * validation worker, which cancels it only if it's genuinely invalid on-chain.
+   *
+   * The payload carries order_hash + protocol_address + item, but NO maker address, so we
+   * key purely on order_hash (UNIQUE on both listings and offers).
+   */
+  private async handleOrderInvalidate(payload: any) {
+    try {
+      const eventData = payload?.payload || payload;
+      const orderHash = eventData?.order_hash;
+
+      if (!orderHash) {
+        logger.warn('Missing order_hash in order_invalidate event, skipping');
+        return;
+      }
+
+      // An order_hash belongs to exactly one listing OR one offer (both columns are UNIQUE).
+      // Re-validate whichever active/pending order it maps to.
+      const listingResult = await this.pool.query(
+        `SELECT id FROM listings WHERE order_hash = $1 AND status = 'active'`,
+        [orderHash]
+      );
+
+      if (listingResult.rowCount && listingResult.rowCount > 0) {
+        const listingId = listingResult.rows[0].id;
+        await safePublishJob(
+          QUEUE_NAMES.VALIDATE_LISTING_OWNERSHIP,
+          { listingId },
+          'order_invalidate'
+        );
+        logger.info({ orderHash, listingId }, 'order_invalidate: queued listing re-validation');
+        return;
+      }
+
+      const offerResult = await this.pool.query(
+        `SELECT id FROM offers WHERE order_hash = $1 AND status = 'pending'`,
+        [orderHash]
+      );
+
+      if (offerResult.rowCount && offerResult.rowCount > 0) {
+        const offerId = offerResult.rows[0].id;
+        await safePublishJob(
+          QUEUE_NAMES.VALIDATE_OFFER_BALANCE,
+          { offerId },
+          'order_invalidate'
+        );
+        logger.info({ orderHash, offerId }, 'order_invalidate: queued offer re-validation');
+        return;
+      }
+
+      logger.debug(`order_invalidate: no active listing or pending offer for order_hash ${orderHash}`);
+    } catch (error: any) {
+      logger.error(`Failed to handle order_invalidate: ${error.message}`);
       logger.debug('Full payload:', JSON.stringify(payload, null, 2));
     }
   }
