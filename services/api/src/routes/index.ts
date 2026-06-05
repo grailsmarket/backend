@@ -39,6 +39,7 @@ import { chatsRoutes } from './chats';
 import { chatsAdminRoutes } from './chats-admin';
 import { blocksRoutes } from './blocks';
 import { commentsRoutes } from './comments';
+import { feedRoutes } from './feed';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -59,6 +60,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(offersRoutes, { prefix: '/api/v1/offers' });
   fastify.register(salesRoutes, { prefix: '/api/v1/sales' });
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
+  fastify.register(feedRoutes, { prefix: '/api/v1/feed' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
   fastify.register(clubsRoutes, { prefix: '/api/v1/clubs' });
   fastify.register(leaderboardRoutes, { prefix: '/api/v1/leaderboard' });
