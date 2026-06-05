@@ -165,6 +165,23 @@ Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The 
 
 `event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `other`.
 
+### Feed (unified)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/feed` | Optional | Unified, time-ordered stream merging activity history + comments |
+
+Single endpoint that merges `activity_history` and `comments` into one `created_at DESC` stream via a SQL `UNION ALL` (the DB does the interleaving + pagination, so the frontend no longer multiplexes two endpoints). Offset-paginated (`page`, `limit` max 100, default 20) with exact `total`/`totalPages`.
+
+Each result item has a `kind` (`activity` | `comment`) discriminator, name-level fields hoisted to the top (`id`, `ens_name_id`, `name`, `clubs`, `owner_address`, `created_at`), plus a nested `activity` or `comment` object with the kind-specific fields.
+
+Filters:
+- `kinds` — which streams to include: `activity`, `comment`, or `activity,comment` (default = both).
+- **Shared** (apply to both streams): `owner` (address), `clubs` (comma list 1–10, or `clubs=any` for names in any club), `watchlist=true` (+ optional `list_id`). `watchlist=true` **requires auth** (401 otherwise); authed requests bypass the response cache.
+- **Activity-only**: `event_type`, `platform` (multi; repeated or comma-separated), `min_price_wei` / `max_price_wei` (decimal wei; ETH/WETH-denominated priced events only, no-price events pass through).
+- **Auto-scope rule**: when `kinds` is omitted, setting any activity-only filter implicitly excludes comments (they can't satisfy it). An explicit `kinds` always wins; `kinds=comment` combined with an activity-only filter returns 400. `kinds=activity,comment` + an activity-only filter keeps comments (explicit opt-in).
+
+Muted addresses (mutelist) are excluded from both streams — activity actor/counterparty and comment author.
+
 ### Clubs
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
