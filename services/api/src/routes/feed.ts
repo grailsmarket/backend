@@ -40,8 +40,8 @@ const FeedQuerySchema = z.object({
     .pipe(z.array(KindEnum).min(1).max(2).optional()),
 
   // activity-only
-  event_type: z.union([z.string(), z.array(z.string())]).optional(),
-  platform: z.union([z.string(), z.array(z.string())]).optional(),
+  event_type: z.union([z.string(), z.array(z.string()).max(20)]).optional(),
+  platform: z.union([z.string(), z.array(z.string()).max(20)]).optional(),
   min_price_wei: z.string().regex(WEI_RE, 'min_price_wei must be a decimal wei string').optional(),
   max_price_wei: z.string().regex(WEI_RE, 'max_price_wei must be a decimal wei string').optional(),
 
