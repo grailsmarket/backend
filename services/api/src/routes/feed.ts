@@ -279,9 +279,22 @@ export async function feedRoutes(fastify: FastifyInstance) {
           comCount.push(`c.ens_name_id IN (SELECT id FROM ens_names WHERE clubs && ${clubsPh}::text[])`);
         }
 
+        // Pagination params. `cap` (= offset + limit) bounds each branch's inner
+        // top-N so the merge only ever sorts a few rows. filterParamCount marks the
+        // boundary so the count query can reuse exactly the filter params.
+        const offset = (page - 1) * limit;
+        const cap = offset + limit;
+        const filterParamCount = params.length;
+        const capPh = push(cap);
+        const limitPh = push(limit);
+        const offsetPh = push(offset);
+
         // --- Assemble the normalized branch SELECTs. Every column is cast to a
-        // type compatible across both branches so UNION ALL type-unification holds. ---
-        const activitySelect = `
+        // type compatible across both branches so UNION ALL type-unification holds.
+        // Each branch carries its own `ORDER BY <table>.created_at DESC LIMIT cap`
+        // so Postgres serves it as an index-driven top-N (no full-table sort). The
+        // outer query then merges/orders only the (<= 2 * cap) capped rows. ---
+        const activitySelect = `(
           SELECT
             'activity'::text                       AS kind,
             0                                      AS kind_rank,
@@ -307,9 +320,12 @@ export async function feedRoutes(fastify: FastifyInstance) {
             NULL::varchar                          AS author_address
           FROM activity_history ah
           JOIN ens_names en ON en.id = ah.ens_name_id
-          ${actData.length ? `WHERE ${actData.join(' AND ')}` : ''}`;
+          ${actData.length ? `WHERE ${actData.join(' AND ')}` : ''}
+          ORDER BY ah.created_at DESC, ah.id DESC
+          LIMIT ${capPh}
+        )`;
 
-        const commentSelect = `
+        const commentSelect = `(
           SELECT
             'comment'::text                        AS kind,
             1                                      AS kind_rank,
@@ -336,14 +352,14 @@ export async function feedRoutes(fastify: FastifyInstance) {
           FROM comments c
           JOIN users u ON u.id = c.user_id
           JOIN ens_names en ON en.id = c.ens_name_id
-          WHERE ${comData.join(' AND ')}`;
+          WHERE ${comData.join(' AND ')}
+          ORDER BY c.created_at DESC, c.id DESC
+          LIMIT ${capPh}
+        )`;
 
         const branches: string[] = [];
         if (includeActivity) branches.push(activitySelect);
         if (includeComment) branches.push(commentSelect);
-
-        const limitPh = push(limit);
-        const offsetPh = push((page - 1) * limit);
 
         const dataQuery = `
           SELECT * FROM (
@@ -378,7 +394,7 @@ export async function feedRoutes(fastify: FastifyInstance) {
           await client.query('BEGIN');
           await client.query('SET LOCAL max_parallel_workers_per_gather = 0');
           result = await client.query(dataQuery, params);
-          countResult = await client.query(countQuery, params.slice(0, -2));
+          countResult = await client.query(countQuery, params.slice(0, filterParamCount));
           await client.query('COMMIT');
         } catch (txError) {
           await client.query('ROLLBACK').catch(() => {});
