@@ -161,7 +161,7 @@ Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The 
 
 - `watchlist=true` — restrict the feed to ENS names on the caller's watchlist. **Requires auth** (send `Authorization: Bearer <jwt>`); returns 401 if `watchlist=true` without a valid token. Authenticated requests bypass the response cache.
 - `list_id=<id>` — with `watchlist=true`, scope to a single watchlist list; omitted = union of all the caller's lists.
-- `min_price_wei` / `max_price_wei` — decimal wei strings. Applies only to ETH/WETH-denominated priced events (others excluded while active); events with no price (e.g. pure transfers) always pass through.
+- `min_price_wei` / `max_price_wei` — decimal wei strings. An active bound requires a real, in-range, ETH/WETH-denominated price; non-ETH/WETH priced events and no-price events (e.g. pure transfers, un-enriched mints) are excluded while a bound is set.
 
 `event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `other`.
 
@@ -177,7 +177,7 @@ Each result item has a `kind` (`activity` | `comment`) discriminator, name-level
 Filters:
 - `kinds` — which streams to include: `activity`, `comment`, or `activity,comment` (default = both).
 - **Shared** (apply to both streams): `owner` (address), `clubs` (comma list 1–10, or `clubs=any` for names in any club), `watchlist=true` (+ optional `list_id`). `watchlist=true` **requires auth** (401 otherwise); authed requests bypass the response cache.
-- **Activity-only**: `event_type`, `platform` (multi; repeated or comma-separated), `min_price_wei` / `max_price_wei` (decimal wei; ETH/WETH-denominated priced events only, no-price events pass through).
+- **Activity-only**: `event_type`, `platform` (multi; repeated or comma-separated), `min_price_wei` / `max_price_wei` (decimal wei; an active bound requires a real ETH/WETH-denominated price, so no-price events are excluded while filtering).
 - **Auto-scope rule**: when `kinds` is omitted, setting any activity-only filter implicitly excludes comments (they can't satisfy it). An explicit `kinds` always wins; `kinds=comment` combined with an activity-only filter returns 400. `kinds=activity,comment` + an activity-only filter keeps comments (explicit opt-in).
 
 Muted addresses (mutelist) are excluded from both streams — activity actor/counterparty and comment author.
@@ -374,7 +374,7 @@ Real-time activity feed with filters:
 
 To use the watchlist filter, connect with a JWT: `wss://host/ws/activity?token=<jwt>` (same as `/ws/chats`). Connections without a token still work for every other filter; `set_watchlist_filter` returns an `error` if the socket isn't authenticated.
 
-Event-type, platform, price, and watchlist filters are independent — all must pass for an event to be sent. Filter ACKs include a `filter_kind` (`event_type`, `platform`, `price`, or `watchlist`) so clients can disambiguate. The price filter applies only to ETH/WETH-denominated priced events; no-price events (e.g. pure transfers) always pass. The watchlist set is snapshotted when `set_watchlist_filter` is received — re-send it to refresh after the user edits their watchlist.
+Event-type, platform, price, and watchlist filters are independent — all must pass for an event to be sent. Filter ACKs include a `filter_kind` (`event_type`, `platform`, `price`, or `watchlist`) so clients can disambiguate. The price filter requires a real, in-range, ETH/WETH-denominated price while a bound is active; no-price events (e.g. pure transfers) are excluded. The watchlist set is snapshotted when `set_watchlist_filter` is received — re-send it to refresh after the user edits their watchlist.
 
 ## Search & Filtering
 

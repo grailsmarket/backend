@@ -430,9 +430,10 @@ export async function activityRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Price threshold filter - applies only to ETH/WETH-denominated priced events.
-      // Events with no price (price_wei IS NULL: pure transfers, etc.) always pass through.
-      // currency_address IS NULL means a blockchain mint/renewal cost, which is ETH-denominated.
+      // Price threshold filter - an active bound requires a real, in-range, ETH/WETH-denominated
+      // price. Events with no price (price_wei IS NULL: pure transfers, un-enriched mints, etc.)
+      // are excluded while filtering by price (a NULL makes the CAST comparison UNKNOWN, so the
+      // row drops out). currency_address IS NULL means a blockchain mint/renewal cost (ETH-denominated).
       const priceConds: string[] = [];
       if (min_price_wei !== undefined) {
         paramCount++;
@@ -452,7 +453,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
         const wethParam = `$${paramCount}`;
         params.push(CURRENCY_ADDRESSES.WETH.toLowerCase());
         conditions.push(
-          `(ah.price_wei IS NULL OR ((ah.currency_address IS NULL OR LOWER(ah.currency_address) IN (${ethParam}, ${wethParam})) AND ${priceConds.join(' AND ')}))`
+          `((ah.currency_address IS NULL OR LOWER(ah.currency_address) IN (${ethParam}, ${wethParam})) AND ${priceConds.join(' AND ')})`
         );
       }
 
