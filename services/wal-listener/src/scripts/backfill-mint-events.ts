@@ -225,8 +225,12 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
             UPDATE activity_history
             SET
               created_at = $1,
-              transaction_hash = $2,
-              block_number = $3,
+              -- Only set tx hash / block when the row doesn't already have one. The Graph's
+              -- events[0] isn't guaranteed to be the registration event, so we must not clobber a
+              -- transaction_hash that the indexer already recorded. block_number is paired with the
+              -- tx hash so it only moves together with it.
+              transaction_hash = COALESCE(transaction_hash, $2),
+              block_number = CASE WHEN transaction_hash IS NULL THEN $3 ELSE block_number END,
               metadata = $4,
               price_wei = $5,
               currency_address = $6
