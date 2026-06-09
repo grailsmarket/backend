@@ -90,6 +90,10 @@ const ConfigSchema = z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().default('https://api.etherscan.io/v2/api'),
   }),
+  ensvision: z.object({
+    apiBaseUrl: z.string().default('https://api2.ensvision.com/v1'),
+    enabled: z.coerce.boolean().default(true),
+  }),
   googleAds: z.object({
     developerToken: z.string().optional(),
     clientId: z.string().optional(),
@@ -184,6 +188,10 @@ const rawConfig = {
   etherscan: {
     apiKey: process.env.ETHERSCAN_API_KEY,
     baseUrl: process.env.ETHERSCAN_BASE_URL,
+  },
+  ensvision: {
+    apiBaseUrl: process.env.ENSVISION_API_BASE_URL,
+    enabled: process.env.ENSVISION_ENABLED !== 'false',
   },
   googleAds: {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,

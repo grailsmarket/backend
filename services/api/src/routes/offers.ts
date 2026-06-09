@@ -296,7 +296,14 @@ export async function offersRoutes(fastify: FastifyInstance) {
         });
       }
     } else if (body.status === 'accepted') {
-      // Only the ENS name owner can accept an offer on their name
+      // Only the current ENS name owner may optimistically mark an offer accepted.
+      // Accepting transfers the name to the buyer, so if the indexer has already
+      // processed the on-chain fill and flipped owner_address, this check fails (403).
+      // That is intentional and NOT loosened: the frontend treats this PUT as
+      // best-effort, and the Seaport indexer authoritatively marks the offer accepted
+      // (createSale -> mark_listing_sold_on_sale trigger). Loosening to "name is now
+      // owned by the buyer" would let ANY authenticated wallet mark the offer accepted
+      // during that window, so we keep the strict owner check.
       if (!isOwner) {
         return reply.status(403).send({
           success: false,

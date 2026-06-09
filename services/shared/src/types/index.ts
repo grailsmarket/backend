@@ -54,7 +54,7 @@ export const SaleSchema = z.object({
   blockNumber: z.bigint(),
   orderHash: z.string().optional(),
   orderData: z.record(z.any()).optional(),
-  source: z.enum(['opensea', 'grails', 'blur', 'looksrare', 'x2y2', 'other']),
+  source: z.enum(['opensea', 'grails', 'vision', 'blur', 'looksrare', 'x2y2', 'other']),
   platformFeeWei: z.string().optional(),
   creatorFeeWei: z.string().optional(),
   metadata: z.record(z.any()).optional(),

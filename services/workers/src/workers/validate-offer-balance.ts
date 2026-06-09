@@ -15,7 +15,8 @@ import {
   WETH_ADDRESS,
   USDC_ADDRESS,
   OPENSEA_CONDUIT_ADDRESS,
-  MARKETPLACE_CONDUIT_ADDRESS
+  MARKETPLACE_CONDUIT_ADDRESS,
+  SEAPORT_ADDRESS
 } from './types';
 
 const pool = getPostgresPool();
@@ -40,6 +41,7 @@ async function fetchOffer(offerId: number): Promise<OfferWithBalance | null> {
       o.status,
       o.ens_name_id,
       o.source,
+      o.order_data,
       en.name
     FROM offers o
     JOIN ens_names en ON en.id = o.ens_name_id
@@ -120,6 +122,23 @@ function getConduitAddress(source: string | undefined): string {
 }
 
 /**
+ * Resolve the address the WETH/USDC approval must target for this offer.
+ *
+ * Seaport orders carry a `conduitKey`: a zero key means tokens move through the
+ * Seaport contract directly, so the approval must be set to Seaport itself (this
+ * is how ENS Vision offers are signed). A non-zero key means a conduit is used,
+ * which we map by source. Reading the key from the signed order keeps validation
+ * correct for any marketplace rather than assuming a per-source conduit.
+ */
+function getSpenderAddress(offer: OfferWithBalance): string {
+  const conduitKey: unknown = (offer as any).order_data?.parameters?.conduitKey;
+  if (typeof conduitKey === 'string' && /^0x0+$/i.test(conduitKey)) {
+    return SEAPORT_ADDRESS;
+  }
+  return getConduitAddress(offer.source);
+}
+
+/**
  * Validate offer balance
  */
 export async function validateOfferBalance(offerId: number): Promise<ValidationResult> {
@@ -178,7 +197,7 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
 
     // 5. Check allowance for ERC20 tokens (WETH, USDC)
     if (currency !== 'ETH') {
-      const conduitAddress = getConduitAddress(offer.source);
+      const conduitAddress = getSpenderAddress(offer);
       const allowance = await getTokenAllowance(
         offer.currency_address,
         offer.buyer_address,
