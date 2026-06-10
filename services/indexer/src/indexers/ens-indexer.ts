@@ -613,14 +613,54 @@ export class ENSIndexer {
         [fullName]
       );
 
-      if (ensNameResult.rows.length === 0) {
-        // Name not yet in database - this can happen if Controller event is processed
-        // before Base Registrar event. Log and skip - we'll catch it on next sync.
-        logger.debug(`Controller NameRegistered: name ${fullName} not yet in ens_names, will retry later`);
-        return;
+      let ensNameId: number;
+      if (ensNameResult.rows.length > 0) {
+        ensNameId = ensNameResult.rows[0].id;
+      } else {
+        // The name isn't in ens_names yet. This is common at chain head: the Base Registrar
+        // Transfer/NameRegistered handlers resolve the name from The Graph and early-return while
+        // The Graph is still catching up to this block, so no row exists when this Controller
+        // event is processed. Unlike those events, the Controller NameRegistered carries
+        // everything we need inline (name, owner, expiry, base/premium cost) and needs no Graph
+        // lookup. Bootstrap the row from the event data here instead of discarding the cost - the
+        // later Graph-driven sync enriches resolver/metadata on the same row. The mint activity is
+        // still created by handleNameRegistered, which copies price_wei from the registrations row
+        // written just below, so cost lands even when the mint is created in a later pass.
+        let bootstrapTokenId: string;
+        try {
+          bootstrapTokenId = BigInt(labelHash).toString();
+        } catch {
+          logger.warn(`Controller NameRegistered: could not derive token_id from labelHash ${labelHash} for ${fullName}, skipping cost capture`);
+          return;
+        }
+        const { has_numbers, has_emoji } = this.calculateNameAttributes(fullName);
+        const bootstrap = await this.pool.query(
+          `INSERT INTO ens_names (
+             token_id, owner_address, registrant, expiry_date, registration_date,
+             name, has_numbers, has_emoji
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (token_id) DO UPDATE SET
+             owner_address = EXCLUDED.owner_address,
+             registrant = EXCLUDED.registrant,
+             expiry_date = EXCLUDED.expiry_date,
+             registration_date = COALESCE(ens_names.registration_date, EXCLUDED.registration_date),
+             name = CASE WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name ELSE ens_names.name END,
+             updated_at = NOW()
+           RETURNING id`,
+          [
+            bootstrapTokenId,
+            owner.toLowerCase(),
+            registrantAddress,
+            expiryDate,
+            registrationDate,
+            fullName,
+            has_numbers,
+            has_emoji,
+          ]
+        );
+        ensNameId = bootstrap.rows[0].id;
+        logger.info(`Controller NameRegistered: bootstrapped ens_names row for ${fullName} (token ${bootstrapTokenId}) ahead of Graph sync`);
       }
-
-      const ensNameId = ensNameResult.rows[0].id;
 
       // Extract referrer from V2 controller events
       const referrer = isV2 && args.referrer ? args.referrer : null;
@@ -1627,6 +1667,40 @@ export class ENSIndexer {
             }
           }
 
+          // If the Controller NameRegistered event for this tx was already processed (it ran first
+          // under Graph lag and wrote the registrations row before this mint activity was created),
+          // copy the cost onto the mint now so it isn't left with a NULL price. In the normal
+          // same-pass ordering this lookup finds nothing (the Controller event runs after this one
+          // in logIndex order) and handleControllerNameRegistered fills price_wei via its UPDATE.
+          let mintPriceWei: string | null = null;
+          let mintPlatform = 'blockchain';
+          const mintMetadata: Record<string, unknown> = {
+            token_id: correctTokenId,
+            duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000),
+          };
+          if (log.transactionHash) {
+            const regRow = await this.pool.query(
+              `SELECT base_cost_wei, premium_wei, total_cost_wei, referrer
+               FROM registrations
+               WHERE ens_name_id = $1 AND transaction_hash = $2
+               LIMIT 1`,
+              [ensNameId, log.transactionHash]
+            );
+            if (regRow.rows.length > 0) {
+              const reg = regRow.rows[0];
+              mintPriceWei = reg.total_cost_wei;
+              mintMetadata.base_cost_wei = reg.base_cost_wei;
+              mintMetadata.premium_wei = reg.premium_wei;
+              mintMetadata.total_cost_wei = reg.total_cost_wei;
+              if (reg.referrer) {
+                const source = getRegistrationSource(reg.referrer);
+                mintMetadata.referrer = reg.referrer;
+                mintMetadata.registration_source = source;
+                if (source) mintPlatform = source;
+              }
+            }
+          }
+
           await this.pool.query(
             `INSERT INTO activity_history (
               ens_name_id,
@@ -1636,19 +1710,21 @@ export class ENSIndexer {
               chain_id,
               transaction_hash,
               block_number,
+              price_wei,
               metadata,
               created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT DO NOTHING`,
             [
               ensNameId,
               'mint',
               actualMinter,
-              'blockchain',
+              mintPlatform,
               1,
               log.transactionHash || null,
               log.blockNumber?.toString() || null,
-              JSON.stringify({ token_id: correctTokenId, duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000) }),
+              mintPriceWei,
+              JSON.stringify(mintMetadata),
               registrationDate
             ]
           );

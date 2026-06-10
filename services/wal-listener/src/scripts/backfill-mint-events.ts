@@ -10,7 +10,13 @@
  * URL: ensnode-api-production-500f.up.railway.app/subgraph
  *
  * Usage:
- *   npx tsx src/scripts/backfill-mint-events.ts [--resume] [--dry-run]
+ *   npx tsx src/scripts/backfill-mint-events.ts [--resume] [--dry-run] [--missing-cost-only]
+ *
+ * Options:
+ *   --missing-cost-only  Only update existing mint events that are missing cost
+ *                        (price_wei IS NULL), and skip the insert phase. Use this to
+ *                        repair just the broken mints instead of re-querying The Graph
+ *                        for every mint event.
  */
 
 import { getPostgresPool, closeAllConnections } from '../../../shared/src';
@@ -141,9 +147,12 @@ async function saveProgress(progress: Progress): Promise<void> {
   await fs.writeFile(PROGRESS_FILE, JSON.stringify(progress, null, 2));
 }
 
-async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Promise<void> {
+async function updateExistingMintEvents(progress: Progress, dryRun: boolean, missingCostOnly: boolean): Promise<void> {
   console.log('\n📝 Phase 1: Updating Existing Mint Events\n');
   console.log('Processing mint events in batches (cursor-based)...\n');
+  if (missingCostOnly) {
+    console.log('🔎 Filter: only mint events missing cost data (price_wei IS NULL)\n');
+  }
 
   let processedCount = 0;
   let lastProcessedActivityId = progress.lastProcessedId;
@@ -162,6 +171,7 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
       JOIN ens_names en ON en.id = ah.ens_name_id
       WHERE ah.event_type = 'mint'
         AND ah.id > $1
+        ${missingCostOnly ? 'AND ah.price_wei IS NULL' : ''}
         AND en.name NOT LIKE '#%'
         AND en.name NOT LIKE '%.%.eth'
       ORDER BY ah.id
@@ -225,8 +235,12 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
             UPDATE activity_history
             SET
               created_at = $1,
-              transaction_hash = $2,
-              block_number = $3,
+              -- Only set tx hash / block when the row doesn't already have one. The Graph's
+              -- events[0] isn't guaranteed to be the registration event, so we must not clobber a
+              -- transaction_hash that the indexer already recorded. block_number is paired with the
+              -- tx hash so it only moves together with it.
+              transaction_hash = COALESCE(transaction_hash, $2),
+              block_number = CASE WHEN transaction_hash IS NULL THEN $3 ELSE block_number END,
               metadata = $4,
               price_wei = $5,
               currency_address = $6
@@ -280,7 +294,9 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
   }
 
   console.log(`\n✅ Phase 1 complete: Updated ${progress.updated} mint events\n`);
-  progress.phase = 'insert';
+  // In missing-cost-only mode we only repair existing mints that lack a price; skip the insert
+  // phase (which scans every ENS name for entirely-missing mints).
+  progress.phase = missingCostOnly ? 'completed' : 'insert';
   progress.lastProcessedId = 0;
   await saveProgress(progress);
 }
@@ -442,11 +458,16 @@ async function main() {
   const args = process.argv.slice(2);
   const shouldResume = args.includes('--resume');
   const dryRun = args.includes('--dry-run');
+  const missingCostOnly = args.includes('--missing-cost-only');
 
   console.log('🔄 Backfilling Mint Events from The Graph\n');
 
   if (dryRun) {
     console.log('⚠️  DRY RUN MODE - No changes will be made\n');
+  }
+
+  if (missingCostOnly) {
+    console.log('🎯 MISSING-COST-ONLY MODE - Only repairing mints with no price; insert phase skipped\n');
   }
 
   try {
@@ -477,12 +498,23 @@ async function main() {
       console.log('📝 Starting fresh backfill process\n');
     }
 
-    // Execute phases
-    if (progress.phase === 'update') {
-      await updateExistingMintEvents(progress, dryRun);
+    // In missing-cost-only mode the update phase IS the entire job. If a prior (full) run left
+    // saved progress in the 'insert' or 'completed' phase, a plain --resume would skip the update
+    // block (wrong phase) and the insert block (missingCostOnly), then exit as a silent no-op that
+    // looks successful. Force the update phase to run from the start instead.
+    if (missingCostOnly && progress.phase !== 'update') {
+      console.warn(`⚠️  Saved progress is in '${progress.phase}' phase; resetting to 'update' for the missing-cost-only repair.\n`);
+      progress.phase = 'update';
+      progress.lastProcessedId = 0;
+      await saveProgress(progress);
     }
 
-    if (progress.phase === 'insert') {
+    // Execute phases
+    if (progress.phase === 'update') {
+      await updateExistingMintEvents(progress, dryRun, missingCostOnly);
+    }
+
+    if (progress.phase === 'insert' && !missingCostOnly) {
       await insertMissingMintEvents(progress, dryRun);
     }
 

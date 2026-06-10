@@ -218,9 +218,11 @@ export async function feedRoutes(fastify: FastifyInstance) {
           if (priceConds.length > 0) {
             const ethPh = push(CURRENCY_ADDRESSES.ETH.toLowerCase());
             const wethPh = push(CURRENCY_ADDRESSES.WETH.toLowerCase());
-            // Price bounds apply only to ETH/WETH-denominated priced events.
-            // No-price events (pure transfers, etc.) always pass through.
-            priceClause = `(ah.price_wei IS NULL OR ((ah.currency_address IS NULL OR LOWER(ah.currency_address) IN (${ethPh}, ${wethPh})) AND ${priceConds.join(' AND ')}))`;
+            // An active price bound requires a real, in-range, ETH/WETH-denominated price.
+            // No-price events (NULL price_wei: pure transfers, un-enriched mints, etc.) are
+            // excluded while filtering by price — a NULL makes the CAST comparison UNKNOWN, so the
+            // row drops out. (null currency = ETH-denominated mint/renewal cost, which is allowed.)
+            priceClause = `((ah.currency_address IS NULL OR LOWER(ah.currency_address) IN (${ethPh}, ${wethPh})) AND ${priceConds.join(' AND ')})`;
           }
         }
 

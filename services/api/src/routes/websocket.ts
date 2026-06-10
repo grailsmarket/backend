@@ -696,11 +696,13 @@ export function broadcastActivityEvent(activityData: any) {
       shouldSend = ens_name_id != null && client.watchlistFilter.ensNameIds.has(Number(ens_name_id));
     }
 
-    // Apply price threshold filter (AND). No-price events always pass; priced events must be
-    // ETH/WETH-denominated (null currency = ETH-denominated mint/renewal) and within range.
+    // Apply price threshold filter (AND). An active bound requires a real, in-range price; no-price
+    // events (NULL/empty price_wei) are excluded. Priced events must be ETH/WETH-denominated
+    // (null currency = ETH-denominated mint/renewal) and within range.
     if (shouldSend && (client.priceFilter.minWei !== undefined || client.priceFilter.maxWei !== undefined)) {
       if (price_wei == null || price_wei === '') {
-        // always include no-price events
+        // no-price events are excluded while filtering by price
+        shouldSend = false;
       } else if (!(currency_address == null || isEthOrWeth(currency_address))) {
         shouldSend = false;
       } else {
