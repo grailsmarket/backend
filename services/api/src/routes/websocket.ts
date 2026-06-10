@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
 import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
 import { verifyToken } from '../middleware/auth';
+import { GLOBAL_CHAT_ID } from '../services/global-chat';
 
 interface WSClient {
   id: string;
@@ -12,10 +13,13 @@ interface WSClient {
 interface ChatWSClient {
   id: string;
   ws: WebSocket;
-  userId: number;
-  address: string;
+  /** null for anonymous (token-less) connections: read-only global chat access. */
+  userId: number | null;
+  address: string | null;
   /** Set true after the client sends `{type:'subscribe'}`. Until then they get nothing. */
   subscribed: boolean;
+  /** Set true after `{type:'subscribe_global'}`; receives global chat events. */
+  subscribedGlobal: boolean;
 }
 
 interface ActivityWSClient {
@@ -77,6 +81,7 @@ export function getWebSocketStats() {
       id: c.id,
       userId: c.userId,
       subscribed: c.subscribed,
+      subscribedGlobal: c.subscribedGlobal,
     })),
     broadcastStats,
   };
@@ -168,24 +173,25 @@ export async function websocketRoutes(fastify: FastifyInstance) {
   fastify.get('/chats', { websocket: true }, async (connection, req) => {
     const clientId = req.id;
 
-    // Auth via ?token=... query param (browser WS APIs cannot set Authorization header)
+    // Auth via ?token=... query param (browser WS APIs cannot set Authorization header).
+    // The token is OPTIONAL: token-less connections become anonymous read-only
+    // clients that may only subscribe to the global chat. A token that is
+    // present but invalid is still rejected (4401) so an expired session
+    // surfaces as an auth failure instead of silently degrading.
     const token = (req.query as { token?: string })?.token;
-    if (!token) {
-      connection.socket.send(JSON.stringify({ type: 'error', message: 'Missing token' }));
-      connection.socket.close(4401, 'Unauthorized');
-      return;
-    }
 
-    let userId: number;
-    let address: string;
-    try {
-      const decoded = verifyToken(token);
-      userId = parseInt(decoded.sub, 10);
-      address = decoded.address;
-    } catch {
-      connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
-      connection.socket.close(4401, 'Unauthorized');
-      return;
+    let userId: number | null = null;
+    let address: string | null = null;
+    if (token) {
+      try {
+        const decoded = verifyToken(token);
+        userId = parseInt(decoded.sub, 10);
+        address = decoded.address;
+      } catch {
+        connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid token' }));
+        connection.socket.close(4401, 'Unauthorized');
+        return;
+      }
     }
 
     const client: ChatWSClient = {
@@ -194,9 +200,10 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       userId,
       address,
       subscribed: false,
+      subscribedGlobal: false,
     };
     chatClients.set(clientId, client);
-    console.log(`[WebSocket] Chat client connected: ${clientId} (user ${userId}), total: ${chatClients.size}`);
+    console.log(`[WebSocket] Chat client connected: ${clientId} (user ${userId ?? 'anonymous'}), total: ${chatClients.size}`);
 
     connection.socket.send(JSON.stringify({
       type: 'connected',
@@ -220,8 +227,10 @@ export async function websocketRoutes(fastify: FastifyInstance) {
     connection.socket.on('close', () => {
       chatClients.delete(clientId);
       // GC throttle keys for this user (cheap; only this user's keys)
-      for (const key of typingThrottle.keys()) {
-        if (key.startsWith(`${userId}:`)) typingThrottle.delete(key);
+      if (userId !== null) {
+        for (const key of typingThrottle.keys()) {
+          if (key.startsWith(`${userId}:`)) typingThrottle.delete(key);
+        }
       }
     });
 
@@ -743,6 +752,10 @@ export function broadcastActivityEvent(activityData: any) {
 async function handleChatMessage(client: ChatWSClient, data: any) {
   switch (data.type) {
     case 'subscribe':
+      if (client.userId === null) {
+        client.ws.send(JSON.stringify({ type: 'error', message: 'Authentication required' }));
+        return;
+      }
       client.subscribed = true;
       client.ws.send(JSON.stringify({
         type: 'subscribed',
@@ -760,8 +773,31 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
       }));
       return;
 
+    case 'subscribe_global':
+      // Anyone may subscribe to the global room, including anonymous clients.
+      client.subscribedGlobal = true;
+      client.ws.send(JSON.stringify({
+        type: 'subscribed',
+        channel: 'global_chat',
+        timestamp: new Date().toISOString(),
+      }));
+      return;
+
+    case 'unsubscribe_global':
+      client.subscribedGlobal = false;
+      client.ws.send(JSON.stringify({
+        type: 'unsubscribed',
+        channel: 'global_chat',
+        timestamp: new Date().toISOString(),
+      }));
+      return;
+
     case 'typing':
     case 'stop_typing': {
+      if (client.userId === null) {
+        client.ws.send(JSON.stringify({ type: 'error', message: 'Authentication required' }));
+        return;
+      }
       const chatId: string | undefined = data.chat_id;
       if (!chatId || typeof chatId !== 'string') {
         client.ws.send(JSON.stringify({ type: 'error', message: 'chat_id required' }));
@@ -773,6 +809,23 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
       const last = typingThrottle.get(throttleKey) ?? 0;
       if (now - last < TYPING_MIN_INTERVAL_MS) return;
       typingThrottle.set(throttleKey, now);
+
+      const eventType = data.type === 'typing' ? 'chat:typing' : 'chat:typing_stop';
+      const payload = JSON.stringify({
+        type: eventType,
+        data: { chat_id: chatId, user_id: client.userId },
+        timestamp: new Date().toISOString(),
+      });
+
+      // Global room: no participant rows; fan out to global subscribers.
+      if (chatId === GLOBAL_CHAT_ID) {
+        chatClients.forEach((c) => {
+          if (c.userId === client.userId) return;
+          if (!c.subscribedGlobal) return;
+          try { c.ws.send(payload); } catch { /* socket closed mid-send */ }
+        });
+        return;
+      }
 
       // Look up other participants (and verify caller is a member). Cheap query.
       const pool = getPostgresPool();
@@ -786,17 +839,10 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
         return;
       }
 
-      const eventType = data.type === 'typing' ? 'chat:typing' : 'chat:typing_stop';
-      const payload = JSON.stringify({
-        type: eventType,
-        data: { chat_id: chatId, user_id: client.userId },
-        timestamp: new Date().toISOString(),
-      });
-
       chatClients.forEach((c) => {
         if (c.userId === client.userId) return;
         if (!c.subscribed) return;
-        if (!participantIds.includes(c.userId)) return;
+        if (c.userId === null || !participantIds.includes(c.userId)) return;
         try { c.ws.send(payload); } catch { /* socket closed mid-send */ }
       });
       return;
@@ -822,6 +868,10 @@ interface ChatMessageRecord {
   edited_at: string | Date | null;
   deleted_at: string | Date | null;
   sender_address?: string;
+  sender_ens_name?: string | null;
+  sender_avatar?: string | null;
+  /** Always [] for new messages; present so WS payloads match REST message shape. */
+  reactions?: unknown[];
 }
 
 /** Send a JSON event to every connected, subscribed chat client whose userId is in `participantUserIds`. */
@@ -829,9 +879,68 @@ function fanOutToParticipants(participantUserIds: number[], payload: object) {
   const json = JSON.stringify(payload);
   chatClients.forEach((c) => {
     if (!c.subscribed) return;
-    if (!participantUserIds.includes(c.userId)) return;
+    if (c.userId === null || !participantUserIds.includes(c.userId)) return;
     try { c.ws.send(json); } catch { /* socket closed mid-send */ }
   });
+}
+
+/** Send a JSON event to every chat client subscribed to the global room (incl. anonymous). */
+function fanOutToGlobal(payload: object) {
+  const json = JSON.stringify(payload);
+  chatClients.forEach((c) => {
+    if (!c.subscribedGlobal) return;
+    try { c.ws.send(json); } catch { /* socket closed mid-send */ }
+  });
+}
+
+export function broadcastGlobalChatEvent(args: { message: ChatMessageRecord }) {
+  fanOutToGlobal({
+    type: 'chat:message_new',
+    data: { chat_id: args.message.chat_id, message: args.message },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastGlobalChatDeletedEvent(args: { messageId: string }) {
+  fanOutToGlobal({
+    type: 'chat:message_deleted',
+    data: { chat_id: GLOBAL_CHAT_ID, message_id: args.messageId },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Reaction add/remove on a message. `count` is the absolute per-emoji count
+ * after the change so client cache patching is idempotent. Audience is the
+ * chat's participants for DMs, or every global subscriber for the global room.
+ */
+export function broadcastChatReactionEvent(args: {
+  chatId: string;
+  messageId: string;
+  userId: number;
+  address: string;
+  emoji: string;
+  count: number;
+  action: 'added' | 'removed';
+  audience: number[] | 'global';
+}) {
+  const payload = {
+    type: args.action === 'added' ? 'chat:reaction_added' : 'chat:reaction_removed',
+    data: {
+      chat_id: args.chatId,
+      message_id: args.messageId,
+      user_id: args.userId,
+      address: args.address,
+      emoji: args.emoji,
+      count: args.count,
+    },
+    timestamp: new Date().toISOString(),
+  };
+  if (args.audience === 'global') {
+    fanOutToGlobal(payload);
+  } else {
+    fanOutToParticipants(args.audience, payload);
+  }
 }
 
 export function broadcastChatEvent(args: {
