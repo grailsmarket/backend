@@ -2,7 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
-import { broadcastChatReadEvent, broadcastChatDeletedEvent, broadcastChatCreatedEvent } from './websocket';
+import {
+  broadcastChatReadEvent,
+  broadcastChatDeletedEvent,
+  broadcastChatCreatedEvent,
+  broadcastChatReactionEvent,
+} from './websocket';
+import { GLOBAL_CHAT_ID } from '../services/global-chat';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -49,6 +55,39 @@ const ChatIdParamsSchema = z.object({
 const ChatMessageIdParamsSchema = z.object({
   id: z.string().uuid(),
   messageId: z.string().uuid(),
+});
+
+// A single emoji grapheme. 32 chars accommodates ZWJ family/skin-tone
+// sequences; the pictographic check is deliberately permissive (regional
+// indicators, keycaps) — the PK on (message_id, user_id, emoji) and the
+// length cap bound abuse to distinct short strings.
+const hasOnlyEmojiSafeChars = (v: string): boolean => {
+  // No whitespace, control, surrogate, private-use or unassigned chars.
+  if (/[\s\p{Cc}\p{Cs}\p{Co}\p{Cn}]/u.test(v)) return false;
+  // Format chars (Cf) are rejected except ZWJ (U+200D), which emoji sequences need.
+  const ZWJ = String.fromCodePoint(0x200d);
+  for (const ch of v) {
+    if (ch !== ZWJ && /\p{Cf}/u.test(ch)) return false;
+  }
+  return true;
+};
+
+const EmojiSchema = z.string().min(1).max(32)
+  .refine(hasOnlyEmojiSafeChars, { message: 'Invalid emoji' })
+  .refine(
+    (v) =>
+      /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\u{FE0F}?\u{20E3}/u.test(v),
+    { message: 'Must be an emoji' }
+  );
+
+const AddReactionSchema = z.object({
+  emoji: EmojiSchema,
+});
+
+const ReactionParamsSchema = z.object({
+  id: z.string().uuid(),
+  messageId: z.string().uuid(),
+  emoji: z.string().min(1),
 });
 
 const sendError = (reply: any, status: number, code: string, message: string, details?: unknown) =>
@@ -476,7 +515,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         beforeCreatedAt = cursor.rows[0].created_at;
       }
 
-      const params: any[] = [id, limit];
+      const params: any[] = [id, limit, callerId];
       let cursorClause = '';
       if (beforeCreatedAt) {
         params.push(beforeCreatedAt);
@@ -486,9 +525,24 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const result = await pool.query(
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at,
-                u.address AS sender_address
+                u.address AS sender_address,
+                COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id
+           LEFT JOIN LATERAL (
+             SELECT json_agg(json_build_object(
+                      'emoji', agg.emoji,
+                      'count', agg.cnt,
+                      'reacted', agg.reacted
+                    ) ORDER BY agg.cnt DESC, agg.emoji) AS reactions
+               FROM (
+                 SELECT emoji, COUNT(*)::int AS cnt,
+                        COALESCE(BOOL_OR(user_id = $3), FALSE) AS reacted
+                   FROM message_reactions
+                  WHERE message_id = m.id
+                  GROUP BY emoji
+               ) agg
+           ) r ON TRUE
           WHERE m.chat_id = $1 ${cursorClause}
           ORDER BY m.created_at DESC, m.id DESC
           LIMIT $2`,
@@ -671,6 +725,143 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
       fastify.log.error({ error }, 'Error deleting message');
       return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete message');
+    }
+  });
+
+  /** Participant of the chat, or anyone for the global room. */
+  async function canAccessChatMessages(chatId: string, userId: number): Promise<boolean> {
+    if (chatId === GLOBAL_CHAT_ID) return true;
+    return userIsParticipant(pool, chatId, userId);
+  }
+
+  /** Absolute per-emoji count after an add/remove, for idempotent client patching. */
+  async function getReactionCount(messageId: string, emoji: string): Promise<number> {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM message_reactions WHERE message_id = $1 AND emoji = $2`,
+      [messageId, emoji]
+    );
+    return r.rows[0]?.c ?? 0;
+  }
+
+  /**
+   * POST /api/v1/chats/:id/messages/:messageId/reactions
+   * Add an emoji reaction. Idempotent: re-adding the same reaction is a no-op
+   * (`added: false`) and does not broadcast. Works for DMs (participants only)
+   * and the global room (any authenticated, non-banned user).
+   */
+  fastify.post('/:id/messages/:messageId/reactions', {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
+  }, async (request, reply) => {
+    try {
+      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+      const { emoji } = AddReactionSchema.parse(request.body);
+      const callerId = parseInt(request.user!.sub, 10);
+
+      if (await callerIsBannedFromChat(pool, callerId)) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+      }
+      if (!(await canAccessChatMessages(id, callerId))) {
+        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+      }
+
+      const msg = await pool.query(
+        `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL`,
+        [messageId, id]
+      );
+      if (msg.rows.length === 0) {
+        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
+      }
+
+      const inserted = await pool.query(
+        `INSERT INTO message_reactions (message_id, user_id, emoji)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (message_id, user_id, emoji) DO NOTHING
+         RETURNING 1`,
+        [messageId, callerId, emoji]
+      );
+      const added = inserted.rows.length > 0;
+
+      if (added) {
+        const count = await getReactionCount(messageId, emoji);
+        broadcastChatReactionEvent({
+          chatId: id,
+          messageId,
+          userId: callerId,
+          address: request.user!.address,
+          emoji,
+          count,
+          action: 'added',
+          audience: id === GLOBAL_CHAT_ID ? 'global' : await getChatParticipantUserIds(pool, id),
+        });
+      }
+
+      return reply.send(ok({ chat_id: id, message_id: messageId, emoji, added }));
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+      }
+      fastify.log.error({ error }, 'Error adding reaction');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to add reaction');
+    }
+  });
+
+  /**
+   * DELETE /api/v1/chats/:id/messages/:messageId/reactions/:emoji
+   * Remove the caller's reaction. :emoji is URL-encoded.
+   */
+  fastify.delete('/:id/messages/:messageId/reactions/:emoji', {
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    try {
+      const params = ReactionParamsSchema.parse(request.params);
+      const emoji = EmojiSchema.parse(decodeURIComponent(params.emoji));
+      const callerId = parseInt(request.user!.sub, 10);
+
+      if (!(await canAccessChatMessages(params.id, callerId))) {
+        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+      }
+
+      const deleted = await pool.query(
+        `DELETE FROM message_reactions mr
+          USING messages m
+          WHERE mr.message_id = m.id
+            AND m.chat_id = $1
+            AND mr.message_id = $2
+            AND mr.user_id = $3
+            AND mr.emoji = $4
+          RETURNING 1`,
+        [params.id, params.messageId, callerId, emoji]
+      );
+      if (deleted.rows.length === 0) {
+        return sendError(reply, 404, 'REACTION_NOT_FOUND', 'Reaction not found');
+      }
+
+      const count = await getReactionCount(params.messageId, emoji);
+      broadcastChatReactionEvent({
+        chatId: params.id,
+        messageId: params.messageId,
+        userId: callerId,
+        address: request.user!.address,
+        emoji,
+        count,
+        action: 'removed',
+        audience:
+          params.id === GLOBAL_CHAT_ID ? 'global' : await getChatParticipantUserIds(pool, params.id),
+      });
+
+      return reply.send(ok({
+        chat_id: params.id,
+        message_id: params.messageId,
+        emoji,
+        removed: true,
+      }));
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+      }
+      fastify.log.error({ error }, 'Error removing reaction');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to remove reaction');
     }
   });
 }
