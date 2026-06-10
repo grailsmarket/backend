@@ -10,7 +10,13 @@
  * URL: ensnode-api-production-500f.up.railway.app/subgraph
  *
  * Usage:
- *   npx tsx src/scripts/backfill-mint-events.ts [--resume] [--dry-run]
+ *   npx tsx src/scripts/backfill-mint-events.ts [--resume] [--dry-run] [--missing-cost-only]
+ *
+ * Options:
+ *   --missing-cost-only  Only update existing mint events that are missing cost
+ *                        (price_wei IS NULL), and skip the insert phase. Use this to
+ *                        repair just the broken mints instead of re-querying The Graph
+ *                        for every mint event.
  */
 
 import { getPostgresPool, closeAllConnections } from '../../../shared/src';
@@ -141,9 +147,12 @@ async function saveProgress(progress: Progress): Promise<void> {
   await fs.writeFile(PROGRESS_FILE, JSON.stringify(progress, null, 2));
 }
 
-async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Promise<void> {
+async function updateExistingMintEvents(progress: Progress, dryRun: boolean, missingCostOnly: boolean): Promise<void> {
   console.log('\n📝 Phase 1: Updating Existing Mint Events\n');
   console.log('Processing mint events in batches (cursor-based)...\n');
+  if (missingCostOnly) {
+    console.log('🔎 Filter: only mint events missing cost data (price_wei IS NULL)\n');
+  }
 
   let processedCount = 0;
   let lastProcessedActivityId = progress.lastProcessedId;
@@ -162,6 +171,7 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
       JOIN ens_names en ON en.id = ah.ens_name_id
       WHERE ah.event_type = 'mint'
         AND ah.id > $1
+        ${missingCostOnly ? 'AND ah.price_wei IS NULL' : ''}
         AND en.name NOT LIKE '#%'
         AND en.name NOT LIKE '%.%.eth'
       ORDER BY ah.id
@@ -284,7 +294,9 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean): Pr
   }
 
   console.log(`\n✅ Phase 1 complete: Updated ${progress.updated} mint events\n`);
-  progress.phase = 'insert';
+  // In missing-cost-only mode we only repair existing mints that lack a price; skip the insert
+  // phase (which scans every ENS name for entirely-missing mints).
+  progress.phase = missingCostOnly ? 'completed' : 'insert';
   progress.lastProcessedId = 0;
   await saveProgress(progress);
 }
@@ -446,11 +458,16 @@ async function main() {
   const args = process.argv.slice(2);
   const shouldResume = args.includes('--resume');
   const dryRun = args.includes('--dry-run');
+  const missingCostOnly = args.includes('--missing-cost-only');
 
   console.log('🔄 Backfilling Mint Events from The Graph\n');
 
   if (dryRun) {
     console.log('⚠️  DRY RUN MODE - No changes will be made\n');
+  }
+
+  if (missingCostOnly) {
+    console.log('🎯 MISSING-COST-ONLY MODE - Only repairing mints with no price; insert phase skipped\n');
   }
 
   try {
@@ -483,10 +500,10 @@ async function main() {
 
     // Execute phases
     if (progress.phase === 'update') {
-      await updateExistingMintEvents(progress, dryRun);
+      await updateExistingMintEvents(progress, dryRun, missingCostOnly);
     }
 
-    if (progress.phase === 'insert') {
+    if (progress.phase === 'insert' && !missingCostOnly) {
       await insertMissingMintEvents(progress, dryRun);
     }
 

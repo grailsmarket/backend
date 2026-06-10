@@ -21,6 +21,8 @@
     "backfill-mint-events": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js",
     "backfill-mint-events:dry": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --dry-run",
     "backfill-mint-events:resume": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --resume",
+    "backfill-mint-events:missing-cost": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --missing-cost-only",
+    "backfill-mint-events:missing-cost:dry": "npm run build && node --max-old-space-size=512 --expose-gc dist/wal-listener/src/scripts/backfill-mint-events.js --missing-cost-only --dry-run",
     "recover-placeholders": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/recover-placeholder-subnames.js",
     "recover-placeholders:dry": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/recover-placeholder-subnames.js --dry-run --limit 10",
     "recover-hash-placeholders": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/recover-hash-placeholders.js",
