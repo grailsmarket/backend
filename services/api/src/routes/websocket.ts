@@ -868,6 +868,10 @@ interface ChatMessageRecord {
   edited_at: string | Date | null;
   deleted_at: string | Date | null;
   sender_address?: string;
+  sender_ens_name?: string | null;
+  sender_avatar?: string | null;
+  /** Always [] for new messages; present so WS payloads match REST message shape. */
+  reactions?: unknown[];
 }
 
 /** Send a JSON event to every connected, subscribed chat client whose userId is in `participantUserIds`. */

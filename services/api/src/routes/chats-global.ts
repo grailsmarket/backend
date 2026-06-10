@@ -12,6 +12,12 @@ import {
   nextUtcMidnight,
   tierLimit,
 } from '../services/global-chat';
+import { callerIsBannedFromChat } from '../services/chat-moderation';
+
+// Advisory-lock namespace for per-user global chat quota serialization
+// (pg_advisory_xact_lock(namespace, user_id)). Arbitrary but must not collide
+// with other advisory-lock namespaces in this codebase.
+const GLOBAL_CHAT_QUOTA_LOCK_NS = 7301;
 
 const SendMessageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
@@ -39,17 +45,6 @@ const ok = <T>(data: T): APIResponse<T> => ({
   data,
   meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
 });
-
-async function callerIsBannedFromChat(
-  pool: ReturnType<typeof getPostgresPool>,
-  userId: number
-): Promise<boolean> {
-  const r = await pool.query(
-    `SELECT 1 FROM chat_user_status WHERE user_id = $1 AND status = 'banned' LIMIT 1`,
-    [userId]
-  );
-  return r.rows.length > 0;
-}
 
 export async function chatsGlobalRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -195,24 +190,11 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
 
       const tier = await getUserTier(callerAddress);
       const limit = tierLimit(tier, config);
-      let used = 0;
-      if (limit !== null) {
-        used = await getQuotaUsedToday(callerId);
-        if (used >= limit) {
-          return sendError(reply, 429, 'QUOTA_EXCEEDED', 'Daily message limit reached', {
-            tier,
-            used,
-            limit,
-            remaining: 0,
-            resets_at: nextUtcMidnight(),
-          });
-        }
-      }
 
       // CTE: insert + join users/ens_names so the response carries the same
       // display fields as list reads. The 0859 trigger fires pg_notify;
       // ChatNotifier handles the WS fan-out.
-      const inserted = await pool.query(
+      const insertSql =
         `WITH new_msg AS (
            INSERT INTO messages (chat_id, sender_user_id, body, content_type)
            VALUES ($1, $2, $3, 'text')
@@ -230,9 +212,50 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
               ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
                        e.registration_date ASC NULLS LAST
               LIMIT 1
-           ) en ON TRUE`,
-        [GLOBAL_CHAT_ID, callerId, body]
-      );
+           ) en ON TRUE`;
+      const insertParams = [GLOBAL_CHAT_ID, callerId, body];
+
+      let messageRow;
+      let used = 0;
+      if (limit === null) {
+        const inserted = await pool.query(insertSql, insertParams);
+        messageRow = inserted.rows[0];
+      } else {
+        // Quota check + insert must be atomic or two concurrent sends can both
+        // pass the check (TOCTOU). A WHERE-guard inside the INSERT statement
+        // would NOT fix this — under READ COMMITTED, concurrent counts don't
+        // see each other's uncommitted rows. Instead, serialize sends per user
+        // with a transaction-scoped advisory lock (safe under PgBouncer
+        // transaction pooling): the second request blocks on the lock until
+        // the first commits, then its count sees the new row.
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT pg_advisory_xact_lock($1, $2)', [
+            GLOBAL_CHAT_QUOTA_LOCK_NS,
+            callerId,
+          ]);
+          used = await getQuotaUsedToday(callerId, client);
+          if (used >= limit) {
+            await client.query('ROLLBACK');
+            return sendError(reply, 429, 'QUOTA_EXCEEDED', 'Daily message limit reached', {
+              tier,
+              used,
+              limit,
+              remaining: 0,
+              resets_at: nextUtcMidnight(),
+            });
+          }
+          const inserted = await client.query(insertSql, insertParams);
+          await client.query('COMMIT');
+          messageRow = inserted.rows[0];
+        } catch (txError) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txError;
+        } finally {
+          client.release();
+        }
+      }
 
       const quota = {
         tier,
@@ -242,7 +265,9 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         resets_at: nextUtcMidnight(),
       };
 
-      return reply.status(201).send(ok({ message: inserted.rows[0], quota }));
+      // New messages have no reactions yet; include the empty aggregate so the
+      // response shape matches GET /messages.
+      return reply.status(201).send(ok({ message: { ...messageRow, reactions: [] }, quota }));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);

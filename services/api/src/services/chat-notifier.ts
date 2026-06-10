@@ -111,6 +111,10 @@ export class ChatNotifier {
       const { participant_user_ids: _drop, ...message } = row;
       void _drop;
 
+      // Freshly inserted messages have no reactions; include the empty
+      // aggregate so WS payloads match the REST message shape.
+      message.reactions = [];
+
       if (message.chat_id === GLOBAL_CHAT_ID) {
         broadcastGlobalChatEvent({ message });
         return;

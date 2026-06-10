@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { broadcastChatDeletedEvent, broadcastGlobalChatDeletedEvent } from './websocket';
-import { GLOBAL_CHAT_ID, getGlobalChatConfig } from '../services/global-chat';
+import {
+  GLOBAL_CHAT_ID,
+  getGlobalChatConfig,
+  invalidateGlobalChatConfigCache,
+} from '../services/global-chat';
 
 const sendError = (reply: any, status: number, code: string, message: string, details?: unknown) =>
   reply.status(status).send({
@@ -614,6 +618,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           `UPDATE global_chat_config SET ${cols.join(', ')} WHERE id = 1`,
           params
         );
+        await invalidateGlobalChatConfigCache();
 
         await pool.query(
           `INSERT INTO chat_moderation_log (admin_id, action, reason, metadata)

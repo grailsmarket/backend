@@ -1,3 +1,4 @@
+import type { Pool, PoolClient } from 'pg';
 import { getPostgresPool } from '../../../shared/src';
 import { getRedisClient } from '../utils/redis';
 
@@ -6,6 +7,8 @@ import { getRedisClient } from '../utils/redis';
 export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';
 
 const TIER_CACHE_TTL_SECONDS = 300;
+const CONFIG_CACHE_TTL_SECONDS = 30;
+const CONFIG_CACHE_KEY = 'globalchat:config';
 
 export type GlobalChatTier = 'avatar' | 'name' | 'none';
 
@@ -26,6 +29,47 @@ export interface GlobalQuotaSnapshot {
 }
 
 export async function getGlobalChatConfig(): Promise<GlobalChatConfig> {
+  const redis = getRedisClient();
+
+  if (redis) {
+    try {
+      const cached = await redis.get(CONFIG_CACHE_KEY);
+      if (cached) {
+        return JSON.parse(cached) as GlobalChatConfig;
+      }
+    } catch {
+      // fall through to the DB
+    }
+  }
+
+  const config = await fetchGlobalChatConfig();
+
+  if (redis) {
+    try {
+      await redis.setex(CONFIG_CACHE_KEY, CONFIG_CACHE_TTL_SECONDS, JSON.stringify(config));
+    } catch {
+      // cache write failures are non-fatal
+    }
+  }
+
+  return config;
+}
+
+/**
+ * Drop the cached config so admin PATCHes take effect immediately instead of
+ * after the cache TTL.
+ */
+export async function invalidateGlobalChatConfigCache(): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+  try {
+    await redis.del(CONFIG_CACHE_KEY);
+  } catch {
+    // worst case the stale config lives for the remaining TTL
+  }
+}
+
+async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
   const pool = getPostgresPool();
   const result = await pool.query(
     `SELECT enabled, quota_with_avatar, quota_with_name, quota_without_name,
@@ -111,11 +155,18 @@ export function tierLimit(
   }
 }
 
-export async function getQuotaUsedToday(userId: number): Promise<number> {
-  const pool = getPostgresPool();
+/**
+ * Accepts an optional PoolClient so the send path can run the count inside
+ * the same advisory-locked transaction as the INSERT (see chats-global.ts).
+ */
+export async function getQuotaUsedToday(
+  userId: number,
+  db?: Pool | PoolClient
+): Promise<number> {
+  const executor = db ?? getPostgresPool();
   // Soft-deleted messages still count: deleting your own message doesn't
   // refund quota. created_at is assumed UTC (same as the rest of the schema).
-  const result = await pool.query(
+  const result = await executor.query(
     `SELECT COUNT(*)::int AS c FROM messages
       WHERE chat_id = $1 AND sender_user_id = $2
         AND created_at >= date_trunc('day', NOW())`,

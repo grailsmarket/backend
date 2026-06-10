@@ -9,6 +9,7 @@ import {
   broadcastChatReactionEvent,
 } from './websocket';
 import { GLOBAL_CHAT_ID } from '../services/global-chat';
+import { callerIsBannedFromChat } from '../services/chat-moderation';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -152,17 +153,6 @@ function dmKeyForUserPair(a: number, b: number): string {
   }
   const [lo, hi] = aNum < bNum ? [aNum, bNum] : [bNum, aNum];
   return `${lo}:${hi}`;
-}
-
-async function callerIsBannedFromChat(
-  pool: ReturnType<typeof getPostgresPool>,
-  userId: number
-): Promise<boolean> {
-  const r = await pool.query(
-    `SELECT 1 FROM chat_user_status WHERE user_id = $1 AND status = 'banned' LIMIT 1`,
-    [userId]
-  );
-  return r.rows.length > 0;
 }
 
 async function userIsParticipant(
@@ -634,7 +624,8 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       );
 
       // Trigger fires pg_notify; ChatNotifier handles fan-out. Nothing else to do here.
-      return reply.status(201).send(ok({ message: inserted.rows[0] }));
+      // reactions: [] keeps the shape consistent with GET /:id/messages.
+      return reply.status(201).send(ok({ message: { ...inserted.rows[0], reactions: [] } }));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
