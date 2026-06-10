@@ -498,6 +498,17 @@ async function main() {
       console.log('📝 Starting fresh backfill process\n');
     }
 
+    // In missing-cost-only mode the update phase IS the entire job. If a prior (full) run left
+    // saved progress in the 'insert' or 'completed' phase, a plain --resume would skip the update
+    // block (wrong phase) and the insert block (missingCostOnly), then exit as a silent no-op that
+    // looks successful. Force the update phase to run from the start instead.
+    if (missingCostOnly && progress.phase !== 'update') {
+      console.warn(`⚠️  Saved progress is in '${progress.phase}' phase; resetting to 'update' for the missing-cost-only repair.\n`);
+      progress.phase = 'update';
+      progress.lastProcessedId = 0;
+      await saveProgress(progress);
+    }
+
     // Execute phases
     if (progress.phase === 'update') {
       await updateExistingMintEvents(progress, dryRun, missingCostOnly);
