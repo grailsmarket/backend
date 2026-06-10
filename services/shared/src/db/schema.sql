@@ -151,10 +151,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS chats (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type               VARCHAR(16) NOT NULL DEFAULT 'direct'
-                         CHECK (type IN ('direct', 'group')),
+                         CHECK (type IN ('direct', 'group', 'global')),
     title              VARCHAR(120),
     dm_key             VARCHAR(80) UNIQUE,
-    created_by_user_id INTEGER NOT NULL,
+    created_by_user_id INTEGER,
     created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
     last_message_at    TIMESTAMP
 );
@@ -191,6 +191,21 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_user_id, created_at DESC);
+-- Supports the per-sender daily quota COUNT in the global chat send path (0880).
+CREATE INDEX IF NOT EXISTS idx_messages_chat_sender_created
+  ON messages(chat_id, sender_user_id, created_at DESC);
+
+-- Emoji reactions on chat messages, DMs and global chat
+-- (mirror of migration 0882_create_message_reactions.sql)
+CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id  UUID        NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id     INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji       VARCHAR(32) NOT NULL,
+    created_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id, emoji)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reactions_user ON message_reactions(user_id);
 
 CREATE TABLE IF NOT EXISTS message_blocks (
     blocker_user_id INTEGER NOT NULL,
@@ -241,7 +256,8 @@ CREATE TABLE IF NOT EXISTS chat_moderation_log (
     user_id      INTEGER,
     admin_id     INTEGER,
     action       VARCHAR(32) NOT NULL
-                   CHECK (action IN ('ban', 'unban', 'delete_messages')),
+                   CHECK (action IN ('ban', 'unban', 'delete_messages',
+                                     'delete_message', 'config_update')),
     reason       TEXT,
     metadata     JSONB,
     created_at   TIMESTAMP NOT NULL DEFAULT NOW()
@@ -250,6 +266,40 @@ CREATE INDEX IF NOT EXISTS idx_chat_moderation_log_user
   ON chat_moderation_log(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_moderation_log_admin
   ON chat_moderation_log(admin_id, created_at DESC);
+
+-- ============================================================================
+-- Global chat (mirror of migrations 0880_create_global_chat.sql and
+-- 0881_create_global_chat_config.sql)
+-- ============================================================================
+
+-- The global "Grails Chat" room: a single well-known chats row with
+-- type 'global' and NO chat_participants rows. Access control and WS fan-out
+-- compare against this fixed UUID (GLOBAL_CHAT_ID in
+-- services/api/src/services/global-chat.ts).
+INSERT INTO chats (id, type, title, dm_key, created_by_user_id)
+VALUES ('00000000-0000-0000-0000-000000000001', 'global', 'Grails Chat', NULL, NULL)
+ON CONFLICT (id) DO NOTHING;
+
+-- Single-row config editable from the admin panel. Quota tiers derive from
+-- ENS ownership in ens_names:
+--   quota_with_avatar  - owns >=1 name with metadata->>'avatar' set (NULL = unlimited)
+--   quota_with_name    - owns >=1 name, none with avatar
+--   quota_without_name - owns no names
+CREATE TABLE IF NOT EXISTS global_chat_config (
+    id                  INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+    quota_with_avatar   INTEGER,
+    quota_with_name     INTEGER NOT NULL DEFAULT 20,
+    quota_without_name  INTEGER NOT NULL DEFAULT 1,
+    max_message_length  INTEGER NOT NULL DEFAULT 1000,
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO global_chat_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Supports GET /chats/global/online-users (mirror of 0884).
+CREATE INDEX IF NOT EXISTS idx_users_last_sign_in
+  ON users(last_sign_in DESC) WHERE last_sign_in IS NOT NULL;
 
 -- ============================================================================
 -- Comments feature (mirror of migration 0861_create_comments.sql)
