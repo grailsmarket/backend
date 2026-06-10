@@ -74,17 +74,13 @@ export class ChatNotifier {
 
   private async handleMessageCreated(messageId: string) {
     try {
-      // Fetch the message + sender address/identity + participant ids in one
-      // round-trip. The sender's ENS name/avatar (preferring a name with an
-      // avatar) is included so global chat clients can render identities
-      // without an extra lookup; harmless extra fields for DMs.
+      // Fetch the message + sender address + participant ids in one round-trip.
+      // Identity (primary name/avatar) is resolved client-side per address.
       const result = await this.pool.query(
         `SELECT
            m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
            m.metadata, m.created_at, m.edited_at, m.deleted_at,
            u.address AS sender_address,
-           en.name AS sender_ens_name,
-           en.avatar AS sender_avatar,
            (
              SELECT COALESCE(array_agg(cp.user_id), ARRAY[]::int[])
                FROM chat_participants cp
@@ -92,14 +88,6 @@ export class ChatNotifier {
            ) AS participant_user_ids
          FROM messages m
          JOIN users u ON u.id = m.sender_user_id
-         LEFT JOIN LATERAL (
-           SELECT e.name, e.metadata->>'avatar' AS avatar
-             FROM ens_names e
-            WHERE LOWER(e.owner_address) = LOWER(u.address)
-            ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
-                     e.registration_date ASC NULLS LAST
-            LIMIT 1
-         ) en ON TRUE
          WHERE m.id = $1`,
         [messageId]
       );

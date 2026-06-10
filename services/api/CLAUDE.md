@@ -314,10 +314,10 @@ A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`typ
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, last_message_at }`. Cached 15s. |
-| GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `sender_ens_name`, `sender_avatar`, `reactions`. |
+| GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `reactions`. Identity is resolved client-side from `sender_address` (same as DMs). |
 | POST   | `/chats/global/messages` | Yes | Send `{ body }`. 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. |
 | GET    | `/chats/global/quota` | Yes | Caller's `{ tier, used, limit, remaining, resets_at }` (`limit: null` = unlimited). |
-| GET    | `/chats/global/online-users` | No | Users with `last_sign_in` in the past 24h, newest first, paginated; excludes stubs and chat-banned users. Cached 15s. |
+| GET    | `/chats/global/online-users` | No | Recently ACTIVE users (24h window of `last_seen_at` — touched by ActivityLogger on any authed request — falling back to `last_sign_in`), newest activity first as `last_active`; excludes stubs and chat-banned users. Cached 15s. |
 
 A `chat_user_status` ban blocks **both** DMs and global chat sends.
 
@@ -363,7 +363,7 @@ Client → server:
 ```
 
 Server → client (event types):
-- `chat:message_new` — `{ chat_id, message }` (global room messages carry `sender_ens_name`/`sender_avatar`; clients route on `chat_id` = global UUID)
+- `chat:message_new` — `{ chat_id, message }` (clients route on `chat_id` = global UUID)
 - `chat:message_deleted` — `{ chat_id, message_id }`
 - `chat:read` — `{ chat_id, user_id, last_read_message_id }`
 - `chat:typing` / `chat:typing_stop` — `{ chat_id, user_id }`

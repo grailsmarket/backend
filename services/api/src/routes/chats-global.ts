@@ -103,23 +103,15 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         cursorClause = `AND m.created_at < $${params.length}`;
       }
 
+      // Identity (primary name + avatar) is resolved client-side per address,
+      // same as DM chats — the backend only ships sender_address.
       const result = await pool.query(
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at,
                 u.address AS sender_address,
-                en.name AS sender_ens_name,
-                en.avatar AS sender_avatar,
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id
-           LEFT JOIN LATERAL (
-             SELECT e.name, e.metadata->>'avatar' AS avatar
-               FROM ens_names e
-              WHERE LOWER(e.owner_address) = LOWER(u.address)
-              ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
-                       e.registration_date ASC NULLS LAST
-              LIMIT 1
-           ) en ON TRUE
            LEFT JOIN LATERAL (
              SELECT json_agg(json_build_object(
                       'emoji', agg.emoji,
@@ -191,28 +183,18 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       const tier = await getUserTier(callerAddress);
       const limit = tierLimit(tier, config);
 
-      // CTE: insert + join users/ens_names so the response carries the same
-      // display fields as list reads. The 0859 trigger fires pg_notify;
-      // ChatNotifier handles the WS fan-out.
+      // CTE: insert + join users so the response carries sender_address (the
+      // frontend resolves identity from it, same as DMs). The 0859 trigger
+      // fires pg_notify; ChatNotifier handles the WS fan-out.
       const insertSql =
         `WITH new_msg AS (
            INSERT INTO messages (chat_id, sender_user_id, body, content_type)
            VALUES ($1, $2, $3, 'text')
            RETURNING *
          )
-         SELECT m.*, u.address AS sender_address,
-                en.name AS sender_ens_name,
-                en.avatar AS sender_avatar
+         SELECT m.*, u.address AS sender_address
            FROM new_msg m
-           JOIN users u ON u.id = m.sender_user_id
-           LEFT JOIN LATERAL (
-             SELECT e.name, e.metadata->>'avatar' AS avatar
-               FROM ens_names e
-              WHERE LOWER(e.owner_address) = LOWER(u.address)
-              ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
-                       e.registration_date ASC NULLS LAST
-              LIMIT 1
-           ) en ON TRUE`;
+           JOIN users u ON u.id = m.sender_user_id`;
       const insertParams = [GLOBAL_CHAT_ID, callerId, body];
 
       let messageRow;
@@ -294,7 +276,10 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /api/v1/chats/global/online-users
-   * Recently signed-in users (24h window) ordered by last_sign_in DESC.
+   * Recently ACTIVE users (24h window), newest activity first. Activity =
+   * users.last_seen_at (updated by ActivityLogger on every authenticated
+   * request, 5-min throttle) falling back to last_sign_in (SIWE verify) —
+   * sign-in alone is too rare a signal because JWT cookies persist for days.
    * Public; response is identical for everyone so it goes through the
    * Redis cache. Excludes stub users and banned users.
    */
@@ -303,25 +288,24 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       const { page, limit } = OnlineUsersQuerySchema.parse(request.query);
       const offset = (page - 1) * limit;
 
-      const usersResult = await pool.query(
-        `SELECT u.id AS user_id, u.address, u.last_sign_in,
-                en.name AS ens_name, en.avatar
-           FROM users u
-           LEFT JOIN LATERAL (
-             SELECT e.name, e.metadata->>'avatar' AS avatar
-               FROM ens_names e
-              WHERE LOWER(e.owner_address) = LOWER(u.address)
-              ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
-                       e.registration_date ASC NULLS LAST
-              LIMIT 1
-           ) en ON TRUE
-          WHERE u.last_sign_in >= NOW() - INTERVAL '24 hours'
+      // OR (instead of GREATEST in the WHERE) so the partial indexes on
+      // last_seen_at and last_sign_in stay usable.
+      const activeWhere = `
+            (u.last_seen_at >= NOW() - INTERVAL '24 hours'
+             OR u.last_sign_in >= NOW() - INTERVAL '24 hours')
             AND COALESCE(u.is_stub, FALSE) = FALSE
             AND NOT EXISTS (
               SELECT 1 FROM chat_user_status s
                WHERE s.user_id = u.id AND s.status = 'banned'
-            )
-          ORDER BY u.last_sign_in DESC
+            )`;
+
+      // Identity is resolved client-side per address (same as DM chats).
+      const usersResult = await pool.query(
+        `SELECT u.id AS user_id, u.address, u.last_sign_in,
+                GREATEST(u.last_seen_at, u.last_sign_in::timestamptz) AS last_active
+           FROM users u
+          WHERE ${activeWhere}
+          ORDER BY GREATEST(u.last_seen_at, u.last_sign_in::timestamptz) DESC
           LIMIT $1 OFFSET $2`,
         [limit, offset]
       );
@@ -329,12 +313,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       const totalResult = await pool.query(
         `SELECT COUNT(*)::int AS count
            FROM users u
-          WHERE u.last_sign_in >= NOW() - INTERVAL '24 hours'
-            AND COALESCE(u.is_stub, FALSE) = FALSE
-            AND NOT EXISTS (
-              SELECT 1 FROM chat_user_status s
-               WHERE s.user_id = u.id AND s.status = 'banned'
-            )`
+          WHERE ${activeWhere}`
       );
       const total = totalResult.rows[0].count;
       const totalPages = Math.ceil(total / limit);

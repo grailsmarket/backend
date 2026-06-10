@@ -491,18 +491,10 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         const result = await pool.query(
           `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at,
                   m.deleted_at, u.address AS sender_address,
-                  en.name AS sender_ens_name,
                   (SELECT s.status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
                     AS sender_mod_status
              FROM messages m
              JOIN users u ON u.id = m.sender_user_id
-             LEFT JOIN LATERAL (
-               SELECT e.name FROM ens_names e
-                WHERE LOWER(e.owner_address) = LOWER(u.address)
-                ORDER BY (COALESCE(e.metadata->>'avatar', '') <> '') DESC,
-                         e.registration_date ASC NULLS LAST
-                LIMIT 1
-             ) en ON TRUE
             WHERE ${whereSql}
             ORDER BY m.created_at DESC, m.id DESC
             LIMIT $${params.length - 1} OFFSET $${params.length}`,
