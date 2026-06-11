@@ -300,6 +300,40 @@ Send-message enforcement: caller must be a participant; nobody in the chat may h
 
 `PATCH /users/me` accepts `acceptMessages: boolean` to globally opt out (hard block).
 
+### Message Reactions (DMs + Global Chat)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST   | `/chats/:id/messages/:messageId/reactions` | Yes | Add `{ emoji }` (single grapheme, ≤32 chars). Idempotent: `{ added: false }` on repeat, no broadcast. Rate limit 60/min. |
+| DELETE | `/chats/:id/messages/:messageId/reactions/:emoji` | Yes | Remove caller's reaction (`:emoji` URL-encoded). 404 `REACTION_NOT_FOUND` if absent. |
+
+Access: chat participant, or anyone authenticated for the global room (`:id` = global chat UUID). Message-list responses include `reactions: [{ emoji, count, reacted }]` aggregated per message (`reacted` is for the caller; always `false` for anonymous reads). Stored in `message_reactions` (PK `(message_id, user_id, emoji)`).
+
+### Global Chat ("Grails Chat")
+A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`type = 'global'`, **no** `chat_participants` rows — access control and fan-out branch on the UUID; constant `GLOBAL_CHAT_ID` in `src/services/global-chat.ts`). Anyone can read; only authenticated users can send, with daily quotas by tier derived from ENS ownership (`ens_names.owner_address`): owns a name with `metadata->>'avatar'` → `quota_with_avatar` (NULL = unlimited); owns a name without avatar → `quota_with_name` (default 20/day); no names → `quota_without_name` (default 1/day). Tier is Redis-cached 5 min; quota counting is a COUNT of the sender's global messages since UTC midnight (soft-deleted still count). Config lives in single-row `global_chat_config`, editable via the admin endpoints below.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, last_message_at }`. Cached 15s. |
+| GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `reactions`. Identity is resolved client-side from `sender_address` (same as DMs). |
+| POST   | `/chats/global/messages` | Yes | Send `{ body }`. 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. |
+| GET    | `/chats/global/quota` | Yes | Caller's `{ tier, used, limit, remaining, resets_at }` (`limit: null` = unlimited). |
+| GET    | `/chats/global/online-users` | No | Recently ACTIVE users (24h window of `last_seen_at` — touched by ActivityLogger on any authed request — falling back to `last_sign_in`), newest activity first as `last_active`; excludes stubs and chat-banned users. Cached 15s. |
+
+Ban scopes (`chat_user_status`): `status = 'banned'` is the **all-chats** ban (blocks DMs, chat creation, reactions, and global chat). `global_status = 'banned'` is the **global-chat-only** ban (blocks global messages and reactions; DMs unaffected; reading stays public). The two are independent columns — setting/lifting one never touches the other. Both exclude the user from `/chats/global/online-users`.
+
+The global send route's per-minute rate limit reads `global_chat_config.rate_limit_per_minute` per request (Redis-cached config; admin PATCH applies immediately).
+
+Admin (all `requireAuth + requireAdmin`, under `/chats/admin`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status`. |
+| DELETE | `/chats/admin/global/messages/:messageId` | Soft-delete one message: `{ reason }`. Logs `delete_message` to `chat_moderation_log`, broadcasts `chat:message_deleted` to global subscribers. |
+| POST   | `/chats/admin/global/users/:userId/ban` | Global-chat-only ban: `{ reason }`. Logs `global_ban`. (All-chats ban remains `/chats/admin/users/:userId/ban`.) |
+| POST   | `/chats/admin/global/users/:userId/unban` | Lift a global-only ban: `{ reason? }`. Logs `global_unban`. |
+| GET    | `/chats/admin/global/config` | Current `global_chat_config`. |
+| PATCH  | `/chats/admin/global/config` | Partial update of `enabled`, `quota_with_avatar` (explicit `null` = unlimited), `quota_with_name`, `quota_without_name`, `max_message_length`, `rate_limit_per_minute` (1–600). Logs `config_update`. |
+
 ### Message Blocks (Auth Required)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -313,31 +347,34 @@ Send-message enforcement: caller must be a participant; nobody in the chat may h
 | `/ws/events` | General event subscriptions |
 | `/ws/orders` | Order status updates |
 | `/ws/activity` | Real-time activity feed |
-| `/ws/chats` | Chat events (auth required via `?token=<jwt>`) |
+| `/ws/chats` | Chat events (`?token=<jwt>` optional: token-less = anonymous read-only global chat access) |
 | `/ws/status` | WebSocket connection stats |
 
 ## WebSocket Protocol
 
 ### /ws/chats
-Real-time chat events. Requires JWT via query param: `wss://host/ws/chats?token=<jwt>`.
+Real-time chat events. JWT via query param: `wss://host/ws/chats?token=<jwt>`. The token is **optional**: token-less connections are anonymous read-only clients that may only `subscribe_global`/`unsubscribe_global`/`ping` (anything else returns an error frame). A present-but-invalid token still closes with 4401.
 
 Client → server:
 ```json
-{ "type": "subscribe" }                        // enroll for all of caller's chats
+{ "type": "subscribe" }                        // enroll for all of caller's chats (auth required)
 { "type": "unsubscribe" }
-{ "type": "typing",      "chat_id": "<uuid>" } // ephemeral; not stored in DB
+{ "type": "subscribe_global" }                 // global chat events (works for anonymous clients too)
+{ "type": "unsubscribe_global" }
+{ "type": "typing",      "chat_id": "<uuid>" } // ephemeral; not stored in DB (auth required)
 { "type": "stop_typing", "chat_id": "<uuid>" }
 { "type": "ping" }
 ```
 
 Server → client (event types):
-- `chat:message_new` — `{ chat_id, message }`
+- `chat:message_new` — `{ chat_id, message }` (clients route on `chat_id` = global UUID)
 - `chat:message_deleted` — `{ chat_id, message_id }`
 - `chat:read` — `{ chat_id, user_id, last_read_message_id }`
 - `chat:typing` / `chat:typing_stop` — `{ chat_id, user_id }`
 - `chat:created` — `{ chat }` (sent to participants when a new chat is created)
+- `chat:reaction_added` / `chat:reaction_removed` — `{ chat_id, message_id, user_id, address, emoji, count }` (`count` = absolute per-emoji count after the change, for idempotent cache patching)
 
-Typing events are server-throttled to ~5/sec per (user, chat). New-message fan-out is driven by an `AFTER INSERT` trigger on `messages` that emits `pg_notify('chat_message_created', …)`; the in-process `ChatNotifier` listens and calls `broadcastChatEvent()` on the relevant participant sockets.
+Typing events are server-throttled to ~5/sec per (user, chat); typing in the global room fans out to global subscribers without a participant check. New-message fan-out is driven by an `AFTER INSERT` trigger on `messages` that emits `pg_notify('chat_message_created', …)`; the in-process `ChatNotifier` listens and calls `broadcastChatEvent()` on the relevant participant sockets (or `broadcastGlobalChatEvent()` for the global room — every `subscribe_global` socket, incl. anonymous). Reaction and admin-deletion events are broadcast directly from the route handlers.
 
 ### /ws/activity
 Real-time activity feed with filters:
@@ -461,6 +498,8 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `chat_participants` | Per-(chat,user) state: read position, mute, role, soft-leave |
 | `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`) |
 | `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
+| `message_reactions` | Emoji reactions on messages (PK `(message_id, user_id, emoji)`) |
+| `global_chat_config` | Single-row global chat config (quota tiers, max length, enabled) |
 
 ## Environment Variables
 

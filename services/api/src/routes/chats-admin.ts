@@ -2,7 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
-import { broadcastChatDeletedEvent } from './websocket';
+import { broadcastChatDeletedEvent, broadcastGlobalChatDeletedEvent } from './websocket';
+import {
+  GLOBAL_CHAT_ID,
+  getGlobalChatConfig,
+  invalidateGlobalChatConfigCache,
+} from '../services/global-chat';
 
 const sendError = (reply: any, status: number, code: string, message: string, details?: unknown) =>
   reply.status(status).send({
@@ -37,6 +42,8 @@ interface ChatStatusRow {
   user_id: number;
   status: 'active' | 'banned';
   banned_at: Date | null;
+  global_status: 'active' | 'banned';
+  global_banned_at: Date | null;
   last_action_by: number | null;
   last_action_reason: string | null;
 }
@@ -46,11 +53,37 @@ async function getChatModStatus(
   userId: number
 ): Promise<ChatStatusRow | null> {
   const r = await pool.query<ChatStatusRow>(
-    `SELECT user_id, status, banned_at, last_action_by, last_action_reason
+    `SELECT user_id, status, banned_at, global_status, global_banned_at,
+            last_action_by, last_action_reason
        FROM chat_user_status WHERE user_id = $1`,
     [userId]
   );
   return r.rows[0] ?? null;
+}
+
+/**
+ * Global-chat-only ban: independent of the all-chats `status` column, which
+ * the upsert deliberately leaves untouched.
+ */
+async function setGlobalChatStatus(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number,
+  globalStatus: 'active' | 'banned',
+  adminId: number,
+  reason: string
+): Promise<void> {
+  const globalBannedAt = globalStatus === 'banned' ? new Date() : null;
+  await pool.query(
+    `INSERT INTO chat_user_status (user_id, global_status, global_banned_at, last_action_by, last_action_reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id) DO UPDATE SET
+       global_status = EXCLUDED.global_status,
+       global_banned_at = EXCLUDED.global_banned_at,
+       last_action_by = EXCLUDED.last_action_by,
+       last_action_reason = EXCLUDED.last_action_reason,
+       updated_at = NOW()`,
+    [userId, globalStatus, globalBannedAt, adminId, reason]
+  );
 }
 
 async function setChatStatus(
@@ -77,7 +110,12 @@ async function setChatStatus(
 async function insertChatModNotification(
   pool: ReturnType<typeof getPostgresPool>,
   userId: number,
-  type: 'chat_banned' | 'chat_unbanned' | 'chat_messages_deleted',
+  type:
+    | 'chat_banned'
+    | 'chat_unbanned'
+    | 'chat_messages_deleted'
+    | 'global_chat_banned'
+    | 'global_chat_unbanned',
   metadata: Record<string, unknown>
 ): Promise<void> {
   await pool.query(
@@ -93,6 +131,33 @@ const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
 const LookupQuerySchema = z.object({
   q: z.string().trim().min(1),
 });
+
+const GlobalMessagesQuerySchema = z.object({
+  sender: z.string().trim().min(1).optional(), // 0x address or numeric users.id
+  status: z.enum(['all', 'visible', 'deleted']).default('all'),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+const GlobalMessageIdParamsSchema = z.object({
+  messageId: z.string().uuid(),
+});
+
+const DeleteGlobalMessageSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+
+const GlobalConfigPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  // null = unlimited for the avatar tier
+  quota_with_avatar: z.number().int().min(0).nullable().optional(),
+  quota_with_name: z.number().int().min(0).optional(),
+  quota_without_name: z.number().int().min(0).optional(),
+  max_message_length: z.number().int().min(1).max(4000).optional(),
+  rate_limit_per_minute: z.number().int().min(1).max(600).optional(),
+}).refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
 export async function chatsAdminRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -203,6 +268,8 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
               user_id: userId,
               status: 'active',
               banned_at: null,
+              global_status: 'active',
+              global_banned_at: null,
               last_action_by: null,
               last_action_reason: null,
             },
@@ -354,6 +421,13 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
             byChat.get(row.chat_id)!.push(row.id);
           }
           for (const [chatId, ids] of byChat.entries()) {
+            // The global room has no participant rows; fan out to global subscribers.
+            if (chatId === GLOBAL_CHAT_ID) {
+              for (const messageId of ids) {
+                broadcastGlobalChatDeletedEvent({ messageId });
+              }
+              continue;
+            }
             const partRes = await pool.query(
               `SELECT user_id FROM chat_participants WHERE chat_id = $1 AND left_at IS NULL`,
               [chatId]
@@ -383,6 +457,292 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         }
         fastify.log.error({ error }, 'Error deleting user chat messages');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete messages');
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/chats/admin/global/messages
+   * Paginated global chat messages for moderation. Filters: sender (address or
+   * users.id), status (all|visible|deleted), from/to datetimes. Unlike public
+   * reads, the raw body is returned even for deleted messages.
+   */
+  fastify.get(
+    '/global/messages',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { sender, status, from, to, page, limit } =
+          GlobalMessagesQuerySchema.parse(request.query);
+        const offset = (page - 1) * limit;
+
+        let senderUserId: number | null = null;
+        if (sender) {
+          if (ADDRESS_RE.test(sender)) {
+            const userResult = await pool.query(
+              `SELECT id FROM users WHERE address = $1`,
+              [sender.toLowerCase()]
+            );
+            if (userResult.rows.length === 0) {
+              return reply.send(ok({
+                messages: [],
+                pagination: { page, limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+              }));
+            }
+            senderUserId = userResult.rows[0].id;
+          } else if (/^\d+$/.test(sender)) {
+            senderUserId = parseInt(sender, 10);
+          } else {
+            return sendError(reply, 400, 'INVALID_SENDER', 'Sender must be an address or user id');
+          }
+        }
+
+        const where: string[] = ['m.chat_id = $1'];
+        const params: unknown[] = [GLOBAL_CHAT_ID];
+        if (senderUserId !== null) {
+          params.push(senderUserId);
+          where.push(`m.sender_user_id = $${params.length}`);
+        }
+        if (from) {
+          params.push(from);
+          where.push(`m.created_at >= $${params.length}`);
+        }
+        if (to) {
+          params.push(to);
+          where.push(`m.created_at <= $${params.length}`);
+        }
+        if (status === 'visible') where.push('m.deleted_at IS NULL');
+        if (status === 'deleted') where.push('m.deleted_at IS NOT NULL');
+
+        const whereSql = where.join(' AND ');
+
+        const countResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM messages m WHERE ${whereSql}`,
+          params
+        );
+        const total = countResult.rows[0].count;
+        const totalPages = Math.ceil(total / limit);
+
+        params.push(limit, offset);
+        const result = await pool.query(
+          `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at,
+                  m.deleted_at, u.address AS sender_address,
+                  (SELECT s.status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
+                    AS sender_mod_status,
+                  (SELECT s.global_status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
+                    AS sender_global_status
+             FROM messages m
+             JOIN users u ON u.id = m.sender_user_id
+            WHERE ${whereSql}
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT $${params.length - 1} OFFSET $${params.length}`,
+          params
+        );
+
+        return reply.send(ok({
+          messages: result.rows,
+          pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+        }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error listing global chat messages (admin)');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list messages');
+      }
+    }
+  );
+
+  /**
+   * DELETE /api/v1/chats/admin/global/messages/:messageId
+   * Soft-delete a single global chat message, log it, broadcast the deletion.
+   */
+  fastify.delete(
+    '/global/messages/:messageId',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { messageId } = GlobalMessageIdParamsSchema.parse(request.params);
+        const { reason } = DeleteGlobalMessageSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const updated = await pool.query<{ sender_user_id: number }>(
+          `UPDATE messages SET deleted_at = NOW()
+            WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL
+            RETURNING sender_user_id`,
+          [messageId, GLOBAL_CHAT_ID]
+        );
+        if (updated.rows.length === 0) {
+          return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or already deleted');
+        }
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)
+           VALUES ($1, $2, 'delete_message', $3, $4)`,
+          [
+            updated.rows[0].sender_user_id,
+            adminId,
+            reason,
+            JSON.stringify({ message_id: messageId }),
+          ]
+        );
+
+        broadcastGlobalChatDeletedEvent({ messageId });
+
+        return reply.send(ok({ message_id: messageId, deleted: true }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error deleting global chat message');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete message');
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/chats/admin/global/config
+   */
+  fastify.get(
+    '/global/config',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (_request, reply) => {
+      try {
+        const config = await getGlobalChatConfig();
+        return reply.send(ok({ config }));
+      } catch (error: unknown) {
+        fastify.log.error({ error }, 'Error fetching global chat config');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to fetch config');
+      }
+    }
+  );
+
+  /**
+   * PATCH /api/v1/chats/admin/global/config
+   * Partial update. quota_with_avatar accepts an explicit null (= unlimited),
+   * so only `undefined` (absent) keys are skipped.
+   */
+  fastify.patch(
+    '/global/config',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const updates = GlobalConfigPatchSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const cols: string[] = [];
+        const params: unknown[] = [];
+        let i = 0;
+        for (const [k, v] of Object.entries(updates)) {
+          if (v === undefined) continue;
+          i += 1;
+          cols.push(`${k} = $${i}`);
+          params.push(v);
+        }
+        if (cols.length === 0) {
+          return sendError(reply, 400, 'NO_FIELDS', 'No fields to update');
+        }
+        cols.push(`updated_at = NOW()`);
+
+        await pool.query(
+          `UPDATE global_chat_config SET ${cols.join(', ')} WHERE id = 1`,
+          params
+        );
+        await invalidateGlobalChatConfigCache();
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (admin_id, action, reason, metadata)
+           VALUES ($1, 'config_update', 'Global chat config patched', $2)`,
+          [adminId, JSON.stringify(updates)]
+        );
+
+        const config = await getGlobalChatConfig();
+        return reply.send(ok({ config }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error updating global chat config');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to update config');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/global/users/:userId/ban
+   * Ban a user from the GLOBAL CHAT ONLY (messages + reactions). DMs are
+   * unaffected; independent of the all-chats ban (/users/:userId/ban).
+   */
+  fastify.post(
+    '/global/users/:userId/ban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = BanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setGlobalChatStatus(pool, userId, 'banned', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'global_ban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'global_chat_banned', { reason });
+
+        return reply.send(ok({ userId, global_status: 'banned' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error banning user from global chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to ban user');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/global/users/:userId/unban
+   * Lift a global-chat-only ban. Does not touch an all-chats ban.
+   */
+  fastify.post(
+    '/global/users/:userId/unban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = UnbanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setGlobalChatStatus(pool, userId, 'active', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'global_unban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'global_chat_unbanned', { reason });
+
+        return reply.send(ok({ userId, global_status: 'active' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error unbanning user from global chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to unban user');
       }
     }
   );

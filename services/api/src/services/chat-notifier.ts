@@ -1,6 +1,7 @@
 import { Client } from 'pg';
 import { getPostgresPool, config } from '../../../shared/src';
-import { broadcastChatEvent } from '../routes/websocket';
+import { broadcastChatEvent, broadcastGlobalChatEvent } from '../routes/websocket';
+import { GLOBAL_CHAT_ID } from './global-chat';
 
 /**
  * Listens for `chat_message_created` PG notifications (emitted by the AFTER INSERT
@@ -74,6 +75,7 @@ export class ChatNotifier {
   private async handleMessageCreated(messageId: string) {
     try {
       // Fetch the message + sender address + participant ids in one round-trip.
+      // Identity (primary name/avatar) is resolved client-side per address.
       const result = await this.pool.query(
         `SELECT
            m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
@@ -96,6 +98,15 @@ export class ChatNotifier {
 
       const { participant_user_ids: _drop, ...message } = row;
       void _drop;
+
+      // Freshly inserted messages have no reactions; include the empty
+      // aggregate so WS payloads match the REST message shape.
+      message.reactions = [];
+
+      if (message.chat_id === GLOBAL_CHAT_ID) {
+        broadcastGlobalChatEvent({ message });
+        return;
+      }
 
       broadcastChatEvent({
         message,
