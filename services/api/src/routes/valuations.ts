@@ -224,11 +224,11 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
               label: target.keyword,
               runId,
               status: 'completed',
-              costUsd: costSummary?.total.totalUsd ?? null,
+              costUsd: costSummary?.costUsd ?? null,
               durationMs: Math.round(performance.now() - runStartedAt),
             });
             if (costSummary) {
-              logger.info({ valuation: logPrefix, cost: costSummary.total }, `${logPrefix} OpenAI run cost summary`);
+              logger.info({ valuation: logPrefix, cost: costSummary }, `${logPrefix} OpenAI run cost summary`);
             }
             return result;
           } catch (error) {

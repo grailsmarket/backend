@@ -59,40 +59,23 @@ type OpenAIResponseUsage = {
   total_tokens?: number;
 };
 
-type OpenAICostEstimate = {
+// Per-call cost (token estimate, or OpenRouter's reported cost when available).
+type OpenAICallCost = {
   inputTokens: number;
-  cachedInputTokens: number;
-  uncachedInputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
-  totalTokens: number;
-  pricingUsdPerMillion: OpenAIModelPricing;
-  estimatedCostUsd: {
-    input: number;
-    cachedInput: number;
-    output: number;
-    total: number;
-  };
-};
-
-type OpenAICostTotals = Omit<OpenAICostEstimate, 'pricingUsdPerMillion'> & {
-  calls: number;
+  costUsd: number;
 };
 
 type OpenAICostStep = 'related_terms' | 'number_variants' | 'name_research' | 'appraisal' | 'other';
 
-type OpenAICostStepSummary = OpenAICostTotals & {
-  step: OpenAICostStep;
-  labels: string[];
-};
-
-type OpenAICostRunAccumulator = OpenAICostTotals & {
-  steps: Partial<Record<OpenAICostStep, OpenAICostStepSummary>>;
-};
-
-export type OpenAICostRunSummary = {
-  steps: OpenAICostStepSummary[];
-  total: OpenAICostTotals;
+// Per-run rollup, keyed by logPrefix, consumed once at the end of a run.
+export type OpenAIRunCost = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number;
 };
 
 const OPENAI_MODEL_PRICING: Record<string, OpenAIModelPricing> = {
@@ -122,45 +105,12 @@ const OPENAI_MODEL_PRICING: Record<string, OpenAIModelPricing> = {
     cachedInputUsdPerMillion: 0.14,
     outputUsdPerMillion: 0.28,
   },
-  'qwen/qwen3.7-max': {
-    inputUsdPerMillion: 1.25,
-    cachedInputUsdPerMillion: 0.25,
-    outputUsdPerMillion: 3.75,
-  },
-  'qwen/qwen3.6-flash': {
-    inputUsdPerMillion: 0.188,
-    cachedInputUsdPerMillion: 0.188,
-    outputUsdPerMillion: 1.125,
-  },
-  'moonshotai/kimi-k2.6': {
-    inputUsdPerMillion: 0.73,
-    cachedInputUsdPerMillion: 0.25,
-    outputUsdPerMillion: 3.49,
-  },
-  'google/gemini-3.5-flash': {
-    inputUsdPerMillion: 1.5,
-    cachedInputUsdPerMillion: 0.15,
-    outputUsdPerMillion: 9,
-  },
-  'x-ai/grok-build-0.1': {
-    inputUsdPerMillion: 1,
-    cachedInputUsdPerMillion: 1,
-    outputUsdPerMillion: 2,
-  },
   'x-ai/grok-4.3': {
     inputUsdPerMillion: 1.25,
     cachedInputUsdPerMillion: 1.25,
     outputUsdPerMillion: 2.5,
   },
 };
-
-const OPENAI_COST_STEP_ORDER: OpenAICostStep[] = [
-  'related_terms',
-  'number_variants',
-  'name_research',
-  'appraisal',
-  'other',
-];
 
 export type ValuationModelProvider = 'openai' | 'openrouter';
 
@@ -174,14 +124,13 @@ export type ValuationChannelModel = {
   temperature?: number;
 };
 
+// Models in production use. The 2026-06 bake-off evaluated several other
+// OpenRouter candidates (Qwen, Kimi, Gemini, Grok-build); only these three were
+// selected, so the rest were removed. Add a model here + to OPENAI_MODEL_PRICING
+// (and OPENROUTER_PROVIDER_ROUTING if it needs provider pinning) to reintroduce one.
 const OPENROUTER_MODELS = {
   deepseekV4Pro: 'deepseek/deepseek-v4-pro',
   deepseekV4Flash: 'deepseek/deepseek-v4-flash',
-  qwen37Max: 'qwen/qwen3.7-max',
-  qwen36Flash: 'qwen/qwen3.6-flash',
-  kimiK26: 'moonshotai/kimi-k2.6',
-  gemini35Flash: 'google/gemini-3.5-flash',
-  grokBuild01: 'x-ai/grok-build-0.1',
   grokV43: 'x-ai/grok-4.3',
 } as const;
 
@@ -191,18 +140,10 @@ type OpenRouterProviderRouting = {
   structuredOutputs?: boolean;
 };
 
-// Some OpenRouter models REQUIRE reasoning and reject `reasoning.enabled:false`.
-const OPENROUTER_REASONING_REQUIRED = new Set<string>([
-  OPENROUTER_MODELS.gemini35Flash,
-  OPENROUTER_MODELS.grokBuild01,
-]);
-
 // Pin the upstream OpenRouter provider per model (pricing varies a lot by provider).
 const OPENROUTER_PROVIDER_ROUTING: Record<string, OpenRouterProviderRouting> = {
   [OPENROUTER_MODELS.deepseekV4Pro]: { order: ['deepseek'], allowFallbacks: false, structuredOutputs: false },
   [OPENROUTER_MODELS.deepseekV4Flash]: { order: ['deepseek'], allowFallbacks: false, structuredOutputs: false },
-  [OPENROUTER_MODELS.qwen36Flash]: { structuredOutputs: false },
-  [OPENROUTER_MODELS.grokBuild01]: { structuredOutputs: false },
   [OPENROUTER_MODELS.grokV43]: { structuredOutputs: false },
 };
 
@@ -240,7 +181,7 @@ function getChannelModel(step: OpenAICostStep): ValuationChannelModel {
   return CHANNEL_MODELS[step];
 }
 
-const openAICostSummariesByLogPrefix = new Map<string, OpenAICostRunAccumulator>();
+const runCostsByLogPrefix = new Map<string, OpenAIRunCost>();
 
 function scopedTermCountForScore(score: number, byScore: Record<string, number>): number {
   const clamped = Math.max(1, Math.min(5, Math.round(score)));
@@ -365,7 +306,9 @@ function getOpenAIPricing(model: string): OpenAIModelPricing | null {
   return matchedModel ? OPENAI_MODEL_PRICING[matchedModel] : null;
 }
 
-function calculateOpenAICost(model: string, usage: OpenAIResponseUsage | undefined) {
+// Per-call cost. Token counts feed the estimate; the caller may override costUsd
+// with a provider-reported figure (e.g. OpenRouter's, which includes plugin fees).
+function calculateOpenAICost(model: string, usage: OpenAIResponseUsage | undefined): OpenAICallCost | null {
   const pricing = getOpenAIPricing(model);
   if (!pricing || !usage) return null;
 
@@ -374,125 +317,15 @@ function calculateOpenAICost(model: string, usage: OpenAIResponseUsage | undefin
   const cachedInputTokens = Math.min(readTokenCount(usage.input_tokens_details?.cached_tokens), inputTokens);
   const uncachedInputTokens = Math.max(inputTokens - cachedInputTokens, 0);
   const reasoningTokens = readTokenCount(usage.output_tokens_details?.reasoning_tokens);
-  const totalTokens = readTokenCount(usage.total_tokens) || inputTokens + outputTokens;
-  const inputCostUsd = (uncachedInputTokens / TOKENS_PER_MILLION) * pricing.inputUsdPerMillion;
-  const cachedInputCostUsd = (cachedInputTokens / TOKENS_PER_MILLION) * pricing.cachedInputUsdPerMillion;
-  const outputCostUsd = (outputTokens / TOKENS_PER_MILLION) * pricing.outputUsdPerMillion;
-  const totalCostUsd = inputCostUsd + cachedInputCostUsd + outputCostUsd;
+  const costUsd =
+    (uncachedInputTokens / TOKENS_PER_MILLION) * pricing.inputUsdPerMillion +
+    (cachedInputTokens / TOKENS_PER_MILLION) * pricing.cachedInputUsdPerMillion +
+    (outputTokens / TOKENS_PER_MILLION) * pricing.outputUsdPerMillion;
 
-  return {
-    inputTokens,
-    cachedInputTokens,
-    uncachedInputTokens,
-    outputTokens,
-    reasoningTokens,
-    totalTokens,
-    pricingUsdPerMillion: pricing,
-    estimatedCostUsd: {
-      input: formatUsd(inputCostUsd),
-      cachedInput: formatUsd(cachedInputCostUsd),
-      output: formatUsd(outputCostUsd),
-      total: formatUsd(totalCostUsd),
-    },
-  };
+  return { inputTokens, outputTokens, reasoningTokens, costUsd: formatUsd(costUsd) };
 }
 
-function createEmptyOpenAICostTotals(): OpenAICostTotals {
-  return {
-    calls: 0,
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    uncachedInputTokens: 0,
-    outputTokens: 0,
-    reasoningTokens: 0,
-    totalTokens: 0,
-    estimatedCostUsd: {
-      input: 0,
-      cachedInput: 0,
-      output: 0,
-      total: 0,
-    },
-  };
-}
-
-function createEmptyOpenAICostRunSummary(): OpenAICostRunAccumulator {
-  return {
-    ...createEmptyOpenAICostTotals(),
-    steps: {},
-  };
-}
-
-function createEmptyOpenAICostStepSummary(step: OpenAICostStep): OpenAICostStepSummary {
-  return {
-    step,
-    labels: [],
-    ...createEmptyOpenAICostTotals(),
-  };
-}
-
-function addOpenAICostToTotals(totals: OpenAICostTotals, cost: OpenAICostEstimate) {
-  totals.calls += 1;
-  totals.inputTokens += cost.inputTokens;
-  totals.cachedInputTokens += cost.cachedInputTokens;
-  totals.uncachedInputTokens += cost.uncachedInputTokens;
-  totals.outputTokens += cost.outputTokens;
-  totals.reasoningTokens += cost.reasoningTokens;
-  totals.totalTokens += cost.totalTokens;
-  totals.estimatedCostUsd.input += cost.estimatedCostUsd.input;
-  totals.estimatedCostUsd.cachedInput += cost.estimatedCostUsd.cachedInput;
-  totals.estimatedCostUsd.output += cost.estimatedCostUsd.output;
-  totals.estimatedCostUsd.total += cost.estimatedCostUsd.total;
-}
-
-type FlatCostLog = {
-  calls: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  uncachedInputTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  inputUsd: number;
-  cachedInputUsd: number;
-  outputUsd: number;
-  totalUsd: number;
-};
-
-type FlatStepCostLog = FlatCostLog & { step: OpenAICostStep; labels: string };
-
-type FlatRunCostLog = { steps: FlatStepCostLog[]; total: FlatCostLog };
-
-function flattenCostTotals(totals: OpenAICostTotals): FlatCostLog {
-  return {
-    calls: totals.calls,
-    inputTokens: totals.inputTokens,
-    cachedInputTokens: totals.cachedInputTokens,
-    uncachedInputTokens: totals.uncachedInputTokens,
-    outputTokens: totals.outputTokens,
-    reasoningTokens: totals.reasoningTokens,
-    totalTokens: totals.totalTokens,
-    inputUsd: formatUsd(totals.estimatedCostUsd.input),
-    cachedInputUsd: formatUsd(totals.estimatedCostUsd.cachedInput),
-    outputUsd: formatUsd(totals.estimatedCostUsd.output),
-    totalUsd: formatUsd(totals.estimatedCostUsd.total),
-  };
-}
-
-function serializeOpenAICostRunSummary(summary: OpenAICostRunAccumulator): FlatRunCostLog {
-  const steps: FlatStepCostLog[] = OPENAI_COST_STEP_ORDER.map((step) => summary.steps[step])
-    .filter((stepSummary): stepSummary is OpenAICostStepSummary => Boolean(stepSummary))
-    .map((stepSummary) => ({
-      step: stepSummary.step,
-      labels: stepSummary.labels.join(', '),
-      ...flattenCostTotals(stepSummary),
-    }));
-
-  return {
-    steps,
-    total: flattenCostTotals(summary),
-  };
-}
-
+// Maps an OpenAI call label to its channel step (used for provider routing).
 function getOpenAICostStep(label: string): OpenAICostStep {
   if (label === 'number_variants') return 'number_variants';
   if (label.startsWith('name_research:')) return 'name_research';
@@ -501,38 +334,35 @@ function getOpenAICostStep(label: string): OpenAICostStep {
   return 'other';
 }
 
-function pruneOpenAICostSummaries() {
-  while (openAICostSummariesByLogPrefix.size > MAX_OPENAI_COST_SUMMARIES) {
-    const oldestKey = openAICostSummariesByLogPrefix.keys().next().value;
-    if (!oldestKey) return;
-    openAICostSummariesByLogPrefix.delete(oldestKey);
-  }
-}
-
-function recordOpenAICost(logPrefix: string, label: string, cost: OpenAICostEstimate | null) {
+function recordOpenAICost(logPrefix: string, cost: OpenAICallCost | null) {
   if (!cost) return;
 
-  const summary = openAICostSummariesByLogPrefix.get(logPrefix) ?? createEmptyOpenAICostRunSummary();
-  const step = getOpenAICostStep(label);
-  const stepSummary = summary.steps[step] ?? createEmptyOpenAICostStepSummary(step);
+  const totals = runCostsByLogPrefix.get(logPrefix) ?? {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    costUsd: 0,
+  };
+  totals.calls += 1;
+  totals.inputTokens += cost.inputTokens;
+  totals.outputTokens += cost.outputTokens;
+  totals.reasoningTokens += cost.reasoningTokens;
+  totals.costUsd = formatUsd(totals.costUsd + cost.costUsd);
+  runCostsByLogPrefix.set(logPrefix, totals);
 
-  addOpenAICostToTotals(summary, cost);
-  addOpenAICostToTotals(stepSummary, cost);
-  if (!stepSummary.labels.includes(label)) {
-    stepSummary.labels.push(label);
+  if (runCostsByLogPrefix.size > MAX_OPENAI_COST_SUMMARIES) {
+    const oldestKey = runCostsByLogPrefix.keys().next().value;
+    if (oldestKey) runCostsByLogPrefix.delete(oldestKey);
   }
-  summary.steps[step] = stepSummary;
-
-  openAICostSummariesByLogPrefix.set(logPrefix, summary);
-  pruneOpenAICostSummaries();
 }
 
-export function consumeOpenAICostRunSummary(logPrefix: string) {
-  const summary = openAICostSummariesByLogPrefix.get(logPrefix);
-  if (!summary) return null;
+export function consumeOpenAICostRunSummary(logPrefix: string): OpenAIRunCost | null {
+  const totals = runCostsByLogPrefix.get(logPrefix);
+  if (!totals) return null;
 
-  openAICostSummariesByLogPrefix.delete(logPrefix);
-  return serializeOpenAICostRunSummary(summary);
+  runCostsByLogPrefix.delete(logPrefix);
+  return totals;
 }
 
 function readRequestedOpenAIModel(body: string) {
@@ -610,12 +440,16 @@ function buildOpenRouterBody(responsesBody: string, routing?: OpenRouterProvider
 
   const effort = parsed.reasoning?.effort;
   const reasoningMaxTokens = parsed.reasoning?.max_tokens;
-  const modelSlug = typeof parsed.model === 'string' ? parsed.model : '';
+  // A bounded reasoning budget takes precedence; otherwise pass through an
+  // explicit effort level, or disable reasoning entirely on effort 'none' (the
+  // production models all reason by default and would otherwise burn the token
+  // budget). If a model that mandates reasoning is reintroduced, it must omit
+  // this disable instead of 400-ing.
   if (typeof reasoningMaxTokens === 'number') {
     out.reasoning = { max_tokens: reasoningMaxTokens };
   } else if (typeof effort === 'string' && effort !== 'none') {
     out.reasoning = { effort };
-  } else if (!OPENROUTER_REASONING_REQUIRED.has(modelSlug)) {
+  } else {
     out.reasoning = { enabled: false };
   }
 
@@ -760,7 +594,12 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
     const model = typeof data.model === 'string' ? data.model : requestedModel;
     const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(data.usage as OpenRouterUsage | undefined);
     const cost = calculateOpenAICost(model, normalized);
-    recordOpenAICost(logPrefix, label, cost);
+    // Prefer OpenRouter's reported cost (includes web-search/plugin fees and the
+    // real provider rate) over our static token estimate.
+    if (cost && reportedCostUsd != null) {
+      cost.costUsd = formatUsd(reportedCostUsd);
+    }
+    recordOpenAICost(logPrefix, cost);
     valuationLogInfo(logPrefix, 'OpenRouter response parsed', {
       label,
       model,
@@ -847,18 +686,16 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
     const model = typeof data.model === 'string' ? data.model : requestedModel;
     const usage = data.usage as OpenAIResponseUsage | undefined;
     const cost = calculateOpenAICost(model, usage);
-    recordOpenAICost(logPrefix, label, cost);
+    recordOpenAICost(logPrefix, cost);
     valuationLogInfo(logPrefix, 'OpenAI response parsed', {
       label,
       model,
       status: data.status,
       inputTokens: usage?.input_tokens,
-      cachedInputTokens: usage?.input_tokens_details?.cached_tokens,
       outputTokens: usage?.output_tokens,
       reasoningTokens: usage?.output_tokens_details?.reasoning_tokens,
-      totalTokens: usage?.total_tokens,
       pricingMatched: Boolean(cost),
-      pricingUsdPerMillion: cost?.pricingUsdPerMillion,
+      costUsd: cost?.costUsd,
       ttfbMs: elapsedMs,
       totalMs,
     });
