@@ -110,6 +110,12 @@ const ConfigSchema = z.object({
     forcePathStyle: z.boolean().default(false),
     enabled: z.boolean(),
   }),
+  valuation: z.object({
+    enabled: z.coerce.boolean().default(true),
+    openrouterApiKey: z.string().optional(),
+    domdbApiKeyPublic: z.string().optional(),
+    domdbApiKeyPrivate: z.string().optional(),
+  }),
 });
 
 const rawConfig = {
@@ -208,6 +214,12 @@ const rawConfig = {
     region: process.env.REGION || 'auto',
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
     enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
+  },
+  valuation: {
+    enabled: process.env.VALUATION_ENABLED !== 'false',
+    openrouterApiKey: process.env.OPENROUTER_API_KEY,
+    domdbApiKeyPublic: process.env.DOMDB_API_KEY_PUBLIC,
+    domdbApiKeyPrivate: process.env.DOMDB_API_KEY_PRIVATE,
   },
 };
 
