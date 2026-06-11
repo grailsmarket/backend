@@ -41,6 +41,7 @@ import { chatsGlobalRoutes } from './chats-global';
 import { blocksRoutes } from './blocks';
 import { commentsRoutes } from './comments';
 import { feedRoutes } from './feed';
+import { valuationsRoutes } from './valuations';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -85,5 +86,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(chatsRoutes, { prefix: '/api/v1/chats' });
   fastify.register(blocksRoutes, { prefix: '/api/v1/me/blocks' });
   fastify.register(commentsRoutes, { prefix: '/api/v1/comments' });
+  fastify.register(valuationsRoutes, { prefix: '/api/v1/valuations' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }
