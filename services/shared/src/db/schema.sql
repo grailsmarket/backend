@@ -243,9 +243,14 @@ CREATE TRIGGER chat_message_created_trigger
 
 CREATE TABLE IF NOT EXISTS chat_user_status (
     user_id              INTEGER PRIMARY KEY,
+    -- All-chats ban (blocks DMs AND global chat)
     status               VARCHAR(16) NOT NULL DEFAULT 'active'
                            CHECK (status IN ('active', 'banned')),
     banned_at            TIMESTAMP,
+    -- Global-chat-only ban (DMs unaffected); independent of `status` (0885)
+    global_status        VARCHAR(16) NOT NULL DEFAULT 'active'
+                           CHECK (global_status IN ('active', 'banned')),
+    global_banned_at     TIMESTAMP,
     last_action_by       INTEGER,
     last_action_reason   TEXT,
     updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
@@ -257,7 +262,8 @@ CREATE TABLE IF NOT EXISTS chat_moderation_log (
     admin_id     INTEGER,
     action       VARCHAR(32) NOT NULL
                    CHECK (action IN ('ban', 'unban', 'delete_messages',
-                                     'delete_message', 'config_update')),
+                                     'delete_message', 'config_update',
+                                     'global_ban', 'global_unban')),
     reason       TEXT,
     metadata     JSONB,
     created_at   TIMESTAMP NOT NULL DEFAULT NOW()
@@ -286,13 +292,15 @@ ON CONFLICT (id) DO NOTHING;
 --   quota_with_name    - owns >=1 name, none with avatar
 --   quota_without_name - owns no names
 CREATE TABLE IF NOT EXISTS global_chat_config (
-    id                  INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
-    quota_with_avatar   INTEGER,
-    quota_with_name     INTEGER NOT NULL DEFAULT 20,
-    quota_without_name  INTEGER NOT NULL DEFAULT 1,
-    max_message_length  INTEGER NOT NULL DEFAULT 1000,
-    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    id                    INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+    quota_with_avatar     INTEGER,
+    quota_with_name       INTEGER NOT NULL DEFAULT 20,
+    quota_without_name    INTEGER NOT NULL DEFAULT 1,
+    max_message_length    INTEGER NOT NULL DEFAULT 1000,
+    -- Per-user per-minute send rate limit (0885); distinct from daily quotas
+    rate_limit_per_minute INTEGER NOT NULL DEFAULT 10,
+    updated_at            TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 INSERT INTO global_chat_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

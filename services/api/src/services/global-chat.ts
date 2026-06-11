@@ -18,6 +18,8 @@ export interface GlobalChatConfig {
   quota_with_name: number;
   quota_without_name: number;
   max_message_length: number;
+  /** Per-user per-minute send rate limit (distinct from daily quotas). */
+  rate_limit_per_minute: number;
 }
 
 export interface GlobalQuotaSnapshot {
@@ -35,7 +37,12 @@ export async function getGlobalChatConfig(): Promise<GlobalChatConfig> {
     try {
       const cached = await redis.get(CONFIG_CACHE_KEY);
       if (cached) {
-        return JSON.parse(cached) as GlobalChatConfig;
+        const parsed = JSON.parse(cached) as GlobalChatConfig;
+        // Shape guard: a blob cached by an older deploy may lack newer
+        // fields — fall through to the DB instead of returning a partial.
+        if (typeof parsed?.rate_limit_per_minute === 'number') {
+          return parsed;
+        }
       }
     } catch {
       // fall through to the DB
@@ -73,7 +80,7 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
   const pool = getPostgresPool();
   const result = await pool.query(
     `SELECT enabled, quota_with_avatar, quota_with_name, quota_without_name,
-            max_message_length
+            max_message_length, rate_limit_per_minute
        FROM global_chat_config WHERE id = 1`
   );
   if (result.rows.length === 0) {
@@ -84,6 +91,7 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
       quota_with_name: 20,
       quota_without_name: 1,
       max_message_length: 1000,
+      rate_limit_per_minute: 10,
     };
   }
   const row = result.rows[0];
@@ -94,6 +102,7 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
     quota_with_name: Number(row.quota_with_name),
     quota_without_name: Number(row.quota_without_name),
     max_message_length: Number(row.max_message_length),
+    rate_limit_per_minute: Number(row.rate_limit_per_minute),
   };
 }
 

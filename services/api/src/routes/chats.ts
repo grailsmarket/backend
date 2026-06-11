@@ -9,7 +9,10 @@ import {
   broadcastChatReactionEvent,
 } from './websocket';
 import { GLOBAL_CHAT_ID } from '../services/global-chat';
-import { callerIsBannedFromChat } from '../services/chat-moderation';
+import {
+  callerIsBannedFromChat,
+  callerIsBannedFromGlobalChat,
+} from '../services/chat-moderation';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -749,7 +752,12 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const { emoji } = AddReactionSchema.parse(request.body);
       const callerId = parseInt(request.user!.sub, 10);
 
-      if (await callerIsBannedFromChat(pool, callerId)) {
+      // Scope-aware: a global-only ban silences reactions in the global room
+      // but leaves DM reactions alone.
+      const banned = id === GLOBAL_CHAT_ID
+        ? await callerIsBannedFromGlobalChat(pool, callerId)
+        : await callerIsBannedFromChat(pool, callerId);
+      if (banned) {
         return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
       }
       if (!(await canAccessChatMessages(id, callerId))) {

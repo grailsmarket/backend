@@ -42,6 +42,8 @@ interface ChatStatusRow {
   user_id: number;
   status: 'active' | 'banned';
   banned_at: Date | null;
+  global_status: 'active' | 'banned';
+  global_banned_at: Date | null;
   last_action_by: number | null;
   last_action_reason: string | null;
 }
@@ -51,11 +53,37 @@ async function getChatModStatus(
   userId: number
 ): Promise<ChatStatusRow | null> {
   const r = await pool.query<ChatStatusRow>(
-    `SELECT user_id, status, banned_at, last_action_by, last_action_reason
+    `SELECT user_id, status, banned_at, global_status, global_banned_at,
+            last_action_by, last_action_reason
        FROM chat_user_status WHERE user_id = $1`,
     [userId]
   );
   return r.rows[0] ?? null;
+}
+
+/**
+ * Global-chat-only ban: independent of the all-chats `status` column, which
+ * the upsert deliberately leaves untouched.
+ */
+async function setGlobalChatStatus(
+  pool: ReturnType<typeof getPostgresPool>,
+  userId: number,
+  globalStatus: 'active' | 'banned',
+  adminId: number,
+  reason: string
+): Promise<void> {
+  const globalBannedAt = globalStatus === 'banned' ? new Date() : null;
+  await pool.query(
+    `INSERT INTO chat_user_status (user_id, global_status, global_banned_at, last_action_by, last_action_reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id) DO UPDATE SET
+       global_status = EXCLUDED.global_status,
+       global_banned_at = EXCLUDED.global_banned_at,
+       last_action_by = EXCLUDED.last_action_by,
+       last_action_reason = EXCLUDED.last_action_reason,
+       updated_at = NOW()`,
+    [userId, globalStatus, globalBannedAt, adminId, reason]
+  );
 }
 
 async function setChatStatus(
@@ -82,7 +110,12 @@ async function setChatStatus(
 async function insertChatModNotification(
   pool: ReturnType<typeof getPostgresPool>,
   userId: number,
-  type: 'chat_banned' | 'chat_unbanned' | 'chat_messages_deleted',
+  type:
+    | 'chat_banned'
+    | 'chat_unbanned'
+    | 'chat_messages_deleted'
+    | 'global_chat_banned'
+    | 'global_chat_unbanned',
   metadata: Record<string, unknown>
 ): Promise<void> {
   await pool.query(
@@ -123,6 +156,7 @@ const GlobalConfigPatchSchema = z.object({
   quota_with_name: z.number().int().min(0).optional(),
   quota_without_name: z.number().int().min(0).optional(),
   max_message_length: z.number().int().min(1).max(4000).optional(),
+  rate_limit_per_minute: z.number().int().min(1).max(600).optional(),
 }).refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
 export async function chatsAdminRoutes(fastify: FastifyInstance) {
@@ -234,6 +268,8 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
               user_id: userId,
               status: 'active',
               banned_at: null,
+              global_status: 'active',
+              global_banned_at: null,
               last_action_by: null,
               last_action_reason: null,
             },
@@ -492,7 +528,9 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at,
                   m.deleted_at, u.address AS sender_address,
                   (SELECT s.status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
-                    AS sender_mod_status
+                    AS sender_mod_status,
+                  (SELECT s.global_status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
+                    AS sender_global_status
              FROM messages m
              JOIN users u ON u.id = m.sender_user_id
             WHERE ${whereSql}
@@ -626,6 +664,85 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         }
         fastify.log.error({ error }, 'Error updating global chat config');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to update config');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/global/users/:userId/ban
+   * Ban a user from the GLOBAL CHAT ONLY (messages + reactions). DMs are
+   * unaffected; independent of the all-chats ban (/users/:userId/ban).
+   */
+  fastify.post(
+    '/global/users/:userId/ban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = BanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setGlobalChatStatus(pool, userId, 'banned', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'global_ban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'global_chat_banned', { reason });
+
+        return reply.send(ok({ userId, global_status: 'banned' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error banning user from global chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to ban user');
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/chats/admin/global/users/:userId/unban
+   * Lift a global-chat-only ban. Does not touch an all-chats ban.
+   */
+  fastify.post(
+    '/global/users/:userId/unban',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const { userId } = UserIdParamsSchema.parse(request.params);
+        const { reason } = UnbanSchema.parse(request.body);
+        const adminId = parseInt(request.user!.sub, 10);
+
+        const target = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+        if (target.rows.length === 0) {
+          return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
+        }
+
+        await setGlobalChatStatus(pool, userId, 'active', adminId, reason);
+
+        await pool.query(
+          `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason)
+           VALUES ($1, $2, 'global_unban', $3)`,
+          [userId, adminId, reason]
+        );
+
+        await insertChatModNotification(pool, userId, 'global_chat_unbanned', { reason });
+
+        return reply.send(ok({ userId, global_status: 'active' }));
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error unbanning user from global chat');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to unban user');
       }
     }
   );

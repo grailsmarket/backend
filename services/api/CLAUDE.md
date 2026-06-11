@@ -319,16 +319,20 @@ A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`typ
 | GET    | `/chats/global/quota` | Yes | Caller's `{ tier, used, limit, remaining, resets_at }` (`limit: null` = unlimited). |
 | GET    | `/chats/global/online-users` | No | Recently ACTIVE users (24h window of `last_seen_at` — touched by ActivityLogger on any authed request — falling back to `last_sign_in`), newest activity first as `last_active`; excludes stubs and chat-banned users. Cached 15s. |
 
-A `chat_user_status` ban blocks **both** DMs and global chat sends.
+Ban scopes (`chat_user_status`): `status = 'banned'` is the **all-chats** ban (blocks DMs, chat creation, reactions, and global chat). `global_status = 'banned'` is the **global-chat-only** ban (blocks global messages and reactions; DMs unaffected; reading stays public). The two are independent columns — setting/lifting one never touches the other. Both exclude the user from `/chats/global/online-users`.
+
+The global send route's per-minute rate limit reads `global_chat_config.rate_limit_per_minute` per request (Redis-cached config; admin PATCH applies immediately).
 
 Admin (all `requireAuth + requireAdmin`, under `/chats/admin`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. |
+| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status`. |
 | DELETE | `/chats/admin/global/messages/:messageId` | Soft-delete one message: `{ reason }`. Logs `delete_message` to `chat_moderation_log`, broadcasts `chat:message_deleted` to global subscribers. |
+| POST   | `/chats/admin/global/users/:userId/ban` | Global-chat-only ban: `{ reason }`. Logs `global_ban`. (All-chats ban remains `/chats/admin/users/:userId/ban`.) |
+| POST   | `/chats/admin/global/users/:userId/unban` | Lift a global-only ban: `{ reason? }`. Logs `global_unban`. |
 | GET    | `/chats/admin/global/config` | Current `global_chat_config`. |
-| PATCH  | `/chats/admin/global/config` | Partial update of `enabled`, `quota_with_avatar` (explicit `null` = unlimited), `quota_with_name`, `quota_without_name`, `max_message_length`. Logs `config_update`. |
+| PATCH  | `/chats/admin/global/config` | Partial update of `enabled`, `quota_with_avatar` (explicit `null` = unlimited), `quota_with_name`, `quota_without_name`, `max_message_length`, `rate_limit_per_minute` (1–600). Logs `config_update`. |
 
 ### Message Blocks (Auth Required)
 | Method | Path | Auth | Description |

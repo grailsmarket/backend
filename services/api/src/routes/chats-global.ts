@@ -12,7 +12,7 @@ import {
   nextUtcMidnight,
   tierLimit,
 } from '../services/global-chat';
-import { callerIsBannedFromChat } from '../services/chat-moderation';
+import { callerIsBannedFromGlobalChat } from '../services/chat-moderation';
 
 // Advisory-lock namespace for per-user global chat quota serialization
 // (pg_advisory_xact_lock(namespace, user_id)). Arbitrary but must not collide
@@ -156,7 +156,15 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
    */
   fastify.post('/messages', {
     preHandler: requireAuth,
-    config: { rateLimit: { max: 10, timeWindow: 60_000 } },
+    config: {
+      rateLimit: {
+        // Admin-configurable via PATCH /chats/admin/global/config; the config
+        // is Redis-cached (30s, invalidated on PATCH) so this per-request
+        // lookup is cheap.
+        max: async () => (await getGlobalChatConfig()).rate_limit_per_minute,
+        timeWindow: 60_000,
+      },
+    },
   }, async (request, reply) => {
     try {
       const { body } = SendMessageSchema.parse(request.body);
@@ -176,7 +184,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         );
       }
 
-      if (await callerIsBannedFromChat(pool, callerId)) {
+      if (await callerIsBannedFromGlobalChat(pool, callerId)) {
         return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
       }
 
@@ -296,7 +304,8 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
             AND COALESCE(u.is_stub, FALSE) = FALSE
             AND NOT EXISTS (
               SELECT 1 FROM chat_user_status s
-               WHERE s.user_id = u.id AND s.status = 'banned'
+               WHERE s.user_id = u.id
+                 AND (s.status = 'banned' OR s.global_status = 'banned')
             )`;
 
       // Identity is resolved client-side per address (same as DM chats).
