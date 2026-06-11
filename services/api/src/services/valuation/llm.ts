@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { config } from '../../../../shared/src';
 import type {
   ValuationAppraisalEvidence,
@@ -38,6 +39,9 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const VALUATION_OPENAI_MODEL = 'gpt-5.5';
 
 const MAX_RETRIES = 3;
+// LLM calls sit on the user-facing stream; bound each attempt so a stalled
+// upstream can't hold the request open for undici's multi-minute default.
+const LLM_REQUEST_TIMEOUT_MS = 120_000;
 const TOKENS_PER_MILLION = 1_000_000;
 const MAX_OPENAI_COST_SUMMARIES = 100;
 
@@ -546,16 +550,33 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
       attempt: attempt + 1,
       maxAttempts: MAX_RETRIES + 1,
     });
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://grails.app',
-        'X-Title': 'Grails Valuation',
-      },
-      body,
-    });
+    let response: Response;
+    try {
+      response = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://grails.app',
+          'X-Title': 'Grails Valuation',
+        },
+        body,
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenRouter network/timeout error, retrying', {
+          label,
+          message: lastError.message,
+          backoffMs: Math.round(backoffMs),
+        });
+        await sleep(backoffMs);
+        continue;
+      }
+      throw lastError;
+    }
     const elapsedMs = Math.round(performance.now() - startedAt);
     valuationLogInfo(logPrefix, 'OpenRouter response received', {
       label,
@@ -593,11 +614,17 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
     const totalMs = Math.round(performance.now() - startedAt);
     const model = typeof data.model === 'string' ? data.model : requestedModel;
     const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(data.usage as OpenRouterUsage | undefined);
-    const cost = calculateOpenAICost(model, normalized);
-    // Prefer OpenRouter's reported cost (includes web-search/plugin fees and the
-    // real provider rate) over our static token estimate.
-    if (cost && reportedCostUsd != null) {
-      cost.costUsd = formatUsd(reportedCostUsd);
+    // Prefer OpenRouter's reported cost (includes web-search/plugin fees + the
+    // real provider rate). Record it even when the model is absent from the
+    // static pricing table — token counts still come from usage.
+    let cost = calculateOpenAICost(model, normalized);
+    if (reportedCostUsd != null) {
+      cost = {
+        inputTokens: normalized.input_tokens ?? 0,
+        outputTokens: normalized.output_tokens ?? 0,
+        reasoningTokens: normalized.output_tokens_details?.reasoning_tokens ?? 0,
+        costUsd: formatUsd(reportedCostUsd),
+      };
     }
     recordOpenAICost(logPrefix, cost);
     valuationLogInfo(logPrefix, 'OpenRouter response parsed', {
@@ -639,14 +666,31 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
       attempt: attempt + 1,
       maxAttempts: MAX_RETRIES + 1,
     });
-    const response = await fetch(OPENAI_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body,
-    });
+    let response: Response;
+    try {
+      response = await fetch(OPENAI_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenAI network/timeout error, retrying', {
+          label,
+          message: lastError.message,
+          backoffMs: Math.round(backoffMs),
+        });
+        await sleep(backoffMs);
+        continue;
+      }
+      throw lastError;
+    }
     const elapsedMs = Math.round(performance.now() - startedAt);
     valuationLogInfo(logPrefix, 'OpenAI response received', {
       label,
@@ -789,20 +833,35 @@ function parseNameResearch(
   };
 }
 
+// The appraisal channel runs in json_object mode (the production models don't
+// honor strict json_schema), so the schema is only suggested in the prompt.
+// Validate + default here: ethValue is required, everything else defaults so a
+// response missing cautions/compsUsed/lowEth can't crash result assembly.
+const AppraisalResponseSchema = z.object({
+  ethValue: z.string(),
+  lowEth: z.string().optional().default('0'),
+  highEth: z.string().optional().default('0'),
+  reasoning: z.string().optional().default(''),
+  signals: z.array(z.string()).optional().default([]),
+  cautions: z.array(z.string()).optional().default([]),
+  compsUsed: z
+    .array(z.object({ name: z.string(), priceEth: z.string(), date: z.string() }))
+    .optional()
+    .default([]),
+});
+
 function parseAppraisal(
   text: string
 ): Omit<ValuationAppraisalEvidence, 'source' | 'model' | 'dataStatus' | 'generatedAt'> {
-  const parsed = JSON.parse(text) as Omit<ValuationAppraisalEvidence, 'source' | 'model' | 'dataStatus' | 'generatedAt'>;
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('OpenAI appraisal response JSON must be an object');
+  const result = AppraisalResponseSchema.safeParse(JSON.parse(text));
+  if (!result.success) {
+    throw new Error(
+      `OpenAI appraisal response failed validation: ${result.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; ')}`
+    );
   }
-
-  if (typeof parsed.ethValue !== 'string' || !Array.isArray(parsed.signals)) {
-    throw new Error('OpenAI appraisal response JSON missing required fields');
-  }
-
-  return parsed;
+  return result.data;
 }
 
 function weiToEthString(value: unknown): string | null {

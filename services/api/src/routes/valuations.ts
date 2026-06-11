@@ -8,7 +8,6 @@ import {
   getCachedValuation,
   getValuationConfig,
   getValuationQuotaSnapshot,
-  normalizeValuationLabel,
   recordValuationGeneration,
   setCachedValuation,
   ValuationConfigError,
@@ -17,6 +16,7 @@ import {
 import { consumeOpenAICostRunSummary } from '../services/valuation/llm';
 import {
   awaitRunOutcome,
+  deriveStrictValuationLabel,
   getInFlightValuationRun,
   getOrCreateValuationRun,
   pipeRunToReply,
@@ -33,6 +33,22 @@ const ParamsSchema = z.object({
   name: z.string().min(1).max(80),
 });
 
+/** Bad client input (request body / params). Mapped to 400. */
+class ValuationValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValuationValidationError';
+  }
+}
+
+/** Generation produced no usable appraisal (e.g. upstream LLM failure). Mapped to 502. */
+class ValuationGenerationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValuationGenerationError';
+  }
+}
+
 function nowMeta() {
   return { timestamp: new Date().toISOString() };
 }
@@ -44,10 +60,10 @@ function createValuationRunId() {
 function readIntegerOption(value: unknown, fallback: number, min: number, max: number, field: string): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isInteger(value)) {
-    throw new Error(`${field} must be an integer`);
+    throw new ValuationValidationError(`${field} must be an integer`);
   }
   if (value < min || value > max) {
-    throw new Error(`${field} must be between ${min} and ${max}`);
+    throw new ValuationValidationError(`${field} must be between ${min} and ${max}`);
   }
   return value;
 }
@@ -55,7 +71,7 @@ function readIntegerOption(value: unknown, fallback: number, min: number, max: n
 function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultEth: string) {
   const premiumRegistrationFloorEth = body?.premiumRegistrationFloorEth ?? premiumDefaultEth;
   if (!/^\d+(\.\d+)?$/.test(premiumRegistrationFloorEth)) {
-    throw new Error('premiumRegistrationFloorEth must be a positive ETH amount');
+    throw new ValuationValidationError('premiumRegistrationFloorEth must be a positive ETH amount');
   }
 
   return {
@@ -78,12 +94,21 @@ function mapValuationError(error: unknown): { status: number; code: string; mess
   if (error instanceof ValuationTargetError) {
     return { status: error.status, code: error.code, message: error.message };
   }
+  if (error instanceof ValuationValidationError) {
+    return { status: 400, code: 'VALIDATION_ERROR', message: error.message };
+  }
+  if (error instanceof z.ZodError) {
+    return { status: 400, code: 'VALIDATION_ERROR', message: 'Invalid request parameters' };
+  }
+  if (error instanceof URIError) {
+    return { status: 400, code: 'VALIDATION_ERROR', message: 'Malformed name parameter' };
+  }
   if (error instanceof ValuationConfigError || error instanceof ValuationPromptError) {
     // Don't leak config/prompt internals; signal retry-later instead.
     return { status: 503, code: 'VALUATION_UNAVAILABLE', message: 'Valuation is temporarily unavailable' };
   }
-  if (error instanceof Error && /must be|Invalid ETH amount/.test(error.message)) {
-    return { status: 400, code: 'VALIDATION_ERROR', message: error.message };
+  if (error instanceof ValuationGenerationError) {
+    return { status: 502, code: 'GENERATION_FAILED', message: 'Could not generate a valuation right now. Please try again.' };
   }
   return { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to generate valuation evidence' };
 }
@@ -132,11 +157,22 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const params = ParamsSchema.parse(request.params);
-      const rawName = decodeURIComponent(params.name);
+      let rawName: string;
+      try {
+        const params = ParamsSchema.parse(request.params);
+        rawName = decodeURIComponent(params.name);
+      } catch (error) {
+        // ZodError (>80 chars) / URIError (bad percent-encoding) -> 400, not 500.
+        return sendError(reply, error);
+      }
+
       const refresh = (request.query as { refresh?: string } | undefined)?.refresh === 'true';
       const streaming = wantsStream(request.headers.accept);
-      const label = normalizeValuationLabel(rawName);
+      // Use the SAME strict normalization as generation for the cache/join key, so
+      // an ineligible input (subname, spaces, etc.) can never alias onto another
+      // label's cached result or in-flight run. Ineligible -> null -> skip to
+      // generation, which returns the precise eligibility error.
+      const label = deriveStrictValuationLabel(rawName);
 
       // 1. Public Tier-2 cache read (skipped on refresh).
       if (label && !refresh) {
@@ -209,28 +245,15 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         //    disconnect can't abort the generation or skip caching.
         const produce: ValuationProduce = async (reportProgress) => {
           const runStartedAt = performance.now();
+          let result: ValuationEvidenceResult;
           try {
-            const result = await runValuationPipeline({
+            result = await runValuationPipeline({
               target,
               config: valuationConfig,
               premiumRegistrationFloorWei: options.premiumRegistrationFloorWei,
               logPrefix,
               reportProgress,
             });
-            await setCachedValuation(target.keyword, result, userId, valuationConfig.ttls.valuationDays);
-            const costSummary = consumeOpenAICostRunSummary(logPrefix);
-            await recordValuationGeneration({
-              userId,
-              label: target.keyword,
-              runId,
-              status: 'completed',
-              costUsd: costSummary?.costUsd ?? null,
-              durationMs: Math.round(performance.now() - runStartedAt),
-            });
-            if (costSummary) {
-              logger.info({ valuation: logPrefix, cost: costSummary }, `${logPrefix} OpenAI run cost summary`);
-            }
-            return result;
           } catch (error) {
             consumeOpenAICostRunSummary(logPrefix);
             logger.error({ err: error, label: target.keyword }, `${logPrefix} valuation generation failed`);
@@ -243,6 +266,53 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
             }).catch(() => {});
             throw error;
           }
+
+          const costSummary = consumeOpenAICostRunSummary(logPrefix);
+          const durationMs = Math.round(performance.now() - runStartedAt);
+
+          // C1: the pipeline reports status 'completed' even when the appraisal
+          // errored (it returns error evidence with ethValue '0'). Never cache
+          // that — it would be served as a public X-Cache: HIT for ~30d — and
+          // don't charge a quota slot for it. Surface an error + record 'failed'.
+          if (result.evidence.appraisal.dataStatus !== 'available') {
+            logger.warn(
+              {
+                valuation: logPrefix,
+                label: target.keyword,
+                appraisalError: result.evidence.appraisal.error?.message,
+              },
+              `${logPrefix} appraisal errored; not caching, recording failed`
+            );
+            await recordValuationGeneration({
+              userId,
+              label: target.keyword,
+              runId,
+              status: 'failed',
+              costUsd: costSummary?.costUsd ?? null,
+              durationMs,
+            }).catch(() => {});
+            throw new ValuationGenerationError(
+              result.evidence.appraisal.error?.message || 'Valuation appraisal failed'
+            );
+          }
+
+          await setCachedValuation(target.keyword, result, userId, valuationConfig.ttls.valuationDays);
+          // W6: the result is already cached; a failed audit insert must not turn
+          // a successful, cached run into a client-facing error. Log + swallow.
+          await recordValuationGeneration({
+            userId,
+            label: target.keyword,
+            runId,
+            status: 'completed',
+            costUsd: costSummary?.costUsd ?? null,
+            durationMs,
+          }).catch((error) => {
+            logger.error({ err: error, label: target.keyword }, `${logPrefix} generation audit insert failed`);
+          });
+          if (costSummary) {
+            logger.info({ valuation: logPrefix, cost: costSummary }, `${logPrefix} OpenAI run cost summary`);
+          }
+          return result;
         };
 
         const { run } = getOrCreateValuationRun(target.keyword, runId, produce, mapValuationError);

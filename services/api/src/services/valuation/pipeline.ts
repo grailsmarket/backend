@@ -318,6 +318,20 @@ function normalizeExactEthName(rawName: string): { normalizedName: string; keywo
   return { normalizedName, keyword };
 }
 
+/**
+ * Strict label for the cache/in-flight key: the same normalization generation
+ * uses, so an ineligible input can't alias onto another label. Returns null for
+ * anything generation would reject (so the route skips the cache and lets
+ * generation surface the precise eligibility error).
+ */
+export function deriveStrictValuationLabel(rawName: string): string | null {
+  try {
+    return normalizeExactEthName(rawName).keyword;
+  } catch {
+    return null;
+  }
+}
+
 function buildCategoryContext(
   data: NameDetailsForEligibility,
   categoryComments: Record<string, string[]>
@@ -433,6 +447,8 @@ class DomDbRequestError extends Error {
 }
 
 const DOMDB_API_URL = 'https://api.domdb.com/v1';
+const DOMDB_REQUEST_TIMEOUT_MS = 15_000;
+const DOMDB_MAX_RETRIES = 2;
 const TOP_EXTENSIONS = [
   'com', 'net', 'org', 'co', 'io', 'ai', 'xyz', 'app',
   'dev', 'me', 'us', 'info', 'online', 'tech', 'cc', 'tv',
@@ -559,46 +575,81 @@ async function fetchDomDb<T>(path: string, body: Record<string, unknown>, logPre
     });
   }
 
-  const startedAt = performance.now();
-  valuationLogInfo(logPrefix, 'DomDB request start', {
-    path,
-    domain: typeof body.domain === 'string' ? body.domain : undefined,
-    hasPublicKey: Boolean(apiKeyPublic),
-    hasPrivateKey: Boolean(apiKeyPrivate),
-  });
-
-  const response = await fetch(`${DOMDB_API_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ apiKeyPublic, apiKeyPrivate, ...body }),
-  });
-
-  const json = (await response.json().catch(() => null)) as DomDbEnvelope<T> | null;
-  const elapsedMs = Math.round(performance.now() - startedAt);
-  const errors = Array.isArray(json?.errors) ? json.errors : [];
-  valuationLogInfo(logPrefix, 'DomDB response received', {
-    path,
-    status: response.status,
-    durationSeconds: json?.duration,
-    errorsFound: errors.length,
-    firstErrorCode: errors[0]?.code,
-    elapsedMs,
-  });
-
-  const firstError = errors[0];
-  const firstErrorCode = firstError?.code ? String(firstError.code) : undefined;
-  if (firstErrorCode === 'DOMAIN_NOT_FOUND') {
-    throw new DomDbDomainNotFoundError(firstError?.message);
-  }
-
-  if (!response.ok || !json || errors.length > 0) {
-    throw new DomDbRequestError(firstError?.message || `DomDB HTTP ${response.status}`, {
-      status: response.status,
-      code: firstErrorCode,
+  // DomDB is a hard dependency for every uncached generation (the comps gate
+  // needs the footprint), so ride out transient blips with a bounded timeout +
+  // retries on network/timeout and 5xx. Definitive errors (DOMAIN_NOT_FOUND,
+  // 4xx, envelope errors) are not retried.
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= DOMDB_MAX_RETRIES; attempt++) {
+    const startedAt = performance.now();
+    valuationLogInfo(logPrefix, 'DomDB request start', {
+      path,
+      domain: typeof body.domain === 'string' ? body.domain : undefined,
+      attempt: attempt + 1,
+      maxAttempts: DOMDB_MAX_RETRIES + 1,
     });
+
+    let response: Response;
+    try {
+      response = await fetch(`${DOMDB_API_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ apiKeyPublic, apiKeyPrivate, ...body }),
+        signal: AbortSignal.timeout(DOMDB_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < DOMDB_MAX_RETRIES) {
+        const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
+        valuationLogWarn(logPrefix, 'DomDB network/timeout error, retrying', {
+          message: lastError.message,
+          backoffMs: Math.round(backoffMs),
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
+      }
+      throw new DomDbRequestError(lastError.message || 'DomDB request failed', { code: 'NETWORK_ERROR' });
+    }
+
+    if (response.status >= 500 && attempt < DOMDB_MAX_RETRIES) {
+      const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
+      valuationLogWarn(logPrefix, 'DomDB server error, retrying', {
+        status: response.status,
+        backoffMs: Math.round(backoffMs),
+      });
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      continue;
+    }
+
+    const json = (await response.json().catch(() => null)) as DomDbEnvelope<T> | null;
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const errors = Array.isArray(json?.errors) ? json.errors : [];
+    valuationLogInfo(logPrefix, 'DomDB response received', {
+      path,
+      status: response.status,
+      durationSeconds: json?.duration,
+      errorsFound: errors.length,
+      firstErrorCode: errors[0]?.code,
+      elapsedMs,
+    });
+
+    const firstError = errors[0];
+    const firstErrorCode = firstError?.code ? String(firstError.code) : undefined;
+    if (firstErrorCode === 'DOMAIN_NOT_FOUND') {
+      throw new DomDbDomainNotFoundError(firstError?.message);
+    }
+
+    if (!response.ok || !json || errors.length > 0) {
+      throw new DomDbRequestError(firstError?.message || `DomDB HTTP ${response.status}`, {
+        status: response.status,
+        code: firstErrorCode,
+      });
+    }
+
+    return json.data as T;
   }
 
-  return json.data as T;
+  throw new DomDbRequestError(lastError?.message || 'DomDB request failed after retries', { code: 'NETWORK_ERROR' });
 }
 
 export async function buildWeb2Evidence(
@@ -744,6 +795,9 @@ export async function buildSearchDemandEvidence(
 
 const PER_NAME_EVENT_LIMIT = 50;
 const PER_CATEGORY_EVENT_LIMIT = 10;
+// Category activity is "recent" market context. Bounding the window keeps the
+// window-function scan/sort cheap for large clubs (e.g. 10k-member categories).
+const CATEGORY_ACTIVITY_WINDOW_DAYS = 90;
 
 const ACTIVITY_COLUMNS = `
   ah.id, ah.ens_name_id, ah.event_type, ah.actor_address, ah.counterparty_address,
@@ -974,9 +1028,10 @@ export async function hydrateCategoryMarketActivity(
          JOIN ens_names en ON ah.ens_name_id = en.id
          JOIN unnest($1::text[]) AS c(club) ON c.club = ANY(en.clubs)
          WHERE ah.event_type IN ('sold', 'mint')
+           AND ah.created_at > NOW() - make_interval(days => $3)
        ) t
        WHERE rn <= $2`,
-      [clubsToFetch, PER_CATEGORY_EVENT_LIMIT]
+      [clubsToFetch, PER_CATEGORY_EVENT_LIMIT, CATEGORY_ACTIVITY_WINDOW_DAYS]
     );
     for (const raw of result.rows) {
       const list = rowsByClub.get(raw.match_club);
@@ -1149,7 +1204,10 @@ async function getOrGenerateRelatedTerms(
     termCountsByScore: config.termCounts.byScore,
     maxResearchSenses: config.limits.maxResearchSenses,
   });
-  if (relatedTerms.source === 'ai_scoped_senses') {
+  // Don't 1-year-cache a degenerate result where every sense failed (terms would
+  // be just the name + number variants); let the next run retry generation.
+  const hasUsableSenses = relatedTerms.perSense.some((sense) => !sense.error);
+  if (relatedTerms.source === 'ai_scoped_senses' && hasUsableSenses) {
     try {
       await setCachedEvidence(label, 'related_terms', relatedTerms, relatedTerms.model, config.ttls.evidenceCacheDays);
     } catch (error) {
@@ -1241,7 +1299,6 @@ export async function runValuationPipeline(args: {
   let nameResearch: ValuationNameResearchEvidence;
 
   if (shouldSkipComps) {
-    emitStage('looking_for_comparable_sales', 'skipped', config.compsGate.skipMessage);
     relatedTerms = {
       source: 'skipped_web2_footprint_gate',
       model: null,
@@ -1267,7 +1324,10 @@ export async function runValuationPipeline(args: {
     const [resolvedSearchDemand, research] = await Promise.all([searchDemandPromise, nameResearchPromise]);
     searchDemand = resolvedSearchDemand;
     nameResearch = research.nameResearch;
+    // Emit the in-progress stage's completion before the next stage's status,
+    // so consumers see a clean researching->completed, comps->skipped order.
     emitStage('researching_name_context', 'completed');
+    emitStage('looking_for_comparable_sales', 'skipped', config.compsGate.skipMessage);
   } else {
     const research = await nameResearchPromise;
     nameResearch = research.nameResearch;
