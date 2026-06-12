@@ -147,39 +147,25 @@ export type ValuationMarketActivityEvidence = {
   errors: ValuationActivityError[];
 };
 
-export type ValuationDomDbPronounceability = {
-  locale: string | null;
-  score: number | null;
-};
-
-export type ValuationDomDbRegisteredExtension = {
-  extension: string;
-  availability: string | null;
-  popularity: number | null;
-};
-
-export type ValuationDomDbTopExtensionCoverage = {
+export type ValuationWeb2TldDataTopExtensionCoverage = {
   extension: string;
   registered: boolean;
 };
 
 export type ValuationWeb2Evidence = {
-  source: 'domdb' | 'domdb_empty';
-  lookupDomain: string;
+  source: 'web2_tld_data' | 'web2_tld_data_empty';
+  lookupLabel: string;
   summary: {
     registeredExtensions: number;
     topExtensionsRegistered: number;
     topExtensionsChecked: number;
-    pronounceabilityScore: number | null;
-    pronounceabilityLocale: string | null;
   };
-  domdb: {
-    domain: string | null;
-    availability: string | null;
-    registryPremium: boolean | null;
-    pronounceability: ValuationDomDbPronounceability[];
-    registeredExtensions: ValuationDomDbRegisteredExtension[];
-    topExtensionCoverage: ValuationDomDbTopExtensionCoverage[];
+  web2TldData: {
+    label: string | null;
+    dnsLabel: string | null;
+    tldCount: number;
+    tlds: string[];
+    topExtensionCoverage: ValuationWeb2TldDataTopExtensionCoverage[];
   } | null;
 };
 
@@ -314,11 +300,6 @@ export type ValuationCalibrationContextEvidence = {
     };
     topExtensionsRegistered: {
       max: number;
-      meaningfulAt: number;
-      strongAt: number;
-      exceptionalAt: number;
-    };
-    pronounceability: {
       meaningfulAt: number;
       strongAt: number;
       exceptionalAt: number;

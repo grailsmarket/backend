@@ -113,8 +113,8 @@ const ConfigSchema = z.object({
   valuation: z.object({
     enabled: z.coerce.boolean().default(true),
     openrouterApiKey: z.string().optional(),
-    domdbApiKeyPublic: z.string().optional(),
-    domdbApiKeyPrivate: z.string().optional(),
+    web2TldDataApiKey: z.string().optional(),
+    web2TldDataBaseUrl: z.string().optional(),
   }),
 });
 
@@ -218,8 +218,8 @@ const rawConfig = {
   valuation: {
     enabled: process.env.VALUATION_ENABLED !== 'false',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
-    domdbApiKeyPublic: process.env.DOMDB_API_KEY_PUBLIC,
-    domdbApiKeyPrivate: process.env.DOMDB_API_KEY_PRIVATE,
+    web2TldDataApiKey: process.env.WEB2_TLD_DATA_API_KEY,
+    web2TldDataBaseUrl: process.env.WEB2_TLD_DATA_BASE_URL,
   },
 };
 
