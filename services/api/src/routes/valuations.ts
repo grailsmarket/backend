@@ -23,6 +23,7 @@ import {
   resolveValuationTarget,
   runValuationPipeline,
   ValuationTargetError,
+  Web2TldDataRequestError,
   type ValuationProduce,
 } from '../services/valuation/pipeline';
 import type { ValuationEvidenceRequest, ValuationEvidenceResult } from '../services/valuation/types';
@@ -109,6 +110,14 @@ function mapValuationError(error: unknown): { status: number; code: string; mess
   }
   if (error instanceof ValuationGenerationError) {
     return { status: 502, code: 'GENERATION_FAILED', message: 'Could not generate a valuation right now. Please try again.' };
+  }
+  if (error instanceof Web2TldDataRequestError) {
+    // Missing API key is a server misconfiguration -> retry-later, like config errors.
+    if (error.code === 'MISSING_WEB2_TLD_DATA_KEY') {
+      return { status: 503, code: 'VALUATION_UNAVAILABLE', message: 'Valuation is temporarily unavailable' };
+    }
+    // Otherwise the upstream Web2 footprint provider failed (network/timeout/5xx/auth).
+    return { status: 502, code: 'WEB2_PROVIDER_FAILED', message: 'Could not reach the Web2 footprint provider. Please try again.' };
   }
   return { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to generate valuation evidence' };
 }

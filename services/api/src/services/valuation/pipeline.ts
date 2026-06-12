@@ -421,7 +421,7 @@ type Web2TldDataResponse = {
   detail?: string;
 };
 
-class Web2TldDataRequestError extends Error {
+export class Web2TldDataRequestError extends Error {
   status?: number;
   code?: string;
 
@@ -564,6 +564,19 @@ async function fetchWeb2TldData(label: string, logPrefix: string): Promise<Web2T
       tldCount: json?.tld_count,
       elapsedMs,
     });
+
+    // A label-level rejection (400 malformed/empty, 404 not found) is not fatal:
+    // treat it as an empty footprint, mirroring the old DomDB "domain not found ->
+    // empty evidence" path so one odd label can't hard-fail the whole valuation.
+    // Auth (401) and server (5xx, already retried above) errors still throw.
+    if (response.status === 400 || response.status === 404) {
+      valuationLogWarn(logPrefix, 'web2-tld-data label not usable, treating as empty footprint', {
+        label,
+        status: response.status,
+        detail: json?.error || json?.detail,
+      });
+      return { label, dns_label: null, tld_count: 0, tlds: [] };
+    }
 
     if (!response.ok || !json) {
       throw new Web2TldDataRequestError(
