@@ -157,11 +157,6 @@ const ValuationConfigSchema = z.object({
         strongAt: z.number(),
         exceptionalAt: z.number(),
       }),
-      pronounceability: z.object({
-        meaningfulAt: z.number(),
-        strongAt: z.number(),
-        exceptionalAt: z.number(),
-      }),
       notes: thresholdNote,
     }),
   }),

@@ -16,9 +16,6 @@ import {
   type ValuationCalibrationContextEvidence,
   type ValuationCategoryContextEvidence,
   type ValuationCategoryMarketActivityEvidence,
-  type ValuationDomDbPronounceability,
-  type ValuationDomDbRegisteredExtension,
-  type ValuationDomDbTopExtensionCoverage,
   type ValuationEvidence,
   type ValuationEvidenceResult,
   type ValuationEvidenceStreamErrorEvent,
@@ -32,6 +29,7 @@ import {
   type ValuationRelatedTermsEvidence,
   type ValuationSearchDemandEvidence,
   type ValuationWeb2Evidence,
+  type ValuationWeb2TldDataTopExtensionCoverage,
 } from './types';
 import {
   getCachedEvidence,
@@ -45,7 +43,7 @@ import { generateAppraisal, generateNameResearch, generateRelatedTerms } from '.
 
 /**
  * Valuation orchestration: target resolution (eligibility), the evidence sources
- * (Web2/DomDB, Google search demand, market activity, category activity),
+ * (Web2/web2-tld-data, Google search demand, market activity, category activity),
  * calibration, the NDJSON streaming + single-flight registry, and the pipeline
  * that ties them together. The multi-provider LLM engine lives in llm.ts and the
  * DB/config/prompt support lives in support.ts; this module depends on both.
@@ -410,54 +408,38 @@ export async function resolveValuationTarget(
 }
 
 // ============================================================================
-// Web2 footprint (DomDB)
+// Web2 footprint (web2-tld-data)
 // ============================================================================
 
-type DomDbEnvelope<T> = {
-  errors?: Array<{ code?: string | number; message?: string; parameter?: string[] }>;
-  duration?: number;
-  data?: T | null;
+type Web2TldDataResponse = {
+  query?: string;
+  label?: string;
+  dns_label?: string | null;
+  tld_count?: number;
+  tlds?: string[];
+  error?: string;
+  detail?: string;
 };
 
-type DomDbDomainResponse = {
-  domain?: string;
-  availability?: string;
-  registryPremium?: boolean;
-  pronounceability?: unknown;
-  extensionsRegistered?: Array<{ extension?: string; availability?: string; popularity?: string | number }>;
-};
-
-class DomDbDomainNotFoundError extends Error {
-  constructor(message = 'DomDB domain not found') {
-    super(message);
-    this.name = 'DomDbDomainNotFoundError';
-  }
-}
-
-class DomDbRequestError extends Error {
+export class Web2TldDataRequestError extends Error {
   status?: number;
   code?: string;
 
   constructor(message: string, options: { status?: number; code?: string } = {}) {
     super(message);
-    this.name = 'DomDbRequestError';
+    this.name = 'Web2TldDataRequestError';
     this.status = options.status;
     this.code = options.code;
   }
 }
 
-const DOMDB_API_URL = 'https://api.domdb.com/v1';
-const DOMDB_REQUEST_TIMEOUT_MS = 15_000;
-const DOMDB_MAX_RETRIES = 2;
+const WEB2_TLD_DATA_DEFAULT_BASE_URL = 'https://web2-tld-data-production.up.railway.app';
+const WEB2_TLD_DATA_REQUEST_TIMEOUT_MS = 15_000;
+const WEB2_TLD_DATA_MAX_RETRIES = 2;
 const TOP_EXTENSIONS = [
   'com', 'net', 'org', 'co', 'io', 'ai', 'xyz', 'app',
   'dev', 'me', 'us', 'info', 'online', 'tech', 'cc', 'tv',
 ];
-
-function parseNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 function normalizeExtension(value: unknown): string | null {
   const extension = String(value || '')
@@ -466,154 +448,107 @@ function normalizeExtension(value: unknown): string | null {
   return extension || null;
 }
 
-function normalizePronounceability(value: unknown): ValuationDomDbPronounceability[] {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => {
-        if (!entry || typeof entry !== 'object') return null;
-        const record = entry as Record<string, unknown>;
-        return {
-          locale:
-            typeof record.locale === 'string'
-              ? record.locale
-              : typeof record.language === 'string'
-                ? record.language
-                : null,
-          score: parseNumber(record.score),
-        };
-      })
-      .filter((entry): entry is ValuationDomDbPronounceability => Boolean(entry));
-  }
-
-  if (value && typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>).map(([locale, score]) => ({
-      locale,
-      score: parseNumber(score),
-    }));
-  }
-
-  return [];
-}
-
-function normalizeRegisteredExtensions(
-  value: DomDbDomainResponse['extensionsRegistered']
-): ValuationDomDbRegisteredExtension[] {
+function normalizeTlds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-
   const seen = new Set<string>();
-  return value
-    .map((extension) => {
-      const normalized = normalizeExtension(extension.extension);
-      if (!normalized || seen.has(normalized)) return null;
-      seen.add(normalized);
-      return {
-        extension: normalized,
-        availability: typeof extension.availability === 'string' ? extension.availability : null,
-        popularity: parseNumber(extension.popularity),
-      };
-    })
-    .filter((extension): extension is ValuationDomDbRegisteredExtension => Boolean(extension));
+  const tlds: string[] = [];
+  for (const entry of value) {
+    const normalized = normalizeExtension(entry);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    tlds.push(normalized);
+  }
+  return tlds;
 }
 
-function buildTopExtensionCoverage(
-  registeredExtensions: ValuationDomDbRegisteredExtension[]
-): ValuationDomDbTopExtensionCoverage[] {
-  const byExtension = new Map(registeredExtensions.map((extension) => [extension.extension, extension]));
-  return TOP_EXTENSIONS.map((extension) => ({ extension, registered: Boolean(byExtension.get(extension)) }));
+function buildTopExtensionCoverage(tlds: string[]): ValuationWeb2TldDataTopExtensionCoverage[] {
+  const registered = new Set(tlds);
+  return TOP_EXTENSIONS.map((extension) => ({ extension, registered: registered.has(extension) }));
 }
 
-function getPrimaryPronounceability(pronounceability: ValuationDomDbPronounceability[]) {
-  return pronounceability.find((entry) => entry.score !== null) ?? null;
-}
-
-function mapDomDbDomainToEvidence(
-  lookupDomain: string,
-  domain: DomDbDomainResponse,
-  source: 'domdb' | 'domdb_empty'
+function mapWeb2TldDataToEvidence(
+  lookupLabel: string,
+  response: Web2TldDataResponse,
+  source: 'web2_tld_data' | 'web2_tld_data_empty'
 ): ValuationWeb2Evidence {
-  const pronounceability = normalizePronounceability(domain.pronounceability);
-  const primaryPronounceability = getPrimaryPronounceability(pronounceability);
-  const registeredExtensions = normalizeRegisteredExtensions(domain.extensionsRegistered);
-  const topExtensionCoverage = buildTopExtensionCoverage(registeredExtensions);
+  const tlds = normalizeTlds(response.tlds);
+  const topExtensionCoverage = buildTopExtensionCoverage(tlds);
   const topExtensionsRegistered = topExtensionCoverage.filter((extension) => extension.registered).length;
+  // Trust the API-reported count (it is the authoritative tld_count across all
+  // ~1,533 zones); fall back to the de-duplicated list length only if absent.
+  const tldCount =
+    typeof response.tld_count === 'number' && Number.isFinite(response.tld_count)
+      ? response.tld_count
+      : tlds.length;
 
   return {
     source,
-    lookupDomain,
+    lookupLabel,
     summary: {
-      registeredExtensions: registeredExtensions.length,
+      registeredExtensions: tldCount,
       topExtensionsRegistered,
       topExtensionsChecked: TOP_EXTENSIONS.length,
-      pronounceabilityScore: primaryPronounceability?.score ?? null,
-      pronounceabilityLocale: primaryPronounceability?.locale ?? null,
     },
-    domdb: {
-      domain: domain.domain ?? null,
-      availability: domain.availability ?? null,
-      registryPremium: typeof domain.registryPremium === 'boolean' ? domain.registryPremium : null,
-      pronounceability,
-      registeredExtensions,
+    web2TldData: {
+      label: typeof response.label === 'string' ? response.label : null,
+      dnsLabel: typeof response.dns_label === 'string' ? response.dns_label : null,
+      tldCount,
+      tlds,
       topExtensionCoverage,
     },
   };
 }
 
-function createEmptyDomDbEvidence(lookupDomain: string): ValuationWeb2Evidence {
-  return mapDomDbDomainToEvidence(
-    lookupDomain,
-    { domain: lookupDomain, extensionsRegistered: [], pronounceability: [] },
-    'domdb_empty'
-  );
-}
-
-async function fetchDomDb<T>(path: string, body: Record<string, unknown>, logPrefix: string): Promise<T> {
-  const apiKeyPublic = appConfig.valuation.domdbApiKeyPublic;
-  const apiKeyPrivate = appConfig.valuation.domdbApiKeyPrivate;
-  if (!apiKeyPublic || !apiKeyPrivate) {
-    throw new DomDbRequestError('DOMDB_API_KEY_PUBLIC and DOMDB_API_KEY_PRIVATE are required', {
-      code: 'MISSING_DOMDB_KEYS',
+async function fetchWeb2TldData(label: string, logPrefix: string): Promise<Web2TldDataResponse> {
+  const apiKey = appConfig.valuation.web2TldDataApiKey;
+  if (!apiKey) {
+    throw new Web2TldDataRequestError('WEB2_TLD_DATA_API_KEY is required', {
+      code: 'MISSING_WEB2_TLD_DATA_KEY',
     });
   }
 
-  // DomDB is a hard dependency for every uncached generation (the comps gate
-  // needs the footprint), so ride out transient blips with a bounded timeout +
-  // retries on network/timeout and 5xx. Definitive errors (DOMAIN_NOT_FOUND,
-  // 4xx, envelope errors) are not retried.
+  const baseUrl = (appConfig.valuation.web2TldDataBaseUrl || WEB2_TLD_DATA_DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const url = `${baseUrl}/label/${encodeURIComponent(label)}`;
+
+  // web2-tld-data is a hard dependency for every uncached generation (the comps
+  // gate needs the footprint), so ride out transient blips with a bounded timeout
+  // + retries on network/timeout and 5xx. A label seen in no zone is NOT an error:
+  // the API returns tld_count: 0 (HTTP 200), which we treat as an empty footprint.
   let lastError: Error | null = null;
-  for (let attempt = 0; attempt <= DOMDB_MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= WEB2_TLD_DATA_MAX_RETRIES; attempt++) {
     const startedAt = performance.now();
-    valuationLogInfo(logPrefix, 'DomDB request start', {
-      path,
-      domain: typeof body.domain === 'string' ? body.domain : undefined,
+    valuationLogInfo(logPrefix, 'web2-tld-data request start', {
+      label,
       attempt: attempt + 1,
-      maxAttempts: DOMDB_MAX_RETRIES + 1,
+      maxAttempts: WEB2_TLD_DATA_MAX_RETRIES + 1,
     });
 
     let response: Response;
     try {
-      response = await fetch(`${DOMDB_API_URL}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ apiKeyPublic, apiKeyPrivate, ...body }),
-        signal: AbortSignal.timeout(DOMDB_REQUEST_TIMEOUT_MS),
+      response = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'X-API-Key': apiKey },
+        signal: AbortSignal.timeout(WEB2_TLD_DATA_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < DOMDB_MAX_RETRIES) {
+      if (attempt < WEB2_TLD_DATA_MAX_RETRIES) {
         const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
-        valuationLogWarn(logPrefix, 'DomDB network/timeout error, retrying', {
+        valuationLogWarn(logPrefix, 'web2-tld-data network/timeout error, retrying', {
           message: lastError.message,
           backoffMs: Math.round(backoffMs),
         });
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
         continue;
       }
-      throw new DomDbRequestError(lastError.message || 'DomDB request failed', { code: 'NETWORK_ERROR' });
+      throw new Web2TldDataRequestError(lastError.message || 'web2-tld-data request failed', {
+        code: 'NETWORK_ERROR',
+      });
     }
 
-    if (response.status >= 500 && attempt < DOMDB_MAX_RETRIES) {
+    if (response.status >= 500 && attempt < WEB2_TLD_DATA_MAX_RETRIES) {
       const backoffMs = 500 * Math.pow(2, attempt) + Math.random() * 250;
-      valuationLogWarn(logPrefix, 'DomDB server error, retrying', {
+      valuationLogWarn(logPrefix, 'web2-tld-data server error, retrying', {
         status: response.status,
         backoffMs: Math.round(backoffMs),
       });
@@ -621,35 +556,41 @@ async function fetchDomDb<T>(path: string, body: Record<string, unknown>, logPre
       continue;
     }
 
-    const json = (await response.json().catch(() => null)) as DomDbEnvelope<T> | null;
+    const json = (await response.json().catch(() => null)) as Web2TldDataResponse | null;
     const elapsedMs = Math.round(performance.now() - startedAt);
-    const errors = Array.isArray(json?.errors) ? json.errors : [];
-    valuationLogInfo(logPrefix, 'DomDB response received', {
-      path,
+    valuationLogInfo(logPrefix, 'web2-tld-data response received', {
+      label,
       status: response.status,
-      durationSeconds: json?.duration,
-      errorsFound: errors.length,
-      firstErrorCode: errors[0]?.code,
+      tldCount: json?.tld_count,
       elapsedMs,
     });
 
-    const firstError = errors[0];
-    const firstErrorCode = firstError?.code ? String(firstError.code) : undefined;
-    if (firstErrorCode === 'DOMAIN_NOT_FOUND') {
-      throw new DomDbDomainNotFoundError(firstError?.message);
-    }
-
-    if (!response.ok || !json || errors.length > 0) {
-      throw new DomDbRequestError(firstError?.message || `DomDB HTTP ${response.status}`, {
+    // A label-level rejection (400 malformed/empty, 404 not found) is not fatal:
+    // treat it as an empty footprint, mirroring the old DomDB "domain not found ->
+    // empty evidence" path so one odd label can't hard-fail the whole valuation.
+    // Auth (401) and server (5xx, already retried above) errors still throw.
+    if (response.status === 400 || response.status === 404) {
+      valuationLogWarn(logPrefix, 'web2-tld-data label not usable, treating as empty footprint', {
+        label,
         status: response.status,
-        code: firstErrorCode,
+        detail: json?.error || json?.detail,
       });
+      return { label, dns_label: null, tld_count: 0, tlds: [] };
     }
 
-    return json.data as T;
+    if (!response.ok || !json) {
+      throw new Web2TldDataRequestError(
+        json?.error || json?.detail || `web2-tld-data HTTP ${response.status}`,
+        { status: response.status }
+      );
+    }
+
+    return json;
   }
 
-  throw new DomDbRequestError(lastError?.message || 'DomDB request failed after retries', { code: 'NETWORK_ERROR' });
+  throw new Web2TldDataRequestError(lastError?.message || 'web2-tld-data request failed after retries', {
+    code: 'NETWORK_ERROR',
+  });
 }
 
 export async function buildWeb2Evidence(
@@ -658,31 +599,30 @@ export async function buildWeb2Evidence(
 ): Promise<ValuationWeb2Evidence> {
   const startedAt = performance.now();
   const logPrefix = options.logPrefix || '[valuation]';
-  const lookupDomain = `${name}.com`;
+  // web2-tld-data looks up a bare label (it strips a trailing .eth and normalizes
+  // unicode to punycode itself); `name` is already the .eth label with no suffix.
+  const lookupLabel = name;
 
   try {
-    valuationLogInfo(logPrefix, 'Web2 evidence DomDB lookup start', { lookupDomain });
-    const domain = await fetchDomDb<DomDbDomainResponse>('/domain/get', { domain: lookupDomain }, logPrefix);
-    const evidence = mapDomDbDomainToEvidence(lookupDomain, domain, 'domdb');
-    valuationLogInfo(logPrefix, 'Web2 evidence DomDB lookup complete', {
-      lookupDomain,
+    valuationLogInfo(logPrefix, 'Web2 evidence web2-tld-data lookup start', { lookupLabel });
+    const response = await fetchWeb2TldData(lookupLabel, logPrefix);
+    const tldCount = typeof response.tld_count === 'number' ? response.tld_count : response.tlds?.length ?? 0;
+    const evidence = mapWeb2TldDataToEvidence(
+      lookupLabel,
+      response,
+      tldCount > 0 ? 'web2_tld_data' : 'web2_tld_data_empty'
+    );
+    valuationLogInfo(logPrefix, 'Web2 evidence web2-tld-data lookup complete', {
+      lookupLabel,
       registeredExtensions: evidence.summary.registeredExtensions,
-      pronounceabilityScore: evidence.summary.pronounceabilityScore,
+      topExtensionsRegistered: evidence.summary.topExtensionsRegistered,
       elapsedMs: Math.round(performance.now() - startedAt),
     });
     return evidence;
   } catch (error) {
-    if (error instanceof DomDbDomainNotFoundError) {
-      valuationLogInfo(logPrefix, 'Web2 evidence DomDB domain not found', {
-        lookupDomain,
-        elapsedMs: Math.round(performance.now() - startedAt),
-      });
-      return createEmptyDomDbEvidence(lookupDomain);
-    }
-
-    valuationLogWarn(logPrefix, 'Web2 evidence DomDB lookup failed', {
-      lookupDomain,
-      message: error instanceof Error ? error.message : 'Unknown DomDB error',
+    valuationLogWarn(logPrefix, 'Web2 evidence web2-tld-data lookup failed', {
+      lookupLabel,
+      message: error instanceof Error ? error.message : 'Unknown web2-tld-data error',
       elapsedMs: Math.round(performance.now() - startedAt),
     });
     throw error;
@@ -1113,7 +1053,6 @@ export function buildCalibrationContext(
     web2Footprint: {
       registeredExtensions: web2Calibration.registeredExtensions,
       topExtensionsRegistered: web2Calibration.topExtensionsRegistered,
-      pronounceability: web2Calibration.pronounceability,
       compsGate:
         web2.summary.registeredExtensions < web2Calibration.registeredExtensions.tooObscureBelow
           ? 'skipped'
