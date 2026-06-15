@@ -247,7 +247,7 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const inFlight = getInFlightValuationRun(label);
         if (inFlight) {
           if (streaming) {
-            await pipeRunToReply(reply, inFlight);
+            await pipeRunToReply(reply, inFlight, request);
             return reply;
           }
           try {
@@ -380,7 +380,7 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const { run } = getOrCreateValuationRun(target.keyword, runId, produce, mapValuationError);
 
         if (streaming) {
-          await pipeRunToReply(reply, run);
+          await pipeRunToReply(reply, run, request);
           return reply;
         }
 
