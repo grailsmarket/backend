@@ -322,7 +322,10 @@ export type ValuationEvidence = {
   nameResearch: ValuationNameResearchEvidence;
   categoryContext: ValuationCategoryContextEvidence;
   categoryMarketActivity: ValuationCategoryMarketActivityEvidence;
-  calibrationContext: ValuationCalibrationContextEvidence;
+  // Methodology-sensitive: present as LLM input during generation, but stripped
+  // from the client/cached response (see runValuationPipeline). Optional so the
+  // public payload can omit it.
+  calibrationContext?: ValuationCalibrationContextEvidence;
   appraisal: ValuationAppraisalEvidence;
 };
 

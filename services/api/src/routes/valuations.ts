@@ -1,17 +1,20 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { config, type APIResponse } from '../../../shared/src';
-import { optionalAuth } from '../middleware/auth';
+import { type APIResponse, getPostgresPool } from '../../../shared/src';
+import { optionalAuth, requireAuth, requireAdmin } from '../middleware/auth';
 import { logger } from '../utils/logger';
 import {
+  clearValuationSettingsCache,
   ethToWeiString,
   getCachedValuation,
   getValuationConfig,
   getValuationQuotaSnapshot,
+  getValuationSettings,
   recordValuationGeneration,
   setCachedValuation,
   ValuationConfigError,
   ValuationPromptError,
+  type ValuationSettings,
 } from '../services/valuation/support';
 import { consumeOpenAICostRunSummary } from '../services/valuation/llm';
 import {
@@ -33,6 +36,36 @@ const DEFAULT_RECOMMENDATION_COUNT = 200;
 const ParamsSchema = z.object({
   name: z.string().min(1).max(80),
 });
+
+/**
+ * Partial update for valuation_settings (admin-only). quota_admin / quota_avatar
+ * accept an explicit null (= unlimited), so only absent (undefined) keys are
+ * skipped by the PATCH handler. Keys map 1:1 to valuation_settings columns.
+ */
+const SettingsPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    window_days: z.number().int().min(1).max(365).optional(),
+    quota_admin: z.number().int().min(0).nullable().optional(),
+    quota_avatar: z.number().int().min(0).nullable().optional(),
+    quota_name: z.number().int().min(0).optional(),
+    quota_default: z.number().int().min(0).optional(),
+    evidence_cache_days: z.number().int().min(1).max(3650).optional(),
+    valuation_days: z.number().int().min(1).max(3650).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
+
+const SETTINGS_COLUMNS = [
+  'enabled',
+  'window_days',
+  'quota_admin',
+  'quota_avatar',
+  'quota_name',
+  'quota_default',
+  'evidence_cache_days',
+  'valuation_days',
+  'updated_at',
+] as const;
 
 /** Bad client input (request body / params). Mapped to 400. */
 class ValuationValidationError extends Error {
@@ -70,9 +103,12 @@ function readIntegerOption(value: unknown, fallback: number, min: number, max: n
 }
 
 function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultEth: string) {
-  const premiumRegistrationFloorEth = body?.premiumRegistrationFloorEth ?? premiumDefaultEth;
-  if (!/^\d+(\.\d+)?$/.test(premiumRegistrationFloorEth)) {
-    throw new ValuationValidationError('premiumRegistrationFloorEth must be a positive ETH amount');
+  // The premium-registration floor is fixed server-side from valuation_config and
+  // is NOT client-overridable: the result is cached ~30d and served publicly, so a
+  // request-body knob could skew everyone's appraisal for that label. Any
+  // premiumRegistrationFloorEth in the body is ignored.
+  if (!/^\d+(\.\d+)?$/.test(premiumDefaultEth)) {
+    throw new ValuationValidationError('Configured premiumRegistrationFloorEth is not a valid ETH amount');
   }
 
   return {
@@ -85,8 +121,8 @@ function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultE
       300,
       'recommendationCount'
     ),
-    premiumRegistrationFloorEth,
-    premiumRegistrationFloorWei: ethToWeiString(premiumRegistrationFloorEth),
+    premiumRegistrationFloorEth: premiumDefaultEth,
+    premiumRegistrationFloorWei: ethToWeiString(premiumDefaultEth),
   };
 }
 
@@ -158,7 +194,18 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
     '/:name/evidence',
     { preHandler: optionalAuth, config: { rateLimit: { max: 30, timeWindow: 60_000 } } },
     async (request, reply) => {
-      if (!config.valuation.enabled) {
+      // Loaded before the main try/catch, so guard its DB read explicitly: a real
+      // query error (vs. a missing row, which the loader treats as disabled) must
+      // map to a clean 503 instead of escaping to the global handler, which would
+      // leak the raw Postgres message (and stack in non-prod).
+      let settings: ValuationSettings;
+      try {
+        settings = await getValuationSettings();
+      } catch (error) {
+        logger.error({ err: error }, 'valuation settings read failed');
+        return sendError(reply, new ValuationConfigError('Failed to load valuation settings'));
+      }
+      if (!settings.enabled) {
         return reply.status(404).send({
           success: false,
           error: { code: 'NOT_FOUND', message: 'Valuation is not enabled' },
@@ -238,8 +285,13 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         );
 
         // 5. Per-user quota (rolling window). Joiners above never reach here.
-        const quota = await getValuationQuotaSnapshot(userId);
-        if (quota.remaining <= 0) {
+        //    Admins and unlimited ENS tiers get remaining === null (no cap).
+        const quota = await getValuationQuotaSnapshot({
+          userId,
+          address: request.user.address,
+          isAdmin: request.user.isAdmin,
+        });
+        if (quota.remaining !== null && quota.remaining <= 0) {
           return reply.status(429).send({
             success: false,
             error: {
@@ -259,6 +311,7 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
             result = await runValuationPipeline({
               target,
               config: valuationConfig,
+              evidenceCacheDays: settings.evidenceCacheDays,
               premiumRegistrationFloorWei: options.premiumRegistrationFloorWei,
               logPrefix,
               reportProgress,
@@ -305,7 +358,7 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
             );
           }
 
-          await setCachedValuation(target.keyword, result, userId, valuationConfig.ttls.valuationDays);
+          await setCachedValuation(target.keyword, result, userId, settings.valuationDays);
           // W6: the result is already cached; a failed audit insert must not turn
           // a successful, cached run into a client-facing error. Log + swallow.
           await recordValuationGeneration({
@@ -340,6 +393,117 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
           logger.error({ err: error, rawName }, `${logPrefix} valuation request failed`);
         }
         return sendError(reply, error);
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/valuations/admin/config
+   * Returns the single valuation_settings row (admin panel edit view).
+   */
+  fastify.get(
+    '/admin/config',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (_request, reply) => {
+      try {
+        const pool = getPostgresPool();
+        const result = await pool.query(
+          `SELECT id, enabled, window_days, quota_admin, quota_avatar, quota_name,
+                  quota_default, evidence_cache_days, valuation_days, updated_at
+             FROM valuation_settings WHERE id = 1`
+        );
+        if (result.rows.length === 0) {
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'valuation_settings row is missing' },
+            meta: nowMeta(),
+          });
+        }
+        return reply.send({ success: true, data: { config: result.rows[0] }, meta: nowMeta() });
+      } catch (error) {
+        logger.error({ err: error }, 'valuation settings read failed');
+        return reply.status(500).send({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch valuation settings' },
+          meta: nowMeta(),
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /api/v1/valuations/admin/config
+   * Partial update. quota_admin / quota_avatar accept an explicit null
+   * (= unlimited); only absent keys are skipped. Clears the in-memory cache so
+   * changes take effect immediately.
+   */
+  fastify.patch(
+    '/admin/config',
+    { preHandler: [requireAuth, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const updates = SettingsPatchSchema.parse(request.body);
+
+        const cols: string[] = [];
+        const params: unknown[] = [];
+        let i = 0;
+        for (const [k, v] of Object.entries(updates)) {
+          if (v === undefined) continue;
+          if (!SETTINGS_COLUMNS.includes(k as (typeof SETTINGS_COLUMNS)[number])) continue;
+          i += 1;
+          cols.push(`${k} = $${i}`);
+          params.push(v);
+        }
+        if (cols.length === 0) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'NO_FIELDS', message: 'No fields to update' },
+            meta: nowMeta(),
+          });
+        }
+        cols.push('updated_at = NOW()');
+
+        const pool = getPostgresPool();
+        const updateResult = await pool.query(
+          `UPDATE valuation_settings SET ${cols.join(', ')} WHERE id = 1`,
+          params
+        );
+        if (updateResult.rowCount === 0) {
+          // Seed row (id=1) is missing — migration 0886 hasn't been applied. Don't
+          // report a phantom success that changed nothing.
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'valuation_settings row is missing' },
+            meta: nowMeta(),
+          });
+        }
+        clearValuationSettingsCache();
+
+        logger.info(
+          { adminId: request.user?.sub, updates },
+          'valuation settings updated via admin panel'
+        );
+
+        const result = await pool.query(
+          `SELECT id, enabled, window_days, quota_admin, quota_avatar, quota_name,
+                  quota_default, evidence_cache_days, valuation_days, updated_at
+             FROM valuation_settings WHERE id = 1`
+        );
+        return reply.send({ success: true, data: { config: result.rows[0] }, meta: nowMeta() });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'VALIDATION_ERROR', message: 'Invalid settings update' },
+            meta: nowMeta(),
+          });
+        }
+        logger.error({ err: error }, 'valuation settings update failed');
+        return reply.status(500).send({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Failed to update valuation settings' },
+          meta: nowMeta(),
+        });
       }
     }
   );
