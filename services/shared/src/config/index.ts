@@ -110,6 +110,11 @@ const ConfigSchema = z.object({
     forcePathStyle: z.boolean().default(false),
     enabled: z.boolean(),
   }),
+  valuation: z.object({
+    openrouterApiKey: z.string().optional(),
+    web2TldDataApiKey: z.string().optional(),
+    web2TldDataBaseUrl: z.string().optional(),
+  }),
 });
 
 const rawConfig = {
@@ -208,6 +213,11 @@ const rawConfig = {
     region: process.env.REGION || 'auto',
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
     enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
+  },
+  valuation: {
+    openrouterApiKey: process.env.OPENROUTER_API_KEY,
+    web2TldDataApiKey: process.env.WEB2_TLD_DATA_API_KEY,
+    web2TldDataBaseUrl: process.env.WEB2_TLD_DATA_BASE_URL,
   },
 };
 
