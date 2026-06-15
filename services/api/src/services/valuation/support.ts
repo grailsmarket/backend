@@ -548,7 +548,18 @@ export async function resolveValuationQuotaTier(args: {
   address: string;
 }): Promise<ValuationQuotaTier> {
   if (args.isAdmin) return 'admin';
-  const ensTier = await getUserTier(args.address);
+  // A transient ens_names lookup failure must not block generation: degrade to the
+  // (most restrictive) 'default' tier rather than 500-ing the whole request.
+  let ensTier: Awaited<ReturnType<typeof getUserTier>>;
+  try {
+    ensTier = await getUserTier(args.address);
+  } catch (error) {
+    logger.warn(
+      { err: error, address: args.address },
+      'valuation tier lookup failed; falling back to default tier'
+    );
+    return 'default';
+  }
   if (ensTier === 'avatar') return 'avatar';
   if (ensTier === 'name') return 'name';
   return 'default';

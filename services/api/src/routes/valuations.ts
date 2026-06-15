@@ -14,6 +14,7 @@ import {
   setCachedValuation,
   ValuationConfigError,
   ValuationPromptError,
+  type ValuationSettings,
 } from '../services/valuation/support';
 import { consumeOpenAICostRunSummary } from '../services/valuation/llm';
 import {
@@ -190,7 +191,17 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
     '/:name/evidence',
     { preHandler: optionalAuth, config: { rateLimit: { max: 30, timeWindow: 60_000 } } },
     async (request, reply) => {
-      const settings = await getValuationSettings();
+      // Loaded before the main try/catch, so guard its DB read explicitly: a real
+      // query error (vs. a missing row, which the loader treats as disabled) must
+      // map to a clean 503 instead of escaping to the global handler, which would
+      // leak the raw Postgres message (and stack in non-prod).
+      let settings: ValuationSettings;
+      try {
+        settings = await getValuationSettings();
+      } catch (error) {
+        logger.error({ err: error }, 'valuation settings read failed');
+        return sendError(reply, new ValuationConfigError('Failed to load valuation settings'));
+      }
       if (!settings.enabled) {
         return reply.status(404).send({
           success: false,
@@ -450,7 +461,19 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         cols.push('updated_at = NOW()');
 
         const pool = getPostgresPool();
-        await pool.query(`UPDATE valuation_settings SET ${cols.join(', ')} WHERE id = 1`, params);
+        const updateResult = await pool.query(
+          `UPDATE valuation_settings SET ${cols.join(', ')} WHERE id = 1`,
+          params
+        );
+        if (updateResult.rowCount === 0) {
+          // Seed row (id=1) is missing — migration 0886 hasn't been applied. Don't
+          // report a phantom success that changed nothing.
+          return reply.status(404).send({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'valuation_settings row is missing' },
+            meta: nowMeta(),
+          });
+        }
         clearValuationSettingsCache();
 
         logger.info(
