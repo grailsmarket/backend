@@ -166,7 +166,13 @@ const ValuationConfigSchema = z.object({
     skipMessage: z.string(),
   }),
   termCounts: z.object({
-    byScore: z.record(z.string(), z.number()),
+    // Must define an entry for every demand score 1-5; otherwise
+    // scopedTermCountForScore throws mid-generation. Validate at load (fail-closed).
+    byScore: z
+      .record(z.string(), z.number())
+      .refine((m) => ['1', '2', '3', '4', '5'].every((k) => typeof m[k] === 'number'), {
+        message: 'termCounts.byScore must define a count for every score 1-5',
+      }),
   }),
   limits: z.object({
     maxResearchSenses: z.number(),

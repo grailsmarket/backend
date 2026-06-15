@@ -911,13 +911,21 @@ function compactMarketActivitySummary(evidence: ValuationEvidence['marketActivit
   };
 }
 
+// Comparable sales can run to the hundreds for liquid related terms (50/term ×
+// many terms). The list is sorted by price descending, so cap the appraisal input
+// at the top N to bound prompt token cost; report how many were dropped.
+const MAX_APPRAISAL_TOP_SALES = 25;
+
 function compactMarketActivity(
   evidence: ValuationEvidence['marketActivity'],
   termSenses?: Record<string, number[]>
 ) {
+  const salesTruncated = Math.max(0, evidence.sales.length - MAX_APPRAISAL_TOP_SALES);
   return {
-    summary: compactMarketActivitySummary(evidence),
-    topSales: evidence.sales.map((sale) => compactActivityRow(sale, termSenses)),
+    summary: { ...compactMarketActivitySummary(evidence), salesTruncated },
+    topSales: evidence.sales
+      .slice(0, MAX_APPRAISAL_TOP_SALES)
+      .map((sale) => compactActivityRow(sale, termSenses)),
     topMintEvents: evidence.mintEvents.slice(0, 10).map((mint) => compactActivityRow(mint, termSenses)),
     topPremiumRegistrations: evidence.premiumRegistrations
       .slice(0, 10)

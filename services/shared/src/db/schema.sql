@@ -398,3 +398,100 @@ CREATE INDEX IF NOT EXISTS idx_comment_moderation_log_admin
 --   ADD COLUMN notify_on_comment_received BOOLEAN NOT NULL DEFAULT TRUE;
 -- ALTER TABLE watchlist
 --   ADD COLUMN notify_on_comment BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ============================================================================
+-- ENS valuation feature (mirror of migrations 0886_create_valuations.sql and
+-- 0887_create_valuation_settings.sql)
+-- ============================================================================
+-- Versioned private prompts + config (methodology content loaded out-of-band).
+CREATE TABLE IF NOT EXISTS valuation_prompts (
+    id          SERIAL PRIMARY KEY,
+    prompt_key  VARCHAR(64) NOT NULL,
+    version     INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    is_active   BOOLEAN NOT NULL DEFAULT false,
+    notes       TEXT,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (prompt_key, version)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_valuation_prompts_one_active
+  ON valuation_prompts (prompt_key)
+  WHERE is_active;
+
+CREATE TABLE IF NOT EXISTS valuation_config (
+    id          SERIAL PRIMARY KEY,
+    version     INTEGER NOT NULL UNIQUE,
+    config      JSONB NOT NULL,
+    is_active   BOOLEAN NOT NULL DEFAULT false,
+    notes       TEXT,
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_valuation_config_one_active
+  ON valuation_config (is_active)
+  WHERE is_active;
+
+-- Tier-1 cache: stable per-label semantic evidence (~365d TTL).
+CREATE TABLE IF NOT EXISTS valuation_evidence_cache (
+    id          SERIAL PRIMARY KEY,
+    label       VARCHAR(64) NOT NULL,
+    kind        VARCHAR(32) NOT NULL,
+    payload     JSONB NOT NULL,
+    model       VARCHAR(96),
+    expires_at  TIMESTAMP NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (label, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_valuation_evidence_cache_expires_at
+  ON valuation_evidence_cache (expires_at);
+
+-- Tier-2 cache: full valuation result per label (~30d TTL).
+CREATE TABLE IF NOT EXISTS valuations (
+    id            SERIAL PRIMARY KEY,
+    label         VARCHAR(64) NOT NULL UNIQUE,
+    result        JSONB NOT NULL,
+    eth_value     NUMERIC,
+    low_eth       NUMERIC,
+    high_eth      NUMERIC,
+    model         VARCHAR(96),
+    generated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    expires_at    TIMESTAMP NOT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_valuations_expires_at
+  ON valuations (expires_at);
+
+-- Quota audit: one row per generation run (initiators only).
+CREATE TABLE IF NOT EXISTS valuation_generations (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label       VARCHAR(64) NOT NULL,
+    run_id      VARCHAR(64) NOT NULL,
+    status      VARCHAR(16) NOT NULL
+                  CHECK (status IN ('completed', 'failed')),
+    cost_usd    NUMERIC,
+    duration_ms INTEGER,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_valuation_generations_user_window
+  ON valuation_generations (user_id, created_at DESC);
+
+-- Operational settings (single row), admin-editable from cat-admin. Holds the
+-- enable flag, quota window + per-tier limits (NULL = unlimited), and cache TTLs.
+CREATE TABLE IF NOT EXISTS valuation_settings (
+    id                  INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+    window_days         INTEGER NOT NULL DEFAULT 7,
+    quota_admin         INTEGER,
+    quota_avatar        INTEGER,
+    quota_name          INTEGER NOT NULL DEFAULT 25,
+    quota_default       INTEGER NOT NULL DEFAULT 10,
+    evidence_cache_days INTEGER NOT NULL DEFAULT 365,
+    valuation_days      INTEGER NOT NULL DEFAULT 30,
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+INSERT INTO valuation_settings (id, quota_avatar) VALUES (1, 60)
+  ON CONFLICT (id) DO NOTHING;

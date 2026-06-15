@@ -1214,10 +1214,15 @@ export async function runValuationPipeline(args: {
   emitStage('researching_name_context', 'started');
   const searchDemandPromise = buildSearchDemandEvidence(keyword, { logPrefix });
   const nameResearchPromise = getOrGenerateNameResearch(keyword, config, evidenceCacheDays, logPrefix);
-  const categoryMarketActivityPromise = hydrateCategoryMarketActivity(
-    target.categoryContext.categories.map((category) => category.slug),
-    config.activity.ignoredCategories,
-    { logPrefix, excludeEnsName: target.normalizedName }
+  // Wrapped in capturePromise so a transient DB rejection can't fire an
+  // unhandledRejection during the long (LLM-bound) window before it's awaited
+  // below — which, with no global handler, would crash the API process.
+  const categoryMarketActivityPromise = capturePromise(
+    hydrateCategoryMarketActivity(
+      target.categoryContext.categories.map((category) => category.slug),
+      config.activity.ignoredCategories,
+      { logPrefix, excludeEnsName: target.normalizedName }
+    )
   );
 
   const evidenceStartedAt = performance.now();
@@ -1295,7 +1300,9 @@ export async function runValuationPipeline(args: {
     );
   }
 
-  const categoryMarketActivity = await categoryMarketActivityPromise;
+  const categoryMarketActivityResult = await categoryMarketActivityPromise;
+  if (!categoryMarketActivityResult.ok) throw categoryMarketActivityResult.error;
+  const categoryMarketActivity = categoryMarketActivityResult.data;
   const calibrationContext = buildCalibrationContext(web2, searchDemand, target.categoryContext, config);
 
   valuationLogInfo(logPrefix, 'evidence collection complete', {
@@ -1323,11 +1330,24 @@ export async function runValuationPipeline(args: {
   const appraisal = await generateAppraisal(keyword, evidenceWithoutAppraisal, { logPrefix });
   emitStage('writing_valuation_estimate', 'completed');
 
+  // Strip methodology-sensitive content from the CLIENT/cached payload — it was
+  // only needed as LLM input above. The full calibration thresholds/notes and the
+  // category comment text must not be returned to clients (the result is cached
+  // and served publicly as an X-Cache: HIT).
+  const { calibrationContext: _omitCalibration, ...publicEvidenceBase } = evidenceWithoutAppraisal;
+
   return {
     name: keyword,
     status: 'completed',
     evidence: {
-      ...evidenceWithoutAppraisal,
+      ...publicEvidenceBase,
+      categoryContext: {
+        ...target.categoryContext,
+        categories: target.categoryContext.categories.map((category) => ({
+          ...category,
+          comments: [],
+        })),
+      },
       appraisal,
     },
     generatedAt: new Date().toISOString(),

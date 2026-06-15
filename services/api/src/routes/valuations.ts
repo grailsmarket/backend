@@ -103,9 +103,12 @@ function readIntegerOption(value: unknown, fallback: number, min: number, max: n
 }
 
 function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultEth: string) {
-  const premiumRegistrationFloorEth = body?.premiumRegistrationFloorEth ?? premiumDefaultEth;
-  if (!/^\d+(\.\d+)?$/.test(premiumRegistrationFloorEth)) {
-    throw new ValuationValidationError('premiumRegistrationFloorEth must be a positive ETH amount');
+  // The premium-registration floor is fixed server-side from valuation_config and
+  // is NOT client-overridable: the result is cached ~30d and served publicly, so a
+  // request-body knob could skew everyone's appraisal for that label. Any
+  // premiumRegistrationFloorEth in the body is ignored.
+  if (!/^\d+(\.\d+)?$/.test(premiumDefaultEth)) {
+    throw new ValuationValidationError('Configured premiumRegistrationFloorEth is not a valid ETH amount');
   }
 
   return {
@@ -118,8 +121,8 @@ function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultE
       300,
       'recommendationCount'
     ),
-    premiumRegistrationFloorEth,
-    premiumRegistrationFloorWei: ethToWeiString(premiumRegistrationFloorEth),
+    premiumRegistrationFloorEth: premiumDefaultEth,
+    premiumRegistrationFloorWei: ethToWeiString(premiumDefaultEth),
   };
 }
 
