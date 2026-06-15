@@ -1,4 +1,4 @@
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { normalize } from 'viem/ens';
 import {
   getPostgresPool,
@@ -61,6 +61,26 @@ const NDJSON_HEADERS = {
   'Content-Type': 'application/x-ndjson; charset=utf-8',
   'X-Accel-Buffering': 'no',
 };
+
+/**
+ * The NDJSON stream hijacks the reply (raw socket), which bypasses Fastify's
+ * onSend lifecycle — and with it the @fastify/cors plugin that normally adds the
+ * Access-Control-* headers. Without these, the browser blocks the streamed
+ * response even though the preflight passed. Mirror the plugin's behavior here:
+ * because the API runs with credentials:true we must reflect the (allow-listed)
+ * Origin rather than using '*', and advertise Vary: Origin for cache safety.
+ */
+function buildStreamCorsHeaders(request: FastifyRequest): Record<string, string> {
+  const origin = request.headers.origin;
+  if (!origin || !appConfig.api.corsOrigins.includes(origin)) {
+    return {};
+  }
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    Vary: 'Origin',
+  };
+}
 
 export type ValuationProduce = (
   reportProgress: (event: ValuationEvidenceStreamStageEvent) => void
@@ -174,10 +194,14 @@ function subscribeToRun(
 }
 
 /** Streams a run's events to the reply as NDJSON until the run settles. */
-export async function pipeRunToReply(reply: FastifyReply, run: ValuationRun): Promise<void> {
+export async function pipeRunToReply(
+  reply: FastifyReply,
+  run: ValuationRun,
+  request: FastifyRequest
+): Promise<void> {
   reply.hijack();
   const raw = reply.raw;
-  raw.writeHead(200, NDJSON_HEADERS);
+  raw.writeHead(200, { ...NDJSON_HEADERS, ...buildStreamCorsHeaders(request) });
 
   let clientGone = false;
   raw.on('close', () => {
