@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { normalize } from 'viem/ens';
 import { getPostgresPool } from '../../../../shared/src';
 import { logger } from '../../utils/logger';
+import { getUserTier } from '../global-chat';
 import type { ValuationEvidenceResult } from './types';
 
 /**
@@ -176,14 +177,6 @@ const ValuationConfigSchema = z.object({
     comparableSaleFloorWei: z.string(),
     premiumRegistrationFloorEthDefault: z.string(),
   }),
-  quotas: z.object({
-    windowDays: z.number(),
-    byTier: z.record(z.string(), z.number()),
-  }),
-  ttls: z.object({
-    evidenceCacheDays: z.number(),
-    valuationDays: z.number(),
-  }),
 });
 
 export type ValuationConfig = z.infer<typeof ValuationConfigSchema>;
@@ -227,12 +220,6 @@ export async function getValuationConfig(): Promise<ValuationConfig> {
       `Active valuation_config (version ${version}) failed validation: ${parsed.error.issues
         .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
         .join('; ')}`
-    );
-  }
-
-  if (parsed.data.quotas.byTier.default === undefined) {
-    throw new ValuationConfigError(
-      `Active valuation_config (version ${version}) is missing quotas.byTier.default`
     );
   }
 
@@ -459,24 +446,125 @@ export async function recordValuationGeneration(params: {
 }
 
 // ============================================================================
-// Per-user generation quota (rolling window, tier-aware)
+// Valuation settings (operational knobs, admin-editable, single-row table)
 // ============================================================================
 
-export interface ValuationQuotaSnapshot {
-  used: number;
-  max: number;
-  remaining: number;
-  resetsAt: string;
+/**
+ * Operational config for the valuation feature, edited live from the cat-admin
+ * panel. Kept separate from the versioned, methodology-sensitive
+ * `valuation_config` doc. `quotaAdmin` / `quotaAvatar` are nullable: null =
+ * unlimited (mirrors global_chat_config.quota_with_avatar).
+ */
+export interface ValuationSettings {
+  enabled: boolean;
   windowDays: number;
-  tier: string;
+  quotaAdmin: number | null;
+  quotaAvatar: number | null;
+  quotaName: number;
+  quotaDefault: number;
+  evidenceCacheDays: number;
+  valuationDays: number;
+}
+
+const SETTINGS_CACHE_TTL_MS = 30_000;
+let cachedSettings: { settings: ValuationSettings; expiresAt: number } | null = null;
+
+export function clearValuationSettingsCache(): void {
+  cachedSettings = null;
 }
 
 /**
- * Resolves the quota tier for a user. Everyone is 'default' today; premium plans
- * will map here later (e.g. a users.plan column or an entitlements lookup).
+ * Loads the single valuation_settings row. A missing row is treated as
+ * DISABLED (fail-safe) so the feature can't silently run on column defaults if
+ * the seed migration hasn't been applied.
  */
-export async function getValuationQuotaTier(_userId: number): Promise<string> {
+export async function getValuationSettings(): Promise<ValuationSettings> {
+  if (cachedSettings && cachedSettings.expiresAt > Date.now()) {
+    return cachedSettings.settings;
+  }
+
+  const pool = getPostgresPool();
+  const result = await pool.query(
+    `SELECT enabled, window_days, quota_admin, quota_avatar, quota_name,
+            quota_default, evidence_cache_days, valuation_days
+       FROM valuation_settings WHERE id = 1`
+  );
+
+  let settings: ValuationSettings;
+  if (result.rows.length === 0) {
+    logger.error('valuation_settings row (id=1) missing; treating feature as disabled');
+    settings = {
+      enabled: false,
+      windowDays: 7,
+      quotaAdmin: null,
+      quotaAvatar: 60,
+      quotaName: 25,
+      quotaDefault: 10,
+      evidenceCacheDays: 365,
+      valuationDays: 30,
+    };
+  } else {
+    const row = result.rows[0];
+    settings = {
+      enabled: Boolean(row.enabled),
+      windowDays: Number(row.window_days),
+      quotaAdmin: row.quota_admin === null ? null : Number(row.quota_admin),
+      quotaAvatar: row.quota_avatar === null ? null : Number(row.quota_avatar),
+      quotaName: Number(row.quota_name),
+      quotaDefault: Number(row.quota_default),
+      evidenceCacheDays: Number(row.evidence_cache_days),
+      valuationDays: Number(row.valuation_days),
+    };
+  }
+
+  cachedSettings = { settings, expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS };
+  return settings;
+}
+
+// ============================================================================
+// Per-user generation quota (rolling window, tier-aware)
+// ============================================================================
+
+export type ValuationQuotaTier = 'admin' | 'avatar' | 'name' | 'default';
+
+export interface ValuationQuotaSnapshot {
+  used: number;
+  /** null = unlimited (admin or an unlimited ENS tier). */
+  max: number | null;
+  /** null = unlimited. */
+  remaining: number | null;
+  resetsAt: string;
+  windowDays: number;
+  tier: ValuationQuotaTier;
+}
+
+/**
+ * Resolves the quota tier in priority order: admins (users.is_admin) first, then
+ * ENS ownership via the global chat tier resolver (shared definition + cache):
+ * avatar > name > default (global chat's 'none').
+ */
+export async function resolveValuationQuotaTier(args: {
+  isAdmin: boolean;
+  address: string;
+}): Promise<ValuationQuotaTier> {
+  if (args.isAdmin) return 'admin';
+  const ensTier = await getUserTier(args.address);
+  if (ensTier === 'avatar') return 'avatar';
+  if (ensTier === 'name') return 'name';
   return 'default';
+}
+
+function tierLimit(tier: ValuationQuotaTier, settings: ValuationSettings): number | null {
+  switch (tier) {
+    case 'admin':
+      return settings.quotaAdmin;
+    case 'avatar':
+      return settings.quotaAvatar;
+    case 'name':
+      return settings.quotaName;
+    case 'default':
+      return settings.quotaDefault;
+  }
 }
 
 export async function getValuationQuotaUsed(userId: number, windowDays: number): Promise<number> {
@@ -492,12 +580,29 @@ export async function getValuationQuotaUsed(userId: number, windowDays: number):
   return result.rows[0]?.c ?? 0;
 }
 
-export async function getValuationQuotaSnapshot(userId: number): Promise<ValuationQuotaSnapshot> {
-  const config = await getValuationConfig();
-  const windowDays = config.quotas.windowDays;
-  const tier = await getValuationQuotaTier(userId);
-  const max = config.quotas.byTier[tier] ?? config.quotas.byTier.default;
-  const used = await getValuationQuotaUsed(userId, windowDays);
+export async function getValuationQuotaSnapshot(args: {
+  userId: number;
+  address: string;
+  isAdmin: boolean;
+}): Promise<ValuationQuotaSnapshot> {
+  const settings = await getValuationSettings();
+  const windowDays = settings.windowDays;
+  const tier = await resolveValuationQuotaTier({ isAdmin: args.isAdmin, address: args.address });
+  const max = tierLimit(tier, settings);
+
+  // Unlimited tier: skip the count + oldest-row queries entirely.
+  if (max === null) {
+    return {
+      used: 0,
+      max: null,
+      remaining: null,
+      resetsAt: new Date(Date.now() + windowDays * MS_PER_DAY).toISOString(),
+      windowDays,
+      tier,
+    };
+  }
+
+  const used = await getValuationQuotaUsed(args.userId, windowDays);
 
   const pool = getPostgresPool();
   const oldestResult = await pool.query(
@@ -506,7 +611,7 @@ export async function getValuationQuotaSnapshot(userId: number): Promise<Valuati
       WHERE user_id = $1
         AND status = 'completed'
         AND created_at > NOW() - make_interval(days => $2)`,
-    [userId, windowDays]
+    [args.userId, windowDays]
   );
   const oldest = oldestResult.rows[0]?.oldest as Date | null;
   const windowMs = windowDays * MS_PER_DAY;

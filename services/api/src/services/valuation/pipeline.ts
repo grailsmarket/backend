@@ -1083,6 +1083,7 @@ function capturePromise<T>(promise: Promise<T>): Promise<{ ok: true; data: T } |
 async function getOrGenerateNameResearch(
   label: string,
   config: ValuationConfig,
+  evidenceCacheDays: number,
   logPrefix: string
 ): Promise<{ nameResearch: ValuationNameResearchEvidence; fromCache: boolean }> {
   let cached: ValuationNameResearchEvidence | null = null;
@@ -1104,7 +1105,7 @@ async function getOrGenerateNameResearch(
   });
   if (nameResearch.dataStatus === 'available') {
     try {
-      await setCachedEvidence(label, 'name_research', nameResearch, nameResearch.model, config.ttls.evidenceCacheDays);
+      await setCachedEvidence(label, 'name_research', nameResearch, nameResearch.model, evidenceCacheDays);
     } catch (error) {
       valuationLogInfo(logPrefix, 'name research cache write failed', {
         error: error instanceof Error ? error.message : error,
@@ -1119,6 +1120,7 @@ async function getOrGenerateRelatedTerms(
   nameResearch: ValuationNameResearchEvidence,
   researchFromCache: boolean,
   config: ValuationConfig,
+  evidenceCacheDays: number,
   logPrefix: string
 ): Promise<ValuationRelatedTermsEvidence> {
   // Only trust cached related terms when the name research was ALSO a cache hit:
@@ -1148,7 +1150,7 @@ async function getOrGenerateRelatedTerms(
   const hasUsableSenses = relatedTerms.perSense.some((sense) => !sense.error);
   if (relatedTerms.source === 'ai_scoped_senses' && hasUsableSenses) {
     try {
-      await setCachedEvidence(label, 'related_terms', relatedTerms, relatedTerms.model, config.ttls.evidenceCacheDays);
+      await setCachedEvidence(label, 'related_terms', relatedTerms, relatedTerms.model, evidenceCacheDays);
     } catch (error) {
       valuationLogInfo(logPrefix, 'related terms cache write failed', {
         error: error instanceof Error ? error.message : error,
@@ -1161,11 +1163,12 @@ async function getOrGenerateRelatedTerms(
 export async function runValuationPipeline(args: {
   target: ValuationTarget;
   config: ValuationConfig;
+  evidenceCacheDays: number;
   premiumRegistrationFloorWei: string;
   logPrefix: string;
   reportProgress: ProgressReporter;
 }): Promise<ValuationEvidenceResult> {
-  const { target, config, premiumRegistrationFloorWei, logPrefix, reportProgress } = args;
+  const { target, config, evidenceCacheDays, premiumRegistrationFloorWei, logPrefix, reportProgress } = args;
   const keyword = target.keyword; // label == keyword (no .eth suffix)
   const comparableSaleFloorWei = config.activity.comparableSaleFloorWei;
   const startedAt = performance.now();
@@ -1210,7 +1213,7 @@ export async function runValuationPipeline(args: {
 
   emitStage('researching_name_context', 'started');
   const searchDemandPromise = buildSearchDemandEvidence(keyword, { logPrefix });
-  const nameResearchPromise = getOrGenerateNameResearch(keyword, config, logPrefix);
+  const nameResearchPromise = getOrGenerateNameResearch(keyword, config, evidenceCacheDays, logPrefix);
   const categoryMarketActivityPromise = hydrateCategoryMarketActivity(
     target.categoryContext.categories.map((category) => category.slug),
     config.activity.ignoredCategories,
@@ -1273,7 +1276,7 @@ export async function runValuationPipeline(args: {
     emitStage('researching_name_context', 'completed');
     emitStage('looking_for_comparable_sales', 'started');
 
-    relatedTerms = await getOrGenerateRelatedTerms(keyword, nameResearch, research.fromCache, config, logPrefix);
+    relatedTerms = await getOrGenerateRelatedTerms(keyword, nameResearch, research.fromCache, config, evidenceCacheDays, logPrefix);
 
     const activityTerms = relatedTerms.terms.filter((term) => `${term}.eth` !== target.normalizedName);
     const [resolvedMarketActivity, resolvedSearchDemand] = await Promise.all([

@@ -111,7 +111,6 @@ const ConfigSchema = z.object({
     enabled: z.boolean(),
   }),
   valuation: z.object({
-    enabled: z.coerce.boolean().default(true),
     openrouterApiKey: z.string().optional(),
     web2TldDataApiKey: z.string().optional(),
     web2TldDataBaseUrl: z.string().optional(),
@@ -216,7 +215,6 @@ const rawConfig = {
     enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
   },
   valuation: {
-    enabled: process.env.VALUATION_ENABLED !== 'false',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     web2TldDataApiKey: process.env.WEB2_TLD_DATA_API_KEY,
     web2TldDataBaseUrl: process.env.WEB2_TLD_DATA_BASE_URL,
