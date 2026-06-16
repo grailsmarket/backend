@@ -35,6 +35,7 @@ import {
   getCachedEvidence,
   isWeiAtLeast,
   setCachedEvidence,
+  toPublicValuation,
   valuationLogInfo,
   valuationLogWarn,
   type ValuationConfig,
@@ -185,7 +186,12 @@ export function createRunNdjsonStream(run: ValuationRun): PassThrough {
 
   const onEvent = (event: ValuationEvidenceStreamEvent) => {
     if (stream.destroyed) return;
-    stream.write(`${JSON.stringify(event)}\n`);
+    // Project the result event down to the public payload before it hits the wire;
+    // stage/error events carry no evidence and pass through unchanged. The buffered
+    // run.events / run.result keep the full result for internal use (caching).
+    const wireEvent =
+      event.type === 'result' ? { type: 'result' as const, data: toPublicValuation(event.data) } : event;
+    stream.write(`${JSON.stringify(wireEvent)}\n`);
   };
 
   const unsubscribe = subscribeToRun(run, onEvent);

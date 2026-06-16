@@ -335,3 +335,24 @@ export type ValuationEvidenceResult = {
   evidence: ValuationEvidence;
   generatedAt: string;
 };
+
+/**
+ * The PUBLIC, client-facing projection of a valuation. The full evidence breakdown
+ * (comps, related terms, name research, category activity, calibration, raw TLD
+ * data, search trend) is methodology-sensitive and stays server-side: it informs
+ * the LLM during generation and is retained in valuations.result for internal/audit
+ * use, but is never serialized to the client. Clients receive only the appraisal
+ * plus the two headline metrics the UI renders. See `toPublicValuation`.
+ */
+export type PublicValuationEvidence = {
+  appraisal: ValuationAppraisalEvidence;
+  web2: Pick<ValuationWeb2Evidence, 'source' | 'lookupLabel' | 'summary'>;
+  searchDemand: Omit<ValuationSearchDemandEvidence, 'monthlyTrend'>;
+};
+
+export type PublicValuationResult = {
+  name: string;
+  status: ValuationEvidenceResult['status'];
+  evidence: PublicValuationEvidence;
+  generatedAt: string;
+};

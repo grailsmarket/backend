@@ -3,7 +3,7 @@ import { normalize } from 'viem/ens';
 import { getPostgresPool } from '../../../../shared/src';
 import { logger } from '../../utils/logger';
 import { getUserTier } from '../global-chat';
-import type { ValuationActivitySale, ValuationEvidenceResult } from './types';
+import type { PublicValuationResult, ValuationActivitySale, ValuationEvidenceResult } from './types';
 
 /**
  * Support layer for the valuation feature: the private DB-stored config + prompt
@@ -385,6 +385,29 @@ export async function getCachedValuation(label: string): Promise<ValuationEviden
     [label]
   );
   return result.rows.length > 0 ? (result.rows[0].result as ValuationEvidenceResult) : null;
+}
+
+/**
+ * Projects a full (internal) valuation result down to the client-facing payload:
+ * the appraisal plus the two headline metrics the UI renders (web2 footprint count
+ * and search demand). The methodology-sensitive evidence breakdown stays internal
+ * and is never sent over the wire. Pure/non-mutating — the input result (used for
+ * storage and held in the in-flight run) is left untouched. Applied at every client
+ * egress point (the route's JSON responses and the NDJSON `result` event).
+ */
+export function toPublicValuation(result: ValuationEvidenceResult): PublicValuationResult {
+  const { appraisal, web2, searchDemand } = result.evidence;
+  const { monthlyTrend: _omitMonthlyTrend, ...publicSearchDemand } = searchDemand;
+  return {
+    name: result.name,
+    status: result.status,
+    generatedAt: result.generatedAt,
+    evidence: {
+      appraisal,
+      web2: { source: web2.source, lookupLabel: web2.lookupLabel, summary: web2.summary },
+      searchDemand: publicSearchDemand,
+    },
+  };
 }
 
 function toNumericOrNull(value: string | undefined): number | null {

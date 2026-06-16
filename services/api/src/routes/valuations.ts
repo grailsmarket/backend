@@ -12,6 +12,7 @@ import {
   getValuationSettings,
   recordValuationGeneration,
   setCachedValuation,
+  toPublicValuation,
   ValuationConfigError,
   ValuationPromptError,
   type ValuationSettings,
@@ -30,7 +31,11 @@ import {
   Web2TldDataRequestError,
   type ValuationProduce,
 } from '../services/valuation/pipeline';
-import type { ValuationEvidenceRequest, ValuationEvidenceResult } from '../services/valuation/types';
+import type {
+  PublicValuationResult,
+  ValuationEvidenceRequest,
+  ValuationEvidenceResult,
+} from '../services/valuation/types';
 
 const DEFAULT_RECOMMENDATION_COUNT = 200;
 
@@ -170,9 +175,11 @@ function sendError(reply: FastifyReply, error: unknown) {
 }
 
 function sendResult(reply: FastifyReply, data: ValuationEvidenceResult, cache: 'HIT' | 'MISS') {
-  const response: APIResponse<ValuationEvidenceResult> = {
+  // Gate the methodology-sensitive evidence: clients only ever receive the public
+  // projection (appraisal + headline metrics). The full evidence stays internal.
+  const response: APIResponse<PublicValuationResult> = {
     success: true,
-    data,
+    data: toPublicValuation(data),
     meta: nowMeta(),
   };
   return reply.header('X-Cache', cache).send(response);
