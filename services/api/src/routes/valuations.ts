@@ -19,10 +19,11 @@ import {
 import { consumeOpenAICostRunSummary } from '../services/valuation/llm';
 import {
   awaitRunOutcome,
+  createRunNdjsonStream,
   deriveStrictValuationLabel,
   getInFlightValuationRun,
   getOrCreateValuationRun,
-  pipeRunToReply,
+  NDJSON_HEADERS,
   resolveValuationTarget,
   runValuationPipeline,
   ValuationTargetError,
@@ -247,8 +248,8 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const inFlight = getInFlightValuationRun(label);
         if (inFlight) {
           if (streaming) {
-            await pipeRunToReply(reply, inFlight, request);
-            return reply;
+            reply.headers(NDJSON_HEADERS);
+            return reply.send(createRunNdjsonStream(inFlight));
           }
           try {
             const result = await awaitRunOutcome(inFlight);
@@ -380,8 +381,8 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const { run } = getOrCreateValuationRun(target.keyword, runId, produce, mapValuationError);
 
         if (streaming) {
-          await pipeRunToReply(reply, run, request);
-          return reply;
+          reply.headers(NDJSON_HEADERS);
+          return reply.send(createRunNdjsonStream(run));
         }
 
         const result = await awaitRunOutcome(run);

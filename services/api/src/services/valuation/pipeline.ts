@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import { PassThrough } from 'node:stream';
 import { normalize } from 'viem/ens';
 import {
   getPostgresPool,
@@ -55,32 +55,12 @@ const pool = getPostgresPool();
 // Streaming + single-flight registry
 // ============================================================================
 
-const NDJSON_HEADERS = {
+export const NDJSON_HEADERS = {
   'Cache-Control': 'no-cache, no-transform',
   Connection: 'keep-alive',
   'Content-Type': 'application/x-ndjson; charset=utf-8',
   'X-Accel-Buffering': 'no',
 };
-
-/**
- * The NDJSON stream hijacks the reply (raw socket), which bypasses Fastify's
- * onSend lifecycle — and with it the @fastify/cors plugin that normally adds the
- * Access-Control-* headers. Without these, the browser blocks the streamed
- * response even though the preflight passed. Mirror the plugin's behavior here:
- * because the API runs with credentials:true we must reflect the (allow-listed)
- * Origin rather than using '*', and advertise Vary: Origin for cache safety.
- */
-function buildStreamCorsHeaders(request: FastifyRequest): Record<string, string> {
-  const origin = request.headers.origin;
-  if (!origin || !appConfig.api.corsOrigins.includes(origin)) {
-    return {};
-  }
-  return {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Credentials': 'true',
-    Vary: 'Origin',
-  };
-}
 
 export type ValuationProduce = (
   reportProgress: (event: ValuationEvidenceStreamStageEvent) => void
@@ -193,48 +173,40 @@ function subscribeToRun(
   return () => run.subscribers.delete(onEvent);
 }
 
-/** Streams a run's events to the reply as NDJSON until the run settles. */
-export async function pipeRunToReply(
-  reply: FastifyReply,
-  run: ValuationRun,
-  request: FastifyRequest
-): Promise<void> {
-  reply.hijack();
-  const raw = reply.raw;
-  raw.writeHead(200, { ...NDJSON_HEADERS, ...buildStreamCorsHeaders(request) });
+/**
+ * Builds a readable NDJSON stream of a run's events. Returned to the route as
+ * the response body so it flows through Fastify's normal lifecycle — that's
+ * what lets @fastify/cors (and helmet) apply their headers, which a hijacked
+ * raw socket would bypass. The run itself is decoupled from any one client, so
+ * a disconnect just unsubscribes this stream; the generation keeps going.
+ */
+export function createRunNdjsonStream(run: ValuationRun): PassThrough {
+  const stream = new PassThrough();
 
-  let clientGone = false;
-  raw.on('close', () => {
-    clientGone = true;
-  });
+  const onEvent = (event: ValuationEvidenceStreamEvent) => {
+    if (stream.destroyed) return;
+    stream.write(`${JSON.stringify(event)}\n`);
+  };
 
-  await new Promise<void>((resolve) => {
-    const onEvent = (event: ValuationEvidenceStreamEvent) => {
-      if (clientGone) return;
-      try {
-        raw.write(`${JSON.stringify(event)}\n`);
-      } catch {
-        clientGone = true;
-      }
-    };
+  const unsubscribe = subscribeToRun(run, onEvent);
 
-    const unsubscribe = subscribeToRun(run, onEvent);
-    if (run.settled) {
-      unsubscribe();
-      resolve();
-      return;
-    }
-    run.whenSettled.finally(() => {
-      unsubscribe();
-      resolve();
-    });
-  });
+  // Client disconnect (Fastify destroys the payload stream) -> stop feeding it.
+  // Swallow teardown errors so a dropped connection can't crash the process.
+  stream.on('close', unsubscribe);
+  stream.on('error', unsubscribe);
 
-  try {
-    if (!clientGone) raw.end();
-  } catch {
-    // socket already closed
+  if (run.settled) {
+    unsubscribe();
+    stream.end();
+    return stream;
   }
+
+  run.whenSettled.finally(() => {
+    unsubscribe();
+    if (!stream.destroyed) stream.end();
+  });
+
+  return stream;
 }
 
 /** Resolves with the run's result or rejects with its error (non-streaming path). */
