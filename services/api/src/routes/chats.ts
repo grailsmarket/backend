@@ -742,11 +742,29 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * any time; `edited_at` is stamped so clients can show an "(edited)" tag.
    * Cannot edit a soft-deleted message.
    */
-  fastify.patch('/:id/messages/:messageId', { preHandler: requireAuth }, async (request, reply) => {
+  fastify.patch('/:id/messages/:messageId', {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+  }, async (request, reply) => {
     try {
       const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
       const { body } = SendMessageSchema.parse(request.body);
       const callerId = parseInt(request.user!.sub, 10);
+
+      // Same moderation boundary as sending: editing injects new content, so a
+      // banned user must not be able to do it. Scope-aware (global-only vs
+      // all-chats ban), mirroring the send + reaction routes.
+      const banned = id === GLOBAL_CHAT_ID
+        ? await callerIsBannedFromGlobalChat(pool, callerId)
+        : await callerIsBannedFromChat(pool, callerId);
+      if (banned) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+      }
+      // Must still be able to see the chat (participant for DMs; anyone for the
+      // global room) — an evicted DM member can't rewrite old messages.
+      if (!(await canAccessChatMessages(id, callerId))) {
+        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+      }
 
       // Global room enforces its admin-configurable max length (may be < 4000).
       if (id === GLOBAL_CHAT_ID) {
