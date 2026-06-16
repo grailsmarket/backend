@@ -3,7 +3,13 @@ import { normalize } from 'viem/ens';
 import { getPostgresPool } from '../../../../shared/src';
 import { logger } from '../../utils/logger';
 import { getUserTier } from '../global-chat';
-import type { PublicValuationResult, ValuationActivitySale, ValuationEvidenceResult } from './types';
+import type {
+  PublicValuationResult,
+  StoredValuationActivityRow,
+  StoredValuationResult,
+  ValuationActivitySale,
+  ValuationEvidenceResult,
+} from './types';
 
 /**
  * Support layer for the valuation feature: the private DB-stored config + prompt
@@ -378,32 +384,36 @@ export async function setCachedEvidence(
   );
 }
 
-export async function getCachedValuation(label: string): Promise<ValuationEvidenceResult | null> {
+export async function getCachedValuation(label: string): Promise<StoredValuationResult | null> {
   const pool = getPostgresPool();
   const result = await pool.query(
     `SELECT result FROM valuations WHERE label = $1 AND expires_at > NOW()`,
     [label]
   );
-  return result.rows.length > 0 ? (result.rows[0].result as ValuationEvidenceResult) : null;
+  // The stored payload is the trimmed shape written by setCachedValuation, hence
+  // StoredValuationResult (not the full ValuationEvidenceResult).
+  return result.rows.length > 0 ? (result.rows[0].result as StoredValuationResult) : null;
 }
 
 /**
- * Projects a full (internal) valuation result down to the client-facing payload:
- * the appraisal plus the two headline metrics the UI renders (web2 footprint count
- * and search demand). The methodology-sensitive evidence breakdown stays internal
- * and is never sent over the wire. Pure/non-mutating — the input result (used for
- * storage and held in the in-flight run) is left untouched. Applied at every client
- * egress point (the route's JSON responses and the NDJSON `result` event).
+ * Projects a valuation result down to the client-facing payload: the appraisal
+ * (minus the model id) plus the two headline metrics the UI renders (web2 footprint
+ * count and search demand). The methodology-sensitive evidence breakdown stays
+ * internal and is never sent over the wire. Accepts either a freshly generated full
+ * result or a trimmed cached result — only the always-present `appraisal`/`web2`/
+ * `searchDemand` are read. Pure/non-mutating: the input (used for storage and held
+ * in the in-flight run) is left untouched.
  */
-export function toPublicValuation(result: ValuationEvidenceResult): PublicValuationResult {
+export function toPublicValuation(result: ValuationEvidenceResult | StoredValuationResult): PublicValuationResult {
   const { appraisal, web2, searchDemand } = result.evidence;
+  const { model: _omitModel, ...publicAppraisal } = appraisal;
   const { monthlyTrend: _omitMonthlyTrend, ...publicSearchDemand } = searchDemand;
   return {
     name: result.name,
     status: result.status,
     generatedAt: result.generatedAt,
     evidence: {
-      appraisal,
+      appraisal: publicAppraisal,
       web2: { source: web2.source, lookupLabel: web2.lookupLabel, summary: web2.summary },
       searchDemand: publicSearchDemand,
     },
@@ -422,19 +432,19 @@ function toNumericOrNull(value: string | undefined): number | null {
  * valuation, and no consumer (UI or refresh) touches the rest of the DB row.
  * Dropping the other ~13 columns (txn hash, addresses, token id, metadata, clubs,
  * …) keeps valuations.result small. The full rows are still used live during
- * generation (LLM input + streaming); only the stored copy is trimmed. Cast: the
- * result is a strict subset of the row it came from, re-served as the same nominal
- * type.
+ * generation (LLM input + streaming); only the stored copy is trimmed. The trimmed
+ * shape is encoded by StoredValuationActivityRow / StoredValuationResult, so the
+ * truncation is type-checked rather than cast away.
  */
-function toStoredActivityRow(row: ValuationActivitySale): ValuationActivitySale {
+function toStoredActivityRow(row: ValuationActivitySale): StoredValuationActivityRow {
   return {
     name: row.name,
     created_at: row.created_at,
     price_wei: row.price_wei,
-  } as ValuationActivitySale;
+  };
 }
 
-function trimResultForStorage(result: ValuationEvidenceResult): ValuationEvidenceResult {
+function trimResultForStorage(result: ValuationEvidenceResult): StoredValuationResult {
   const { marketActivity, categoryMarketActivity } = result.evidence;
   return {
     ...result,

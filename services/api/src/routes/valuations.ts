@@ -33,6 +33,7 @@ import {
 } from '../services/valuation/pipeline';
 import type {
   PublicValuationResult,
+  StoredValuationResult,
   ValuationEvidenceRequest,
   ValuationEvidenceResult,
 } from '../services/valuation/types';
@@ -174,7 +175,11 @@ function sendError(reply: FastifyReply, error: unknown) {
   return reply.status(mapped.status).send(response);
 }
 
-function sendResult(reply: FastifyReply, data: ValuationEvidenceResult, cache: 'HIT' | 'MISS') {
+function sendResult(
+  reply: FastifyReply,
+  data: ValuationEvidenceResult | StoredValuationResult,
+  cache: 'HIT' | 'MISS'
+) {
   // Gate the methodology-sensitive evidence: clients only ever receive the public
   // projection (appraisal + headline metrics). The full evidence stays internal.
   const response: APIResponse<PublicValuationResult> = {

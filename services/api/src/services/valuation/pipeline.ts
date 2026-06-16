@@ -123,7 +123,10 @@ function startRun(
     try {
       const result = await produce((stageEvent) => emit(stageEvent));
       run.result = result;
-      emit({ type: 'result', data: result });
+      // Project to the public payload once, here at emit: the buffered event + every
+      // streamed copy carry only the public shape, while run.result keeps the full
+      // result for internal use (non-streaming sendResult + caching).
+      emit({ type: 'result', data: toPublicValuation(result) });
     } catch (error) {
       run.error = error;
       const mapped = mapError(error);
@@ -185,21 +188,36 @@ export function createRunNdjsonStream(run: ValuationRun): PassThrough {
   const stream = new PassThrough();
 
   const onEvent = (event: ValuationEvidenceStreamEvent) => {
-    if (stream.destroyed) return;
-    // Project the result event down to the public payload before it hits the wire;
-    // stage/error events carry no evidence and pass through unchanged. The buffered
-    // run.events / run.result keep the full result for internal use (caching).
-    const wireEvent =
-      event.type === 'result' ? { type: 'result' as const, data: toPublicValuation(event.data) } : event;
-    stream.write(`${JSON.stringify(wireEvent)}\n`);
+    // Skip writes once the stream is destroyed (client gone) or already ended, so a
+    // late event can't throw or pile into a buffer that will never drain.
+    if (stream.destroyed || stream.writableEnded) return;
+    // Events are already public-projected at emit time (the result event carries the
+    // public payload), so each can be serialized straight to the wire.
+    stream.write(`${JSON.stringify(event)}\n`);
   };
 
   const unsubscribe = subscribeToRun(run, onEvent);
 
   // Client disconnect (Fastify destroys the payload stream) -> stop feeding it.
-  // Swallow teardown errors so a dropped connection can't crash the process.
+  // Routine teardown errors are expected on a dropped connection and must not crash
+  // the process; anything else is logged so real write/protocol failures stay visible.
   stream.on('close', unsubscribe);
-  stream.on('error', unsubscribe);
+  stream.on('error', (err) => {
+    const code = (err as NodeJS.ErrnoException).code;
+    const isTeardown =
+      code === 'ERR_STREAM_DESTROYED' ||
+      code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+      code === 'EPIPE' ||
+      code === 'ECONNRESET';
+    if (!isTeardown) {
+      valuationLogWarn(`[valuation:${run.runId}]`, 'NDJSON stream error', {
+        label: run.label,
+        code,
+        message: err.message,
+      });
+    }
+    unsubscribe();
+  });
 
   if (run.settled) {
     unsubscribe();
