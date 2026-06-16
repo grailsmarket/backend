@@ -10,12 +10,14 @@ import {
   broadcastChatReactionEvent,
   broadcastGlobalChatDeletedEvent,
   broadcastGlobalChatEditedEvent,
+  broadcastNotificationBump,
 } from './websocket';
 import { GLOBAL_CHAT_ID, getGlobalChatConfig } from '../services/global-chat';
 import {
   callerIsBannedFromChat,
   callerIsBannedFromGlobalChat,
 } from '../services/chat-moderation';
+import { notifyReplyAndMentions, validateReplyTarget } from '../services/chat-notifications';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -35,6 +37,7 @@ const CreateChatSchema = z.object({
 
 const SendMessageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
+  reply_to_message_id: z.string().uuid().optional(),
 });
 
 const MarkReadSchema = z.object({
@@ -522,9 +525,19 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,
+                CASE WHEN m.reply_to_message_id IS NOT NULL THEN
+                  json_build_object(
+                    'id', m.reply_to_message_id,
+                    'sender_address', pu.address,
+                    'body', CASE WHEN p.deleted_at IS NOT NULL THEN NULL ELSE LEFT(p.body, 140) END,
+                    'deleted', (p.deleted_at IS NOT NULL)
+                  )
+                ELSE NULL END AS reply_to,
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id
+           LEFT JOIN messages p  ON p.id = m.reply_to_message_id
+           LEFT JOIN users    pu ON pu.id = p.sender_user_id
            LEFT JOIN LATERAL (
              SELECT json_agg(json_build_object(
                       'emoji', agg.emoji,
@@ -577,7 +590,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     try {
       const { id } = ChatIdParamsSchema.parse(request.params);
-      const { body } = SendMessageSchema.parse(request.body);
+      const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
       const callerId = parseInt(request.user!.sub, 10);
 
       if (await callerIsBannedFromChat(pool, callerId)) {
@@ -616,24 +629,54 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Reply target must be a live message in this chat.
+      let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
+      if (reply_to_message_id) {
+        replyContext = await validateReplyTarget(pool, id, reply_to_message_id);
+        if (!replyContext) {
+          return sendError(reply, 400, 'INVALID_REPLY_TARGET', 'Reply target not found in this chat');
+        }
+      }
+
       // CTE: insert + join users so we return sender_address alongside the row.
       // Without this, the frontend's optimistic-replace step loses sender_address
       // and renders the message on the wrong side until the next refresh.
       const inserted = await pool.query(
         `WITH new_msg AS (
-           INSERT INTO messages (chat_id, sender_user_id, body, content_type)
-           VALUES ($1, $2, $3, 'text')
+           INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
+           VALUES ($1, $2, $3, 'text', $4)
            RETURNING *
          )
          SELECT m.*, u.address AS sender_address
            FROM new_msg m
            JOIN users u ON u.id = m.sender_user_id`,
-        [id, callerId, body]
+        [id, callerId, body, reply_to_message_id ?? null]
       );
 
-      // Trigger fires pg_notify; ChatNotifier handles fan-out. Nothing else to do here.
+      // Fire reply/@-mention notifications out-of-band; never fail the send on it.
+      // DM → restrict targets to the chat's participants.
+      const participantIds = others.rows.map((r) => r.user_id);
+      try {
+        const notified = await notifyReplyAndMentions({
+          pool,
+          chatId: id,
+          messageId: inserted.rows[0].id,
+          senderUserId: callerId,
+          senderAddress: inserted.rows[0].sender_address,
+          body,
+          replyToMessageId: reply_to_message_id ?? null,
+          replyParentAuthorId: replyContext?.parentAuthorId ?? null,
+          accessibleUserIds: participantIds,
+        });
+        broadcastNotificationBump(notified);
+      } catch (notifyError) {
+        fastify.log.error({ notifyError }, 'Error creating chat notifications (DM send)');
+      }
+
+      // Trigger fires pg_notify; ChatNotifier handles fan-out.
       // reactions: [] keeps the shape consistent with GET /:id/messages.
-      return reply.status(201).send(ok({ message: { ...inserted.rows[0], reactions: [] } }));
+      const message = { ...inserted.rows[0], reactions: [], reply_to: replyContext?.replyTo ?? null };
+      return reply.status(201).send(ok({ message }));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);

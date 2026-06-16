@@ -13,6 +13,8 @@ import {
   tierLimit,
 } from '../services/global-chat';
 import { callerIsBannedFromGlobalChat } from '../services/chat-moderation';
+import { notifyReplyAndMentions, validateReplyTarget } from '../services/chat-notifications';
+import { broadcastNotificationBump } from './websocket';
 
 // Advisory-lock namespace for per-user global chat quota serialization
 // (pg_advisory_xact_lock(namespace, user_id)). Arbitrary but must not collide
@@ -21,6 +23,7 @@ const GLOBAL_CHAT_QUOTA_LOCK_NS = 7301;
 
 const SendMessageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
+  reply_to_message_id: z.string().uuid().optional(),
 });
 
 const ListMessagesQuerySchema = z.object({
@@ -109,9 +112,19 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,
+                CASE WHEN m.reply_to_message_id IS NOT NULL THEN
+                  json_build_object(
+                    'id', m.reply_to_message_id,
+                    'sender_address', pu.address,
+                    'body', CASE WHEN p.deleted_at IS NOT NULL THEN NULL ELSE LEFT(p.body, 140) END,
+                    'deleted', (p.deleted_at IS NOT NULL)
+                  )
+                ELSE NULL END AS reply_to,
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id
+           LEFT JOIN messages p  ON p.id = m.reply_to_message_id
+           LEFT JOIN users    pu ON pu.id = p.sender_user_id
            LEFT JOIN LATERAL (
              SELECT json_agg(json_build_object(
                       'emoji', agg.emoji,
@@ -171,7 +184,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
     },
   }, async (request, reply) => {
     try {
-      const { body } = SendMessageSchema.parse(request.body);
+      const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
       const callerId = parseInt(request.user!.sub, 10);
       const callerAddress = request.user!.address;
 
@@ -192,6 +205,15 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
       }
 
+      // Reply target must be a live message in this room.
+      let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
+      if (reply_to_message_id) {
+        replyContext = await validateReplyTarget(pool, GLOBAL_CHAT_ID, reply_to_message_id);
+        if (!replyContext) {
+          return sendError(reply, 400, 'INVALID_REPLY_TARGET', 'Reply target not found in this chat');
+        }
+      }
+
       const tier = await getUserTier(callerAddress);
       const limit = tierLimit(tier, config);
 
@@ -200,14 +222,14 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       // fires pg_notify; ChatNotifier handles the WS fan-out.
       const insertSql =
         `WITH new_msg AS (
-           INSERT INTO messages (chat_id, sender_user_id, body, content_type)
-           VALUES ($1, $2, $3, 'text')
+           INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
+           VALUES ($1, $2, $3, 'text', $4)
            RETURNING *
          )
          SELECT m.*, u.address AS sender_address
            FROM new_msg m
            JOIN users u ON u.id = m.sender_user_id`;
-      const insertParams = [GLOBAL_CHAT_ID, callerId, body];
+      const insertParams = [GLOBAL_CHAT_ID, callerId, body, reply_to_message_id ?? null];
 
       let messageRow;
       let used = 0;
@@ -259,9 +281,29 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         resets_at: nextUtcMidnight(),
       };
 
+      // Fire reply/@-mention notifications out-of-band; never fail the send on it.
+      // Global room → any resolved user may be notified (accessibleUserIds = null).
+      try {
+        const notified = await notifyReplyAndMentions({
+          pool,
+          chatId: GLOBAL_CHAT_ID,
+          messageId: messageRow.id,
+          senderUserId: callerId,
+          senderAddress: callerAddress,
+          body,
+          replyToMessageId: reply_to_message_id ?? null,
+          replyParentAuthorId: replyContext?.parentAuthorId ?? null,
+          accessibleUserIds: null,
+        });
+        broadcastNotificationBump(notified);
+      } catch (notifyError) {
+        fastify.log.error({ notifyError }, 'Error creating chat notifications (global send)');
+      }
+
       // New messages have no reactions yet; include the empty aggregate so the
       // response shape matches GET /messages.
-      return reply.status(201).send(ok({ message: { ...messageRow, reactions: [] }, quota }));
+      const message = { ...messageRow, reactions: [], reply_to: replyContext?.replyTo ?? null };
+      return reply.status(201).send(ok({ message, quota }));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);

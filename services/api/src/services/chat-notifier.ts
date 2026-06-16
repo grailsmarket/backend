@@ -81,6 +81,14 @@ export class ChatNotifier {
            m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
            m.metadata, m.created_at, m.edited_at, m.deleted_at,
            u.address AS sender_address,
+           CASE WHEN m.reply_to_message_id IS NOT NULL THEN
+             json_build_object(
+               'id', m.reply_to_message_id,
+               'sender_address', pu.address,
+               'body', CASE WHEN p.deleted_at IS NOT NULL THEN NULL ELSE LEFT(p.body, 140) END,
+               'deleted', (p.deleted_at IS NOT NULL)
+             )
+           ELSE NULL END AS reply_to,
            (
              SELECT COALESCE(array_agg(cp.user_id), ARRAY[]::int[])
                FROM chat_participants cp
@@ -88,6 +96,8 @@ export class ChatNotifier {
            ) AS participant_user_ids
          FROM messages m
          JOIN users u ON u.id = m.sender_user_id
+         LEFT JOIN messages p  ON p.id = m.reply_to_message_id
+         LEFT JOIN users    pu ON pu.id = p.sender_user_id
          WHERE m.id = $1`,
         [messageId]
       );
