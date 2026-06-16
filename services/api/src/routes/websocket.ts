@@ -899,10 +899,19 @@ export function broadcastGlobalChatEvent(args: { message: ChatMessageRecord }) {
   });
 }
 
-export function broadcastGlobalChatDeletedEvent(args: { messageId: string }) {
+export function broadcastGlobalChatDeletedEvent(args: { messageId: string; deletedByAdmin: boolean }) {
   fanOutToGlobal({
     type: 'chat:message_deleted',
-    data: { chat_id: GLOBAL_CHAT_ID, message_id: args.messageId },
+    data: { chat_id: GLOBAL_CHAT_ID, message_id: args.messageId, deleted_by_admin: args.deletedByAdmin },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** Edited message in the global room. Carries the full updated row (same shape as message_new). */
+export function broadcastGlobalChatEditedEvent(args: { message: ChatMessageRecord }) {
+  fanOutToGlobal({
+    type: 'chat:message_edited',
+    data: { chat_id: args.message.chat_id, message: args.message },
     timestamp: new Date().toISOString(),
   });
 }
@@ -973,10 +982,23 @@ export function broadcastChatDeletedEvent(args: {
   chatId: string;
   messageId: string;
   participantUserIds: number[];
+  deletedByAdmin: boolean;
 }) {
   fanOutToParticipants(args.participantUserIds, {
     type: 'chat:message_deleted',
-    data: { chat_id: args.chatId, message_id: args.messageId },
+    data: { chat_id: args.chatId, message_id: args.messageId, deleted_by_admin: args.deletedByAdmin },
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** Edited message in a DM. Carries the full updated row (same shape as message_new). */
+export function broadcastChatEditedEvent(args: {
+  message: ChatMessageRecord;
+  participantUserIds: number[];
+}) {
+  fanOutToParticipants(args.participantUserIds, {
+    type: 'chat:message_edited',
+    data: { chat_id: args.message.chat_id, message: args.message },
     timestamp: new Date().toISOString(),
   });
 }

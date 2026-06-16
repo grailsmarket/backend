@@ -186,7 +186,9 @@ CREATE TABLE IF NOT EXISTS messages (
     metadata        JSONB,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     edited_at       TIMESTAMP,
-    deleted_at      TIMESTAMP
+    deleted_at      TIMESTAMP,
+    deleted_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    deleted_reason  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at DESC);

@@ -5,10 +5,13 @@ import { requireAuth } from '../middleware/auth';
 import {
   broadcastChatReadEvent,
   broadcastChatDeletedEvent,
+  broadcastChatEditedEvent,
   broadcastChatCreatedEvent,
   broadcastChatReactionEvent,
+  broadcastGlobalChatDeletedEvent,
+  broadcastGlobalChatEditedEvent,
 } from './websocket';
-import { GLOBAL_CHAT_ID } from '../services/global-chat';
+import { GLOBAL_CHAT_ID, getGlobalChatConfig } from '../services/global-chat';
 import {
   callerIsBannedFromChat,
   callerIsBannedFromGlobalChat,
@@ -517,7 +520,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
 
       const result = await pool.query(
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
-                m.metadata, m.created_at, m.edited_at, m.deleted_at,
+                m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
@@ -542,9 +545,11 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         params
       );
 
-      const messages = result.rows.map((m) => ({
+      // Don't leak the raw deleter id; expose only the admin-vs-author distinction.
+      const messages = result.rows.map(({ deleted_by, ...m }) => ({
         ...m,
         body: m.deleted_at ? null : m.body,
+        deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
       }));
 
       return reply.send(ok({
@@ -695,7 +700,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const callerId = parseInt(request.user!.sub, 10);
 
       const result = await pool.query(
-        `UPDATE messages SET deleted_at = NOW()
+        `UPDATE messages SET deleted_at = NOW(), deleted_by = $3
           WHERE id = $1 AND chat_id = $2 AND sender_user_id = $3 AND deleted_at IS NULL
           RETURNING id`,
         [messageId, id, callerId]
@@ -705,12 +710,20 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not deletable');
       }
 
-      const participantIds = await getChatParticipantUserIds(pool, id);
-      broadcastChatDeletedEvent({
-        chatId: id,
-        messageId,
-        participantUserIds: participantIds,
-      });
+      // Self-delete → deleted_by_admin: false. The global room has no
+      // chat_participants rows, so it must fan out to global subscribers
+      // instead of the (empty) participant set.
+      if (id === GLOBAL_CHAT_ID) {
+        broadcastGlobalChatDeletedEvent({ messageId, deletedByAdmin: false });
+      } else {
+        const participantIds = await getChatParticipantUserIds(pool, id);
+        broadcastChatDeletedEvent({
+          chatId: id,
+          messageId,
+          participantUserIds: participantIds,
+          deletedByAdmin: false,
+        });
+      }
 
       return reply.send(ok({ chat_id: id, message_id: messageId, deleted: true }));
     } catch (error: any) {
@@ -719,6 +732,92 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
       fastify.log.error({ error }, 'Error deleting message');
       return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete message');
+    }
+  });
+
+  /**
+   * PATCH /api/v1/chats/:id/messages/:messageId
+   * Edit caller's own message. Serves DMs and the global room (id = global UUID);
+   * branches the broadcast on GLOBAL_CHAT_ID, same as delete. Edits are allowed
+   * any time; `edited_at` is stamped so clients can show an "(edited)" tag.
+   * Cannot edit a soft-deleted message.
+   */
+  fastify.patch('/:id/messages/:messageId', {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+  }, async (request, reply) => {
+    try {
+      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+      const { body } = SendMessageSchema.parse(request.body);
+      const callerId = parseInt(request.user!.sub, 10);
+
+      // Same moderation boundary as sending: editing injects new content, so a
+      // banned user must not be able to do it. Scope-aware (global-only vs
+      // all-chats ban), mirroring the send + reaction routes.
+      const banned = id === GLOBAL_CHAT_ID
+        ? await callerIsBannedFromGlobalChat(pool, callerId)
+        : await callerIsBannedFromChat(pool, callerId);
+      if (banned) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+      }
+      // Must still be able to see the chat (participant for DMs; anyone for the
+      // global room) — an evicted DM member can't rewrite old messages.
+      if (!(await canAccessChatMessages(id, callerId))) {
+        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+      }
+
+      // Global room enforces its admin-configurable max length (may be < 4000).
+      if (id === GLOBAL_CHAT_ID) {
+        const config = await getGlobalChatConfig();
+        if (body.length > config.max_message_length) {
+          return sendError(
+            reply,
+            400,
+            'MESSAGE_TOO_LONG',
+            `Message exceeds the maximum length of ${config.max_message_length} characters`
+          );
+        }
+      }
+
+      // Ownership is enforced in the WHERE (sender_user_id = caller). The CTE
+      // joins users so the broadcast/response carry sender_address, same as send.
+      const result = await pool.query(
+        `WITH upd AS (
+           UPDATE messages SET body = $4, edited_at = NOW()
+             WHERE id = $1 AND chat_id = $2 AND sender_user_id = $3 AND deleted_at IS NULL
+             RETURNING *
+         )
+         SELECT m.*, u.address AS sender_address
+           FROM upd m
+           JOIN users u ON u.id = m.sender_user_id`,
+        [messageId, id, callerId, body]
+      );
+      if (result.rows.length === 0) {
+        // Not found, not in chat, not the sender, or already deleted.
+        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not editable');
+      }
+
+      // Keep the public message shape consistent with the read paths: expose
+      // deleted_by_admin, not the raw deleter id. (Both null here — not deleted.)
+      const { deleted_by, deleted_reason, ...row } = result.rows[0];
+      void deleted_by;
+      void deleted_reason;
+      const message = { ...row, deleted_by_admin: false, reactions: [] };
+
+      if (id === GLOBAL_CHAT_ID) {
+        broadcastGlobalChatEditedEvent({ message });
+      } else {
+        const participantIds = await getChatParticipantUserIds(pool, id);
+        broadcastChatEditedEvent({ message, participantUserIds: participantIds });
+      }
+
+      return reply.send(ok({ message }));
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+      }
+      fastify.log.error({ error }, 'Error editing message');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to edit message');
     }
   });
 

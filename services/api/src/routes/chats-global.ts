@@ -107,7 +107,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       // same as DM chats — the backend only ships sender_address.
       const result = await pool.query(
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
-                m.metadata, m.created_at, m.edited_at, m.deleted_at,
+                m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
@@ -132,9 +132,13 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         params
       );
 
-      const messages = result.rows.map((m) => ({
+      // Don't leak the raw deleter id publicly; expose only the admin-vs-author
+      // distinction. deleted_by === author → self-delete ("by user"); a different
+      // deleter → admin moderation ("by Admin").
+      const messages = result.rows.map(({ deleted_by, ...m }) => ({
         ...m,
         body: m.deleted_at ? null : m.body,
+        deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
       }));
 
       return reply.send(ok({

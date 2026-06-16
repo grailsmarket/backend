@@ -386,10 +386,10 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         }
 
         const updated = await pool.query<{ id: string; chat_id: string }>(
-          `UPDATE messages SET deleted_at = NOW()
+          `UPDATE messages SET deleted_at = NOW(), deleted_by = $2, deleted_reason = $3
             WHERE sender_user_id = $1 AND deleted_at IS NULL
           RETURNING id, chat_id`,
-          [userId]
+          [userId, adminId, reason]
         );
 
         const messageIds = updated.rows.map((r) => r.id);
@@ -424,7 +424,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
             // The global room has no participant rows; fan out to global subscribers.
             if (chatId === GLOBAL_CHAT_ID) {
               for (const messageId of ids) {
-                broadcastGlobalChatDeletedEvent({ messageId });
+                broadcastGlobalChatDeletedEvent({ messageId, deletedByAdmin: true });
               }
               continue;
             }
@@ -438,6 +438,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
                 chatId,
                 messageId,
                 participantUserIds,
+                deletedByAdmin: true,
               });
             }
           }
@@ -526,7 +527,10 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         params.push(limit, offset);
         const result = await pool.query(
           `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at,
-                  m.deleted_at, u.address AS sender_address,
+                  m.deleted_at, m.deleted_by, m.deleted_reason,
+                  (m.deleted_at IS NOT NULL AND m.deleted_by IS NOT NULL
+                     AND m.deleted_by <> m.sender_user_id) AS deleted_by_admin,
+                  u.address AS sender_address,
                   (SELECT s.status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
                     AS sender_mod_status,
                   (SELECT s.global_status FROM chat_user_status s WHERE s.user_id = m.sender_user_id)
@@ -567,10 +571,10 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         const adminId = parseInt(request.user!.sub, 10);
 
         const updated = await pool.query<{ sender_user_id: number }>(
-          `UPDATE messages SET deleted_at = NOW()
+          `UPDATE messages SET deleted_at = NOW(), deleted_by = $3, deleted_reason = $4
             WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL
             RETURNING sender_user_id`,
-          [messageId, GLOBAL_CHAT_ID]
+          [messageId, GLOBAL_CHAT_ID, adminId, reason]
         );
         if (updated.rows.length === 0) {
           return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or already deleted');
@@ -587,7 +591,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           ]
         );
 
-        broadcastGlobalChatDeletedEvent({ messageId });
+        broadcastGlobalChatDeletedEvent({ messageId, deletedByAdmin: true });
 
         return reply.send(ok({ message_id: messageId, deleted: true }));
       } catch (error: unknown) {
