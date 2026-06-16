@@ -3,7 +3,7 @@ import { normalize } from 'viem/ens';
 import { getPostgresPool } from '../../../../shared/src';
 import { logger } from '../../utils/logger';
 import { getUserTier } from '../global-chat';
-import type { ValuationEvidenceResult } from './types';
+import type { ValuationActivitySale, ValuationEvidenceResult } from './types';
 
 /**
  * Support layer for the valuation feature: the private DB-stored config + prompt
@@ -393,6 +393,59 @@ function toNumericOrNull(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Persisted activity rows (market activity AND category market activity) only need
+ * name/date/price: the cached result is read back solely to re-serve a prior
+ * valuation, and no consumer (UI or refresh) touches the rest of the DB row.
+ * Dropping the other ~13 columns (txn hash, addresses, token id, metadata, clubs,
+ * …) keeps valuations.result small. The full rows are still used live during
+ * generation (LLM input + streaming); only the stored copy is trimmed. Cast: the
+ * result is a strict subset of the row it came from, re-served as the same nominal
+ * type.
+ */
+function toStoredActivityRow(row: ValuationActivitySale): ValuationActivitySale {
+  return {
+    name: row.name,
+    created_at: row.created_at,
+    price_wei: row.price_wei,
+  } as ValuationActivitySale;
+}
+
+function trimResultForStorage(result: ValuationEvidenceResult): ValuationEvidenceResult {
+  const { marketActivity, categoryMarketActivity } = result.evidence;
+  return {
+    ...result,
+    evidence: {
+      ...result.evidence,
+      marketActivity: {
+        ...marketActivity,
+        sales: marketActivity.sales.map(toStoredActivityRow),
+        mintEvents: marketActivity.mintEvents.map(toStoredActivityRow),
+        premiumRegistrations: marketActivity.premiumRegistrations.map(toStoredActivityRow),
+      },
+      categoryMarketActivity: {
+        ...categoryMarketActivity,
+        categories: categoryMarketActivity.categories.map((category) => ({
+          ...category,
+          sales: category.sales.map(toStoredActivityRow),
+          mintEvents: category.mintEvents.map(toStoredActivityRow),
+        })),
+      },
+      // Related terms are generation-time plumbing (the search terms used to find
+      // comps); no cache consumer reads them. Keep the scalar metadata/counts but
+      // drop the heavy arrays so the stored object stays a valid evidence shape.
+      relatedTerms: {
+        ...result.evidence.relatedTerms,
+        perSense: [],
+        termSenses: {},
+        baseTerms: [],
+        numberVariants: [],
+        terms: [],
+      },
+    },
+  };
+}
+
 export async function setCachedValuation(
   label: string,
   result: ValuationEvidenceResult,
@@ -417,7 +470,7 @@ export async function setCachedValuation(
        updated_at = NOW()`,
     [
       label,
-      JSON.stringify(result),
+      JSON.stringify(trimResultForStorage(result)),
       toNumericOrNull(appraisal.ethValue),
       toNumericOrNull(appraisal.lowEth),
       toNumericOrNull(appraisal.highEth),
