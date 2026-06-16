@@ -293,8 +293,11 @@ Direct (1:1) messaging in v1. Schema is group-chat-ready; group endpoints are de
 | GET    | `/chats/:id/messages` | Yes | Cursor pagination via `?before=<message-uuid>&limit=<1-100>`. |
 | POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars). Per-route rate limit: 30/min. |
 | POST   | `/chats/:id/read` | Yes | Mark read: `{ up_to_message_id }`. Broadcasts `chat:read` over WS. |
-| DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message. |
+| DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message (records `deleted_by = caller`). Also serves the global room (`:id` = global UUID) — branches WS to global subscribers. |
+| PATCH  | `/chats/:id/messages/:messageId` | Yes | Edit caller's own message: `{ body }` (1–4000). Stamps `edited_at`, broadcasts `chat:message_edited`. 404 if not the sender or already deleted. Also serves the global room (enforces `max_message_length` there). |
 | PATCH  | `/chats/:id` | Yes | `{ muted? }` per-chat mute. |
+
+Self-delete and edit work for the global room through this same `:id` route (the global UUID), mirroring reactions — there are no dedicated `/chats/global/messages/:id` mutation routes. Soft-deleted messages return `body: null` plus `deleted_by_admin` (derived: `deleted_by` differs from the author ⇒ admin moderation, else author self-delete).
 
 Send-message enforcement: caller must be a participant; nobody in the chat may have blocked the caller; all other participants must have `accept_messages = TRUE`.
 
@@ -327,7 +330,7 @@ Admin (all `requireAuth + requireAdmin`, under `/chats/admin`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status`. |
+| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status` + `deleted_by`/`deleted_reason`/`deleted_by_admin`. |
 | DELETE | `/chats/admin/global/messages/:messageId` | Soft-delete one message: `{ reason }`. Logs `delete_message` to `chat_moderation_log`, broadcasts `chat:message_deleted` to global subscribers. |
 | POST   | `/chats/admin/global/users/:userId/ban` | Global-chat-only ban: `{ reason }`. Logs `global_ban`. (All-chats ban remains `/chats/admin/users/:userId/ban`.) |
 | POST   | `/chats/admin/global/users/:userId/unban` | Lift a global-only ban: `{ reason? }`. Logs `global_unban`. |
@@ -368,7 +371,8 @@ Client → server:
 
 Server → client (event types):
 - `chat:message_new` — `{ chat_id, message }` (clients route on `chat_id` = global UUID)
-- `chat:message_deleted` — `{ chat_id, message_id }`
+- `chat:message_edited` — `{ chat_id, message }` (updated row; clients patch `body` + `edited_at`)
+- `chat:message_deleted` — `{ chat_id, message_id, deleted_by_admin }` (`deleted_by_admin` distinguishes admin moderation from author self-delete)
 - `chat:read` — `{ chat_id, user_id, last_read_message_id }`
 - `chat:typing` / `chat:typing_stop` — `{ chat_id, user_id }`
 - `chat:created` — `{ chat }` (sent to participants when a new chat is created)
@@ -496,7 +500,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `ai_recommendations` | Cached AI similar-name suggestions (label, recommendations JSONB, model, expires_at) |
 | `chats` | Chat threads (direct or group). UUID PK; `dm_key` unique for idempotent direct creation |
 | `chat_participants` | Per-(chat,user) state: read position, mute, role, soft-leave |
-| `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`) |
+| `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`; `deleted_by`/`deleted_reason` attribute who deleted + why; `edited_at` stamped on edit) |
 | `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
 | `message_reactions` | Emoji reactions on messages (PK `(message_id, user_id, emoji)`) |
 | `global_chat_config` | Single-row global chat config (quota tiers, max length, enabled) |
