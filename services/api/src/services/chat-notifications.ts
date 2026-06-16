@@ -20,31 +20,57 @@ const snippet = (body: string): string => {
   return t.length > SNIPPET_LEN ? t.slice(0, SNIPPET_LEN) : t;
 };
 
+export interface ChatNotificationRow {
+  userId: number;
+  type: ChatNotificationType;
+  metadata: Record<string, unknown>;
+}
+
 /**
- * Direct INSERT into the notifications table for a chat event. Generalizes the
- * insertChatModNotification pattern (ens_name_id = NULL); chat notifications are
+ * Bulk INSERT chat notifications in a single round-trip (ens_name_id = NULL).
+ * Generalizes the insertChatModNotification pattern; chat notifications are
  * delivered in-app (bell), not via the email/send-notification queue.
  */
-export async function insertChatNotification(
-  pool: Pool,
-  userId: number,
-  type: ChatNotificationType,
-  metadata: Record<string, unknown>
-): Promise<void> {
+export async function insertChatNotifications(pool: Pool, rows: ChatNotificationRow[]): Promise<void> {
+  if (rows.length === 0) return;
   await pool.query(
     `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
-     VALUES ($1, $2, NULL, $3, NOW())`,
-    [userId, type, JSON.stringify(metadata)]
+     SELECT u, t, NULL, m::jsonb, NOW()
+       FROM unnest($1::int[], $2::text[], $3::text[]) AS x(u, t, m)`,
+    [rows.map((r) => r.userId), rows.map((r) => r.type), rows.map((r) => JSON.stringify(r.metadata))]
   );
 }
 
-/** Compact preview of a parent message, embedded on a reply. */
+/**
+ * Compact preview of a parent message, embedded on a reply. `body` is null once
+ * the parent is soft-deleted (the read paths null it out); non-null at send-time.
+ */
 export interface ReplyPreview {
   id: string;
   sender_address: string;
-  body: string;
+  body: string | null;
   deleted: boolean;
 }
+
+/**
+ * Shared `reply_to` preview pieces, used by both message read paths and the WS
+ * broadcast query so the shape (and truncation length) stay in one place.
+ * REPLY_TO_PREVIEW_SELECT is a column expression aliased `reply_to`; it requires
+ * REPLY_TO_JOINS (aliases `p` = parent message, `pu` = parent author) in FROM.
+ */
+export const REPLY_TO_PREVIEW_SELECT = `
+                CASE WHEN m.reply_to_message_id IS NOT NULL THEN
+                  json_build_object(
+                    'id', m.reply_to_message_id,
+                    'sender_address', pu.address,
+                    'body', CASE WHEN p.deleted_at IS NOT NULL THEN NULL ELSE LEFT(p.body, ${SNIPPET_LEN}) END,
+                    'deleted', (p.deleted_at IS NOT NULL)
+                  )
+                ELSE NULL END AS reply_to`;
+
+export const REPLY_TO_JOINS = `
+           LEFT JOIN messages p  ON p.id = m.reply_to_message_id
+           LEFT JOIN users    pu ON pu.id = p.sender_user_id`;
 
 /**
  * Validate that a reply target exists, belongs to the same chat, and isn't
@@ -148,6 +174,7 @@ export interface NotifyReplyAndMentionsArgs {
 export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): Promise<number[]> {
   const { pool, chatId, messageId, senderUserId, senderAddress, body, replyParentAuthorId, accessibleUserIds } = args;
   const notified = new Set<number>();
+  const rows: ChatNotificationRow[] = [];
   const snip = snippet(body);
 
   const canNotify = (userId: number): boolean => {
@@ -159,17 +186,15 @@ export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): 
   // Reply → parent author. (Notification metadata uses camelCase to match the
   // frontend NotificationMetadata convention, e.g. priceWei/offerAmountWei.)
   if (replyParentAuthorId != null && canNotify(replyParentAuthorId)) {
-    await insertChatNotification(pool, replyParentAuthorId, 'chat_reply', {
-      chatId,
-      messageId,
-      replyToMessageId: args.replyToMessageId ?? null,
-      senderAddress,
-      snippet: snip,
+    rows.push({
+      userId: replyParentAuthorId,
+      type: 'chat_reply',
+      metadata: { chatId, messageId, replyToMessageId: args.replyToMessageId ?? null, senderAddress, snippet: snip },
     });
     notified.add(replyParentAuthorId);
   }
 
-  // @-mentions → resolved users (excluding anyone already notified above).
+  // @-mentions → resolved users (excluding anyone already notified above), capped.
   const tokens = parseMentionTokens(body);
   if (tokens.length > 0) {
     const resolved = await resolveMentionUserIds(pool, tokens);
@@ -177,16 +202,13 @@ export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): 
     for (const userId of resolved.values()) {
       if (count >= MAX_MENTION_NOTIFICATIONS) break;
       if (notified.has(userId) || !canNotify(userId)) continue;
-      await insertChatNotification(pool, userId, 'chat_mention', {
-        chatId,
-        messageId,
-        senderAddress,
-        snippet: snip,
-      });
+      rows.push({ userId, type: 'chat_mention', metadata: { chatId, messageId, senderAddress, snippet: snip } });
       notified.add(userId);
       count++;
     }
   }
 
+  // One round-trip for the reply + all mention notifications.
+  await insertChatNotifications(pool, rows);
   return [...notified];
 }

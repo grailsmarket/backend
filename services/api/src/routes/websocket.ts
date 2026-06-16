@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
 import { verifyToken } from '../middleware/auth';
 import { GLOBAL_CHAT_ID } from '../services/global-chat';
+import type { ReplyPreview } from '../services/chat-notifications';
 
 interface WSClient {
   id: string;
@@ -869,7 +870,7 @@ interface ChatMessageRecord {
   deleted_at: string | Date | null;
   sender_address?: string;
   /** Compact parent-message preview when this message is a reply; null otherwise. */
-  reply_to?: unknown;
+  reply_to?: ReplyPreview | null;
   /** Always [] for new messages; present so WS payloads match REST message shape. */
   reactions?: unknown[];
 }

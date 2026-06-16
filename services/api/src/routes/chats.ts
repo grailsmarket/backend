@@ -17,7 +17,12 @@ import {
   callerIsBannedFromChat,
   callerIsBannedFromGlobalChat,
 } from '../services/chat-moderation';
-import { notifyReplyAndMentions, validateReplyTarget } from '../services/chat-notifications';
+import {
+  notifyReplyAndMentions,
+  validateReplyTarget,
+  REPLY_TO_PREVIEW_SELECT,
+  REPLY_TO_JOINS,
+} from '../services/chat-notifications';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -524,20 +529,10 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const result = await pool.query(
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
-                u.address AS sender_address,
-                CASE WHEN m.reply_to_message_id IS NOT NULL THEN
-                  json_build_object(
-                    'id', m.reply_to_message_id,
-                    'sender_address', pu.address,
-                    'body', CASE WHEN p.deleted_at IS NOT NULL THEN NULL ELSE LEFT(p.body, 140) END,
-                    'deleted', (p.deleted_at IS NOT NULL)
-                  )
-                ELSE NULL END AS reply_to,
+                u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
-           JOIN users u ON u.id = m.sender_user_id
-           LEFT JOIN messages p  ON p.id = m.reply_to_message_id
-           LEFT JOIN users    pu ON pu.id = p.sender_user_id
+           JOIN users u ON u.id = m.sender_user_id${REPLY_TO_JOINS}
            LEFT JOIN LATERAL (
              SELECT json_agg(json_build_object(
                       'emoji', agg.emoji,
