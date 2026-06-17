@@ -348,19 +348,23 @@ export type ValuationEvidenceResult = {
 export type PublicValuationAppraisal = Omit<ValuationAppraisalEvidence, 'model'>;
 
 /**
- * The PUBLIC, client-facing projection of a valuation. The methodology-sensitive
- * evidence — the RAW comparable-sale evidence (`marketActivity`,
- * `categoryMarketActivity`), `relatedTerms`, `nameResearch`, `categoryContext`,
- * calibration, the raw TLD list, and the search trend — stays server-side: it
- * informs the LLM during generation and is retained (trimmed) in valuations.result
- * for internal/audit use, but is never serialized to the client. Clients receive
- * only the appraisal (incl. its cited comps) plus the two headline metrics the UI
- * renders. See `toPublicValuation`.
+ * The PUBLIC, client-facing projection of a valuation. Clients receive the
+ * appraisal (incl. its cited comps), the two headline web2/search metrics, the
+ * name's senses, and the comparable-sales count. The methodology-sensitive
+ * evidence — the RAW comparable-sale evidence (`marketActivity` rows,
+ * `categoryMarketActivity`), `relatedTerms`, `categoryContext`, calibration, the
+ * raw TLD list, and the search trend — stays server-side: it informs the LLM
+ * during generation and is retained (trimmed) in valuations.result for
+ * internal/audit use, but is never serialized to the client. See `toPublicValuation`.
  */
 export type PublicValuationEvidence = {
   appraisal: PublicValuationAppraisal;
   web2: Pick<ValuationWeb2Evidence, 'source' | 'lookupLabel' | 'summary'>;
   searchDemand: Omit<ValuationSearchDemandEvidence, 'monthlyTrend'>;
+  // The name's distinct meanings (with per-sense demand scores).
+  nameResearch: { senses: ValuationResearchSense[] };
+  // Headline comparable-sales count only; the raw comp evidence stays internal.
+  marketActivity: { salesFound: number };
 };
 
 export type PublicValuationResult = {
