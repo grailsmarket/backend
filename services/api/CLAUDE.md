@@ -306,6 +306,7 @@ Send-message enforcement: caller must be a participant; nobody in the chat may h
 ### Message Reactions (DMs + Global Chat)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET    | `/chats/:id/messages/:messageId/reactions` | Optional | Who reacted, grouped by emoji: `{ reactions: [{ emoji, count, users: [{ address }] }] }` (users oldest-first). Public for the global room; participants only for DMs (401 if unauth DM, 404 if not a participant). |
 | POST   | `/chats/:id/messages/:messageId/reactions` | Yes | Add `{ emoji }` (single grapheme, ≤32 chars). Idempotent: `{ added: false }` on repeat, no broadcast. Rate limit 60/min. |
 | DELETE | `/chats/:id/messages/:messageId/reactions/:emoji` | Yes | Remove caller's reaction (`:emoji` URL-encoded). 404 `REACTION_NOT_FOUND` if absent. |
 
