@@ -63,6 +63,13 @@ const InboxQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+const SearchChatsQuerySchema = z.object({
+  // Comma-separated, forward-resolved candidate addresses (from the client's ENS search).
+  addresses: z.string().optional(),
+  // Partial address for "0x…" typing.
+  address_prefix: z.string().optional(),
+});
+
 const ChatIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
@@ -194,6 +201,55 @@ async function getChatParticipantUserIds(
 
 export async function chatsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
+
+  // Per-chat inbox row (last message preview, unread count, participants, block
+  // flag). References $1 = caller user id and the `my_chats` CTE. Shared by the
+  // inbox (GET /) and search (GET /search) queries so result rows render
+  // identically; each supplies its own `my_chats` CTE + ORDER BY/LIMIT.
+  const INBOX_ROW_SELECT = `
+         SELECT
+           mc.*,
+           (
+             SELECT row_to_json(lm) FROM (
+               SELECT id, sender_user_id, body, content_type, created_at, deleted_at
+                 FROM messages
+                WHERE chat_id = mc.id AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+             ) lm
+           ) AS last_message,
+           (
+             SELECT COUNT(*) FROM messages m
+              WHERE m.chat_id = mc.id
+                AND m.deleted_at IS NULL
+                AND m.sender_user_id <> $1
+                AND (
+                  mc.last_read_message_id IS NULL
+                  OR m.created_at > (SELECT created_at FROM messages WHERE id = mc.last_read_message_id)
+                )
+           )::int AS unread_count,
+           (
+             SELECT COALESCE(json_agg(json_build_object(
+               'user_id', cp2.user_id,
+               'address', u.address,
+               'role', cp2.role,
+               'joined_at', cp2.joined_at,
+               'left_at', cp2.left_at,
+               'last_read_message_id', cp2.last_read_message_id
+             ) ORDER BY cp2.joined_at), '[]'::json)
+               FROM chat_participants cp2
+               JOIN users u ON u.id = cp2.user_id
+              WHERE cp2.chat_id = mc.id
+           ) AS participants,
+           EXISTS (
+             SELECT 1
+               FROM message_blocks mb
+               JOIN chat_participants cp_other ON cp_other.user_id = mb.blocked_user_id
+              WHERE mb.blocker_user_id = $1
+                AND cp_other.chat_id   = mc.id
+                AND cp_other.user_id  <> $1
+           ) AS is_blocked_by_me
+         FROM my_chats mc`;
 
   /**
    * POST /api/v1/chats
@@ -340,49 +396,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
              JOIN chat_participants cp ON cp.chat_id = c.id
             WHERE cp.user_id = $1 AND cp.left_at IS NULL
          )
-         SELECT
-           mc.*,
-           (
-             SELECT row_to_json(lm) FROM (
-               SELECT id, sender_user_id, body, content_type, created_at, deleted_at
-                 FROM messages
-                WHERE chat_id = mc.id AND deleted_at IS NULL
-                ORDER BY created_at DESC
-                LIMIT 1
-             ) lm
-           ) AS last_message,
-           (
-             SELECT COUNT(*) FROM messages m
-              WHERE m.chat_id = mc.id
-                AND m.deleted_at IS NULL
-                AND m.sender_user_id <> $1
-                AND (
-                  mc.last_read_message_id IS NULL
-                  OR m.created_at > (SELECT created_at FROM messages WHERE id = mc.last_read_message_id)
-                )
-           )::int AS unread_count,
-           (
-             SELECT COALESCE(json_agg(json_build_object(
-               'user_id', cp2.user_id,
-               'address', u.address,
-               'role', cp2.role,
-               'joined_at', cp2.joined_at,
-               'left_at', cp2.left_at,
-               'last_read_message_id', cp2.last_read_message_id
-             ) ORDER BY cp2.joined_at), '[]'::json)
-               FROM chat_participants cp2
-               JOIN users u ON u.id = cp2.user_id
-              WHERE cp2.chat_id = mc.id
-           ) AS participants,
-           EXISTS (
-             SELECT 1
-               FROM message_blocks mb
-               JOIN chat_participants cp_other ON cp_other.user_id = mb.blocked_user_id
-              WHERE mb.blocker_user_id = $1
-                AND cp_other.chat_id   = mc.id
-                AND cp_other.user_id  <> $1
-           ) AS is_blocked_by_me
-         FROM my_chats mc
+         ${INBOX_ROW_SELECT}
          ORDER BY mc.last_message_at DESC NULLS LAST, mc.created_at DESC
          LIMIT $2 OFFSET $3`,
         [callerId, limit, offset]
@@ -406,6 +420,70 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
       fastify.log.error({ error }, 'Error listing chats');
       return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list chats');
+    }
+  });
+
+  /**
+   * GET /api/v1/chats/search
+   * Find the caller's DMs by counterparty. The frontend forward-resolves the
+   * typed name to candidate addresses (ENS primary names are forward-verified,
+   * so the resolved address is the chatting peer regardless of who owns the name
+   * NFT) and passes them as `addresses`; `address_prefix` supports "0x…" typing.
+   * Matches the peer's address, reusing the inbox row shape. Capped, unpaginated.
+   * (Static path — resolves before GET /:id.)
+   */
+  fastify.get('/search', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      const q = SearchChatsQuerySchema.parse(request.query);
+      const callerId = parseInt(request.user!.sub, 10);
+
+      const addresses = Array.from(
+        new Set(
+          (q.addresses ?? '')
+            .split(',')
+            .map((a) => a.trim().toLowerCase())
+            .filter((a) => /^0x[0-9a-f]{40}$/.test(a))
+        )
+      ).slice(0, 50);
+
+      const rawPrefix = (q.address_prefix ?? '').trim().toLowerCase();
+      const addressPrefix = /^0x[0-9a-f]{1,40}$/.test(rawPrefix) ? rawPrefix : null;
+
+      // Nothing resolvable to match — don't scan the inbox.
+      if (addresses.length === 0 && addressPrefix === null) {
+        return reply.send(ok({ chats: [] }));
+      }
+
+      const result = await pool.query(
+        `WITH my_chats AS (
+           SELECT c.*, cp.last_read_message_id, cp.muted
+             FROM chats c
+             JOIN chat_participants cp ON cp.chat_id = c.id
+            WHERE cp.user_id = $1 AND cp.left_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM chat_participants cpx
+                  JOIN users ux ON ux.id = cpx.user_id
+                 WHERE cpx.chat_id = c.id
+                   AND cpx.user_id <> $1
+                   AND (
+                     LOWER(ux.address) = ANY($2::text[])
+                     OR ($3::text IS NOT NULL AND LOWER(ux.address) LIKE $3 || '%')
+                   )
+              )
+         )
+         ${INBOX_ROW_SELECT}
+         ORDER BY mc.last_message_at DESC NULLS LAST, mc.created_at DESC
+         LIMIT 50`,
+        [callerId, addresses, addressPrefix]
+      );
+
+      return reply.send(ok({ chats: result.rows }));
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);
+      }
+      fastify.log.error({ error }, 'Error searching chats');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to search chats');
     }
   });
 
