@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import { PassThrough } from 'node:stream';
 import { normalize } from 'viem/ens';
 import {
   getPostgresPool,
@@ -35,6 +35,7 @@ import {
   getCachedEvidence,
   isWeiAtLeast,
   setCachedEvidence,
+  toPublicValuation,
   valuationLogInfo,
   valuationLogWarn,
   type ValuationConfig,
@@ -55,32 +56,12 @@ const pool = getPostgresPool();
 // Streaming + single-flight registry
 // ============================================================================
 
-const NDJSON_HEADERS = {
+export const NDJSON_HEADERS = {
   'Cache-Control': 'no-cache, no-transform',
   Connection: 'keep-alive',
   'Content-Type': 'application/x-ndjson; charset=utf-8',
   'X-Accel-Buffering': 'no',
 };
-
-/**
- * The NDJSON stream hijacks the reply (raw socket), which bypasses Fastify's
- * onSend lifecycle — and with it the @fastify/cors plugin that normally adds the
- * Access-Control-* headers. Without these, the browser blocks the streamed
- * response even though the preflight passed. Mirror the plugin's behavior here:
- * because the API runs with credentials:true we must reflect the (allow-listed)
- * Origin rather than using '*', and advertise Vary: Origin for cache safety.
- */
-function buildStreamCorsHeaders(request: FastifyRequest): Record<string, string> {
-  const origin = request.headers.origin;
-  if (!origin || !appConfig.api.corsOrigins.includes(origin)) {
-    return {};
-  }
-  return {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Credentials': 'true',
-    Vary: 'Origin',
-  };
-}
 
 export type ValuationProduce = (
   reportProgress: (event: ValuationEvidenceStreamStageEvent) => void
@@ -142,7 +123,10 @@ function startRun(
     try {
       const result = await produce((stageEvent) => emit(stageEvent));
       run.result = result;
-      emit({ type: 'result', data: result });
+      // Project to the public payload once, here at emit: the buffered event + every
+      // streamed copy carry only the public shape, while run.result keeps the full
+      // result for internal use (non-streaming sendResult + caching).
+      emit({ type: 'result', data: toPublicValuation(result) });
     } catch (error) {
       run.error = error;
       const mapped = mapError(error);
@@ -193,48 +177,60 @@ function subscribeToRun(
   return () => run.subscribers.delete(onEvent);
 }
 
-/** Streams a run's events to the reply as NDJSON until the run settles. */
-export async function pipeRunToReply(
-  reply: FastifyReply,
-  run: ValuationRun,
-  request: FastifyRequest
-): Promise<void> {
-  reply.hijack();
-  const raw = reply.raw;
-  raw.writeHead(200, { ...NDJSON_HEADERS, ...buildStreamCorsHeaders(request) });
+/**
+ * Builds a readable NDJSON stream of a run's events. Returned to the route as
+ * the response body so it flows through Fastify's normal lifecycle — that's
+ * what lets @fastify/cors (and helmet) apply their headers, which a hijacked
+ * raw socket would bypass. The run itself is decoupled from any one client, so
+ * a disconnect just unsubscribes this stream; the generation keeps going.
+ */
+export function createRunNdjsonStream(run: ValuationRun): PassThrough {
+  const stream = new PassThrough();
 
-  let clientGone = false;
-  raw.on('close', () => {
-    clientGone = true;
-  });
+  const onEvent = (event: ValuationEvidenceStreamEvent) => {
+    // Skip writes once the stream is destroyed (client gone) or already ended, so a
+    // late event can't throw or pile into a buffer that will never drain.
+    if (stream.destroyed || stream.writableEnded) return;
+    // Events are already public-projected at emit time (the result event carries the
+    // public payload), so each can be serialized straight to the wire.
+    stream.write(`${JSON.stringify(event)}\n`);
+  };
 
-  await new Promise<void>((resolve) => {
-    const onEvent = (event: ValuationEvidenceStreamEvent) => {
-      if (clientGone) return;
-      try {
-        raw.write(`${JSON.stringify(event)}\n`);
-      } catch {
-        clientGone = true;
-      }
-    };
+  const unsubscribe = subscribeToRun(run, onEvent);
 
-    const unsubscribe = subscribeToRun(run, onEvent);
-    if (run.settled) {
-      unsubscribe();
-      resolve();
-      return;
+  // Client disconnect (Fastify destroys the payload stream) -> stop feeding it.
+  // Routine teardown errors are expected on a dropped connection and must not crash
+  // the process; anything else is logged so real write/protocol failures stay visible.
+  stream.on('close', unsubscribe);
+  stream.on('error', (err) => {
+    const code = (err as NodeJS.ErrnoException).code;
+    const isTeardown =
+      code === 'ERR_STREAM_DESTROYED' ||
+      code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+      code === 'EPIPE' ||
+      code === 'ECONNRESET';
+    if (!isTeardown) {
+      valuationLogWarn(`[valuation:${run.runId}]`, 'NDJSON stream error', {
+        label: run.label,
+        code,
+        message: err.message,
+      });
     }
-    run.whenSettled.finally(() => {
-      unsubscribe();
-      resolve();
-    });
+    unsubscribe();
   });
 
-  try {
-    if (!clientGone) raw.end();
-  } catch {
-    // socket already closed
+  if (run.settled) {
+    unsubscribe();
+    stream.end();
+    return stream;
   }
+
+  run.whenSettled.finally(() => {
+    unsubscribe();
+    if (!stream.destroyed) stream.end();
+  });
+
+  return stream;
 }
 
 /** Resolves with the run's result or rejects with its error (non-streaming path). */
