@@ -12,6 +12,7 @@ import {
   getValuationSettings,
   recordValuationGeneration,
   setCachedValuation,
+  toPublicValuation,
   ValuationConfigError,
   ValuationPromptError,
   type ValuationSettings,
@@ -19,17 +20,23 @@ import {
 import { consumeOpenAICostRunSummary } from '../services/valuation/llm';
 import {
   awaitRunOutcome,
+  createRunNdjsonStream,
   deriveStrictValuationLabel,
   getInFlightValuationRun,
   getOrCreateValuationRun,
-  pipeRunToReply,
+  NDJSON_HEADERS,
   resolveValuationTarget,
   runValuationPipeline,
   ValuationTargetError,
   Web2TldDataRequestError,
   type ValuationProduce,
 } from '../services/valuation/pipeline';
-import type { ValuationEvidenceRequest, ValuationEvidenceResult } from '../services/valuation/types';
+import type {
+  PublicValuationResult,
+  StoredValuationResult,
+  ValuationEvidenceRequest,
+  ValuationEvidenceResult,
+} from '../services/valuation/types';
 
 const DEFAULT_RECOMMENDATION_COUNT = 200;
 
@@ -168,10 +175,16 @@ function sendError(reply: FastifyReply, error: unknown) {
   return reply.status(mapped.status).send(response);
 }
 
-function sendResult(reply: FastifyReply, data: ValuationEvidenceResult, cache: 'HIT' | 'MISS') {
-  const response: APIResponse<ValuationEvidenceResult> = {
+function sendResult(
+  reply: FastifyReply,
+  data: ValuationEvidenceResult | StoredValuationResult,
+  cache: 'HIT' | 'MISS'
+) {
+  // Gate the methodology-sensitive evidence: clients only ever receive the public
+  // projection (appraisal + headline metrics). The full evidence stays internal.
+  const response: APIResponse<PublicValuationResult> = {
     success: true,
-    data,
+    data: toPublicValuation(data),
     meta: nowMeta(),
   };
   return reply.header('X-Cache', cache).send(response);
@@ -247,8 +260,8 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const inFlight = getInFlightValuationRun(label);
         if (inFlight) {
           if (streaming) {
-            await pipeRunToReply(reply, inFlight, request);
-            return reply;
+            reply.headers(NDJSON_HEADERS);
+            return reply.send(createRunNdjsonStream(inFlight));
           }
           try {
             const result = await awaitRunOutcome(inFlight);
@@ -380,8 +393,8 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         const { run } = getOrCreateValuationRun(target.keyword, runId, produce, mapValuationError);
 
         if (streaming) {
-          await pipeRunToReply(reply, run, request);
-          return reply;
+          reply.headers(NDJSON_HEADERS);
+          return reply.send(createRunNdjsonStream(run));
         }
 
         const result = await awaitRunOutcome(run);

@@ -37,7 +37,9 @@ export type ValuationEvidenceStreamStageEvent = {
 
 export type ValuationEvidenceStreamResultEvent = {
   type: 'result';
-  data: ValuationEvidenceResult;
+  // The streamed terminal event carries the PUBLIC projection only — the full
+  // evidence is never put on the wire (see `toPublicValuation`, projected at emit).
+  data: PublicValuationResult;
 };
 
 export type ValuationEvidenceStreamErrorEvent = {
@@ -334,4 +336,65 @@ export type ValuationEvidenceResult = {
   status: 'completed';
   evidence: ValuationEvidence;
   generatedAt: string;
+};
+
+/**
+ * The PUBLIC appraisal sent to clients. Identical to the internal appraisal except
+ * the `model` id is withheld (minor methodology disclosure). `compsUsed` IS public
+ * by design: it is the small list of comparable sales the model *cites* (the UI
+ * renders it as "Similar Sales" + the comp scatter plot) — distinct from the raw
+ * `marketActivity`/`categoryMarketActivity` comp evidence, which stays internal.
+ */
+export type PublicValuationAppraisal = Omit<ValuationAppraisalEvidence, 'model'>;
+
+/**
+ * The PUBLIC, client-facing projection of a valuation. The methodology-sensitive
+ * evidence — the RAW comparable-sale evidence (`marketActivity`,
+ * `categoryMarketActivity`), `relatedTerms`, `nameResearch`, `categoryContext`,
+ * calibration, the raw TLD list, and the search trend — stays server-side: it
+ * informs the LLM during generation and is retained (trimmed) in valuations.result
+ * for internal/audit use, but is never serialized to the client. Clients receive
+ * only the appraisal (incl. its cited comps) plus the two headline metrics the UI
+ * renders. See `toPublicValuation`.
+ */
+export type PublicValuationEvidence = {
+  appraisal: PublicValuationAppraisal;
+  web2: Pick<ValuationWeb2Evidence, 'source' | 'lookupLabel' | 'summary'>;
+  searchDemand: Omit<ValuationSearchDemandEvidence, 'monthlyTrend'>;
+};
+
+export type PublicValuationResult = {
+  name: string;
+  status: ValuationEvidenceResult['status'];
+  evidence: PublicValuationEvidence;
+  generatedAt: string;
+};
+
+/**
+ * The STORED (Tier-2 cache) shape of a valuation. `valuations.result` is trimmed
+ * before persisting (see `trimResultForStorage`): every activity row is reduced to
+ * name/date/price, and `relatedTerms`' heavy arrays are emptied (scalar counts are
+ * retained). These types encode that truncation so internal/audit readers of the
+ * cached row get accurate types instead of a full-`ValuationEvidenceResult` lie.
+ */
+export type StoredValuationActivityRow = Pick<ValuationActivitySale, 'name' | 'created_at' | 'price_wei'>;
+
+export type StoredValuationEvidence = Omit<ValuationEvidence, 'marketActivity' | 'categoryMarketActivity'> & {
+  marketActivity: Omit<ValuationMarketActivityEvidence, 'sales' | 'mintEvents' | 'premiumRegistrations'> & {
+    sales: StoredValuationActivityRow[];
+    mintEvents: StoredValuationActivityRow[];
+    premiumRegistrations: StoredValuationActivityRow[];
+  };
+  categoryMarketActivity: Omit<ValuationCategoryMarketActivityEvidence, 'categories'> & {
+    categories: Array<
+      Omit<ValuationCategoryMarketActivityEvidence['categories'][number], 'sales' | 'mintEvents'> & {
+        sales: StoredValuationActivityRow[];
+        mintEvents: StoredValuationActivityRow[];
+      }
+    >;
+  };
+};
+
+export type StoredValuationResult = Omit<ValuationEvidenceResult, 'evidence'> & {
+  evidence: StoredValuationEvidence;
 };
