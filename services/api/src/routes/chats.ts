@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, optionalAuth } from '../middleware/auth';
 import {
   broadcastChatReadEvent,
   broadcastChatDeletedEvent,
@@ -873,6 +873,56 @@ export async function chatsRoutes(fastify: FastifyInstance) {
     );
     return r.rows[0]?.c ?? 0;
   }
+
+  /**
+   * GET /api/v1/chats/:id/messages/:messageId/reactions
+   * Who reacted, grouped by emoji (each with the reactor addresses, oldest
+   * first). Public for the global room; participants only for DMs.
+   */
+  fastify.get('/:id/messages/:messageId/reactions', { preHandler: optionalAuth }, async (request, reply) => {
+    try {
+      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+      const callerId = request.user ? parseInt(request.user.sub, 10) : null;
+
+      // Global room is publicly readable; DMs require a participant.
+      if (id !== GLOBAL_CHAT_ID) {
+        if (callerId === null) {
+          return sendError(reply, 401, 'UNAUTHORIZED', 'Authentication required');
+        }
+        if (!(await canAccessChatMessages(id, callerId))) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
+      }
+
+      const msg = await pool.query(
+        `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2`,
+        [messageId, id]
+      );
+      if (msg.rows.length === 0) {
+        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
+      }
+
+      const result = await pool.query(
+        `SELECT mr.emoji,
+                COUNT(*)::int AS count,
+                json_agg(json_build_object('address', u.address) ORDER BY mr.created_at) AS users
+           FROM message_reactions mr
+           JOIN users u ON u.id = mr.user_id
+          WHERE mr.message_id = $1
+          GROUP BY mr.emoji
+          ORDER BY COUNT(*) DESC, mr.emoji`,
+        [messageId]
+      );
+
+      return reply.send(ok({ message_id: messageId, reactions: result.rows }));
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+      }
+      fastify.log.error({ error }, 'Error listing message reactions');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list reactions');
+    }
+  });
 
   /**
    * POST /api/v1/chats/:id/messages/:messageId/reactions
