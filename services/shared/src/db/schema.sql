@@ -186,7 +186,10 @@ CREATE TABLE IF NOT EXISTS messages (
     metadata        JSONB,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     edited_at       TIMESTAMP,
-    deleted_at      TIMESTAMP
+    deleted_at      TIMESTAMP,
+    deleted_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    deleted_reason  TEXT,
+    reply_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at DESC);
@@ -194,6 +197,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_user_id, creat
 -- Supports the per-sender daily quota COUNT in the global chat send path (0880).
 CREATE INDEX IF NOT EXISTS idx_messages_chat_sender_created
   ON messages(chat_id, sender_user_id, created_at DESC);
+-- Parent-preview LEFT JOIN for threaded replies (0889).
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to_message_id)
+  WHERE reply_to_message_id IS NOT NULL;
 
 -- Emoji reactions on chat messages, DMs and global chat
 -- (mirror of migration 0882_create_message_reactions.sql)

@@ -289,12 +289,16 @@ Direct (1:1) messaging in v1. Schema is group-chat-ready; group endpoints are de
 |--------|------|------|-------------|
 | POST   | `/chats` | Yes | Create or fetch a direct chat: `{ recipient: address \| ens }`. Idempotent via `dm_key`. 501 for `recipients.length > 1`. |
 | GET    | `/chats` | Yes | Inbox: paginated, last message preview + unread count + participant list. |
+| GET    | `/chats/search` | Yes | Find the caller's DMs by counterparty: `?q=<name fragment or 0x…>`. A name fragment is resolved server-side against the ENS subgraph **constrained to the caller's own peer addresses** (`name_starts_with` + `resolvedAddress_in`), so recall is complete (no global top-N truncation); `0x…` prefix-matches the peer address. Matches the peer's **resolved/chatting address** (not the name's NFT owner), reusing the inbox row shape. Capped at 50, unpaginated; <2 chars or no matches → `{ chats: [] }`. |
 | GET    | `/chats/:id` | Yes | Chat detail with participants and each participant's `last_read_message_id`. |
 | GET    | `/chats/:id/messages` | Yes | Cursor pagination via `?before=<message-uuid>&limit=<1-100>`. |
-| POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars). Per-route rate limit: 30/min. |
+| POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars) + optional `reply_to_message_id` (must be a live message in the same chat, else 400 `INVALID_REPLY_TARGET`). Per-route rate limit: 30/min. Fires `chat_reply`/`chat_mention` notifications. |
 | POST   | `/chats/:id/read` | Yes | Mark read: `{ up_to_message_id }`. Broadcasts `chat:read` over WS. |
-| DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message. |
+| DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message (records `deleted_by = caller`). Also serves the global room (`:id` = global UUID) — branches WS to global subscribers. |
+| PATCH  | `/chats/:id/messages/:messageId` | Yes | Edit caller's own message: `{ body }` (1–4000). Stamps `edited_at`, broadcasts `chat:message_edited`. 404 if not the sender or already deleted. Also serves the global room (enforces `max_message_length` there). |
 | PATCH  | `/chats/:id` | Yes | `{ muted? }` per-chat mute. |
+
+Self-delete and edit work for the global room through this same `:id` route (the global UUID), mirroring reactions — there are no dedicated `/chats/global/messages/:id` mutation routes. Soft-deleted messages return `body: null` plus `deleted_by_admin` (derived: `deleted_by` differs from the author ⇒ admin moderation, else author self-delete).
 
 Send-message enforcement: caller must be a participant; nobody in the chat may have blocked the caller; all other participants must have `accept_messages = TRUE`.
 
@@ -303,6 +307,7 @@ Send-message enforcement: caller must be a participant; nobody in the chat may h
 ### Message Reactions (DMs + Global Chat)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET    | `/chats/:id/messages/:messageId/reactions` | Optional | Who reacted, grouped by emoji: `{ reactions: [{ emoji, count, users: [{ address }] }] }` (users oldest-first). Public for the global room; participants only for DMs (401 if unauth DM, 404 if not a participant). |
 | POST   | `/chats/:id/messages/:messageId/reactions` | Yes | Add `{ emoji }` (single grapheme, ≤32 chars). Idempotent: `{ added: false }` on repeat, no broadcast. Rate limit 60/min. |
 | DELETE | `/chats/:id/messages/:messageId/reactions/:emoji` | Yes | Remove caller's reaction (`:emoji` URL-encoded). 404 `REACTION_NOT_FOUND` if absent. |
 
@@ -315,7 +320,7 @@ A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`typ
 |--------|------|------|-------------|
 | GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, last_message_at }`. Cached 15s. |
 | GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `reactions`. Identity is resolved client-side from `sender_address` (same as DMs). |
-| POST   | `/chats/global/messages` | Yes | Send `{ body }`. 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. |
+| POST   | `/chats/global/messages` | Yes | Send `{ body }` + optional `reply_to_message_id` (live global message, else 400 `INVALID_REPLY_TARGET`). 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. Fires `chat_reply`/`chat_mention` notifications. |
 | GET    | `/chats/global/quota` | Yes | Caller's `{ tier, used, limit, remaining, resets_at }` (`limit: null` = unlimited). |
 | GET    | `/chats/global/online-users` | No | Recently ACTIVE users (24h window of `last_seen_at` — touched by ActivityLogger on any authed request — falling back to `last_sign_in`), newest activity first as `last_active`; excludes stubs and chat-banned users. Cached 15s. |
 
@@ -327,7 +332,7 @@ Admin (all `requireAuth + requireAdmin`, under `/chats/admin`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status`. |
+| GET    | `/chats/admin/global/messages` | Moderation list. Filters: `sender` (address or user id), `status` (all\|visible\|deleted), `from`/`to`, `page`/`limit`. Raw body returned even when deleted. Rows include `sender_mod_status` + `sender_global_status` + `deleted_by`/`deleted_reason`/`deleted_by_admin`. |
 | DELETE | `/chats/admin/global/messages/:messageId` | Soft-delete one message: `{ reason }`. Logs `delete_message` to `chat_moderation_log`, broadcasts `chat:message_deleted` to global subscribers. |
 | POST   | `/chats/admin/global/users/:userId/ban` | Global-chat-only ban: `{ reason }`. Logs `global_ban`. (All-chats ban remains `/chats/admin/users/:userId/ban`.) |
 | POST   | `/chats/admin/global/users/:userId/unban` | Lift a global-only ban: `{ reason? }`. Logs `global_unban`. |
@@ -367,8 +372,10 @@ Client → server:
 ```
 
 Server → client (event types):
-- `chat:message_new` — `{ chat_id, message }` (clients route on `chat_id` = global UUID)
-- `chat:message_deleted` — `{ chat_id, message_id }`
+- `chat:message_new` — `{ chat_id, message }` (clients route on `chat_id` = global UUID; `message.reply_to` carries the parent preview when it's a reply)
+- `chat:message_edited` — `{ chat_id, message }` (updated row; clients patch `body` + `edited_at`)
+- `notification:unread` — `{}` (sent to specific users after a `chat_reply`/`chat_mention` notification is written; client re-fetches its unread count instead of waiting for the ~30s poll)
+- `chat:message_deleted` — `{ chat_id, message_id, deleted_by_admin }` (`deleted_by_admin` distinguishes admin moderation from author self-delete)
 - `chat:read` — `{ chat_id, user_id, last_read_message_id }`
 - `chat:typing` / `chat:typing_stop` — `{ chat_id, user_id }`
 - `chat:created` — `{ chat }` (sent to participants when a new chat is created)
@@ -496,7 +503,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `ai_recommendations` | Cached AI similar-name suggestions (label, recommendations JSONB, model, expires_at) |
 | `chats` | Chat threads (direct or group). UUID PK; `dm_key` unique for idempotent direct creation |
 | `chat_participants` | Per-(chat,user) state: read position, mute, role, soft-leave |
-| `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`) |
+| `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`; `deleted_by`/`deleted_reason` attribute who deleted + why; `edited_at` stamped on edit; `reply_to_message_id` self-FK for threaded replies) |
 | `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
 | `message_reactions` | Emoji reactions on messages (PK `(message_id, user_id, emoji)`) |
 | `global_chat_config` | Single-row global chat config (quota tiers, max length, enabled) |

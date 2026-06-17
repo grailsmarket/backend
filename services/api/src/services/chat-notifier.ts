@@ -2,6 +2,7 @@ import { Client } from 'pg';
 import { getPostgresPool, config } from '../../../shared/src';
 import { broadcastChatEvent, broadcastGlobalChatEvent } from '../routes/websocket';
 import { GLOBAL_CHAT_ID } from './global-chat';
+import { REPLY_TO_PREVIEW_SELECT, REPLY_TO_JOINS } from './chat-notifications';
 
 /**
  * Listens for `chat_message_created` PG notifications (emitted by the AFTER INSERT
@@ -80,14 +81,14 @@ export class ChatNotifier {
         `SELECT
            m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
            m.metadata, m.created_at, m.edited_at, m.deleted_at,
-           u.address AS sender_address,
+           u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
            (
              SELECT COALESCE(array_agg(cp.user_id), ARRAY[]::int[])
                FROM chat_participants cp
               WHERE cp.chat_id = m.chat_id AND cp.left_at IS NULL
            ) AS participant_user_ids
          FROM messages m
-         JOIN users u ON u.id = m.sender_user_id
+         JOIN users u ON u.id = m.sender_user_id${REPLY_TO_JOINS}
          WHERE m.id = $1`,
         [messageId]
       );
