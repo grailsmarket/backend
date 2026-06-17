@@ -289,7 +289,7 @@ Direct (1:1) messaging in v1. Schema is group-chat-ready; group endpoints are de
 |--------|------|------|-------------|
 | POST   | `/chats` | Yes | Create or fetch a direct chat: `{ recipient: address \| ens }`. Idempotent via `dm_key`. 501 for `recipients.length > 1`. |
 | GET    | `/chats` | Yes | Inbox: paginated, last message preview + unread count + participant list. |
-| GET    | `/chats/search` | Yes | Find the caller's DMs by counterparty: `?addresses=<csv>` (forward-resolved candidate addresses from the client's ENS search) and/or `?address_prefix=0x…`. Matches the peer's **resolved/chatting address** (not the name's NFT owner), reusing the inbox row shape. Capped at 50, unpaginated; empty params → `{ chats: [] }`. |
+| GET    | `/chats/search` | Yes | Find the caller's DMs by counterparty: `?q=<name fragment or 0x…>`. A name fragment is resolved server-side against the ENS subgraph **constrained to the caller's own peer addresses** (`name_starts_with` + `resolvedAddress_in`), so recall is complete (no global top-N truncation); `0x…` prefix-matches the peer address. Matches the peer's **resolved/chatting address** (not the name's NFT owner), reusing the inbox row shape. Capped at 50, unpaginated; <2 chars or no matches → `{ chats: [] }`. |
 | GET    | `/chats/:id` | Yes | Chat detail with participants and each participant's `last_read_message_id`. |
 | GET    | `/chats/:id/messages` | Yes | Cursor pagination via `?before=<message-uuid>&limit=<1-100>`. |
 | POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars) + optional `reply_to_message_id` (must be a live message in the same chat, else 400 `INVALID_REPLY_TARGET`). Per-route rate limit: 30/min. Fires `chat_reply`/`chat_mention` notifications. |

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, config, type APIResponse } from '../../../shared/src';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import {
   broadcastChatReadEvent,
@@ -64,11 +64,65 @@ const InboxQuerySchema = z.object({
 });
 
 const SearchChatsQuerySchema = z.object({
-  // Comma-separated, forward-resolved candidate addresses (from the client's ENS search).
-  addresses: z.string().optional(),
-  // Partial address for "0x…" typing.
-  address_prefix: z.string().optional(),
+  // Raw search string (ENS name fragment or address). Resolved server-side.
+  q: z.string().max(100).optional(),
 });
+
+const SEARCH_MIN_LEN = 2;
+// The Graph `_in` list is bounded; name search covers up to this many peers
+// (address search still covers all peers via prefix match).
+const PEER_SUBGRAPH_CAP = 1000;
+
+/**
+ * Resolve an ENS name fragment to peer addresses by asking the subgraph for
+ * `name_starts_with` matches whose resolved address is IN the caller's own peer
+ * set. Constraining to the peer set (rather than searching all of ENS then
+ * intersecting) gives complete recall — "jack" finds jackflash.eth even though
+ * thousands of jack* names exist globally. Returns matched peer addresses.
+ */
+async function resolveNameMatchesAmongPeers(search: string, peerAddresses: string[]): Promise<string[]> {
+  const url = config.theGraph.ensSubgraphUrl;
+  if (!url || peerAddresses.length === 0) return [];
+
+  // ENSNode (Ponder) exposes the FK scalar filter `resolvedAddressId_in`, not the
+  // subgraph-style relation filter `resolvedAddress_in`. Account ids are lowercase.
+  const gql = `
+    query SearchMyChats($search: String, $addresses: [String!]) {
+      domains(first: 1000, where: { name_starts_with: $search, resolvedAddressId_in: $addresses }) {
+        resolvedAddress { id }
+      }
+    }`;
+
+  // Attach the gateway API key when configured (matches ens-roles.ts /
+  // name-details.ts); the keyless ENSNode instance simply omits it.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.theGraph?.apiKey) {
+    headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query: gql,
+        // Subgraph stores names/account-ids lowercase.
+        variables: { search: search.toLowerCase(), addresses: peerAddresses.slice(0, PEER_SUBGRAPH_CAP) },
+      }),
+      // User-facing/interactive search — bound the latency so a slow subgraph
+      // can't hold the request handler open.
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) return [];
+    const json = (await resp.json()) as { data?: { domains?: { resolvedAddress?: { id?: string } | null }[] } };
+    const ids = (json.data?.domains ?? [])
+      .map((d) => d.resolvedAddress?.id?.toLowerCase())
+      .filter((x): x is string => !!x);
+    return Array.from(new Set(ids));
+  } catch {
+    return [];
+  }
+}
 
 const ChatIdParamsSchema = z.object({
   id: z.string().uuid(),
@@ -434,24 +488,39 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/search', { preHandler: requireAuth }, async (request, reply) => {
     try {
-      const q = SearchChatsQuerySchema.parse(request.query);
+      const { q } = SearchChatsQuerySchema.parse(request.query);
       const callerId = parseInt(request.user!.sub, 10);
-
-      const addresses = Array.from(
-        new Set(
-          (q.addresses ?? '')
-            .split(',')
-            .map((a) => a.trim().toLowerCase())
-            .filter((a) => /^0x[0-9a-f]{40}$/.test(a))
-        )
-      ).slice(0, 50);
-
-      const rawPrefix = (q.address_prefix ?? '').trim().toLowerCase();
-      const addressPrefix = /^0x[0-9a-f]{1,40}$/.test(rawPrefix) ? rawPrefix : null;
-
-      // Nothing resolvable to match — don't scan the inbox.
-      if (addresses.length === 0 && addressPrefix === null) {
+      const query = (q ?? '').trim();
+      if (query.length < SEARCH_MIN_LEN) {
         return reply.send(ok({ chats: [] }));
+      }
+
+      // Resolve the query to peer addresses to match.
+      //  - "0x…" → prefix-match the peer address directly (handled in SQL below).
+      //  - a name fragment → ask the subgraph for matches among MY peers only.
+      let addresses: string[] = [];
+      let addressPrefix: string | null = null;
+
+      if (/^0x[0-9a-f]+$/i.test(query)) {
+        addressPrefix = query.toLowerCase();
+      } else {
+        // Gather the caller's DM peer addresses (bounded by their chat count).
+        const peers = await pool.query(
+          `SELECT DISTINCT LOWER(ux.address) AS address
+             FROM chat_participants cp
+             JOIN chat_participants cpx ON cpx.chat_id = cp.chat_id AND cpx.user_id <> cp.user_id
+             JOIN users ux ON ux.id = cpx.user_id
+            WHERE cp.user_id = $1 AND cp.left_at IS NULL`,
+          [callerId]
+        );
+        const peerAddresses = peers.rows.map((r) => r.address as string);
+        if (peerAddresses.length === 0) {
+          return reply.send(ok({ chats: [] }));
+        }
+        addresses = await resolveNameMatchesAmongPeers(query, peerAddresses);
+        if (addresses.length === 0) {
+          return reply.send(ok({ chats: [] }));
+        }
       }
 
       const result = await pool.query(
