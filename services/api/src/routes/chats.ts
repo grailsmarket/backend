@@ -65,7 +65,7 @@ const InboxQuerySchema = z.object({
 
 const SearchChatsQuerySchema = z.object({
   // Raw search string (ENS name fragment or address). Resolved server-side.
-  q: z.string().optional(),
+  q: z.string().max(100).optional(),
 });
 
 const SEARCH_MIN_LEN = 2;
@@ -93,15 +93,25 @@ async function resolveNameMatchesAmongPeers(search: string, peerAddresses: strin
       }
     }`;
 
+  // Attach the gateway API key when configured (matches ens-roles.ts /
+  // name-details.ts); the keyless ENSNode instance simply omits it.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.theGraph?.apiKey) {
+    headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+  }
+
   try {
     const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         query: gql,
         // Subgraph stores names/account-ids lowercase.
         variables: { search: search.toLowerCase(), addresses: peerAddresses.slice(0, PEER_SUBGRAPH_CAP) },
       }),
+      // User-facing/interactive search — bound the latency so a slow subgraph
+      // can't hold the request handler open.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!resp.ok) return [];
     const json = (await resp.json()) as { data?: { domains?: { resolvedAddress?: { id?: string } | null }[] } };
