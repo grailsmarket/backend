@@ -3,7 +3,7 @@ import { getPostgresPool, config } from '../../../shared/src';
 import { broadcastChatEvent, broadcastGlobalChatEvent } from '../routes/websocket';
 import { GLOBAL_CHAT_ID } from './global-chat';
 import { REPLY_TO_PREVIEW_SELECT, REPLY_TO_JOINS } from './chat-notifications';
-import { ATTACHMENT_SELECT, withAttachmentUrl } from './chat-images';
+import { ATTACHMENTS_SELECT, withAttachmentUrls } from './chat-images';
 
 /**
  * Listens for `chat_message_created` PG notifications (emitted by the AFTER INSERT
@@ -83,7 +83,7 @@ export class ChatNotifier {
            m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
            m.metadata, m.created_at, m.edited_at, m.deleted_at,
            u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
-           ${ATTACHMENT_SELECT},
+           ${ATTACHMENTS_SELECT},
            (
              SELECT COALESCE(array_agg(cp.user_id), ARRAY[]::int[])
                FROM chat_participants cp
@@ -105,8 +105,8 @@ export class ChatNotifier {
       // Freshly inserted messages have no reactions; include the empty
       // aggregate so WS payloads match the REST message shape.
       message.reactions = [];
-      // Turn the raw attachment (storage_key) into a client-facing { url, ... }.
-      withAttachmentUrl(message);
+      // Turn each raw attachment (storage_key) into a client-facing { url, ... }.
+      withAttachmentUrls(message);
 
       if (message.chat_id === GLOBAL_CHAT_ID) {
         broadcastGlobalChatEvent({ message });
