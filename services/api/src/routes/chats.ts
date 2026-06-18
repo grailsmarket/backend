@@ -34,10 +34,11 @@ import {
   parseImageUpload,
   buildChatImageKey,
   chatImageUrl,
-  withAttachmentUrl,
+  withAttachmentUrls,
   expireMessageAttachments,
-  ATTACHMENT_SELECT,
+  ATTACHMENTS_SELECT,
   MAX_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
 } from '../services/chat-images';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -693,7 +694,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
-                ${ATTACHMENT_SELECT},
+                ${ATTACHMENTS_SELECT},
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id${REPLY_TO_JOINS}
@@ -718,7 +719,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       );
 
       // Don't leak the raw deleter id; expose only the admin-vs-author distinction.
-      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrl({
+      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrls({
         ...m,
         body: m.deleted_at ? null : m.body,
         deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
@@ -833,8 +834,8 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
 
       // Trigger fires pg_notify; ChatNotifier handles fan-out.
-      // reactions: [] keeps the shape consistent with GET /:id/messages.
-      const message = { ...inserted.rows[0], reactions: [], reply_to: replyContext?.replyTo ?? null };
+      // reactions/attachments keep the shape consistent with GET /:id/messages.
+      const message = { ...inserted.rows[0], reactions: [], reply_to: replyContext?.replyTo ?? null, attachments: [] };
       return reply.status(201).send(ok({ message }));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -855,7 +856,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
     preHandler: requireAuth,
     config: { rateLimit: { max: 30, timeWindow: 60_000 } },
   }, async (request, reply) => {
-    let uploadedKey: string | null = null;
+    const uploadedKeys: string[] = [];
     try {
       const { id } = ChatIdParamsSchema.parse(request.params);
       const callerId = parseInt(request.user!.sub, 10);
@@ -908,6 +909,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         const map: Record<string, [number, string, string]> = {
           NO_FILE: [400, 'NO_FILE', 'No image file provided'],
           FILE_TOO_LARGE: [413, 'FILE_TOO_LARGE', `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`],
+          TOO_MANY_IMAGES: [400, 'TOO_MANY_IMAGES', `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`],
           UNSUPPORTED_TYPE: [400, 'UNSUPPORTED_TYPE', 'Unsupported image type (allowed: jpeg, png, gif, webp)'],
         };
         const [status, code, message] = map[parsed.error];
@@ -932,10 +934,18 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         }
       }
 
-      uploadedKey = buildChatImageKey(id, parsed.ext);
-      await uploadFile(uploadedKey, parsed.buffer, parsed.mimetype);
+      // Upload every image first, tracking keys so any failure cleans them all up.
+      const attachments = parsed.files.map((f) => ({
+        key: buildChatImageKey(id, f.ext),
+        mimetype: f.mimetype,
+        byteSize: f.buffer.length,
+      }));
+      for (let i = 0; i < parsed.files.length; i++) {
+        await uploadFile(attachments[i].key, parsed.files[i].buffer, attachments[i].mimetype);
+        uploadedKeys.push(attachments[i].key);
+      }
 
-      // Insert message + attachment atomically.
+      // Insert message + attachments atomically.
       const client = await pool.connect();
       let messageRow: any;
       try {
@@ -952,11 +962,14 @@ export async function chatsRoutes(fastify: FastifyInstance) {
           [id, callerId, caption, replyToRaw]
         );
         messageRow = inserted.rows[0];
-        await client.query(
-          `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [messageRow.id, id, uploadedKey, parsed.mimetype, parsed.buffer.length]
-        );
+        for (let i = 0; i < attachments.length; i++) {
+          const a = attachments[i];
+          await client.query(
+            `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size, position)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [messageRow.id, id, a.key, a.mimetype, a.byteSize, i]
+          );
+        }
         await client.query('COMMIT');
       } catch (txError) {
         await client.query('ROLLBACK').catch(() => {});
@@ -988,18 +1001,18 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         ...messageRow,
         reactions: [],
         reply_to: replyContext?.replyTo ?? null,
-        attachment: {
-          url: chatImageUrl(uploadedKey),
-          content_type: parsed.mimetype,
+        attachments: attachments.map((a) => ({
+          url: chatImageUrl(a.key),
+          content_type: a.mimetype,
           width: null,
           height: null,
-          byte_size: parsed.buffer.length,
+          byte_size: a.byteSize,
           expired: false,
-        },
+        })),
       };
       return reply.status(201).send(ok({ message }));
     } catch (error: any) {
-      if (uploadedKey) await deleteFile(uploadedKey).catch(() => {});
+      await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
       }

@@ -30,9 +30,10 @@ import {
   parseImageUpload,
   buildChatImageKey,
   chatImageUrl,
-  withAttachmentUrl,
-  ATTACHMENT_SELECT,
+  withAttachmentUrls,
+  ATTACHMENTS_SELECT,
   MAX_IMAGE_BYTES,
+  MAX_IMAGES_PER_MESSAGE,
 } from '../services/chat-images';
 import { broadcastNotificationBump } from './websocket';
 
@@ -90,9 +91,10 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         enabled: config.enabled,
         max_message_length: config.max_message_length,
         // Image feature flags (the kill switch is a global master, so clients can
-        // use it to gate the image button in DMs too) + the upload size cap.
+        // use it to gate the image button in DMs too) + the upload limits.
         images_enabled: config.images_enabled,
         max_image_bytes: MAX_IMAGE_BYTES,
+        max_images_per_message: MAX_IMAGES_PER_MESSAGE,
         last_message_at: chat?.last_message_at ?? null,
       }));
     } catch (error) {
@@ -136,7 +138,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
-                ${ATTACHMENT_SELECT},
+                ${ATTACHMENTS_SELECT},
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id${REPLY_TO_JOINS}
@@ -163,7 +165,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       // Don't leak the raw deleter id publicly; expose only the admin-vs-author
       // distinction. deleted_by === author → self-delete ("by user"); a different
       // deleter → admin moderation ("by Admin").
-      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrl({
+      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrls({
         ...m,
         body: m.deleted_at ? null : m.body,
         deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
@@ -202,10 +204,10 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
     callerAddress: string;
     body: string; // text body, or image caption (may be empty)
     replyToMessageId: string | null;
-    attachment: { storageKey: string; mimetype: string; byteSize: number } | null;
+    attachments: { storageKey: string; mimetype: string; byteSize: number }[];
     config?: GlobalChatConfig;
   }): Promise<CreateGlobalResult> {
-    const { callerId, callerAddress, body, replyToMessageId, attachment } = params;
+    const { callerId, callerAddress, body, replyToMessageId, attachments } = params;
     const config = params.config ?? (await getGlobalChatConfig());
 
     if (!config.enabled) {
@@ -234,7 +236,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
 
     const tier = await getUserTier(callerAddress);
     const limit = tierLimit(tier, config);
-    const contentType = attachment ? 'image' : 'text';
+    const contentType = attachments.length > 0 ? 'image' : 'text';
 
     // CTE: insert + join users so the response carries sender_address (the
     // frontend resolves identity from it, same as DMs). The 0859 trigger fires
@@ -275,11 +277,12 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       }
       const inserted = await client.query(insertSql, insertParams);
       messageRow = inserted.rows[0];
-      if (attachment) {
+      for (let i = 0; i < attachments.length; i++) {
+        const a = attachments[i];
         await client.query(
-          `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [messageRow.id, GLOBAL_CHAT_ID, attachment.storageKey, attachment.mimetype, attachment.byteSize]
+          `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size, position)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [messageRow.id, GLOBAL_CHAT_ID, a.storageKey, a.mimetype, a.byteSize, i]
         );
       }
       await client.query('COMMIT');
@@ -323,16 +326,14 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       ...messageRow,
       reactions: [],
       reply_to: replyContext?.replyTo ?? null,
-      attachment: attachment
-        ? {
-            url: chatImageUrl(attachment.storageKey),
-            content_type: attachment.mimetype,
-            width: null,
-            height: null,
-            byte_size: attachment.byteSize,
-            expired: false,
-          }
-        : null,
+      attachments: attachments.map((a) => ({
+        url: chatImageUrl(a.storageKey),
+        content_type: a.mimetype,
+        width: null,
+        height: null,
+        byte_size: a.byteSize,
+        expired: false,
+      })),
     };
     return { ok: true, message, quota };
   }
@@ -360,7 +361,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         callerAddress: request.user!.address,
         body,
         replyToMessageId: reply_to_message_id ?? null,
-        attachment: null,
+        attachments: [],
       });
       if (!result.ok) {
         return sendError(reply, result.status, result.code, result.message, result.details);
@@ -390,7 +391,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       },
     },
   }, async (request, reply) => {
-    let uploadedKey: string | null = null;
+    const uploadedKeys: string[] = [];
     try {
       const callerId = parseInt(request.user!.sub, 10);
       const callerAddress = request.user!.address;
@@ -415,6 +416,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         const map: Record<string, [number, string, string]> = {
           NO_FILE: [400, 'NO_FILE', 'No image file provided'],
           FILE_TOO_LARGE: [413, 'FILE_TOO_LARGE', `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`],
+          TOO_MANY_IMAGES: [400, 'TOO_MANY_IMAGES', `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`],
           UNSUPPORTED_TYPE: [400, 'UNSUPPORTED_TYPE', 'Unsupported image type (allowed: jpeg, png, gif, webp)'],
         };
         const [status, code, message] = map[parsed.error];
@@ -435,25 +437,32 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         );
       }
 
-      uploadedKey = buildChatImageKey(GLOBAL_CHAT_ID, parsed.ext);
-      await uploadFile(uploadedKey, parsed.buffer, parsed.mimetype);
+      // Upload every image first, tracking keys so any failure (here or in the
+      // insert) cleans them all up rather than orphaning objects in the bucket.
+      const attachments = [];
+      for (const f of parsed.files) {
+        const key = buildChatImageKey(GLOBAL_CHAT_ID, f.ext);
+        await uploadFile(key, f.buffer, f.mimetype);
+        uploadedKeys.push(key);
+        attachments.push({ storageKey: key, mimetype: f.mimetype, byteSize: f.buffer.length });
+      }
 
       const result = await createGlobalMessage({
         callerId,
         callerAddress,
         body: caption,
         replyToMessageId: replyToRaw,
-        attachment: { storageKey: uploadedKey, mimetype: parsed.mimetype, byteSize: parsed.buffer.length },
+        attachments,
         config,
       });
       if (!result.ok) {
-        // The insert failed (e.g. quota) — don't orphan the uploaded object.
-        await deleteFile(uploadedKey).catch(() => {});
+        // The insert failed (e.g. quota) — don't orphan the uploaded objects.
+        await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
         return sendError(reply, result.status, result.code, result.message, result.details);
       }
       return reply.status(201).send(ok({ message: result.message, quota: result.quota }));
     } catch (error: any) {
-      if (uploadedKey) await deleteFile(uploadedKey).catch(() => {});
+      await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
       }

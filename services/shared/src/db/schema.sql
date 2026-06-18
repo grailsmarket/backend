@@ -234,6 +234,8 @@ CREATE TABLE IF NOT EXISTS message_attachments (
     byte_size    INTEGER     NOT NULL,
     width        INTEGER,
     height       INTEGER,
+    -- Stable client-facing order within a message (0-based); see migration 0893.
+    position     SMALLINT    NOT NULL DEFAULT 0,
     created_at   TIMESTAMP   NOT NULL DEFAULT NOW(),
     expired_at   TIMESTAMP
 );

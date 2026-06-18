@@ -5,7 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
 import { config, getPostgresPool } from '../../shared/src';
-import { MAX_IMAGE_BYTES } from './services/chat-images';
+import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE } from './services/chat-images';
 import { registerRoutes } from './routes';
 import { errorHandler } from './middleware/error-handler';
 import { logger } from './utils/logger';
@@ -43,9 +43,10 @@ async function start() {
 
   await fastify.register(websocket);
 
-  // Chat image uploads (multipart). One image file per request, size-capped.
+  // Chat image uploads (multipart). Up to MAX_IMAGES_PER_MESSAGE files/request,
+  // each size-capped at MAX_IMAGE_BYTES.
   await fastify.register(multipart, {
-    limits: { fileSize: MAX_IMAGE_BYTES, files: 1 },
+    limits: { fileSize: MAX_IMAGE_BYTES, files: MAX_IMAGES_PER_MESSAGE },
   });
 
   fastify.setErrorHandler(errorHandler as any);
