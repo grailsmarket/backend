@@ -18,6 +18,8 @@ import { registerOnchainActivityWorker } from './workers/onchain-activity';
 import { registerApiLogCleanupWorker } from './workers/api-log-cleanup';
 import { registerPersonaClassificationWorker } from './workers/persona-classification';
 import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-backfill';
+import { registerGlobalChatRetentionWorker } from './workers/global-chat-retention';
+import { registerExpireChatImagesWorker } from './workers/expire-chat-images';
 import { logger } from './utils/logger';
 import { closeAllConnections } from '../../shared/src';
 
@@ -71,6 +73,10 @@ async function start() {
 
     // Register Google metrics backfill worker
     await registerGoogleMetricsBackfillWorker(boss);
+
+    // Register chat retention + image-expiry workers
+    await registerGlobalChatRetentionWorker(boss);
+    await registerExpireChatImagesWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

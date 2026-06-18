@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
+import { expireMessageAttachments } from '../services/chat-images';
 import { broadcastChatDeletedEvent, broadcastGlobalChatDeletedEvent } from './websocket';
 import {
   GLOBAL_CHAT_ID,
@@ -157,6 +158,11 @@ const GlobalConfigPatchSchema = z.object({
   quota_without_name: z.number().int().min(0).optional(),
   max_message_length: z.number().int().min(1).max(4000).optional(),
   rate_limit_per_minute: z.number().int().min(1).max(600).optional(),
+  // Master kill switch for image sending across all chats.
+  images_enabled: z.boolean().optional(),
+  // GLOBAL-only message cap; ALL-chats image expiry. Capped at ~10 years.
+  message_retention_days: z.number().int().min(1).max(3650).optional(),
+  image_retention_days: z.number().int().min(1).max(3650).optional(),
 }).refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
 export async function chatsAdminRoutes(fastify: FastifyInstance) {
@@ -395,6 +401,9 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         const messageIds = updated.rows.map((r) => r.id);
         const affectedChatIds = Array.from(new Set(updated.rows.map((r) => r.chat_id)));
 
+        // Pull any attached images from the bucket now (best-effort).
+        await expireMessageAttachments(pool, messageIds);
+
         await pool.query(
           `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)
            VALUES ($1, $2, 'delete_messages', $3, $4)`,
@@ -579,6 +588,9 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         if (updated.rows.length === 0) {
           return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or already deleted');
         }
+
+        // Pull any attached image from the bucket now (best-effort).
+        await expireMessageAttachments(pool, [messageId]);
 
         await pool.query(
           `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)

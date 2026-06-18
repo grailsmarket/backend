@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_user_id  INTEGER NOT NULL,
     body            TEXT NOT NULL,
     content_type    VARCHAR(16) NOT NULL DEFAULT 'text'
-                      CHECK (content_type IN ('text')),
+                      CHECK (content_type IN ('text', 'image')),
     metadata        JSONB,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     edited_at       TIMESTAMP,
@@ -221,6 +221,27 @@ CREATE TABLE IF NOT EXISTS message_blocks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_message_blocks_blocked ON message_blocks(blocked_user_id);
+
+-- Image attachments on chat messages (mirror of migration 0891_create_message_attachments.sql).
+-- storage_key references an object in the Railway S3-compatible bucket; created_at +
+-- expired_at drive the 180-day image-expiry worker.
+CREATE TABLE IF NOT EXISTS message_attachments (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id   UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    chat_id      UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    storage_key  TEXT        NOT NULL,
+    content_type VARCHAR(64) NOT NULL,
+    byte_size    INTEGER     NOT NULL,
+    width        INTEGER,
+    height       INTEGER,
+    created_at   TIMESTAMP   NOT NULL DEFAULT NOW(),
+    expired_at   TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_msg_attach_message ON message_attachments (message_id);
+CREATE INDEX IF NOT EXISTS idx_msg_attach_live_age
+  ON message_attachments (created_at) WHERE expired_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_msg_attach_storage_key ON message_attachments (storage_key);
 
 -- AFTER INSERT trigger on messages: updates chats.last_message_at and emits
 -- pg_notify('chat_message_created', {message_id, chat_id}) for the in-process
@@ -306,6 +327,12 @@ CREATE TABLE IF NOT EXISTS global_chat_config (
     max_message_length    INTEGER NOT NULL DEFAULT 1000,
     -- Per-user per-minute send rate limit (0885); distinct from daily quotas
     rate_limit_per_minute INTEGER NOT NULL DEFAULT 10,
+    -- Chat-image controls (0892): images_enabled is the master kill switch for
+    -- image sending in ALL chats; message_retention_days hard-deletes GLOBAL
+    -- messages older than N days; image_retention_days expires images (all chats).
+    images_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    message_retention_days INTEGER NOT NULL DEFAULT 30,
+    image_retention_days   INTEGER NOT NULL DEFAULT 180,
     updated_at            TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

@@ -38,6 +38,7 @@ import { broadcastImagesRoutes } from './broadcast-images';
 import { chatsRoutes } from './chats';
 import { chatsAdminRoutes } from './chats-admin';
 import { chatsGlobalRoutes } from './chats-global';
+import { chatImagesRoutes } from './chat-images';
 import { blocksRoutes } from './blocks';
 import { commentsRoutes } from './comments';
 import { feedRoutes } from './feed';
@@ -83,6 +84,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(broadcastImagesRoutes, { prefix: '/api/v1/broadcasts/images' });
   fastify.register(chatsAdminRoutes, { prefix: '/api/v1/chats/admin' });
   fastify.register(chatsGlobalRoutes, { prefix: '/api/v1/chats/global' });
+  fastify.register(chatImagesRoutes, { prefix: '/api/v1/chats/images' });
   fastify.register(chatsRoutes, { prefix: '/api/v1/chats' });
   fastify.register(blocksRoutes, { prefix: '/api/v1/me/blocks' });
   fastify.register(commentsRoutes, { prefix: '/api/v1/comments' });
