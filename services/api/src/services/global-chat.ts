@@ -20,6 +20,12 @@ export interface GlobalChatConfig {
   max_message_length: number;
   /** Per-user per-minute send rate limit (distinct from daily quotas). */
   rate_limit_per_minute: number;
+  /** Master kill switch for image sending in ALL chats (not just global). */
+  images_enabled: boolean;
+  /** GLOBAL chat only: hard-delete messages older than this many days. */
+  message_retention_days: number;
+  /** ALL chats: expire (delete from bucket) images older than this many days. */
+  image_retention_days: number;
 }
 
 export interface GlobalQuotaSnapshot {
@@ -40,7 +46,8 @@ export async function getGlobalChatConfig(): Promise<GlobalChatConfig> {
         const parsed = JSON.parse(cached) as GlobalChatConfig;
         // Shape guard: a blob cached by an older deploy may lack newer
         // fields — fall through to the DB instead of returning a partial.
-        if (typeof parsed?.rate_limit_per_minute === 'number') {
+        // Check the newest field (images_enabled, 0892) so stale blobs miss.
+        if (typeof parsed?.images_enabled === 'boolean') {
           return parsed;
         }
       }
@@ -80,7 +87,8 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
   const pool = getPostgresPool();
   const result = await pool.query(
     `SELECT enabled, quota_with_avatar, quota_with_name, quota_without_name,
-            max_message_length, rate_limit_per_minute
+            max_message_length, rate_limit_per_minute,
+            images_enabled, message_retention_days, image_retention_days
        FROM global_chat_config WHERE id = 1`
   );
   if (result.rows.length === 0) {
@@ -92,6 +100,9 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
       quota_without_name: 1,
       max_message_length: 1000,
       rate_limit_per_minute: 10,
+      images_enabled: true,
+      message_retention_days: 30,
+      image_retention_days: 180,
     };
   }
   const row = result.rows[0];
@@ -103,6 +114,9 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
     quota_without_name: Number(row.quota_without_name),
     max_message_length: Number(row.max_message_length),
     rate_limit_per_minute: Number(row.rate_limit_per_minute),
+    images_enabled: Boolean(row.images_enabled),
+    message_retention_days: Number(row.message_retention_days),
+    image_retention_days: Number(row.image_retention_days),
   };
 }
 
