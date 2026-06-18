@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { FastifyRequest } from 'fastify';
 import { getPostgresPool, deleteFile, isStorageEnabled } from '../../../shared/src';
+import { logger } from '../utils/logger';
 
 /**
  * Shared helpers for chat image attachments: upload parsing/validation, storage
@@ -180,24 +181,33 @@ export async function expireMessageAttachments(
   messageIds: string[]
 ): Promise<void> {
   if (messageIds.length === 0 || !isStorageEnabled()) return;
-  const rows = await pool.query<{ id: string; storage_key: string }>(
-    `SELECT id, storage_key FROM message_attachments
-      WHERE message_id = ANY($1::uuid[]) AND expired_at IS NULL`,
-    [messageIds]
-  );
-  const succeeded: string[] = [];
-  for (const r of rows.rows) {
-    try {
-      await deleteFile(r.storage_key);
-      succeeded.push(r.id);
-    } catch {
-      // leave expired_at NULL so the image-expiry worker retries later
-    }
-  }
-  if (succeeded.length > 0) {
-    await pool.query(
-      `UPDATE message_attachments SET expired_at = NOW() WHERE id = ANY($1::uuid[])`,
-      [succeeded]
+  // Wrap the whole body: callers await this immediately before critical writes
+  // (the soft-delete / moderation-log INSERT) with no try/catch of their own, so
+  // a transient DB error here must NOT propagate and abort their flow. The
+  // image-expiry worker is the backstop — anything still expired_at IS NULL gets
+  // re-processed on the next run.
+  try {
+    const rows = await pool.query<{ id: string; storage_key: string }>(
+      `SELECT id, storage_key FROM message_attachments
+        WHERE message_id = ANY($1::uuid[]) AND expired_at IS NULL`,
+      [messageIds]
     );
+    const succeeded: string[] = [];
+    for (const r of rows.rows) {
+      try {
+        await deleteFile(r.storage_key);
+        succeeded.push(r.id);
+      } catch {
+        // leave expired_at NULL so the image-expiry worker retries later
+      }
+    }
+    if (succeeded.length > 0) {
+      await pool.query(
+        `UPDATE message_attachments SET expired_at = NOW() WHERE id = ANY($1::uuid[])`,
+        [succeeded]
+      );
+    }
+  } catch (err) {
+    logger.error({ err, messageIds }, 'expireMessageAttachments failed (non-fatal)');
   }
 }
