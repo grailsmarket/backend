@@ -1,10 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, GLOBAL_CHAT_ID } from '../../../shared/src';
 import { getRedisClient } from '../utils/redis';
 
 // The single well-known global chat room, seeded by migration 0880. It has no
-// chat_participants rows; routes and WS fan-out branch on this UUID.
-export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';
+// chat_participants rows; routes and WS fan-out branch on this UUID. Defined in
+// shared so the API, workers, and migrations can't drift; re-exported here so
+// existing importers of `../services/global-chat` keep working.
+export { GLOBAL_CHAT_ID };
 
 const TIER_CACHE_TTL_SECONDS = 300;
 const CONFIG_CACHE_TTL_SECONDS = 30;

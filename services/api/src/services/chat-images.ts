@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { FastifyRequest } from 'fastify';
+import { getPostgresPool, deleteFile, isStorageEnabled } from '../../../shared/src';
 
 /**
  * Shared helpers for chat image attachments: upload parsing/validation, storage
@@ -25,6 +26,41 @@ export const ALLOWED_IMAGE_MIME: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
 };
+
+/**
+ * Detect an allowed image type from a buffer's magic bytes, returning the MIME
+ * string or null. Trusting the client's multipart Content-Type is unsafe — it's
+ * attacker-controlled — so we sniff the real bytes instead of relying on a
+ * heavier dependency like `file-type` (which is ESM-only and awkward in this
+ * CommonJS build). Covers exactly the four formats we accept.
+ */
+export function sniffImageMime(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  // GIF: "GIF87a" or "GIF89a"
+  if (
+    buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38 &&
+    (buf[4] === 0x37 || buf[4] === 0x39) && buf[5] === 0x61
+  ) {
+    return 'image/gif';
+  }
+  // WEBP: "RIFF" .... "WEBP"
+  if (
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
 
 /**
  * SQL fragment selecting a single attachment as a JSON object (or NULL) for a
@@ -96,19 +132,16 @@ export async function parseImageUpload(
   request: FastifyRequest
 ): Promise<ParsedImageUpload | { error: ParseImageError }> {
   let buffer: Buffer | null = null;
-  let mimetype = '';
   const fields: Record<string, string> = {};
 
   const parts = request.parts({ limits: { fileSize: MAX_IMAGE_BYTES, files: 1 } });
   try {
     for await (const part of parts) {
       if (part.type === 'file') {
-        mimetype = part.mimetype;
-        const buf = await part.toBuffer();
-        if ((part as any).file?.truncated) {
-          return { error: 'FILE_TOO_LARGE' };
-        }
-        buffer = buf;
+        // toBuffer() throws FST_REQ_FILE_TOO_LARGE if the size limit is breached
+        // (handled by the catch below) — the stream `truncated` flag is only set
+        // when consuming the stream manually, so there's no separate check here.
+        buffer = await part.toBuffer();
       } else {
         fields[part.fieldname] = String((part as any).value ?? '');
       }
@@ -122,8 +155,49 @@ export async function parseImageUpload(
   }
 
   if (!buffer) return { error: 'NO_FILE' };
-  const ext = ALLOWED_IMAGE_MIME[mimetype];
-  if (!ext) return { error: 'UNSUPPORTED_TYPE' };
+
+  // Validate against the file's actual magic bytes, NOT the client-declared
+  // Content-Type (which is fully attacker-controlled). The sniffed type is
+  // authoritative for both the stored content_type and the key extension.
+  const mimetype = sniffImageMime(buffer);
+  const ext = mimetype ? ALLOWED_IMAGE_MIME[mimetype] : undefined;
+  if (!mimetype || !ext) return { error: 'UNSUPPORTED_TYPE' };
 
   return { buffer, mimetype, ext, fields };
+}
+
+/**
+ * Pull the bucket objects for the given messages and stamp `expired_at` on the
+ * rows we successfully removed (failed deletes stay unexpired so the
+ * image-expiry worker retries them later). Best-effort: never throws.
+ *
+ * Called by both user self-delete and admin moderation so a deleted message's
+ * image stops being served immediately, rather than lingering in the bucket
+ * (and reachable via its URL) until the 180-day expiry sweep.
+ */
+export async function expireMessageAttachments(
+  pool: ReturnType<typeof getPostgresPool>,
+  messageIds: string[]
+): Promise<void> {
+  if (messageIds.length === 0 || !isStorageEnabled()) return;
+  const rows = await pool.query<{ id: string; storage_key: string }>(
+    `SELECT id, storage_key FROM message_attachments
+      WHERE message_id = ANY($1::uuid[]) AND expired_at IS NULL`,
+    [messageIds]
+  );
+  const succeeded: string[] = [];
+  for (const r of rows.rows) {
+    try {
+      await deleteFile(r.storage_key);
+      succeeded.push(r.id);
+    } catch {
+      // leave expired_at NULL so the image-expiry worker retries later
+    }
+  }
+  if (succeeded.length > 0) {
+    await pool.query(
+      `UPDATE message_attachments SET expired_at = NOW() WHERE id = ANY($1::uuid[])`,
+      [succeeded]
+    );
+  }
 }

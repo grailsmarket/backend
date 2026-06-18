@@ -77,11 +77,16 @@ export async function chatImagesRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // Global-chat images are public, so let shared caches (CDN/proxy) store
+    // them; DM/group images are auth-gated and must stay private.
+    const cacheControl =
+      chat_id === GLOBAL_CHAT_ID ? 'public, max-age=86400' : 'private, max-age=86400';
+
     const cached = imageCache.get(fullKey);
     if (cached && Date.now() - cached.cachedAt < IMAGE_CACHE_TTL_MS) {
       return reply
         .header('Content-Type', cached.contentType)
-        .header('Cache-Control', 'private, max-age=86400')
+        .header('Cache-Control', cacheControl)
         .send(cached.body);
     }
 
@@ -100,7 +105,7 @@ export async function chatImagesRoutes(fastify: FastifyInstance) {
 
       return reply
         .header('Content-Type', file.contentType)
-        .header('Cache-Control', 'private, max-age=86400')
+        .header('Cache-Control', cacheControl)
         .send(file.body);
     } catch (error) {
       fastify.log.error(error);

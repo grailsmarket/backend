@@ -35,6 +35,7 @@ import {
   buildChatImageKey,
   chatImageUrl,
   withAttachmentUrl,
+  expireMessageAttachments,
   ATTACHMENT_SELECT,
   MAX_IMAGE_BYTES,
 } from '../services/chat-images';
@@ -1073,6 +1074,11 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         // Either not found, not in chat, not the sender, or already deleted.
         return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not deletable');
       }
+
+      // Pull any attached image from the bucket immediately (best-effort) — a
+      // user deleting a message they regret posting shouldn't leave the image
+      // reachable until the 180-day sweep. Mirrors the admin-delete path.
+      await expireMessageAttachments(pool, [messageId]);
 
       // Self-delete → deleted_by_admin: false. The global room has no
       // chat_participants rows, so it must fan out to global subscribers

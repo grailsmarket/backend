@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, deleteFile, isStorageEnabled } from '../../../shared/src';
+import { getPostgresPool, deleteFile, isStorageEnabled, GLOBAL_CHAT_ID } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 /**
@@ -13,8 +13,6 @@ import { logger } from '../utils/logger';
 
 const QUEUE_NAME = 'cleanup-global-chat-messages';
 const CRON_SCHEDULE = '0 4 * * *'; // daily, 4 AM UTC
-// Fixed UUID of the global "Grails Chat" room (GLOBAL_CHAT_ID; seeded by 0880).
-const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';
 const DEFAULT_RETENTION_DAYS = 30;
 const BATCH_SIZE = 500;
 

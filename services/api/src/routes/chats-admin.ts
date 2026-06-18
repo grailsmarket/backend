@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, deleteFile, isStorageEnabled, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
+import { expireMessageAttachments } from '../services/chat-images';
 import { broadcastChatDeletedEvent, broadcastGlobalChatDeletedEvent } from './websocket';
 import {
   GLOBAL_CHAT_ID,
@@ -105,39 +106,6 @@ async function setChatStatus(
        updated_at = NOW()`,
     [userId, status, bannedAt, adminId, reason]
   );
-}
-
-/**
- * Moderation should pull offending images immediately, not wait for the 180-day
- * expiry sweep. Deletes the bucket objects for the given messages and stamps
- * `expired_at` on the rows we successfully removed (failed deletes stay
- * unexpired so the worker can retry). Best-effort: never throws.
- */
-async function expireAttachmentsForMessages(
-  pool: ReturnType<typeof getPostgresPool>,
-  messageIds: string[]
-): Promise<void> {
-  if (messageIds.length === 0 || !isStorageEnabled()) return;
-  const rows = await pool.query<{ id: string; storage_key: string }>(
-    `SELECT id, storage_key FROM message_attachments
-      WHERE message_id = ANY($1::uuid[]) AND expired_at IS NULL`,
-    [messageIds]
-  );
-  const succeeded: string[] = [];
-  for (const r of rows.rows) {
-    try {
-      await deleteFile(r.storage_key);
-      succeeded.push(r.id);
-    } catch {
-      // leave expired_at NULL so the image-expiry worker retries later
-    }
-  }
-  if (succeeded.length > 0) {
-    await pool.query(
-      `UPDATE message_attachments SET expired_at = NOW() WHERE id = ANY($1::uuid[])`,
-      [succeeded]
-    );
-  }
 }
 
 async function insertChatModNotification(
@@ -434,7 +402,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         const affectedChatIds = Array.from(new Set(updated.rows.map((r) => r.chat_id)));
 
         // Pull any attached images from the bucket now (best-effort).
-        await expireAttachmentsForMessages(pool, messageIds);
+        await expireMessageAttachments(pool, messageIds);
 
         await pool.query(
           `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)
@@ -622,7 +590,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         }
 
         // Pull any attached image from the bucket now (best-effort).
-        await expireAttachmentsForMessages(pool, [messageId]);
+        await expireMessageAttachments(pool, [messageId]);
 
         await pool.query(
           `INSERT INTO chat_moderation_log (user_id, admin_id, action, reason, metadata)
