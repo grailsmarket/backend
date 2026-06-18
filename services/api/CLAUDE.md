@@ -319,7 +319,7 @@ A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`typ
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, last_message_at }`. Cached 15s. |
+| GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, images_enabled, max_image_bytes, last_message_at }`. Cached 15s. |
 | GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `reactions`. Identity is resolved client-side from `sender_address` (same as DMs). |
 | POST   | `/chats/global/messages` | Yes | Send `{ body }` + optional `reply_to_message_id` (live global message, else 400 `INVALID_REPLY_TARGET`). 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. Fires `chat_reply`/`chat_mention` notifications. |
 | POST   | `/chats/global/messages/image` | Yes | Image variant (multipart: `file` + optional `body` caption + optional `reply_to_message_id`). Same quota/ban/rate-limit enforcement as the text send; counts as one message against the daily quota. Gated by `images_enabled` (403 `IMAGES_DISABLED`). 201 → `{ message, quota }` where `message.attachment` carries the served image URL. |

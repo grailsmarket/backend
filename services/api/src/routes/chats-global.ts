@@ -89,6 +89,10 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         title: chat?.title ?? 'Grails Chat',
         enabled: config.enabled,
         max_message_length: config.max_message_length,
+        // Image feature flags (the kill switch is a global master, so clients can
+        // use it to gate the image button in DMs too) + the upload size cap.
+        images_enabled: config.images_enabled,
+        max_image_bytes: MAX_IMAGE_BYTES,
         last_message_at: chat?.last_message_at ?? null,
       }));
     } catch (error) {
