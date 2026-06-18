@@ -293,7 +293,7 @@ Direct (1:1) messaging in v1. Schema is group-chat-ready; group endpoints are de
 | GET    | `/chats/:id` | Yes | Chat detail with participants and each participant's `last_read_message_id`. |
 | GET    | `/chats/:id/messages` | Yes | Cursor pagination via `?before=<message-uuid>&limit=<1-100>`. |
 | POST   | `/chats/:id/messages` | Yes | Send a message: `{ body }` (1–4000 chars) + optional `reply_to_message_id` (must be a live message in the same chat, else 400 `INVALID_REPLY_TARGET`). Per-route rate limit: 30/min. Fires `chat_reply`/`chat_mention` notifications. |
-| POST   | `/chats/:id/messages/image` | Yes | Send an image (multipart: `file` + optional `body` caption + optional `reply_to_message_id`). Gated by the `images_enabled` master switch (403 `IMAGES_DISABLED`). 413 `FILE_TOO_LARGE`, 400 `UNSUPPORTED_TYPE`/`NO_FILE`, 503 `STORAGE_UNAVAILABLE`. Inserts a `messages` row (`content_type='image'`) + a `message_attachments` row atomically; on failure the bucket object is cleaned up. Response message carries an `attachment: { url, content_type, width, height, byte_size, expired }`. |
+| POST   | `/chats/:id/messages/image` | Yes | Send 1–`MAX_IMAGES_PER_MESSAGE` images (multipart: repeated `file` parts + optional `body` caption + optional `reply_to_message_id`). Gated by the `images_enabled` master switch (403 `IMAGES_DISABLED`). 413 `FILE_TOO_LARGE`, 400 `TOO_MANY_IMAGES`/`UNSUPPORTED_TYPE`/`NO_FILE`, 503 `STORAGE_UNAVAILABLE`. Inserts a `messages` row (`content_type='image'`) + one `message_attachments` row per image atomically (with `position`); on any failure all uploaded bucket objects are cleaned up. Response message carries `attachments: [{ url, content_type, width, height, byte_size, expired }]` (ordered). |
 | POST   | `/chats/:id/read` | Yes | Mark read: `{ up_to_message_id }`. Broadcasts `chat:read` over WS. |
 | DELETE | `/chats/:id/messages/:messageId` | Yes | Soft-delete caller's own message (records `deleted_by = caller`). Also serves the global room (`:id` = global UUID) — branches WS to global subscribers. |
 | PATCH  | `/chats/:id/messages/:messageId` | Yes | Edit caller's own message: `{ body }` (1–4000). Stamps `edited_at`, broadcasts `chat:message_edited`. 404 if not the sender or already deleted. Also serves the global room (enforces `max_message_length` there). |
@@ -319,10 +319,10 @@ A single room seeded as `chats` row `00000000-0000-0000-0000-000000000001` (`typ
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, images_enabled, max_image_bytes, last_message_at }`. Cached 15s. |
+| GET    | `/chats/global` | No | Room info: `{ chat_id, title, enabled, max_message_length, images_enabled, max_image_bytes, max_images_per_message, last_message_at }`. Cached 15s. |
 | GET    | `/chats/global/messages` | Optional | Public cursor pagination (`?before&limit`), same shape as DM messages plus `reactions`. Identity is resolved client-side from `sender_address` (same as DMs). |
 | POST   | `/chats/global/messages` | Yes | Send `{ body }` + optional `reply_to_message_id` (live global message, else 400 `INVALID_REPLY_TARGET`). 201 → `{ message, quota }`. Errors: 403 `GLOBAL_CHAT_DISABLED`/`CHAT_BANNED`, 400 `MESSAGE_TOO_LONG`, 429 `QUOTA_EXCEEDED` (details = quota snapshot). Rate limit 10/min. Fires `chat_reply`/`chat_mention` notifications. |
-| POST   | `/chats/global/messages/image` | Yes | Image variant (multipart: `file` + optional `body` caption + optional `reply_to_message_id`). Same quota/ban/rate-limit enforcement as the text send; counts as one message against the daily quota. Gated by `images_enabled` (403 `IMAGES_DISABLED`). 201 → `{ message, quota }` where `message.attachment` carries the served image URL. |
+| POST   | `/chats/global/messages/image` | Yes | Image variant (multipart: 1–`MAX_IMAGES_PER_MESSAGE` repeated `file` parts + optional `body` caption + optional `reply_to_message_id`). Same quota/ban/rate-limit enforcement as the text send; the whole message counts as **one** against the daily quota regardless of image count. Gated by `images_enabled` (403 `IMAGES_DISABLED`); 400 `TOO_MANY_IMAGES` past the cap. 201 → `{ message, quota }` where `message.attachments[]` carries the served image URLs. |
 | GET    | `/chats/global/quota` | Yes | Caller's `{ tier, used, limit, remaining, resets_at }` (`limit: null` = unlimited). |
 | GET    | `/chats/global/online-users` | No | Recently ACTIVE users (24h window of `last_seen_at` — touched by ActivityLogger on any authed request — falling back to `last_sign_in`), newest activity first as `last_active`; excludes stubs and chat-banned users. Cached 15s. |
 
@@ -342,13 +342,13 @@ Admin (all `requireAuth + requireAdmin`, under `/chats/admin`):
 | PATCH  | `/chats/admin/global/config` | Partial update of `enabled`, `quota_with_avatar` (explicit `null` = unlimited), `quota_with_name`, `quota_without_name`, `max_message_length`, `rate_limit_per_minute` (1–600), `images_enabled` (image kill switch, all chats), `message_retention_days` (global-only message cap), `image_retention_days` (all-chats image expiry). Logs `config_update`. |
 
 ### Chat Images
-Users can attach one image per message in any chat (DM or global) via the multipart `…/messages/image` endpoints above. Images are stored in the Railway S3-compatible bucket (`config.storage`) under `chat/<chatId>/<uuid>.<ext>`, recorded in `message_attachments`, and served back through a proxy:
+Users can attach up to `MAX_IMAGES_PER_MESSAGE` images (env `CHAT_MAX_IMAGES_PER_MESSAGE`, default 5) per message in any chat (DM or global) via the multipart `…/messages/image` endpoints above. Images are stored in the Railway S3-compatible bucket (`config.storage`) under `chat/<chatId>/<uuid>.<ext>`, recorded one row per image in `message_attachments` (ordered by `position`), and served back through a proxy:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/chats/images/*` | Optional | Streams a chat image from the bucket (5-min in-memory cache). Global-chat images are public; DM/group images require the caller to be a participant of the owning chat. Returns 410 once expired, 404 if unknown. |
 
-Controls live in `global_chat_config` (admin PATCH above): `images_enabled` is the master kill switch for image sending across **all** chats; `message_retention_days` (default 30) hard-deletes **global** messages past the cap; `image_retention_days` (default 180) expires images in **all** chats. Admin message deletion also pulls the attached bucket object immediately. Upload limits: ≤ `CHAT_IMAGE_MAX_BYTES` (default 10 MB), MIME jpeg/png/gif/webp. Shared helpers in `src/services/chat-images.ts`; serving route in `src/routes/chat-images.ts`.
+Controls live in `global_chat_config` (admin PATCH above): `images_enabled` is the master kill switch for image sending across **all** chats; `message_retention_days` (default 30) hard-deletes **global** messages past the cap; `image_retention_days` (default 180) expires images in **all** chats. Admin/user message deletion also pulls the attached bucket objects immediately. Upload limits: ≤ `CHAT_IMAGE_MAX_BYTES` per image (default 10 MB) and ≤ `CHAT_MAX_IMAGES_PER_MESSAGE` images (default 5); MIME validated by **magic bytes** (jpeg/png/gif/webp), not the client header. Shared helpers in `src/services/chat-images.ts`; serving route in `src/routes/chat-images.ts`.
 
 ### Message Blocks (Auth Required)
 | Method | Path | Auth | Description |
@@ -517,7 +517,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `messages` | Chat messages (UUID PK, soft-delete via `deleted_at`; `deleted_by`/`deleted_reason` attribute who deleted + why; `edited_at` stamped on edit; `reply_to_message_id` self-FK for threaded replies) |
 | `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
 | `message_reactions` | Emoji reactions on messages (PK `(message_id, user_id, emoji)`) |
-| `message_attachments` | Image attachments on messages (`storage_key`, `chat_id`, `byte_size`, `created_at`, `expired_at`); drives the 180-day image-expiry worker |
+| `message_attachments` | Image attachments on messages, one row per image (`storage_key`, `chat_id`, `byte_size`, `position`, `created_at`, `expired_at`); drives the 180-day image-expiry worker |
 | `global_chat_config` | Single-row global chat config (quota tiers, max length, enabled, `images_enabled`, `message_retention_days`, `image_retention_days`) |
 
 ## Environment Variables

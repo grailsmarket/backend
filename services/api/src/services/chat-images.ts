@@ -15,10 +15,14 @@ import { logger } from '../utils/logger';
 // serving route (chat-images.ts) strips this prefix from the request path.
 export const CHAT_IMAGE_KEY_PREFIX = 'chat';
 
-// Max upload size. Overridable via env so ops can tune without a redeploy of the
-// constant; default 10 MB.
+// Max upload size PER IMAGE. Overridable via env so ops can tune without a
+// redeploy of the constant; default 10 MB.
 export const MAX_IMAGE_BYTES =
   parseInt(process.env.CHAT_IMAGE_MAX_BYTES || '', 10) || 10 * 1024 * 1024;
+
+// Max images allowed in a single message. Overridable via env; default 5.
+export const MAX_IMAGES_PER_MESSAGE =
+  parseInt(process.env.CHAT_MAX_IMAGES_PER_MESSAGE || '', 10) || 5;
 
 // Allowed image MIME types → file extension used in the storage key.
 export const ALLOWED_IMAGE_MIME: Record<string, string> = {
@@ -64,24 +68,28 @@ export function sniffImageMime(buf: Buffer): string | null {
 }
 
 /**
- * SQL fragment selecting a single attachment as a JSON object (or NULL) for a
- * message aliased `m`. MVP = one image per message. Returns `storage_key` (not a
- * URL) — call withAttachmentUrl() on the row to turn it into a public `url`.
+ * SQL fragment selecting a message's attachments as a JSON array (empty when
+ * none) for a message aliased `m`, ordered by `position`. Each element carries
+ * `storage_key` (not a URL) — call withAttachmentUrls() on the row to turn each
+ * into a public `url`.
  */
-export const ATTACHMENT_SELECT = `(
-           SELECT json_build_object(
-                    'storage_key', a.storage_key,
-                    'content_type', a.content_type,
-                    'width', a.width,
-                    'height', a.height,
-                    'byte_size', a.byte_size,
-                    'expired', a.expired_at IS NOT NULL
+export const ATTACHMENTS_SELECT = `(
+           SELECT COALESCE(
+                    json_agg(
+                      json_build_object(
+                        'storage_key', a.storage_key,
+                        'content_type', a.content_type,
+                        'width', a.width,
+                        'height', a.height,
+                        'byte_size', a.byte_size,
+                        'expired', a.expired_at IS NOT NULL
+                      ) ORDER BY a.position, a.created_at
+                    ),
+                    '[]'::json
                   )
              FROM message_attachments a
             WHERE a.message_id = m.id
-            ORDER BY a.created_at
-            LIMIT 1
-         ) AS attachment`;
+         ) AS attachments`;
 
 /** Build the public serving URL for a stored chat image key. */
 export function chatImageUrl(storageKey: string): string {
@@ -97,23 +105,34 @@ export function buildChatImageKey(chatId: string, ext: string): string {
 }
 
 /**
- * Replace a serialized message's raw `attachment` (with storage_key) with a
- * client-facing shape carrying a `url` instead. No-op when there's no image.
- * Mutates and returns the same object for convenient use inside `.map()`.
+ * Replace each raw attachment in a serialized message's `attachments` array
+ * (carrying `storage_key`) with a client-facing shape carrying a `url` instead.
+ * No-op when there are no attachments. Mutates and returns the same object for
+ * convenient use inside `.map()`.
  */
-export function withAttachmentUrl<T extends { attachment?: any }>(message: T): T {
-  const a = message.attachment;
-  if (a && typeof a === 'object' && a.storage_key) {
-    const { storage_key, ...rest } = a;
-    (message as any).attachment = { ...rest, url: chatImageUrl(storage_key) };
+export function withAttachmentUrls<T extends { attachments?: any }>(message: T): T {
+  const arr = message.attachments;
+  if (Array.isArray(arr)) {
+    (message as any).attachments = arr.map((a: any) => {
+      if (a && typeof a === 'object' && a.storage_key) {
+        const { storage_key, ...rest } = a;
+        return { ...rest, url: chatImageUrl(storage_key) };
+      }
+      return a;
+    });
   }
   return message;
 }
 
-export interface ParsedImageUpload {
+export interface ParsedImageFile {
   buffer: Buffer;
   mimetype: string;
   ext: string;
+}
+
+export interface ParsedImageUpload {
+  /** One entry per uploaded image, in client order (1..MAX_IMAGES_PER_MESSAGE). */
+  files: ParsedImageFile[];
   /** Non-file form fields (e.g. body/caption, reply_to_message_id). */
   fields: Record<string, string>;
 }
@@ -121,50 +140,62 @@ export interface ParsedImageUpload {
 export type ParseImageError =
   | 'NO_FILE'
   | 'FILE_TOO_LARGE'
+  | 'TOO_MANY_IMAGES'
   | 'UNSUPPORTED_TYPE';
 
 /**
- * Parse a multipart request carrying one image file plus optional text fields.
- * Collects parts in document order, so text fields may appear before or after
- * the file. Returns a discriminated result; never throws on the expected
- * validation failures.
+ * Parse a multipart request carrying up to MAX_IMAGES_PER_MESSAGE image files
+ * (repeated `file` parts) plus optional text fields. Collects parts in document
+ * order, so text fields may appear before, between, or after the files, and the
+ * files keep their upload order. Returns a discriminated result; never throws on
+ * the expected validation failures.
  */
 export async function parseImageUpload(
   request: FastifyRequest
 ): Promise<ParsedImageUpload | { error: ParseImageError }> {
-  let buffer: Buffer | null = null;
+  const buffers: Buffer[] = [];
   const fields: Record<string, string> = {};
 
-  const parts = request.parts({ limits: { fileSize: MAX_IMAGE_BYTES, files: 1 } });
+  const parts = request.parts({
+    limits: { fileSize: MAX_IMAGE_BYTES, files: MAX_IMAGES_PER_MESSAGE },
+  });
   try {
     for await (const part of parts) {
       if (part.type === 'file') {
-        // toBuffer() throws FST_REQ_FILE_TOO_LARGE if the size limit is breached
-        // (handled by the catch below) — the stream `truncated` flag is only set
+        // toBuffer() throws FST_REQ_FILE_TOO_LARGE if the per-file size limit is
+        // breached; exceeding the files count throws FST_FILES_LIMIT. Both are
+        // handled by the catch below — the stream `truncated` flag is only set
         // when consuming the stream manually, so there's no separate check here.
-        buffer = await part.toBuffer();
+        buffers.push(await part.toBuffer());
       } else {
         fields[part.fieldname] = String((part as any).value ?? '');
       }
     }
   } catch (err: any) {
-    // @fastify/multipart throws when the per-file size limit is exceeded.
-    if (err?.code === 'FST_REQ_FILE_TOO_LARGE' || err?.code === 'FST_FILES_LIMIT') {
+    if (err?.code === 'FST_FILES_LIMIT') {
+      return { error: 'TOO_MANY_IMAGES' };
+    }
+    if (err?.code === 'FST_REQ_FILE_TOO_LARGE') {
       return { error: 'FILE_TOO_LARGE' };
     }
     throw err;
   }
 
-  if (!buffer) return { error: 'NO_FILE' };
+  if (buffers.length === 0) return { error: 'NO_FILE' };
 
-  // Validate against the file's actual magic bytes, NOT the client-declared
+  // Validate each file against its actual magic bytes, NOT the client-declared
   // Content-Type (which is fully attacker-controlled). The sniffed type is
-  // authoritative for both the stored content_type and the key extension.
-  const mimetype = sniffImageMime(buffer);
-  const ext = mimetype ? ALLOWED_IMAGE_MIME[mimetype] : undefined;
-  if (!mimetype || !ext) return { error: 'UNSUPPORTED_TYPE' };
+  // authoritative for both the stored content_type and the key extension. If any
+  // file fails, reject the whole upload (the caller uploads nothing).
+  const files: ParsedImageFile[] = [];
+  for (const buffer of buffers) {
+    const mimetype = sniffImageMime(buffer);
+    const ext = mimetype ? ALLOWED_IMAGE_MIME[mimetype] : undefined;
+    if (!mimetype || !ext) return { error: 'UNSUPPORTED_TYPE' };
+    files.push({ buffer, mimetype, ext });
+  }
 
-  return { buffer, mimetype, ext, fields };
+  return { files, fields };
 }
 
 /**
