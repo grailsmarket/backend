@@ -397,15 +397,16 @@ export async function getCachedValuation(label: string): Promise<StoredValuation
 
 /**
  * Projects a valuation result down to the client-facing payload: the appraisal
- * (minus the model id) plus the two headline metrics the UI renders (web2 footprint
- * count and search demand). The methodology-sensitive evidence breakdown stays
- * internal and is never sent over the wire. Accepts either a freshly generated full
- * result or a trimmed cached result — only the always-present `appraisal`/`web2`/
- * `searchDemand` are read. Pure/non-mutating: the input (used for storage and held
- * in the in-flight run) is left untouched.
+ * (minus the model id), the headline web2 + search-demand metrics, the name's
+ * senses, and the comparable-sales count. The methodology-sensitive evidence
+ * breakdown stays internal and is never sent over the wire. Accepts either a
+ * freshly generated full result or a trimmed cached result — only the
+ * always-present `appraisal`/`web2`/`searchDemand`/`nameResearch`/
+ * `marketActivity.summary` are read. Pure/non-mutating: the input (used for
+ * storage and held in the in-flight run) is left untouched.
  */
 export function toPublicValuation(result: ValuationEvidenceResult | StoredValuationResult): PublicValuationResult {
-  const { appraisal, web2, searchDemand } = result.evidence;
+  const { appraisal, web2, searchDemand, nameResearch, marketActivity } = result.evidence;
   const { model: _omitModel, ...publicAppraisal } = appraisal;
   const { monthlyTrend: _omitMonthlyTrend, ...publicSearchDemand } = searchDemand;
   return {
@@ -416,6 +417,8 @@ export function toPublicValuation(result: ValuationEvidenceResult | StoredValuat
       appraisal: publicAppraisal,
       web2: { source: web2.source, lookupLabel: web2.lookupLabel, summary: web2.summary },
       searchDemand: publicSearchDemand,
+      nameResearch: { senses: nameResearch.senses },
+      marketActivity: { salesFound: marketActivity.summary.salesFound },
     },
   };
 }

@@ -201,7 +201,8 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
    * Streams (NDJSON) or returns (JSON) an AI valuation for an ENS name.
    * - Cached results (Tier 2) are public; generation requires auth + quota.
    * - Concurrent requests for the same name attach to one in-flight run.
-   * - `?refresh=true` (authed) bypasses the Tier-2 cache to regenerate.
+   * - A cached result is always served when present; regeneration happens only
+   *   on a cache miss.
    */
   fastify.post(
     '/:name/evidence',
@@ -235,7 +236,6 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
         return sendError(reply, error);
       }
 
-      const refresh = (request.query as { refresh?: string } | undefined)?.refresh === 'true';
       const streaming = wantsStream(request.headers.accept);
       // Use the SAME strict normalization as generation for the cache/join key, so
       // an ineligible input (subname, spaces, etc.) can never alias onto another
@@ -243,8 +243,9 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
       // generation, which returns the precise eligibility error.
       const label = deriveStrictValuationLabel(rawName);
 
-      // 1. Public Tier-2 cache read (skipped on refresh).
-      if (label && !refresh) {
+      // 1. Public Tier-2 cache read. A cached result is always served when
+      //    present; regeneration happens only on a cache miss.
+      if (label) {
         try {
           const cached = await getCachedValuation(label);
           if (cached) {
