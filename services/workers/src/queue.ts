@@ -134,4 +134,6 @@ export const QUEUE_NAMES = {
   FETCH_ONCHAIN_ACTIVITY: 'fetch-onchain-activity',
   CLEANUP_API_REQUEST_LOGS: 'cleanup-api-request-logs',
   BACKFILL_GOOGLE_METRICS: 'backfill-google-metrics',
+  CLEANUP_GLOBAL_CHAT_MESSAGES: 'cleanup-global-chat-messages',
+  EXPIRE_CHAT_IMAGES: 'expire-chat-images',
 } as const;

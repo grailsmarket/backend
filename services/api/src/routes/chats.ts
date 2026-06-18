@@ -1,6 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, config, type APIResponse } from '../../../shared/src';
+import {
+  getPostgresPool,
+  config,
+  uploadFile,
+  deleteFile,
+  isStorageEnabled,
+  type APIResponse,
+} from '../../../shared/src';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import {
   broadcastChatReadEvent,
@@ -23,6 +30,15 @@ import {
   REPLY_TO_PREVIEW_SELECT,
   REPLY_TO_JOINS,
 } from '../services/chat-notifications';
+import {
+  parseImageUpload,
+  buildChatImageKey,
+  chatImageUrl,
+  withAttachmentUrl,
+  expireMessageAttachments,
+  ATTACHMENT_SELECT,
+  MAX_IMAGE_BYTES,
+} from '../services/chat-images';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
@@ -677,6 +693,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.content_type,
                 m.metadata, m.created_at, m.edited_at, m.deleted_at, m.deleted_by,
                 u.address AS sender_address,${REPLY_TO_PREVIEW_SELECT},
+                ${ATTACHMENT_SELECT},
                 COALESCE(r.reactions, '[]'::json) AS reactions
            FROM messages m
            JOIN users u ON u.id = m.sender_user_id${REPLY_TO_JOINS}
@@ -701,7 +718,7 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       );
 
       // Don't leak the raw deleter id; expose only the admin-vs-author distinction.
-      const messages = result.rows.map(({ deleted_by, ...m }) => ({
+      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrl({
         ...m,
         body: m.deleted_at ? null : m.body,
         deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
@@ -829,6 +846,169 @@ export async function chatsRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * POST /api/v1/chats/:id/messages/image
+   * Send an image message in a DM (multipart: `file` + optional `body` caption +
+   * optional `reply_to_message_id`). Same enforcement as text sends, gated by the
+   * global `images_enabled` master switch.
+   */
+  fastify.post('/:id/messages/image', {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+  }, async (request, reply) => {
+    let uploadedKey: string | null = null;
+    try {
+      const { id } = ChatIdParamsSchema.parse(request.params);
+      const callerId = parseInt(request.user!.sub, 10);
+
+      const chatConfig = await getGlobalChatConfig();
+      if (!chatConfig.images_enabled) {
+        return sendError(reply, 403, 'IMAGES_DISABLED', 'Image messages are currently disabled');
+      }
+      if (!isStorageEnabled()) {
+        return sendError(reply, 503, 'STORAGE_UNAVAILABLE', 'Image storage is not configured');
+      }
+
+      if (await callerIsBannedFromChat(pool, callerId)) {
+        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+      }
+
+      const others = await pool.query(
+        `SELECT cp.user_id, u.accept_messages
+           FROM chat_participants cp
+           JOIN users u ON u.id = cp.user_id
+          WHERE cp.chat_id = $1 AND cp.left_at IS NULL`,
+        [id]
+      );
+      const callerInChat = others.rows.find((r) => r.user_id === callerId);
+      if (!callerInChat) {
+        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+      }
+      const otherIds = others.rows.filter((r) => r.user_id !== callerId).map((r) => r.user_id);
+
+      if (otherIds.length > 0) {
+        const blocked = await pool.query(
+          `SELECT 1 FROM message_blocks
+            WHERE blocker_user_id = ANY($1::int[]) AND blocked_user_id = $2
+            LIMIT 1`,
+          [otherIds, callerId]
+        );
+        if (blocked.rows.length > 0) {
+          return sendError(reply, 403, 'BLOCKED', 'You are blocked from messaging this chat');
+        }
+        const allAccept = others.rows
+          .filter((r) => r.user_id !== callerId)
+          .every((r) => r.accept_messages !== false);
+        if (!allAccept) {
+          return sendError(reply, 403, 'RECIPIENT_OPTED_OUT', 'A recipient is not accepting messages');
+        }
+      }
+
+      const parsed = await parseImageUpload(request);
+      if ('error' in parsed) {
+        const map: Record<string, [number, string, string]> = {
+          NO_FILE: [400, 'NO_FILE', 'No image file provided'],
+          FILE_TOO_LARGE: [413, 'FILE_TOO_LARGE', `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`],
+          UNSUPPORTED_TYPE: [400, 'UNSUPPORTED_TYPE', 'Unsupported image type (allowed: jpeg, png, gif, webp)'],
+        };
+        const [status, code, message] = map[parsed.error];
+        return sendError(reply, status, code, message);
+      }
+
+      const caption = (parsed.fields.body ?? '').trim();
+      if (caption.length > 4000) {
+        return sendError(reply, 400, 'MESSAGE_TOO_LONG', 'Caption exceeds the maximum length of 4000 characters');
+      }
+      const replyToRaw = parsed.fields.reply_to_message_id || null;
+      if (replyToRaw && !z.string().uuid().safeParse(replyToRaw).success) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid reply_to_message_id');
+      }
+
+      // Reply target must be a live message in this chat.
+      let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
+      if (replyToRaw) {
+        replyContext = await validateReplyTarget(pool, id, replyToRaw);
+        if (!replyContext) {
+          return sendError(reply, 400, 'INVALID_REPLY_TARGET', 'Reply target not found in this chat');
+        }
+      }
+
+      uploadedKey = buildChatImageKey(id, parsed.ext);
+      await uploadFile(uploadedKey, parsed.buffer, parsed.mimetype);
+
+      // Insert message + attachment atomically.
+      const client = await pool.connect();
+      let messageRow: any;
+      try {
+        await client.query('BEGIN');
+        const inserted = await client.query(
+          `WITH new_msg AS (
+             INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
+             VALUES ($1, $2, $3, 'image', $4)
+             RETURNING *
+           )
+           SELECT m.*, u.address AS sender_address
+             FROM new_msg m
+             JOIN users u ON u.id = m.sender_user_id`,
+          [id, callerId, caption, replyToRaw]
+        );
+        messageRow = inserted.rows[0];
+        await client.query(
+          `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [messageRow.id, id, uploadedKey, parsed.mimetype, parsed.buffer.length]
+        );
+        await client.query('COMMIT');
+      } catch (txError) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txError;
+      } finally {
+        client.release();
+      }
+
+      // Fire reply/@-mention notifications out-of-band; never fail the send on it.
+      const participantIds = others.rows.map((r) => r.user_id);
+      try {
+        const notified = await notifyReplyAndMentions({
+          pool,
+          chatId: id,
+          messageId: messageRow.id,
+          senderUserId: callerId,
+          senderAddress: messageRow.sender_address,
+          body: caption,
+          replyToMessageId: replyToRaw,
+          replyParentAuthorId: replyContext?.parentAuthorId ?? null,
+          accessibleUserIds: participantIds,
+        });
+        broadcastNotificationBump(notified);
+      } catch (notifyError) {
+        fastify.log.error({ notifyError }, 'Error creating chat notifications (DM image send)');
+      }
+
+      const message = {
+        ...messageRow,
+        reactions: [],
+        reply_to: replyContext?.replyTo ?? null,
+        attachment: {
+          url: chatImageUrl(uploadedKey),
+          content_type: parsed.mimetype,
+          width: null,
+          height: null,
+          byte_size: parsed.buffer.length,
+          expired: false,
+        },
+      };
+      return reply.status(201).send(ok({ message }));
+    } catch (error: any) {
+      if (uploadedKey) await deleteFile(uploadedKey).catch(() => {});
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+      }
+      fastify.log.error({ error }, 'Error sending DM image');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send image');
+    }
+  });
+
+  /**
    * POST /api/v1/chats/:id/read
    * Mark messages as read up to the given message id. Broadcasts chat:read to other participants.
    */
@@ -894,6 +1074,11 @@ export async function chatsRoutes(fastify: FastifyInstance) {
         // Either not found, not in chat, not the sender, or already deleted.
         return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not deletable');
       }
+
+      // Pull any attached image from the bucket immediately (best-effort) — a
+      // user deleting a message they regret posting shouldn't leave the image
+      // reachable until the 180-day sweep. Mirrors the admin-delete path.
+      await expireMessageAttachments(pool, [messageId]);
 
       // Self-delete → deleted_by_admin: false. The global room has no
       // chat_participants rows, so it must fan out to global subscribers

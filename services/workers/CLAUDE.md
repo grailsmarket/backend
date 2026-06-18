@@ -119,6 +119,28 @@ Deletes expired rows from `ai_recommendations` to keep the cache table compact o
 - Deletes rows where `expires_at < NOW()`
 - Logs count of deleted rows for observability
 
+#### **Global Chat Retention Worker** (`global-chat-retention.ts`)
+Hard-deletes **global-chat** messages older than the configured cap, to keep the room lean.
+
+**Queue**: `cleanup-global-chat-messages`
+**Cron**: `0 4 * * *` (daily, 4 AM UTC)
+
+**Actions**:
+- Reads `global_chat_config.message_retention_days` (default 30, admin-tunable)
+- Deletes attached images from the bucket first (ON DELETE CASCADE would otherwise drop the rows holding the storage keys), then hard-deletes the messages in batches of 500
+- Global room only; DMs/groups are untouched
+
+#### **Chat Image Expiry Worker** (`expire-chat-images.ts`)
+Expires chat images (**all** chats) past the configured age — deletes the bucket object and stamps `expired_at`, leaving the message intact.
+
+**Queue**: `expire-chat-images`
+**Cron**: `0 5 * * *` (daily, 5 AM UTC)
+
+**Actions**:
+- Reads `global_chat_config.image_retention_days` (default 180, admin-tunable)
+- Keyset-cursor scan over `message_attachments WHERE expired_at IS NULL AND created_at < cutoff`; per row: `deleteFile()` then `UPDATE … SET expired_at = NOW()`
+- Idempotent; failed deletes keep `expired_at` NULL and retry next run. Skips entirely if storage is not configured
+
 ### Validation Workers (`src/workers/validation/`)
 
 These workers validate on-chain state to ensure listings and offers are still fulfillable.
