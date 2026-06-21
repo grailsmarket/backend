@@ -89,12 +89,13 @@ export interface SendNotificationJob {
     | 'listing-cancelled-ownership-change'
     | 'offer-received'
     | 'listing-sold'
-    | 'comment-received';
+    | 'comment-received'
+    | 'listing-cancelled';
   userId?: number;
   email?: string;
   recipientAddress?: string;
   ensNameId: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   transactionHash?: string;
 }
 
