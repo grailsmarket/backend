@@ -68,6 +68,13 @@ const ConfigSchema = z.object({
     fromEmail: z.string().default('noreply@grails.market'),
     enabled: z.boolean().default(true),
   }),
+  webPush: z.object({
+    publicKey: z.string().optional(),
+    privateKey: z.string().optional(),
+    subject: z.string().default('mailto:noreply@grails.market'),
+    ttlSeconds: z.number().int().positive().default(86400),
+    enabled: z.boolean(),
+  }),
   frontend: z.object({
     url: z.string().default('http://localhost:3001'),
   }),
@@ -169,6 +176,13 @@ const rawConfig = {
     smtpPassword: process.env.SMTP_PASSWORD,
     fromEmail: process.env.FROM_EMAIL,
     enabled: process.env.ENABLE_EMAIL !== 'false',
+  },
+  webPush: {
+    publicKey: process.env.WEB_PUSH_VAPID_PUBLIC_KEY,
+    privateKey: process.env.WEB_PUSH_VAPID_PRIVATE_KEY,
+    subject: process.env.WEB_PUSH_SUBJECT || `mailto:${process.env.FROM_EMAIL || 'noreply@grails.market'}`,
+    ttlSeconds: process.env.WEB_PUSH_TTL_SECONDS ? parseInt(process.env.WEB_PUSH_TTL_SECONDS) : 86400,
+    enabled: !!(process.env.WEB_PUSH_VAPID_PUBLIC_KEY && process.env.WEB_PUSH_VAPID_PRIVATE_KEY),
   },
   frontend: {
     url: process.env.FRONTEND_URL,
