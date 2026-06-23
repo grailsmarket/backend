@@ -9,7 +9,7 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource } from '../../../shared/src';
+import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 
@@ -568,7 +568,9 @@ export class ENSIndexer {
   private async handleControllerNameRegistered(args: any, log: Log, isV2: boolean = false) {
     // V2 controller uses 'label' for the name string and 'labelhash' for the hash
     // Original controller uses 'name' for the name string and 'label' for the hash
-    const name = isV2 ? args.label : args.name;
+    // Normalize per ENSIP-15 so emoji/keycap labels match the canonical name & token_id
+    // stored by the Graph-driven paths (e.g. keycaps lose the U+FE0F variation selector).
+    const name = safeNormalize(isV2 ? args.label : args.name);
     const labelHash = isV2 ? args.labelhash : args.label;
     const { owner, baseCost, premium, expires } = args;
 
@@ -577,8 +579,8 @@ export class ENSIndexer {
     const premiumWei = typeof premium === 'bigint' ? premium.toString() : String(premium);
     const totalCostWei = (BigInt(baseCostWei) + BigInt(premiumWei)).toString();
 
-    // Calculate name length (excluding .eth suffix)
-    const nameLength = name.length;
+    // Calculate name length (excluding .eth suffix) by visible characters, not code units
+    const nameLength = this.countGraphemes(name);
 
     // Get the actual registrant (transaction sender) - they may differ from owner
     let registrantAddress = owner.toLowerCase();
@@ -735,12 +737,13 @@ export class ENSIndexer {
   private async handleControllerNameRenewed(args: any, log: Log, isV2: boolean = false) {
     // V2 controller uses 'label' for the name string and 'labelhash' for the hash
     // Original controller uses 'name' for the name string and 'label' for the hash
-    const name = isV2 ? args.label : args.name;
+    // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name.
+    const name = safeNormalize(isV2 ? args.label : args.name);
     const { cost, expires } = args;
     const referrer = isV2 && args.referrer ? args.referrer : null;
 
     const costWei = typeof cost === 'bigint' ? cost.toString() : String(cost);
-    const nameLength = name.length;
+    const nameLength = this.countGraphemes(name);
     const fullName = `${name}.eth`;
     const expiryDate = new Date(Number(expires) * 1000);
 
@@ -930,10 +933,12 @@ export class ENSIndexer {
         return;
       }
 
-      const { label, cost, duration, referrer } = decodedLog.args;
+      const { label: rawLabel, cost, duration, referrer } = decodedLog.args;
+      // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name.
+      const label = safeNormalize(rawLabel);
       const costWei = typeof cost === 'bigint' ? cost.toString() : String(cost);
       const durationSeconds = typeof duration === 'bigint' ? Number(duration) : Number(duration);
-      const nameLength = label.length;
+      const nameLength = this.countGraphemes(label);
       const fullName = `${label}.eth`;
 
       // Get block timestamp for renewal date
@@ -1138,6 +1143,14 @@ export class ENSIndexer {
       has_numbers: /\d/.test(name),
       has_emoji: hasEmoji(name),
     };
+  }
+
+  // Count visible characters (grapheme clusters), not UTF-16 code units.
+  // A keycap like "2️⃣" / "2⃣" is one visible char but several code points, so
+  // String.length over-counts emoji/keycap labels. Used for registrations.name_length.
+  private static graphemeSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+  private countGraphemes(label: string): number {
+    return [...ENSIndexer.graphemeSegmenter.segment(label)].length;
   }
 
   private async processEvent(eventName: string, args: any, log: Log) {

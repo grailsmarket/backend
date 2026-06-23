@@ -87,8 +87,9 @@ export class ENSResolver {
     }
 
     try {
-      // Compute the namehash - this is what the Name Wrapper uses as token ID
-      const node = namehash(ensName);
+      // Compute the namehash - this is what the Name Wrapper uses as token ID.
+      // Normalize per ENSIP-15 first so emoji/keycap names hash to the canonical node.
+      const node = namehash(safeNormalize(ensName));
 
       // Call ownerOf on the Name Wrapper contract
       const owner = await this.client.readContract({
@@ -126,8 +127,9 @@ export class ENSResolver {
     }
 
     try {
-      // Extract the label (e.g., "vitalik" from "vitalik.eth")
-      const label = ensName.replace('.eth', '');
+      // Normalize per ENSIP-15 first so emoji/keycap names produce the canonical
+      // labelhash the chain uses (e.g. keycaps drop the U+FE0F variation selector).
+      const label = safeNormalize(ensName).replace(/\.eth$/, '');
       if (!label) return null;
 
       // Compute labelhash and convert to decimal
@@ -152,7 +154,9 @@ export class ENSResolver {
     }
 
     try {
-      const hash = namehash(ensName);
+      // Normalize per ENSIP-15 first so emoji/keycap names produce the canonical
+      // namehash the Name Wrapper uses (e.g. keycaps drop the U+FE0F variation selector).
+      const hash = namehash(safeNormalize(ensName));
       return BigInt(hash).toString(10);
     } catch (error: any) {
       logger.debug(`Error computing namehash for ${ensName}: ${error.message}`);
