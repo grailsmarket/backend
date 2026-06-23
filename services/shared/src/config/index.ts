@@ -94,6 +94,13 @@ const ConfigSchema = z.object({
     apiBaseUrl: z.string().default('https://api2.ensvision.com/v1'),
     enabled: z.coerce.boolean().default(true),
   }),
+  efp: z.object({
+    apiBaseUrl: z.string().default('https://api.ethfollow.xyz/api/v1'),
+    enabled: z.coerce.boolean().default(true),
+    timeoutMs: z.coerce.number().default(5000),
+    followingCacheTtlSeconds: z.coerce.number().default(300), // 5 min
+    maxFollowing: z.coerce.number().default(5000), // safety cap on fetched following set
+  }),
   googleAds: z.object({
     developerToken: z.string().optional(),
     clientId: z.string().optional(),
@@ -197,6 +204,15 @@ const rawConfig = {
   ensvision: {
     apiBaseUrl: process.env.ENSVISION_API_BASE_URL,
     enabled: process.env.ENSVISION_ENABLED !== 'false',
+  },
+  efp: {
+    apiBaseUrl: process.env.EFP_API_BASE_URL,
+    enabled: process.env.EFP_ENABLED !== 'false',
+    timeoutMs: process.env.EFP_TIMEOUT_MS ? parseInt(process.env.EFP_TIMEOUT_MS) : 5000,
+    followingCacheTtlSeconds: process.env.EFP_FOLLOWING_CACHE_TTL
+      ? parseInt(process.env.EFP_FOLLOWING_CACHE_TTL)
+      : 300,
+    maxFollowing: process.env.EFP_MAX_FOLLOWING ? parseInt(process.env.EFP_MAX_FOLLOWING) : 5000,
   },
   googleAds: {
     developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
