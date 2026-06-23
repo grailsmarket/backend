@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { generateText, APICallError } from 'ai';
+import { generateText, APICallError, type ToolSet } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter, type OpenRouterUsageAccounting } from '@openrouter/ai-sdk-provider';
 import { config } from '../../../../shared/src';
 import {
@@ -9,6 +10,7 @@ import {
   type OpenAIResponseUsage,
   type OpenRouterProviderRouting,
 } from './openrouter-transport';
+import { parseOpenAiResponsesBody } from './openai-transport';
 import type {
   ValuationAppraisalEvidence,
   ValuationEvidence,
@@ -51,7 +53,6 @@ import {
  *   below still owns all attempts. The OpenAI Responses path remains raw fetch.
  */
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
 export const VALUATION_OPENAI_MODEL = 'gpt-5.5';
 
 const MAX_RETRIES = 3;
@@ -376,17 +377,6 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function extractOutputText(data: any): string {
-  const messageItem = data.output?.find((item: { type: string }) => item.type === 'message');
-  const text = messageItem?.content?.find((content: { type: string }) => content.type === 'output_text')?.text;
-
-  if (typeof text !== 'string' || text.length === 0) {
-    throw new Error('No output text in OpenAI response');
-  }
-
-  return text;
-}
-
 // One OpenRouter provider per API key (the key is effectively constant in prod).
 // Attribution headers match the old raw-fetch request.
 let openRouterProvider: ReturnType<typeof createOpenRouter> | null = null;
@@ -528,13 +518,41 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
     return callOpenRouterChat(body, label, logPrefix);
   }
 
+  return callOpenAi(body, label, logPrefix);
+}
+
+// One OpenAI provider per API key. openai.responses(...) targets the Responses API.
+let openAiProvider: ReturnType<typeof createOpenAI> | null = null;
+let openAiProviderKey: string | null = null;
+
+function getOpenAiProvider(apiKey: string): ReturnType<typeof createOpenAI> {
+  if (openAiProvider && openAiProviderKey === apiKey) {
+    return openAiProvider;
+  }
+  openAiProvider = createOpenAI({ apiKey });
+  openAiProviderKey = apiKey;
+  return openAiProvider;
+}
+
+async function callOpenAi(responsesBody: string, label: string, logPrefix: string): Promise<string> {
   const apiKey = config.openai.apiKey;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not configured');
   }
 
+  const requestedModel = readRequestedOpenAIModel(responsesBody);
+  const call = parseOpenAiResponsesBody(responsesBody);
+  const provider = getOpenAiProvider(apiKey);
+  const model = provider.responses(call.model);
+  // Native server-side web search on the Responses API (the 'other' channel only).
+  const tools: ToolSet | undefined = call.hasWebSearch ? { web_search: provider.tools.webSearch() } : undefined;
+  const providerOptions = {
+    openai: {
+      ...(call.store !== undefined ? { store: call.store } : {}),
+      ...(call.reasoningEffort !== undefined ? { reasoningEffort: call.reasoningEffort } : {}),
+    },
+  };
   let lastError: Error | null = null;
-  const requestedModel = readRequestedOpenAIModel(body);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const startedAt = performance.now();
@@ -544,20 +562,47 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
       attempt: attempt + 1,
       maxAttempts: MAX_RETRIES + 1,
     });
-    let response: Response;
+
+    let result: Awaited<ReturnType<typeof generateText>>;
     try {
-      response = await fetch(OPENAI_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body,
-        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+      // maxRetries:0 — this loop owns all attempts/backoff, exactly as before.
+      result = await generateText({
+        model,
+        messages: call.messages,
+        ...(call.maxOutputTokens !== undefined ? { maxOutputTokens: call.maxOutputTokens } : {}),
+        ...(call.temperature !== undefined ? { temperature: call.temperature } : {}),
+        ...(tools ? { tools } : {}),
+        providerOptions,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < MAX_RETRIES) {
+      const status = APICallError.isInstance(error) ? error.statusCode : undefined;
+      const headers = APICallError.isInstance(error) ? error.responseHeaders : undefined;
+
+      if (status === 429 && attempt < MAX_RETRIES) {
+        // Preserve the OpenAI-specific reset-header backoff (and its precedence
+        // quirk: resetMs is used raw, without added jitter).
+        const resetMs = parseResetHeader(headers?.['x-ratelimit-reset-requests'] ?? null);
+        const backoffMs = resetMs ?? 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenAI rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (status !== undefined && status >= 500 && attempt < MAX_RETRIES) {
+        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenAI server error, retrying', {
+          label,
+          status,
+          backoffMs: Math.round(backoffMs),
+        });
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (status === undefined && attempt < MAX_RETRIES) {
         const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
         valuationLogWarn(logPrefix, 'OpenAI network/timeout error, retrying', {
           label,
@@ -567,65 +612,40 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
         await sleep(backoffMs);
         continue;
       }
-      throw lastError;
-    }
-    const elapsedMs = Math.round(performance.now() - startedAt);
-    valuationLogInfo(logPrefix, 'OpenAI response received', {
-      label,
-      attempt: attempt + 1,
-      status: response.status,
-      elapsedMs,
-    });
-
-    if (response.status === 429 && attempt < MAX_RETRIES) {
-      const resetMs = parseResetHeader(response.headers.get('x-ratelimit-reset-requests'));
-      const backoffMs = resetMs ?? 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-      valuationLogWarn(logPrefix, 'OpenAI rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
-      await sleep(backoffMs);
-      continue;
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      lastError = new Error(`OpenAI HTTP ${response.status}: ${errorText}`);
-
-      if (response.status >= 500 && attempt < MAX_RETRIES) {
-        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-        valuationLogWarn(logPrefix, 'OpenAI server error, retrying', {
-          label,
-          status: response.status,
-          backoffMs: Math.round(backoffMs),
-        });
-        await sleep(backoffMs);
-        continue;
-      }
 
       throw lastError;
     }
 
-    const data: any = await response.json();
     const totalMs = Math.round(performance.now() - startedAt);
-    const model = typeof data.model === 'string' ? data.model : requestedModel;
-    const usage = data.usage as OpenAIResponseUsage | undefined;
-    const cost = calculateOpenAICost(model, usage);
+    const actualModel = result.response?.modelId || requestedModel;
+    const usage = result.usage;
+    const normalized: OpenAIResponseUsage = {
+      input_tokens: readTokenCount(usage.inputTokens),
+      input_tokens_details: { cached_tokens: readTokenCount(usage.cachedInputTokens) },
+      output_tokens: readTokenCount(usage.outputTokens),
+      output_tokens_details: { reasoning_tokens: readTokenCount(usage.reasoningTokens) },
+      total_tokens:
+        readTokenCount(usage.totalTokens) || readTokenCount(usage.inputTokens) + readTokenCount(usage.outputTokens),
+    };
+    const cost = calculateOpenAICost(actualModel, normalized);
     recordOpenAICost(logPrefix, cost);
     valuationLogInfo(logPrefix, 'OpenAI response parsed', {
       label,
-      model,
-      status: data.status,
-      inputTokens: usage?.input_tokens,
-      outputTokens: usage?.output_tokens,
-      reasoningTokens: usage?.output_tokens_details?.reasoning_tokens,
+      model: actualModel,
+      finishReason: result.finishReason,
+      inputTokens: normalized.input_tokens,
+      outputTokens: normalized.output_tokens,
+      reasoningTokens: normalized.output_tokens_details?.reasoning_tokens,
       pricingMatched: Boolean(cost),
       costUsd: cost?.costUsd,
-      ttfbMs: elapsedMs,
       totalMs,
     });
-    if (data.status !== 'completed' && data.status !== 'incomplete') {
-      throw new Error(`OpenAI response status: ${data.status}`);
-    }
 
-    return extractOutputText(data);
+    const text = result.text;
+    if (typeof text !== 'string' || text.length === 0) {
+      throw new Error('No output text in OpenAI response');
+    }
+    return text;
   }
 
   throw lastError ?? new Error('OpenAI request failed');
