@@ -1,5 +1,14 @@
 import { z } from 'zod';
+import { generateText, APICallError } from 'ai';
+import { createOpenRouter, type OpenRouterUsageAccounting } from '@openrouter/ai-sdk-provider';
 import { config } from '../../../../shared/src';
+import {
+  buildOpenRouterRequest,
+  normalizeOpenRouterUsage,
+  readTokenCount,
+  type OpenAIResponseUsage,
+  type OpenRouterProviderRouting,
+} from './openrouter-transport';
 import type {
   ValuationAppraisalEvidence,
   ValuationEvidence,
@@ -32,10 +41,17 @@ import {
  * - API keys come from shared config.
  * - The local CSV run-logging (test-only) is removed; the in-memory per-run cost
  *   summary is kept.
+ * - OpenRouter calls go through the Vercel AI SDK (`generateText` +
+ *   `@openrouter/ai-sdk-provider`) instead of raw fetch. The exact OpenRouter
+ *   request body (provider pinning, reasoning ladder incl. the disable-on-'none',
+ *   the json_schema↔json_object downgrade with the schema injected into a system
+ *   message, the web plugin) is reproduced via `extraBody`, so the wire request
+ *   and the parse/cost/error-as-evidence behavior are unchanged. The SDK's own
+ *   retries are disabled (`maxRetries: 0`); the hand-rolled retry/backoff loop
+ *   below still owns all attempts. The OpenAI Responses path remains raw fetch.
  */
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const VALUATION_OPENAI_MODEL = 'gpt-5.5';
 
 const MAX_RETRIES = 3;
@@ -49,18 +65,6 @@ type OpenAIModelPricing = {
   inputUsdPerMillion: number;
   cachedInputUsdPerMillion: number;
   outputUsdPerMillion: number;
-};
-
-type OpenAIResponseUsage = {
-  input_tokens?: number;
-  input_tokens_details?: {
-    cached_tokens?: number;
-  };
-  output_tokens?: number;
-  output_tokens_details?: {
-    reasoning_tokens?: number;
-  };
-  total_tokens?: number;
 };
 
 // Per-call cost (token estimate, or OpenRouter's reported cost when available).
@@ -137,12 +141,6 @@ const OPENROUTER_MODELS = {
   deepseekV4Flash: 'deepseek/deepseek-v4-flash',
   grokV43: 'x-ai/grok-4.3',
 } as const;
-
-type OpenRouterProviderRouting = {
-  order?: string[];
-  allowFallbacks?: boolean;
-  structuredOutputs?: boolean;
-};
 
 // Pin the upstream OpenRouter provider per model (pricing varies a lot by provider).
 const OPENROUTER_PROVIDER_ROUTING: Record<string, OpenRouterProviderRouting> = {
@@ -293,10 +291,6 @@ function parseResetHeader(value: string | null): number | null {
   return ms > 0 ? ms : null;
 }
 
-function readTokenCount(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 function formatUsd(value: number) {
   return Number(value.toFixed(8));
 }
@@ -393,143 +387,24 @@ function extractOutputText(data: any): string {
   return text;
 }
 
-function buildOpenRouterBody(responsesBody: string, routing?: OpenRouterProviderRouting): string {
-  const parsed = JSON.parse(responsesBody) as {
-    model?: unknown;
-    instructions?: unknown;
-    input?: unknown;
-    max_output_tokens?: unknown;
-    temperature?: unknown;
-    reasoning?: { effort?: unknown; max_tokens?: unknown };
-    text?: { format?: { type?: unknown; name?: unknown; strict?: unknown; schema?: unknown } };
-    tools?: Array<{ type?: unknown }>;
-  };
+// One OpenRouter provider per API key (the key is effectively constant in prod).
+// Attribution headers match the old raw-fetch request.
+let openRouterProvider: ReturnType<typeof createOpenRouter> | null = null;
+let openRouterProviderKey: string | null = null;
 
-  const format = parsed.text?.format;
-  const hasJsonSchema = format?.type === 'json_schema';
-  // Downgrade to json_object mode when the pinned provider can't do strict
-  // json_schema (e.g. DeepSeek). Inject the schema into the prompt instead.
-  const useJsonObjectMode = hasJsonSchema && routing?.structuredOutputs === false;
-
-  const systemParts: string[] = [];
-  if (typeof parsed.instructions === 'string' && parsed.instructions.length > 0) {
-    systemParts.push(parsed.instructions);
+function getOpenRouterProvider(apiKey: string): ReturnType<typeof createOpenRouter> {
+  if (openRouterProvider && openRouterProviderKey === apiKey) {
+    return openRouterProvider;
   }
-  if (useJsonObjectMode) {
-    systemParts.push(
-      `Respond with ONLY a single JSON object (no markdown, no prose) that strictly conforms to this JSON schema:\n${JSON.stringify(format?.schema)}`
-    );
-  }
-
-  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
-  if (systemParts.length > 0) {
-    messages.push({ role: 'system', content: systemParts.join('\n\n') });
-  }
-  const userContent = typeof parsed.input === 'string' ? parsed.input : JSON.stringify(parsed.input ?? '');
-  messages.push({ role: 'user', content: userContent });
-
-  const out: Record<string, unknown> = {
-    model: parsed.model,
-    messages,
-    usage: { include: true },
-  };
-
-  if (typeof parsed.max_output_tokens === 'number') {
-    out.max_tokens = parsed.max_output_tokens;
-  }
-
-  if (typeof parsed.temperature === 'number') {
-    out.temperature = parsed.temperature;
-  }
-
-  const effort = parsed.reasoning?.effort;
-  const reasoningMaxTokens = parsed.reasoning?.max_tokens;
-  // A bounded reasoning budget takes precedence; otherwise pass through an
-  // explicit effort level, or disable reasoning entirely on effort 'none' (the
-  // production models all reason by default and would otherwise burn the token
-  // budget). If a model that mandates reasoning is reintroduced, it must omit
-  // this disable instead of 400-ing.
-  if (typeof reasoningMaxTokens === 'number') {
-    out.reasoning = { max_tokens: reasoningMaxTokens };
-  } else if (typeof effort === 'string' && effort !== 'none') {
-    out.reasoning = { effort };
-  } else {
-    out.reasoning = { enabled: false };
-  }
-
-  const providerOptions: Record<string, unknown> = {};
-
-  if (hasJsonSchema) {
-    out.response_format = useJsonObjectMode
-      ? { type: 'json_object' }
-      : {
-          type: 'json_schema',
-          json_schema: {
-            name: typeof format?.name === 'string' ? format.name : 'structured_output',
-            strict: Boolean(format?.strict),
-            schema: format?.schema,
-          },
-        };
-    providerOptions.require_parameters = true;
-  }
-
-  if (routing?.order && routing.order.length > 0) {
-    providerOptions.order = routing.order;
-    providerOptions.allow_fallbacks = routing.allowFallbacks ?? false;
-  }
-
-  if (Object.keys(providerOptions).length > 0) {
-    out.provider = providerOptions;
-  }
-
-  const hasWebSearch = Array.isArray(parsed.tools) && parsed.tools.some((tool) => tool?.type === 'web_search');
-  if (hasWebSearch) {
-    out.plugins = [{ id: 'web', max_results: 5 }];
-  }
-
-  return JSON.stringify(out);
-}
-
-type OpenRouterUsage = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-  prompt_tokens_details?: { cached_tokens?: number };
-  completion_tokens_details?: { reasoning_tokens?: number };
-  cost?: number;
-};
-
-function normalizeOpenRouterUsage(usage: OpenRouterUsage | undefined): {
-  normalized: OpenAIResponseUsage;
-  reportedCostUsd: number | null;
-} {
-  const promptTokens = readTokenCount(usage?.prompt_tokens);
-  const completionTokens = readTokenCount(usage?.completion_tokens);
-
-  return {
-    normalized: {
-      input_tokens: promptTokens,
-      input_tokens_details: { cached_tokens: readTokenCount(usage?.prompt_tokens_details?.cached_tokens) },
-      output_tokens: completionTokens,
-      output_tokens_details: { reasoning_tokens: readTokenCount(usage?.completion_tokens_details?.reasoning_tokens) },
-      total_tokens: readTokenCount(usage?.total_tokens) || promptTokens + completionTokens,
+  openRouterProvider = createOpenRouter({
+    apiKey,
+    headers: {
+      'HTTP-Referer': 'https://grails.app',
+      'X-Title': 'Grails Valuation',
     },
-    reportedCostUsd: typeof usage?.cost === 'number' ? usage.cost : null,
-  };
-}
-
-function extractOpenRouterText(data: any): string {
-  const choice = data?.choices?.[0];
-  const content = choice?.message?.content;
-
-  if (typeof content !== 'string' || content.length === 0) {
-    const finishReason = choice?.finish_reason ?? 'unknown';
-    throw new Error(
-      `No content in OpenRouter response (finish_reason: ${finishReason}; likely reasoning consumed the token budget)`
-    );
-  }
-
-  return content;
+  });
+  openRouterProviderKey = apiKey;
+  return openRouterProvider;
 }
 
 async function callOpenRouterChat(responsesBody: string, label: string, logPrefix: string): Promise<string> {
@@ -539,7 +414,10 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
   }
 
   const requestedModel = readRequestedOpenAIModel(responsesBody);
-  const body = buildOpenRouterBody(responsesBody, OPENROUTER_PROVIDER_ROUTING[requestedModel]);
+  const request = buildOpenRouterRequest(responsesBody, OPENROUTER_PROVIDER_ROUTING[requestedModel]);
+  // Settings (provider routing, reasoning, plugins, response_format, usage) ride
+  // on extraBody so the outbound body matches the previous hand-built JSON exactly.
+  const model = getOpenRouterProvider(apiKey).chat(request.model, { extraBody: request.extraBody });
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -550,22 +428,45 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
       attempt: attempt + 1,
       maxAttempts: MAX_RETRIES + 1,
     });
-    let response: Response;
+
+    let result: Awaited<ReturnType<typeof generateText>>;
     try {
-      response = await fetch(OPENROUTER_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://grails.app',
-          'X-Title': 'Grails Valuation',
-        },
-        body,
-        signal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+      // maxRetries:0 — this loop owns all attempts/backoff, exactly as before.
+      result = await generateText({
+        model,
+        messages: request.messages,
+        ...(request.maxOutputTokens !== undefined ? { maxOutputTokens: request.maxOutputTokens } : {}),
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < MAX_RETRIES) {
+      // A thrown call exposes an HTTP status only for an API error; a
+      // network/timeout/abort has none. Retry on 429, 5xx, and no-status
+      // (network/timeout) — and throw immediately on any other 4xx, mirroring
+      // the old `!response.ok` non-429/non-5xx path.
+      const status = APICallError.isInstance(error) ? error.statusCode : undefined;
+
+      if (status === 429 && attempt < MAX_RETRIES) {
+        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenRouter rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (status !== undefined && status >= 500 && attempt < MAX_RETRIES) {
+        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        valuationLogWarn(logPrefix, 'OpenRouter server error, retrying', {
+          label,
+          status,
+          backoffMs: Math.round(backoffMs),
+        });
+        await sleep(backoffMs);
+        continue;
+      }
+
+      if (status === undefined && attempt < MAX_RETRIES) {
         const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
         valuationLogWarn(logPrefix, 'OpenRouter network/timeout error, retrying', {
           label,
@@ -575,49 +476,21 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
         await sleep(backoffMs);
         continue;
       }
-      throw lastError;
-    }
-    const elapsedMs = Math.round(performance.now() - startedAt);
-    valuationLogInfo(logPrefix, 'OpenRouter response received', {
-      label,
-      attempt: attempt + 1,
-      status: response.status,
-      elapsedMs,
-    });
-
-    if (response.status === 429 && attempt < MAX_RETRIES) {
-      const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-      valuationLogWarn(logPrefix, 'OpenRouter rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
-      await sleep(backoffMs);
-      continue;
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      lastError = new Error(`OpenRouter HTTP ${response.status}: ${errorText}`);
-
-      if (response.status >= 500 && attempt < MAX_RETRIES) {
-        const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-        valuationLogWarn(logPrefix, 'OpenRouter server error, retrying', {
-          label,
-          status: response.status,
-          backoffMs: Math.round(backoffMs),
-        });
-        await sleep(backoffMs);
-        continue;
-      }
 
       throw lastError;
     }
 
-    const data: any = await response.json();
     const totalMs = Math.round(performance.now() - startedAt);
-    const model = typeof data.model === 'string' ? data.model : requestedModel;
-    const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(data.usage as OpenRouterUsage | undefined);
+    const actualModel = result.response?.modelId || requestedModel;
+    // The token split + reported cost come from OpenRouter's usage object in
+    // providerMetadata (the normalized result.usage frequently leaves
+    // cached/reasoning tokens undefined); result.usage is only a fallback.
+    const openrouterUsage = result.providerMetadata?.openrouter?.usage as OpenRouterUsageAccounting | undefined;
+    const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(openrouterUsage, result.usage);
     // Prefer OpenRouter's reported cost (includes web-search/plugin fees + the
     // real provider rate). Record it even when the model is absent from the
     // static pricing table — token counts still come from usage.
-    let cost = calculateOpenAICost(model, normalized);
+    let cost = calculateOpenAICost(actualModel, normalized);
     if (reportedCostUsd != null) {
       cost = {
         inputTokens: normalized.input_tokens ?? 0,
@@ -629,17 +502,22 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
     recordOpenAICost(logPrefix, cost);
     valuationLogInfo(logPrefix, 'OpenRouter response parsed', {
       label,
-      model,
-      finishReason: data.choices?.[0]?.finish_reason,
+      model: actualModel,
+      finishReason: result.finishReason,
       inputTokens: normalized.input_tokens,
       outputTokens: normalized.output_tokens,
       reportedCostUsd,
       pricingMatched: Boolean(cost),
-      ttfbMs: elapsedMs,
       totalMs,
     });
 
-    return extractOpenRouterText(data);
+    const text = result.text;
+    if (typeof text !== 'string' || text.length === 0) {
+      throw new Error(
+        `No content in OpenRouter response (finish_reason: ${result.finishReason ?? 'unknown'}; likely reasoning consumed the token budget)`
+      );
+    }
+    return text;
   }
 
   throw lastError ?? new Error('OpenRouter request failed');
