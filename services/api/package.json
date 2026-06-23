@@ -18,6 +18,7 @@
     "cache": "npm run build && node dist/api/src/scripts/redis-cache.js"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.74",
     "@aws-sdk/client-s3": "^3.992.0",
     "@fastify/cors": "^8.5.0",
     "@fastify/helmet": "^11.1.1",
