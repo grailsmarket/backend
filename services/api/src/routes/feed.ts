@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, config } from '../../../shared/src';
 import { optionalAuth } from '../middleware/auth';
 import { cacheHandler } from '../middleware/cache';
 import { mutelistService } from '../services/mutelist';
+import { getFollowingAddresses, EfpUnavailableError } from '../services/efp';
 
 const pool = getPostgresPool();
 
@@ -18,7 +19,7 @@ const KindEnum = z.enum(['activity', 'comment']);
  *
  * Filter classes:
  *  - selector:      kinds (which streams to include; default = both)
- *  - shared:        owner, clubs, watchlist (+ list_id) — apply to both streams
+ *  - shared:        owner, clubs, watchlist (+ list_id), following — apply to both streams
  *  - activity-only: event_type, platform, min/max price — apply to the activity stream
  *
  * Auto-scope rule: when no explicit `kinds` is given, the presence of any
@@ -57,6 +58,11 @@ const FeedQuerySchema = z.object({
     .optional()
     .transform((v) => v === 'true'),
   list_id: z.coerce.number().int().positive().optional(),
+  // Restrict the feed to accounts the caller follows on EFP (requires auth).
+  following: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
 
   // pagination
   page: z.coerce.number().int().min(1).default(1),
@@ -81,6 +87,31 @@ function parseMulti(value: string | string[] | undefined): string[] {
   if (value == null) return [];
   const raw = Array.isArray(value) ? value : value.split(',');
   return raw.map((s) => s.trim()).filter(Boolean);
+}
+
+// A well-formed empty page, used when a filter provably matches nothing (e.g.
+// the caller follows nobody on EFP) so we can skip the DB round-trip entirely.
+// The result set is empty regardless of `page`, so there are no earlier/later
+// pages — hasNext/hasPrev are both false.
+function emptyFeed(page: number, limit: number): APIResponse {
+  return {
+    success: true,
+    data: {
+      results: [],
+      pagination: {
+        page,
+        limit,
+        total: 0,
+        totalPages: 1,
+        hasNext: false,
+        hasPrev: false,
+      },
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+      version: '1.0.0',
+    },
+  };
 }
 
 export async function feedRoutes(fastify: FastifyInstance) {
@@ -114,6 +145,7 @@ export async function feedRoutes(fastify: FastifyInstance) {
           clubs,
           watchlist,
           list_id,
+          following,
           page,
           limit,
         } = q;
@@ -126,6 +158,22 @@ export async function feedRoutes(fastify: FastifyInstance) {
             401,
             'UNAUTHORIZED',
             'Authentication required to filter the feed by watchlist'
+          );
+        }
+
+        // Check the feature flag before auth so an anonymous caller against a
+        // deployment with the filter disabled gets FEATURE_DISABLED (which tells
+        // the client to hide the toggle), not a misleading 401.
+        if (following && !config.efp.enabled) {
+          return sendError(reply, 400, 'FEATURE_DISABLED', 'EFP following filter is disabled');
+        }
+        // The EFP "following" filter is personalized: it needs the caller's address.
+        if (following && !request.user) {
+          return sendError(
+            reply,
+            401,
+            'UNAUTHORIZED',
+            'Authentication required to filter the feed by EFP followings'
           );
         }
 
@@ -203,6 +251,31 @@ export async function feedRoutes(fastify: FastifyInstance) {
           if (list_id != null) wlListPh = push(list_id);
         }
 
+        // Resolve the caller's EFP following set (Redis-cached) and bind it once;
+        // both branches' membership predicates reference this single placeholder.
+        let followingPh = '';
+        if (following && request.user) {
+          let followingAddrs: string[];
+          try {
+            followingAddrs = await getFollowingAddresses(request.user.address);
+          } catch (err) {
+            if (err instanceof EfpUnavailableError) {
+              return sendError(
+                reply,
+                502,
+                'EFP_UNAVAILABLE',
+                'Could not load your EFP following list'
+              );
+            }
+            throw err;
+          }
+          // Follows nobody → nothing can match; return an empty page (not an error).
+          if (followingAddrs.length === 0) {
+            return reply.send(emptyFeed(page, limit));
+          }
+          followingPh = push(followingAddrs);
+        }
+
         // Activity-only params are only referenced by the activity branch.
         const etPhs: string[] = [];
         const pPhs: string[] = [];
@@ -244,6 +317,11 @@ export async function feedRoutes(fastify: FastifyInstance) {
           actShared.push(`(ah.counterparty_address IS NULL OR ah.counterparty_address != ALL(${mutedPh}))`);
         }
         if (watchlistActive) actShared.push(wlClause('ah.ens_name_id'));
+        // EFP following: restrict to actors the caller follows. Hashed semi-join
+        // (not `= ANY`) so membership is O(1)/row across a large following set.
+        if (followingPh) {
+          actShared.push(`ah.actor_address IN (SELECT a FROM unnest(${followingPh}::text[]) AS t(a))`);
+        }
 
         const actData = [...actShared];
         const actCount = [...actShared];
@@ -268,6 +346,14 @@ export async function feedRoutes(fastify: FastifyInstance) {
         if (hasMuted) {
           comData.push(`u.address != ALL(${mutedPh})`);
           comCount.push(`NOT EXISTS (SELECT 1 FROM users mu WHERE mu.id = c.user_id AND mu.address = ANY(${mutedPh}))`);
+        }
+        // EFP following: restrict to comment authors the caller follows. The data
+        // query has `JOIN users u`; the count query reaches users via EXISTS.
+        if (followingPh) {
+          comData.push(`u.address IN (SELECT a FROM unnest(${followingPh}::text[]) AS t(a))`);
+          comCount.push(
+            `EXISTS (SELECT 1 FROM users fu WHERE fu.id = c.user_id AND fu.address IN (SELECT a FROM unnest(${followingPh}::text[]) AS t(a)))`
+          );
         }
         if (owner) {
           comData.push(`en.owner_address = ${ownerPh}`);

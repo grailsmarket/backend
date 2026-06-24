@@ -176,7 +176,8 @@ Each result item has a `kind` (`activity` | `comment`) discriminator, name-level
 
 Filters:
 - `kinds` — which streams to include: `activity`, `comment`, or `activity,comment` (default = both).
-- **Shared** (apply to both streams): `owner` (address), `clubs` (comma list 1–10, or `clubs=any` for names in any club), `watchlist=true` (+ optional `list_id`). `watchlist=true` **requires auth** (401 otherwise); authed requests bypass the response cache.
+- **Shared** (apply to both streams): `owner` (address), `clubs` (comma list 1–10, or `clubs=any` for names in any club), `watchlist=true` (+ optional `list_id`), `following=true`. `watchlist=true` and `following=true` both **require auth** (401 otherwise); authed requests bypass the response cache.
+  - `following=true` — restrict the feed to accounts the caller follows on [EFP](https://ethfollow.xyz) (Ethereum Follow Protocol). Filters by the event **actor** (activity) / comment **author** — distinct from `owner`, which filters by the name's owner. The caller's own events are **not** included (strictly followed accounts). The following set is fetched from the EFP API and Redis-cached per address (TTL `EFP_FOLLOWING_CACHE_TTL`, default 5 min). If the caller follows nobody → empty page (`total: 0`). If EFP is unreachable and nothing is cached → `502 EFP_UNAVAILABLE`. Disabled via `EFP_ENABLED=false` → `400 FEATURE_DISABLED`.
 - **Activity-only**: `event_type`, `platform` (multi; repeated or comma-separated), `min_price_wei` / `max_price_wei` (decimal wei; an active bound requires a real ETH/WETH-denominated price, so no-price events are excluded while filtering).
 - **Auto-scope rule**: when `kinds` is omitted, setting any activity-only filter implicitly excludes comments (they can't satisfy it). An explicit `kinds` always wins; `kinds=comment` combined with an activity-only filter returns 400. `kinds=activity,comment` + an activity-only filter keeps comments (explicit opt-in).
 
@@ -559,6 +560,14 @@ ELASTICSEARCH_INDEX=ens_names
 # The Graph
 THE_GRAPH_ENS_SUBGRAPH_URL=https://gateway.thegraph.com/api/subgraphs/id/...
 THE_GRAPH_API_KEY=your-graph-api-key
+
+# EFP (Ethereum Follow Protocol) — powers the feed `following=true` filter
+EFP_API_BASE_URL=https://api.ethfollow.xyz/api/v1
+EFP_ENABLED=true
+EFP_TIMEOUT_MS=5000            # per-page request timeout
+EFP_OVERALL_TIMEOUT_MS=20000  # hard cap on the whole paginated following fetch
+EFP_FOLLOWING_CACHE_TTL=300   # seconds; per-address following list cache
+EFP_MAX_FOLLOWING=5000        # safety cap on fetched following set
 
 # Redis (Optional)
 REDIS_URL=redis://localhost:6379
