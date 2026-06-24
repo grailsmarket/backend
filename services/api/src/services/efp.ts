@@ -15,7 +15,10 @@ import { getCachedResponse, setCachedResponse } from '../utils/redis';
  */
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const PAGE_LIMIT = 1000;
+// EFP hard-caps `limit` at 100 per page regardless of the requested value, so we
+// page by offset and stop only when a page comes back short. Using anything
+// larger here would make the "short page" break condition fire after page 1.
+const PAGE_LIMIT = 100;
 
 /**
  * Thrown when EFP cannot be reached / returns an error and we have no cached
