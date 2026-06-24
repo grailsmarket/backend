@@ -91,6 +91,8 @@ function parseMulti(value: string | string[] | undefined): string[] {
 
 // A well-formed empty page, used when a filter provably matches nothing (e.g.
 // the caller follows nobody on EFP) so we can skip the DB round-trip entirely.
+// The result set is empty regardless of `page`, so there are no earlier/later
+// pages — hasNext/hasPrev are both false.
 function emptyFeed(page: number, limit: number): APIResponse {
   return {
     success: true,
@@ -102,7 +104,7 @@ function emptyFeed(page: number, limit: number): APIResponse {
         total: 0,
         totalPages: 1,
         hasNext: false,
-        hasPrev: page > 1,
+        hasPrev: false,
       },
     },
     meta: {
@@ -159,6 +161,12 @@ export async function feedRoutes(fastify: FastifyInstance) {
           );
         }
 
+        // Check the feature flag before auth so an anonymous caller against a
+        // deployment with the filter disabled gets FEATURE_DISABLED (which tells
+        // the client to hide the toggle), not a misleading 401.
+        if (following && !config.efp.enabled) {
+          return sendError(reply, 400, 'FEATURE_DISABLED', 'EFP following filter is disabled');
+        }
         // The EFP "following" filter is personalized: it needs the caller's address.
         if (following && !request.user) {
           return sendError(
@@ -167,9 +175,6 @@ export async function feedRoutes(fastify: FastifyInstance) {
             'UNAUTHORIZED',
             'Authentication required to filter the feed by EFP followings'
           );
-        }
-        if (following && !config.efp.enabled) {
-          return sendError(reply, 400, 'FEATURE_DISABLED', 'EFP following filter is disabled');
         }
 
         // Parse the unified `clubs` param: `any` sentinel vs a 1–10 entry list.

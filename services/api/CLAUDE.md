@@ -564,7 +564,8 @@ THE_GRAPH_API_KEY=your-graph-api-key
 # EFP (Ethereum Follow Protocol) — powers the feed `following=true` filter
 EFP_API_BASE_URL=https://api.ethfollow.xyz/api/v1
 EFP_ENABLED=true
-EFP_TIMEOUT_MS=5000
+EFP_TIMEOUT_MS=5000            # per-page request timeout
+EFP_OVERALL_TIMEOUT_MS=20000  # hard cap on the whole paginated following fetch
 EFP_FOLLOWING_CACHE_TTL=300   # seconds; per-address following list cache
 EFP_MAX_FOLLOWING=5000        # safety cap on fetched following set
 

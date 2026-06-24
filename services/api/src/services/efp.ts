@@ -19,6 +19,9 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 // page by offset and stop only when a page comes back short. Using anything
 // larger here would make the "short page" break condition fire after page 1.
 const PAGE_LIMIT = 100;
+// Pages within a "wave" are fetched concurrently so a heavy follower's cold load
+// stays a few seconds instead of (page_count × per-request latency) sequential.
+const FETCH_CONCURRENCY = 8;
 
 /**
  * Thrown when EFP cannot be reached / returns an error and we have no cached
@@ -44,17 +47,34 @@ function cacheKey(address: string): string {
 }
 
 /**
+ * Per-request abort signal, bounded by BOTH the per-request timeout and the
+ * remaining overall budget (whichever is smaller). Throws once the overall
+ * deadline has passed so the whole paginated fetch can never exceed its budget.
+ */
+function pageSignal(deadline: number): AbortSignal {
+  const budget = Math.min(config.efp.timeoutMs, deadline - Date.now());
+  if (budget <= 0) {
+    throw new EfpUnavailableError('EFP following fetch exceeded overall time budget');
+  }
+  return AbortSignal.timeout(budget);
+}
+
+/**
  * Fetch a single page of following records from EFP. Throws EfpUnavailableError
  * on timeout, network error, non-2xx response, or unparseable body.
  */
-async function fetchFollowingPage(address: string, offset: number): Promise<EfpFollowingRecord[]> {
+async function fetchFollowingPage(
+  address: string,
+  offset: number,
+  deadline: number
+): Promise<EfpFollowingRecord[]> {
   const url =
     `${config.efp.apiBaseUrl}/users/${address}/following` +
     `?limit=${PAGE_LIMIT}&offset=${offset}`;
   try {
     const response = await fetch(url, {
       headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(config.efp.timeoutMs),
+      signal: pageSignal(deadline),
     });
     if (!response.ok) {
       throw new EfpUnavailableError(`EFP following request failed: ${response.status}`);
@@ -77,8 +97,11 @@ async function fetchFollowingPage(address: string, offset: number): Promise<EfpF
  *   `config.efp.followingCacheTtlSeconds`.
  * - An empty array is a valid "follows nobody" answer and is cached (distinct
  *   from an outage, which throws EfpUnavailableError).
+ * - Pages are fetched in concurrent waves and the whole operation is bounded by
+ *   `config.efp.overallTimeoutMs`, so even a heavy follower with a cold cache
+ *   never blocks the request handler beyond that budget (it 502s instead).
  *
- * @throws EfpUnavailableError on cache miss + EFP fetch failure.
+ * @throws EfpUnavailableError on cache miss + EFP fetch failure (or budget exceeded).
  */
 export async function getFollowingAddresses(address: string): Promise<string[]> {
   const lower = address.toLowerCase();
@@ -89,19 +112,27 @@ export async function getFollowingAddresses(address: string): Promise<string[]> 
     return cached as string[];
   }
 
+  const deadline = Date.now() + config.efp.overallTimeoutMs;
   const seen = new Set<string>();
-  for (let offset = 0; ; offset += PAGE_LIMIT) {
-    const page = await fetchFollowingPage(lower, offset);
-    for (const rec of page) {
-      if (rec.record_type && rec.record_type !== 'address') continue;
-      const addr = (rec.data ?? rec.address)?.toLowerCase();
-      if (addr && ADDRESS_RE.test(addr)) seen.add(addr);
+  let done = false;
+  // Fetch FETCH_CONCURRENCY pages per wave. A short page marks the end of the
+  // list (later offsets in the same wave just return empty, also "short"), so we
+  // never miss the tail while still parallelising the bulk.
+  for (let base = 0; !done; base += FETCH_CONCURRENCY * PAGE_LIMIT) {
+    const offsets = Array.from({ length: FETCH_CONCURRENCY }, (_, k) => base + k * PAGE_LIMIT);
+    const pages = await Promise.all(offsets.map((o) => fetchFollowingPage(lower, o, deadline)));
+    for (const page of pages) {
+      for (const rec of page) {
+        if (rec.record_type && rec.record_type !== 'address') continue;
+        const addr = (rec.data ?? rec.address)?.toLowerCase();
+        if (addr && ADDRESS_RE.test(addr)) seen.add(addr);
+      }
+      if (page.length < PAGE_LIMIT) done = true;
     }
-    if (page.length < PAGE_LIMIT) break;
-    if (seen.size >= config.efp.maxFollowing) break;
+    if (seen.size >= config.efp.maxFollowing) done = true;
   }
 
-  const addresses = Array.from(seen);
+  const addresses = Array.from(seen).slice(0, config.efp.maxFollowing);
   await setCachedResponse(key, addresses, config.efp.followingCacheTtlSeconds);
   return addresses;
 }
