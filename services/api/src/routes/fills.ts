@@ -22,7 +22,18 @@ export async function fillsRoutes(fastify: FastifyInstance) {
   // indexer independently verifies the trade and that the reported filler is the real on-chain
   // buyer/seller before stamping sales.filled_via, so a report can only tag a genuine sale.
   fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
-    const body = FillReportSchema.parse(request.body);
+    const parsed = FillReportSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+    const body = parsed.data;
 
     const filler = body.fillerAddress.toLowerCase();
     const userAddress = request.user!.address.toLowerCase();
@@ -40,47 +51,54 @@ export async function fillsRoutes(fastify: FastifyInstance) {
     const txHash = body.transactionHash.toLowerCase();
     const orderHashes = [...new Set(body.orders.map((o) => o.orderHash.toLowerCase()))];
 
-    let recorded = 0;
-    let reconciled = 0;
-
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      for (const orderHash of orderHashes) {
-        // 1. Persist the fill report (idempotent per tx+order).
-        const ins = await client.query(
-          `INSERT INTO order_fills (order_hash, transaction_hash, filler_address, source)
-           VALUES ($1, $2, $3, 'grails')
-           ON CONFLICT (transaction_hash, order_hash) DO NOTHING`,
-          [orderHash, txHash, filler]
-        );
-        if (ins.rowCount && ins.rowCount > 0) recorded++;
+      // 1. Persist all fill reports in one statement (idempotent per tx+order). rowCount excludes
+      //    rows that hit the unique conflict, giving the count actually newly recorded.
+      const ins = await client.query(
+        `INSERT INTO order_fills (order_hash, transaction_hash, filler_address, source)
+         SELECT oh, $2, $3, 'grails' FROM unnest($1::text[]) AS oh
+         ON CONFLICT (transaction_hash, order_hash) DO NOTHING`,
+        [orderHashes, txHash, filler]
+      );
+      const recorded = ins.rowCount ?? 0;
 
-        // 2. Reconcile the sale-first race: if the indexer already recorded this sale before the
-        //    app's report arrived, back-fill filled_via now. Same anti-spoof guard as the indexer:
-        //    only tag sales where the reporter is the on-chain buyer or seller.
-        const sales = await client.query(
-          `SELECT id FROM sales
-           WHERE filled_via IS NULL
-             AND (order_hash = $1 OR transaction_hash = $2)
-             AND (lower(buyer_address) = $3 OR lower(seller_address) = $3)`,
-          [orderHash, txHash, filler]
-        );
+      // 2. Reconcile the sale-first race in one set-based UPDATE: if the indexer already recorded
+      //    these sales before the app's report arrived, back-fill filled_via now. Same anti-spoof
+      //    guard as the indexer — only tag sales where the reporter is the on-chain buyer/seller.
+      const reconcileResult = await client.query(
+        `UPDATE sales SET filled_via = 'grails'
+         WHERE filled_via IS NULL
+           AND (order_hash = ANY($1::text[]) OR transaction_hash = $2)
+           AND (lower(buyer_address) = $3 OR lower(seller_address) = $3)
+         RETURNING id`,
+        [orderHashes, txHash, filler]
+      );
+      const saleIds = reconcileResult.rows.map((r) => r.id);
 
-        for (const row of sales.rows) {
-          await client.query(`UPDATE sales SET filled_via = 'grails' WHERE id = $1`, [row.id]);
-          await client.query(
-            `UPDATE activity_history
-             SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{filled_via}', '"grails"')
-             WHERE (metadata->>'sale_id')::integer = $1`,
-            [row.id]
-          );
-          reconciled++;
-        }
+      if (saleIds.length > 0) {
+        await client.query(
+          `UPDATE activity_history
+           SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{filled_via}', '"grails"')
+           WHERE (metadata->>'sale_id')::integer = ANY($1::int[])`,
+          [saleIds]
+        );
       }
 
       await client.query('COMMIT');
+
+      const response: APIResponse = {
+        success: true,
+        data: { recorded, reconciled: saleIds.length },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: '1.0.0',
+        },
+      };
+
+      return reply.send(response);
     } catch (error) {
       await client.query('ROLLBACK');
       fastify.log.error(error);
@@ -95,16 +113,5 @@ export async function fillsRoutes(fastify: FastifyInstance) {
     } finally {
       client.release();
     }
-
-    const response: APIResponse = {
-      success: true,
-      data: { recorded, reconciled },
-      meta: {
-        timestamp: new Date().toISOString(),
-        version: '1.0.0',
-      },
-    };
-
-    return reply.send(response);
   });
 }

@@ -87,9 +87,10 @@ BEGIN
         jsonb_build_object(
             'sale_id', NEW.id,
             'listing_id', NEW.listing_id,
-            'offer_id', NEW.offer_id,
-            'filled_via', NEW.filled_via
-        ),
+            'offer_id', NEW.offer_id
+        ) || CASE WHEN NEW.filled_via IS NOT NULL
+                  THEN jsonb_build_object('filled_via', NEW.filled_via)
+                  ELSE '{}'::jsonb END,
         NEW.sale_date
     );
 
@@ -121,9 +122,10 @@ BEGIN
         jsonb_build_object(
             'sale_id', NEW.id,
             'listing_id', NEW.listing_id,
-            'offer_id', NEW.offer_id,
-            'filled_via', NEW.filled_via
-        ),
+            'offer_id', NEW.offer_id
+        ) || CASE WHEN NEW.filled_via IS NOT NULL
+                  THEN jsonb_build_object('filled_via', NEW.filled_via)
+                  ELSE '{}'::jsonb END,
         NEW.sale_date
     );
 

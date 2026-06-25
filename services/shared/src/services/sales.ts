@@ -19,8 +19,9 @@ export interface CreateSaleParams {
    * Where the fill was EXECUTED ('grails' when filled through the Grails app), independent of
    * `source` (the marketplace the order originated on). When omitted, createSale resolves it from
    * the order_fills attribution log. NULL = unknown / filled on the origin marketplace's own UI.
+   * Narrowed to 'grails' to match the sales.filled_via DB CHECK constraint.
    */
-  filledVia?: string;
+  filledVia?: 'grails';
   platformFeeWei?: string;
   creatorFeeWei?: string;
   metadata?: any;

@@ -57,7 +57,7 @@ export const SaleSchema = z.object({
   source: z.enum(['opensea', 'grails', 'vision', 'blur', 'looksrare', 'x2y2', 'other']),
   // Where the order was actually filled (e.g. 'grails'), independent of `source` (origin
   // marketplace). NULL/absent = unknown or filled on the origin marketplace's own UI.
-  filled_via: z.string().nullable().optional(),
+  filledVia: z.string().nullable().optional(),
   platformFeeWei: z.string().optional(),
   creatorFeeWei: z.string().optional(),
   metadata: z.record(z.any()).optional(),
