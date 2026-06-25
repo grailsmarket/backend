@@ -15,10 +15,40 @@ export interface CreateSaleParams {
   orderHash?: string;
   orderData?: any;
   source: string;
+  /**
+   * Where the fill was EXECUTED ('grails' when filled through the Grails app), independent of
+   * `source` (the marketplace the order originated on). When omitted, createSale resolves it from
+   * the order_fills attribution log. NULL = unknown / filled on the origin marketplace's own UI.
+   * Narrowed to 'grails' to match the sales.filled_via DB CHECK constraint.
+   */
+  filledVia?: 'grails';
   platformFeeWei?: string;
   creatorFeeWei?: string;
   metadata?: any;
   saleDate: Date;
+}
+
+/**
+ * Resolve the fill-venue attribution for a sale from the order_fills log (populated by the Grails
+ * app via POST /api/v1/fills). Only returns a value when a reported fill matches this order/tx AND
+ * the reported filler is the actual on-chain buyer or seller — so a report can never tag a trade
+ * the reporter didn't execute. In a Seaport OrderFulfilled the on-chain filler is the buyer for a
+ * listing purchase and the seller for an offer acceptance, so checking both covers both flows.
+ */
+async function resolveFilledVia(
+  orderHash: string | undefined,
+  transactionHash: string,
+  normalizedBuyer: string,
+  normalizedSeller: string
+): Promise<string | null> {
+  const result = await pool.query(
+    `SELECT source FROM order_fills
+     WHERE (order_hash = $1 OR transaction_hash = $2)
+       AND lower(filler_address) IN ($3, $4)
+     LIMIT 1`,
+    [orderHash || null, transactionHash, normalizedBuyer, normalizedSeller]
+  );
+  return result.rows[0]?.source ?? null;
 }
 
 export async function createSale(params: CreateSaleParams) {
@@ -35,6 +65,7 @@ export async function createSale(params: CreateSaleParams) {
     orderHash,
     orderData,
     source,
+    filledVia,
     platformFeeWei,
     creatorFeeWei,
     metadata,
@@ -43,6 +74,11 @@ export async function createSale(params: CreateSaleParams) {
 
   const normalizedSeller = sellerAddress.toLowerCase();
   const normalizedBuyer = buyerAddress.toLowerCase();
+
+  // Where the order was actually filled (e.g. 'grails'). Use the caller-supplied value if any,
+  // otherwise consult the order_fills attribution log. `source` (origin marketplace) is unaffected.
+  const effectiveFilledVia =
+    filledVia ?? (await resolveFilledVia(orderHash, transactionHash, normalizedBuyer, normalizedSeller));
 
   // Multi-criteria dedup check: order_hash, transaction_hash, or fuzzy match (same parties within 60s)
   const dedupQuery = `
@@ -80,7 +116,8 @@ export async function createSale(params: CreateSaleParams) {
             block_number = CASE WHEN $2 > 0 THEN $2 ELSE block_number END,
             source = CASE WHEN $3 = 'grails' THEN 'grails' ELSE source END,
             order_hash = COALESCE($4, order_hash),
-            order_data = COALESCE($5, order_data)
+            order_data = COALESCE($5, order_data),
+            filled_via = COALESCE($7, filled_via)
         WHERE id = $6
         RETURNING *
       `;
@@ -91,7 +128,8 @@ export async function createSale(params: CreateSaleParams) {
         source,
         orderHash,
         orderData ? JSON.stringify(orderData) : null,
-        existingSale.id
+        existingSale.id,
+        effectiveFilledVia
       ]);
 
       console.log(`[createSale] Upgraded synthetic hash for sale ${existingSale.id}: ${existingSale.transaction_hash} -> ${transactionHash}`);
@@ -102,9 +140,14 @@ export async function createSale(params: CreateSaleParams) {
         try {
           await pool.query(`
             UPDATE activity_history
-            SET platform = $1, transaction_hash = $2, block_number = $3
+            SET platform = $1, transaction_hash = $2, block_number = $3,
+                metadata = CASE
+                  WHEN $5::text IS NOT NULL
+                  THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{filled_via}', to_jsonb($5::text))
+                  ELSE metadata
+                END
             WHERE (metadata->>'sale_id')::integer = $4
-          `, [sale.source, transactionHash, blockNumber, existingSale.id]);
+          `, [sale.source, transactionHash, blockNumber, existingSale.id, sale.filled_via ?? null]);
         } catch (err) {
           console.error(`[createSale] Failed to update activity records for sale ${existingSale.id}:`, err);
         }
@@ -142,8 +185,9 @@ export async function createSale(params: CreateSaleParams) {
       platform_fee_wei,
       creator_fee_wei,
       metadata,
-      sale_date
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      sale_date,
+      filled_via
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
     RETURNING *
   `;
@@ -164,7 +208,8 @@ export async function createSale(params: CreateSaleParams) {
     platformFeeWei,
     creatorFeeWei,
     metadata ? JSON.stringify(metadata) : null,
-    saleDate
+    saleDate,
+    effectiveFilledVia
   ];
 
   const result = await pool.query(query, values);
