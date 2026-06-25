@@ -5,6 +5,7 @@ import { ordersRoutes } from './orders';
 import { listingsRoutes } from './listings';
 import { offersRoutes } from './offers';
 import { salesRoutes } from './sales';
+import { fillsRoutes } from './fills';
 import { activityRoutes } from './activity';
 import { profilesRoutes } from './profiles';
 import { authRoutes } from './auth';
@@ -62,6 +63,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(brokeredListingsRoutes, { prefix: '/api/v1/brokered-listings' });
   fastify.register(offersRoutes, { prefix: '/api/v1/offers' });
   fastify.register(salesRoutes, { prefix: '/api/v1/sales' });
+  fastify.register(fillsRoutes, { prefix: '/api/v1/fills' });
   fastify.register(activityRoutes, { prefix: '/api/v1/activity' });
   fastify.register(feedRoutes, { prefix: '/api/v1/feed' });
   fastify.register(profilesRoutes, { prefix: '/api/v1/profiles' });
