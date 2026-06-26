@@ -16,6 +16,16 @@ export function getPostgresPool(): Pool {
     pgPool.on('error', (err) => {
       console.error('Unexpected error on idle PostgreSQL client', err);
     });
+
+    pgPool.on('connect', (client) => {
+      // Container /dev/shm is too small for parallel-query DSM segments; disabling
+      // parallelism pool-wide prevents "could not resize shared memory segment /
+      // No space left on device" failures across all services. Replaces the
+      // per-endpoint SET LOCAL guards in api/src/routes/activity.ts & feed.ts.
+      client.query('SET max_parallel_workers_per_gather = 0').catch((err) => {
+        console.error('Failed to disable parallel query on new connection', err);
+      });
+    });
   }
   return pgPool;
 }
