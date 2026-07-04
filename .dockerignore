@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+**/dist
+.git
+
+# Never bake local env files (and their secrets) into an image — dotenv would
+# silently use their values for any var the deploy platform doesn't set.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+
+*.md
+services/docs
+services/sdk
