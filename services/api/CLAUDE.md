@@ -163,7 +163,7 @@ Query params (all three routes): `page`, `limit`, `event_type`, `platform`. The 
 - `list_id=<id>` — with `watchlist=true`, scope to a single watchlist list; omitted = union of all the caller's lists.
 - `min_price_wei` / `max_price_wei` — decimal wei strings. An active bound requires a real, in-range, ETH/WETH-denominated price; non-ETH/WETH priced events and no-price events (e.g. pure transfers, un-enriched mints) are excluded while a bound is set.
 
-`event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `other`.
+`event_type` and `platform` accept either repeated params (`?platform=opensea&platform=grails`) or a comma-separated list (`?platform=opensea,grails`). Known `platform` values today: `grails`, `opensea`, `blockchain`, `vision`, `blur`, `looksrare`, `x2y2`, `snipezone`, `enstools`, `rotki`, `namewhisper`, `other`.
 
 ### Feed (unified)
 | Method | Path | Auth | Description |
@@ -414,7 +414,7 @@ Real-time activity feed with filters:
 { "type": "set_event_filter", "filter_type": "include", "event_types": ["sale", "listing"] }
 { "type": "clear_event_filter" }
 
-// Filter by platform/source (opensea, grails, blockchain, vision, blur, looksrare, x2y2, snipezone, enstools, rotki, other)
+// Filter by platform/source (opensea, grails, blockchain, vision, blur, looksrare, x2y2, snipezone, enstools, rotki, namewhisper, other)
 { "type": "set_platform_filter", "filter_type": "include", "platforms": ["opensea", "grails"] }
 { "type": "set_platform_filter", "filter_type": "exclude", "platforms": ["blockchain"] }
 { "type": "clear_platform_filter" }
