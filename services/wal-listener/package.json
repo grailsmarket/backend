@@ -65,7 +65,9 @@
     "backfill-registration-referrers": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js",
     "backfill-registration-referrers:dry": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/backfill-registration-referrers.js --dry-run --verbose",
     "backfill-renewal-activity": "npm run build && node dist/wal-listener/src/scripts/backfill-renewal-activity.js",
-    "backfill-renewal-activity:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-renewal-activity.js --dry-run --verbose"
+    "backfill-renewal-activity:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-renewal-activity.js --dry-run --verbose",
+    "fix-mint-activity-platform": "npm run build && node dist/wal-listener/src/scripts/fix-mint-activity-platform.js",
+    "fix-mint-activity-platform:dry": "npm run build && node dist/wal-listener/src/scripts/fix-mint-activity-platform.js --dry-run --verbose"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.992.0",
