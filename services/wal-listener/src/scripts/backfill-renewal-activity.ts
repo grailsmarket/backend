@@ -16,6 +16,11 @@
  *   --batch-size <n>       Renewals per batch (default: 500)
  *   --limit <n>            Maximum renewals to process
  *   --start-id <n>         Resume from renewal id (processes rows with id > n)
+ *   --since <YYYY-MM-DD>   Only renewals with renewal_date on/after this date
+ *   --referrer <0x...>     Only renewals with this referrer (bytes32 or plain address)
+ *   --fix-platforms        Also re-stamp existing 'blockchain' renewal activity rows
+ *                          whose referrer now maps to a known source (use after adding
+ *                          a new entry to ENS_REFERRER_CODES)
  *   --verbose              Show detailed logs
  */
 
@@ -26,6 +31,9 @@ interface Options {
   batchSize: number;
   limit: number | undefined;
   startId: number | undefined;
+  since: string | undefined;
+  referrer: string | undefined;
+  fixPlatforms: boolean;
   verbose: boolean;
 }
 
@@ -36,6 +44,9 @@ function parseArgs(): Options {
     batchSize: 500,
     limit: undefined,
     startId: undefined,
+    since: undefined,
+    referrer: undefined,
+    fixPlatforms: false,
     verbose: false,
   };
 
@@ -53,9 +64,34 @@ function parseArgs(): Options {
       case '--start-id':
         options.startId = parseInt(args[++i], 10);
         break;
+      case '--since':
+        options.since = args[++i];
+        break;
+      case '--referrer':
+        options.referrer = args[++i]?.toLowerCase();
+        break;
+      case '--fix-platforms':
+        options.fixPlatforms = true;
+        break;
       case '--verbose':
         options.verbose = true;
         break;
+    }
+  }
+
+  if (options.since !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(options.since)) {
+    console.error('Invalid --since value; expected YYYY-MM-DD');
+    process.exit(1);
+  }
+
+  if (options.referrer !== undefined) {
+    // Accept a plain 20-byte address and pad it to the bytes32 form stored in renewals.referrer
+    if (/^0x[0-9a-f]{40}$/.test(options.referrer)) {
+      options.referrer = `0x${'0'.repeat(24)}${options.referrer.slice(2)}`;
+    }
+    if (!/^0x[0-9a-f]{64}$/.test(options.referrer)) {
+      console.error('Invalid --referrer value; expected 0x-prefixed 20-byte address or 32-byte referrer code');
+      process.exit(1);
     }
   }
 
@@ -79,6 +115,19 @@ async function main() {
   console.log(`Options: ${JSON.stringify(options)}`);
 
   try {
+    // Extra renewal filters (validated in parseArgs, safe to inline)
+    const extraConditions: string[] = [];
+    if (options.since !== undefined) {
+      extraConditions.push(`renewal_date >= '${options.since}'`);
+    }
+    if (options.referrer !== undefined) {
+      extraConditions.push(`referrer = '${options.referrer}'`);
+    }
+    const extraBare = extraConditions.map((c) => ` AND ${c}`).join('');
+    const extraAliased = extraConditions.map((c) => ` AND r.${c}`).join('');
+
+    const referrerCase = buildReferrerCaseExpression();
+
     // Count total renewals to process
     const countConditions = ['1=1'];
     if (options.startId !== undefined) {
@@ -88,7 +137,7 @@ async function main() {
     const countResult = await pool.query(`
       SELECT COUNT(*) as total
       FROM renewals r
-      WHERE ${countConditions.join(' AND ')}
+      WHERE ${countConditions.join(' AND ')}${extraAliased}
         AND NOT EXISTS (
           SELECT 1 FROM activity_history ah
           WHERE ah.ens_name_id = r.ens_name_id
@@ -100,19 +149,64 @@ async function main() {
     const total = parseInt(countResult.rows[0].total, 10);
     console.log(`Found ${total} renewals without activity_history records`);
 
+    let fixTotal = 0;
+    if (options.fixPlatforms) {
+      const fixCountResult = await pool.query(`
+        SELECT COUNT(*) as total
+        FROM activity_history ah
+        JOIN renewals r
+          ON r.ens_name_id = ah.ens_name_id
+          AND r.transaction_hash = ah.transaction_hash
+        LEFT JOIN LATERAL (
+          SELECT ${referrerCase} AS registration_source
+        ) src ON true
+        WHERE ah.event_type = 'renewal'
+          AND ah.platform = 'blockchain'
+          AND src.registration_source IS NOT NULL${extraAliased}
+      `);
+      fixTotal = parseInt(fixCountResult.rows[0].total, 10);
+      console.log(`Found ${fixTotal} renewal activity records stamped 'blockchain' with a now-known referrer`);
+    }
+
     if (options.dryRun) {
-      console.log('Dry run — no records will be inserted.');
+      console.log('Dry run — no records will be inserted or updated.');
       await closeAllConnections();
       return;
     }
 
-    if (total === 0) {
+    if (total === 0 && fixTotal === 0) {
       console.log('Nothing to backfill.');
       await closeAllConnections();
       return;
     }
 
-    const referrerCase = buildReferrerCaseExpression();
+    if (options.fixPlatforms && fixTotal > 0) {
+      const fixResult = await pool.query(`
+        UPDATE activity_history ah
+        SET platform = src.registration_source,
+          metadata = COALESCE(ah.metadata, '{}'::jsonb) || jsonb_build_object(
+            'referrer', r.referrer,
+            'registration_source', src.registration_source
+          )
+        FROM renewals r
+        LEFT JOIN LATERAL (
+          SELECT ${referrerCase} AS registration_source
+        ) src ON true
+        WHERE ah.event_type = 'renewal'
+          AND ah.platform = 'blockchain'
+          AND ah.ens_name_id = r.ens_name_id
+          AND ah.transaction_hash = r.transaction_hash
+          AND src.registration_source IS NOT NULL${extraAliased}
+      `);
+      console.log(`Re-stamped platform on ${fixResult.rowCount ?? 0} renewal activity records.`);
+    }
+
+    if (total === 0) {
+      console.log('No missing activity records to insert.');
+      await closeAllConnections();
+      return;
+    }
+
     let processed = 0;
     let inserted = 0;
     let lastId = options.startId ?? 0;
@@ -147,7 +241,7 @@ async function main() {
           r.renewal_date
         FROM (
           SELECT * FROM renewals
-          WHERE id > $1
+          WHERE id > $1${extraBare}
           ORDER BY id ASC
           LIMIT $2
         ) r
@@ -165,7 +259,7 @@ async function main() {
 
       // Get the actual max id from the batch to advance
       const batchMaxResult = await pool.query(`
-        SELECT id FROM renewals WHERE id > $1 ORDER BY id ASC LIMIT $2
+        SELECT id FROM renewals WHERE id > $1${extraBare} ORDER BY id ASC LIMIT $2
       `, [lastId, batchLimit]);
 
       if (batchMaxResult.rows.length === 0) break;
