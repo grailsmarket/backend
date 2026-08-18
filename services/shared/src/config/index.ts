@@ -276,6 +276,7 @@ export const ENS_REFERRER_CODES: Record<string, string> = {
   '0x000000000000000000000000efce7f86fd1efb0359a91c873e6dee9f98788713': 'enstools',
   '0x0000000000000000000000009531c059098e3d194ff87febb587ab07b30b1306': 'rotki',
   '0x000000000000000000000000f919a96d2970380b87917b04f02e6d3d08368b10': 'vision',
+  '0x000000000000000000000000486b883dbbe12b342efc5d4685343611dd4b2c18': 'namewhisper',
 };
 
 // Look up a bytes32 referrer value and return the human-readable source name, or null
