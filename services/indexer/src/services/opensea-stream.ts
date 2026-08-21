@@ -699,58 +699,91 @@ export class OpenSeaStreamListener {
 
       const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
 
-      // Find the listing that's being sold and get its source
-      // Include recently-sold listings in case the Seaport indexer already marked it as sold
+      // Identify the exact order that was fulfilled. The event's order_hash is authoritative —
+      // it says which record (listing vs offer) was executed and therefore which marketplace
+      // the order originated on. The heuristic matches further down are only trusted when the
+      // hash matches nothing (some stream payloads omit order_hash).
+      const eventOrderHash: string | null = eventData.order_hash || null;
       let listingId: number | undefined;
       let listingSource: string | null = null;
-      if (sellerAddress) {
-        const findListingQuery = `
-          SELECT id, source, status FROM listings
-          WHERE ens_name_id = $1
-          AND seller_address = $2
-          AND status IN ('active', 'sold')
-          ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updated_at DESC
-          LIMIT 1
-        `;
-
-        const listingResult = await this.pool.query(findListingQuery, [
-          ensNameId,
-          sellerAddress,
-        ]);
-
-        if (listingResult.rows.length > 0) {
-          listingId = listingResult.rows[0].id;
-          listingSource = listingResult.rows[0].source;
-        }
-      }
-
-      // Always check for matching offer (not just when no listing found).
-      // For offer acceptances, the offer source is the authoritative platform.
       let offerId: number | undefined;
       let offerSource: string | null = null;
-      if (buyerAddress) {
-        const findOfferQuery = `
-          SELECT id, source FROM offers
-          WHERE ens_name_id = $1
-          AND buyer_address = $2
-          AND status IN ('pending', 'accepted')
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
 
-        const offerResult = await this.pool.query(findOfferQuery, [
-          ensNameId,
-          buyerAddress,
-        ]);
-
-        if (offerResult.rows.length > 0) {
-          offerId = offerResult.rows[0].id;
-          offerSource = offerResult.rows[0].source;
+      if (eventOrderHash) {
+        const hashListingResult = await this.pool.query(
+          `SELECT id, source FROM listings WHERE order_hash = $1 ORDER BY created_at DESC LIMIT 1`,
+          [eventOrderHash]
+        );
+        if (hashListingResult.rows.length > 0) {
+          listingId = hashListingResult.rows[0].id;
+          listingSource = hashListingResult.rows[0].source;
+        } else {
+          const hashOfferResult = await this.pool.query(
+            `SELECT id, source FROM offers WHERE order_hash = $1 ORDER BY created_at DESC LIMIT 1`,
+            [eventOrderHash]
+          );
+          if (hashOfferResult.rows.length > 0) {
+            offerId = hashOfferResult.rows[0].id;
+            offerSource = hashOfferResult.rows[0].source;
+          }
         }
       }
 
-      // For offer-driven sales, use the offer source (it tells us which platform facilitated the sale).
-      // For direct listing purchases, use the listing source.
+      // A native-ETH payment can only be a direct listing purchase — Seaport offers are ERC20
+      // (WETH), so an ETH-paid sale must never be attributed to an open offer from the buyer.
+      const paymentTokenAddress = (eventData.payment_token?.address || '0x0000000000000000000000000000000000000000').toLowerCase();
+      const isNativeEthPayment = paymentTokenAddress === '0x0000000000000000000000000000000000000000';
+
+      if (!listingId && !offerId) {
+        // No order-hash match: fall back to heuristics.
+        // Include recently-sold listings in case the Seaport indexer already marked it as sold.
+        if (sellerAddress) {
+          const findListingQuery = `
+            SELECT id, source, status FROM listings
+            WHERE ens_name_id = $1
+            AND seller_address = $2
+            AND status IN ('active', 'sold')
+            ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updated_at DESC
+            LIMIT 1
+          `;
+
+          const listingResult = await this.pool.query(findListingQuery, [
+            ensNameId,
+            sellerAddress,
+          ]);
+
+          if (listingResult.rows.length > 0) {
+            listingId = listingResult.rows[0].id;
+            listingSource = listingResult.rows[0].source;
+          }
+        }
+
+        if (!isNativeEthPayment && buyerAddress) {
+          const findOfferQuery = `
+            SELECT id, source FROM offers
+            WHERE ens_name_id = $1
+            AND buyer_address = $2
+            AND status IN ('pending', 'accepted')
+            ORDER BY created_at DESC
+            LIMIT 1
+          `;
+
+          const offerResult = await this.pool.query(findOfferQuery, [
+            ensNameId,
+            buyerAddress,
+          ]);
+
+          if (offerResult.rows.length > 0) {
+            offerId = offerResult.rows[0].id;
+            offerSource = offerResult.rows[0].source;
+          }
+        }
+      }
+
+      // Offer-driven sale: the offer's source is the platform that facilitated the trade.
+      // Direct listing purchase: the listing's source is. When both matched heuristically
+      // (ERC20 payment, no order-hash match), prefer the offer — WETH-denominated trades are
+      // almost always offer acceptances.
       const saleSource = offerId
         ? (offerSource || listingSource || 'opensea')
         : (listingSource || offerSource || 'opensea');
