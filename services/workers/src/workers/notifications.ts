@@ -1,7 +1,9 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, config } from '../../../shared/src';
+import { ethers } from 'ethers';
 import { logger } from '../utils/logger';
+import { getPostgresPool, config } from '../../../shared/src';
 import { QUEUE_NAMES, type SendNotificationJob } from '../queue';
+import { sendPushNotifications } from '../utils/push-notification';
 import {
   sendEmail,
   buildNewListingEmail,
@@ -12,10 +14,41 @@ import {
   buildOfferReceivedEmail,
   buildListingSoldEmail,
   buildCommentReceivedEmail,
+  type EmailTemplate,
 } from '../services/email';
-import { ethers } from 'ethers';
 
 const FRONTEND_URL = config.frontend.url;
+
+interface EnsNameRow {
+  name: string;
+}
+
+interface UserNotificationRow {
+  email: string | null;
+  email_verified: boolean;
+}
+
+interface ExistingNotificationRow {
+  id: number;
+  metadata: Record<string, unknown> | null;
+}
+
+interface InsertedNotificationRow {
+  id: number;
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string {
+  const value = metadata?.[key];
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return value.toString();
+  }
+
+  return '0';
+}
 
 /**
  * Notification Worker
@@ -31,7 +64,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 2,
     },
     async (job) => {
-      const { type, userId, email, recipientAddress, ensNameId, metadata, transactionHash } = job.data;
+      const { type, userId, email, recipientAddress, ensNameId, metadata } = job.data;
 
       logger.info({ type, userId, ensNameId }, 'Processing notification');
 
@@ -39,10 +72,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
 
       try {
         // Get ENS name details
-        const ensResult = await pool.query(
-          'SELECT name FROM ens_names WHERE id = $1',
-          [ensNameId]
-        );
+        const ensResult = await pool.query<EnsNameRow>('SELECT name FROM ens_names WHERE id = $1', [ensNameId]);
 
         if (ensResult.rows.length === 0) {
           logger.warn({ ensNameId }, 'ENS name not found for notification');
@@ -52,11 +82,11 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         const ensName = ensResult.rows[0].name;
 
         // Get recipient email if not provided
-        let recipientEmail = email;
+        let recipientEmail: string | null | undefined = email;
         if (!recipientEmail && userId) {
-          const userResult = await pool.query(
+          const userResult = await pool.query<UserNotificationRow>(
             'SELECT email, email_verified FROM users WHERE id = $1',
-            [userId]
+            [userId],
           );
 
           if (userResult.rows.length === 0) {
@@ -66,7 +96,6 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
 
           const user = userResult.rows[0];
 
-          // Check if email is verified
           if (!user.email_verified) {
             logger.info({ userId }, 'User email not verified, skipping notification');
             return;
@@ -83,8 +112,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         }
 
         if (!recipientEmail) {
-          logger.warn({ type, userId, ensNameId }, 'No email found for notification recipient');
-          return;
+          logger.info({ type, userId, ensNameId }, 'No verified email found for notification recipient');
         }
 
         // Check if we already sent this notification (deduplication)
@@ -96,13 +124,13 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           const allowDuplicates = ['listing-sold', 'comment-received'];
 
           if (!allowDuplicates.includes(type)) {
-            const existingNotification = await pool.query(
+            const existingNotification = await pool.query<ExistingNotificationRow>(
               `SELECT id, metadata FROM notifications
                WHERE user_id = $1
                  AND type = $2
                  AND ens_name_id = $3
                  AND sent_at > NOW() - INTERVAL '12 hours'`,
-              [userId, type, ensNameId]
+              [userId, type, ensNameId],
             );
 
             if (existingNotification.rows.length > 0) {
@@ -111,20 +139,26 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
                 const lastNotificationPrice = existingNotification.rows[0].metadata?.priceWei;
                 if (lastNotificationPrice && lastNotificationPrice !== metadata.priceWei) {
                   logger.info(
-                    { userId, type, ensNameId, oldPrice: lastNotificationPrice, newPrice: metadata.priceWei },
-                    'Price changed since last notification, allowing duplicate'
+                    {
+                      userId,
+                      type,
+                      ensNameId,
+                      oldPrice: lastNotificationPrice,
+                      newPrice: metadata.priceWei,
+                    },
+                    'Price changed since last notification, allowing duplicate',
                   );
                 } else {
                   logger.info(
                     { userId, type, ensNameId },
-                    'Duplicate notification detected (sent within last 12 hours), skipping'
+                    'Duplicate notification detected (sent within last 12 hours), skipping',
                   );
                   return;
                 }
               } else {
                 logger.info(
                   { userId, type, ensNameId },
-                  'Duplicate notification detected (sent within last 12 hours), skipping'
+                  'Duplicate notification detected (sent within last 12 hours), skipping',
                 );
                 return;
               }
@@ -133,12 +167,12 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         }
 
         // Build email based on notification type
-        let emailTemplate;
+        let emailTemplate: EmailTemplate | undefined;
         const unsubscribeUrl = `${FRONTEND_URL}/settings/notifications`;
 
         switch (type) {
           case 'new-listing': {
-            const priceWei = metadata?.priceWei || '0';
+            const priceWei = metadataString(metadata, 'priceWei');
             const priceEth = ethers.formatEther(priceWei);
 
             emailTemplate = buildNewListingEmail({
@@ -151,8 +185,8 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           }
 
           case 'price-change': {
-            const oldPriceWei = metadata?.oldPriceWei || '0';
-            const newPriceWei = metadata?.newPriceWei || '0';
+            const oldPriceWei = metadataString(metadata, 'oldPriceWei');
+            const newPriceWei = metadataString(metadata, 'newPriceWei');
             const oldPriceEth = ethers.formatEther(oldPriceWei);
             const newPriceEth = ethers.formatEther(newPriceWei);
 
@@ -167,7 +201,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           }
 
           case 'sale': {
-            const priceWei = metadata?.priceWei || '0';
+            const priceWei = metadataString(metadata, 'priceWei');
             const priceEth = ethers.formatEther(priceWei);
 
             emailTemplate = buildSaleEmail({
@@ -180,7 +214,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           }
 
           case 'new-offer': {
-            const offerAmountWei = metadata?.offerAmountWei || '0';
+            const offerAmountWei = metadataString(metadata, 'offerAmountWei');
             const priceEth = ethers.formatEther(offerAmountWei);
 
             emailTemplate = buildNewOfferEmail({
@@ -201,8 +235,17 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             break;
           }
 
+          case 'listing-cancelled': {
+            emailTemplate = buildListingCancelledEmail({
+              ensName,
+              listingUrl: `${FRONTEND_URL}/${ensName}`,
+              unsubscribeUrl,
+            });
+            break;
+          }
+
           case 'offer-received': {
-            const offerAmountWei = metadata?.offerAmountWei || '0';
+            const offerAmountWei = metadataString(metadata, 'offerAmountWei');
             const priceEth = ethers.formatEther(offerAmountWei);
 
             emailTemplate = buildOfferReceivedEmail({
@@ -215,7 +258,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
           }
 
           case 'listing-sold': {
-            const priceWei = metadata?.priceWei || '0';
+            const priceWei = metadataString(metadata, 'priceWei');
             const priceEth = ethers.formatEther(priceWei);
 
             emailTemplate = buildListingSoldEmail({
@@ -241,16 +284,50 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             return;
         }
 
-        // Send email
-        await sendEmail(recipientEmail, emailTemplate);
-
-        // Log notification in database
+        // Log notification in database as the canonical in-app notification
+        let notificationId: number | undefined;
         if (userId) {
-          await pool.query(
+          const insertedNotification = await pool.query<InsertedNotificationRow>(
             `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
-             VALUES ($1, $2, $3, $4, NOW())`,
-            [userId, type, ensNameId, JSON.stringify(metadata || {})]
+             VALUES ($1, $2, $3, $4, NOW())
+             RETURNING id`,
+            [userId, type, ensNameId, JSON.stringify(metadata || {})],
           );
+          notificationId = insertedNotification.rows[0].id;
+        }
+
+        if (recipientEmail && emailTemplate) {
+          try {
+            await sendEmail(recipientEmail, emailTemplate);
+          } catch (emailError) {
+            logger.warn(
+              {
+                error: emailError,
+                userId,
+                type,
+                ensNameId,
+                email: recipientEmail,
+              },
+              'Email notification delivery failed after canonical notification was logged',
+            );
+          }
+        }
+
+        if (userId && notificationId !== undefined) {
+          try {
+            await sendPushNotifications({
+              userId,
+              type,
+              ensName,
+              notificationId,
+              metadata,
+            });
+          } catch (pushError) {
+            logger.warn(
+              { error: pushError, userId, type, ensNameId },
+              'Push notification delivery failed after canonical notification was logged',
+            );
+          }
 
           logger.info({ userId, type, ensNameId, email: recipientEmail }, 'Notification sent and logged');
         } else {
@@ -260,7 +337,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
         logger.error({ error, type, userId, ensNameId }, 'Error sending notification');
         throw error; // Will trigger pg-boss retry
       }
-    }
+    },
   );
 
   logger.info('Notification worker registered');
