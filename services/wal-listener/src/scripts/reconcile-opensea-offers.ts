@@ -5,6 +5,13 @@
  * Fetches active offers from OpenSea API and compares with our database.
  * Inserts any missing offers that we may have missed due to WebSocket gaps.
  *
+ * Uses the v2 offers endpoints (the legacy /orders/{chain}/seaport/offers
+ * endpoint was removed and returns 405):
+ *   - all offers:  GET /api/v2/offers/collection/ens/all (paginated, item
+ *     offers filtered by --days client-side)
+ *   - --token-id:  GET /api/v2/offers/collection/ens/nfts/{id}/best — the v2
+ *     API only exposes the single BEST offer per NFT (--days is ignored)
+ *
  * Usage:
  *   npx tsx src/scripts/reconcile-opensea-offers.ts                    # Check last 21 days (dry run)
  *   npx tsx src/scripts/reconcile-opensea-offers.ts --fix              # Insert missing offers
@@ -47,7 +54,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
+async function fetchWithRetry(url: string, attempt = 1, allow404 = false): Promise<Response | null> {
   const response = await fetch(url, {
     headers: {
       'X-API-Key': OPENSEA_API_KEY!,
@@ -59,7 +66,11 @@ async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
     const delay = Math.pow(2, attempt) * 1000;
     console.log(`  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`);
     await sleep(delay);
-    return fetchWithRetry(url, attempt + 1);
+    return fetchWithRetry(url, attempt + 1, allow404);
+  }
+
+  if (response.status === 404 && allow404) {
+    return null;
   }
 
   if (!response.ok) {
@@ -69,34 +80,35 @@ async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
   return response;
 }
 
+// Shape returned by the v2 offers endpoints (/offers/collection/{slug}/all
+// and /offers/collection/{slug}/nfts/{id}/best). The legacy
+// /orders/{chain}/seaport/offers endpoint was removed (returns 405).
 interface OpenSeaOffer {
   order_hash: string;
-  created_date: string;
-  closing_date: string;
-  expiration_time: number;
-  current_price: string;
-  maker: { address: string };
+  chain: string;
   protocol_data: {
     parameters: {
       offerer: string;
       offer: Array<{
+        itemType: number;
         token: string;
         startAmount: string;
       }>;
       consideration: Array<{
+        itemType: number;
         token: string;
         identifierOrCriteria: string;
       }>;
+      startTime: string;
+      endTime: string;
     };
   };
-  taker_asset_bundle: {
-    assets: Array<{
-      token_id: string;
-      name: string;
-    }>;
-  };
-  cancelled: boolean;
-  finalized: boolean;
+  protocol_address: string;
+  asset: { identifier: string; contract: string } | null;
+  order_created_at: number;
+  criteria: unknown | null;
+  price: { currency: string; decimals: number; value: string };
+  status: string;
 }
 
 async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: number): Promise<OpenSeaOffer[]> {
@@ -104,52 +116,52 @@ async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: nu
     throw new Error('OPENSEA_API_KEY not configured');
   }
 
-  const allOffers: OpenSeaOffer[] = [];
-  const baseUrl = 'https://api.opensea.io/api/v2/orders/ethereum/seaport/offers';
-  const params = new URLSearchParams({
-    collection_slug: 'ens',
-    limit: limit.toString(),
-  });
-
   if (tokenId) {
-    params.append('token_ids', tokenId);
-  }
-  if (listedAfter) {
-    params.append('listed_after', listedAfter.toString());
+    // The v2 API only exposes the single best offer per NFT.
+    const url = `https://api.opensea.io/api/v2/offers/collection/ens/nfts/${tokenId}/best`;
+    console.log('Fetching best offer for token (v2 API only exposes the best offer per NFT)...');
+    const response = await fetchWithRetry(url, 1, true);
+    if (!response) {
+      return [];
+    }
+    const data = await response.json() as OpenSeaOffer | Record<string, never>;
+    return 'order_hash' in data && data.order_hash ? [data as OpenSeaOffer] : [];
   }
 
-  let url: string | null = `${baseUrl}?${params}`;
+  const allOffers: OpenSeaOffer[] = [];
+  const baseUrl = 'https://api.opensea.io/api/v2/offers/collection/ens/all';
+
+  let cursor: string | undefined;
   let page = 1;
 
-  while (url) {
+  do {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (cursor) {
+      params.append('next', cursor);
+    }
+
     console.log(`Fetching page ${page}...`);
-    const response = await fetchWithRetry(url);
-    const data = await response.json() as { orders?: OpenSeaOffer[]; next?: string };
+    const response = await fetchWithRetry(`${baseUrl}?${params}`);
+    const data = await response!.json() as { offers?: OpenSeaOffer[]; next?: string };
 
-    if (data.orders) {
-      allOffers.push(...data.orders);
-      console.log(`  Got ${data.orders.length} offers (total: ${allOffers.length})`);
+    if (data.offers) {
+      // Keep item offers only (criteria offers are collection/trait-wide and
+      // don't map to a single name). Apply the --days window client-side —
+      // the v2 endpoint has no listed_after filter.
+      const itemOffers = data.offers.filter(
+        o => !o.criteria && o.asset?.identifier &&
+          (!listedAfter || o.order_created_at >= listedAfter)
+      );
+      allOffers.push(...itemOffers);
+      console.log(`  Got ${data.offers.length} offers, kept ${itemOffers.length} item offers in window (total: ${allOffers.length})`);
     }
 
-    if (data.next) {
-      const nextParams = new URLSearchParams({
-        collection_slug: 'ens',
-        limit: limit.toString(),
-        cursor: data.next,
-      });
-      if (tokenId) {
-        nextParams.append('token_ids', tokenId);
-      }
-      if (listedAfter) {
-        nextParams.append('listed_after', listedAfter.toString());
-      }
-      url = `${baseUrl}?${nextParams}`;
-      page++;
+    cursor = data.next;
+    page++;
+    if (cursor) {
       await sleep(300);
-    } else {
-      url = null;
     }
-  }
+  } while (cursor);
 
   return allOffers;
 }
@@ -173,11 +185,11 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
 
   // Get order hashes to check against our database
   const orderHashes = osOffers
-    .filter(o => !o.cancelled && !o.finalized)
+    .filter(o => o.status === 'ACTIVE')
     .map(o => o.order_hash);
 
   if (orderHashes.length === 0) {
-    console.log('No active (non-cancelled, non-finalized) offers found.');
+    console.log('No active offers found.');
     return;
   }
 
@@ -190,7 +202,7 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
 
   // Find missing offers
   const missingOffers = osOffers.filter(
-    o => !o.cancelled && !o.finalized && !existingHashes.has(o.order_hash)
+    o => o.status === 'ACTIVE' && !existingHashes.has(o.order_hash)
   );
 
   console.log('=== Results ===\n');
@@ -205,17 +217,15 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
 
   console.log('\n=== Missing Offers ===\n');
   for (const offer of missingOffers) {
-    const tokenId = offer.taker_asset_bundle?.assets?.[0]?.token_id || 'unknown';
-    const name = offer.taker_asset_bundle?.assets?.[0]?.name || 'unknown';
-    const priceEth = (BigInt(offer.current_price) / BigInt(10 ** 18)).toString();
-    const priceWei = offer.current_price;
-    const expiresAt = new Date(offer.expiration_time * 1000).toISOString();
+    const tokenId = offer.asset?.identifier || 'unknown';
+    const priceRaw = offer.price.value;
+    const priceDisplay = (Number(priceRaw) / 10 ** offer.price.decimals).toString();
+    const expiresAt = new Date(Number(offer.protocol_data.parameters.endTime) * 1000).toISOString();
 
-    console.log(`${name}`);
-    console.log(`  Token ID: ${tokenId}`);
+    console.log(`Token ID: ${tokenId}`);
     console.log(`  Order Hash: ${offer.order_hash}`);
-    console.log(`  Price: ${priceEth} ETH (${priceWei} wei)`);
-    console.log(`  Maker: ${offer.maker.address}`);
+    console.log(`  Price: ${priceDisplay} ${offer.price.currency} (${priceRaw} wei)`);
+    console.log(`  Maker: ${offer.protocol_data.parameters.offerer}`);
     console.log(`  Expires: ${expiresAt}`);
     console.log('');
   }
@@ -228,7 +238,7 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
 
     for (const offer of missingOffers) {
       try {
-        const tokenId = offer.taker_asset_bundle?.assets?.[0]?.token_id;
+        const tokenId = offer.asset?.identifier;
         if (!tokenId) {
           console.log(`  [SKIP] No token_id found in offer ${offer.order_hash}`);
           continue;
@@ -240,35 +250,14 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
           [tokenId]
         );
 
-        let ensNameId: number;
-        let ensName: string;
-
-        if (ensNameResult.rows.length > 0) {
-          ensNameId = ensNameResult.rows[0].id;
-          ensName = ensNameResult.rows[0].name;
-        } else {
-          // Try to find by name if token_id doesn't match
-          const name = offer.taker_asset_bundle?.assets?.[0]?.name;
-          if (name) {
-            const byNameResult = await pool.query(
-              'SELECT id, name FROM ens_names WHERE name = $1',
-              [name]
-            );
-            if (byNameResult.rows.length > 0) {
-              ensNameId = byNameResult.rows[0].id;
-              ensName = byNameResult.rows[0].name;
-              console.log(`  [INFO] Found ${name} by name lookup (token_id mismatch)`);
-            } else {
-              console.log(`  [SKIP] ENS name not found for token ${tokenId} / ${name}`);
-              failed++;
-              continue;
-            }
-          } else {
-            console.log(`  [SKIP] ENS name not found for token ${tokenId}`);
-            failed++;
-            continue;
-          }
+        if (ensNameResult.rows.length === 0) {
+          console.log(`  [SKIP] ENS name not found for token ${tokenId}`);
+          failed++;
+          continue;
         }
+
+        const ensNameId: number = ensNameResult.rows[0].id;
+        const ensName: string = ensNameResult.rows[0].name;
 
         // Get currency from the offer
         const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
@@ -292,13 +281,13 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
           ON CONFLICT (order_hash, source) DO NOTHING`,
           [
             ensNameId,
-            offer.maker.address.toLowerCase(),
-            offer.current_price,
+            offer.protocol_data.parameters.offerer.toLowerCase(),
+            offer.price.value,
             currencyAddress.toLowerCase(),
             offer.order_hash,
             JSON.stringify(offer.protocol_data),
-            new Date(offer.expiration_time * 1000),
-            new Date(offer.created_date),
+            new Date(Number(offer.protocol_data.parameters.endTime) * 1000),
+            new Date(offer.order_created_at * 1000),
           ]
         );
 
