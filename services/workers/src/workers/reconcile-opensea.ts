@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool, safeNormalize } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
@@ -89,6 +89,78 @@ export async function registerReconcileOpenseaWorker(boss: PgBoss) {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch an asset's name from the OpenSea NFT metadata endpoint. The v2 order
+ * endpoints no longer include asset names, so this is the name source for the
+ * fallback below. Failures return null — a metadata hiccup shouldn't fail the
+ * whole reconcile job.
+ */
+async function fetchOpenSeaAssetName(contract: string, identifier: string): Promise<string | null> {
+  if (!OPENSEA_API_KEY) return null;
+
+  try {
+    const response = await fetch(
+      `https://api.opensea.io/api/v2/chain/ethereum/contract/${contract}/nfts/${identifier}`,
+      {
+        headers: {
+          'X-API-Key': OPENSEA_API_KEY,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      logger.warn({ contract, identifier, status: response.status }, 'OpenSea NFT metadata fetch failed');
+      return null;
+    }
+
+    const data = await response.json() as { nft?: { name?: string } };
+    return data.nft?.name || null;
+  } catch (error: any) {
+    logger.warn({ contract, identifier, error: error.message }, 'OpenSea NFT metadata fetch failed');
+    return null;
+  }
+}
+
+/**
+ * Resolve an OpenSea asset to an ens_names row. Tries the exact token_id
+ * first; on a miss — e.g. the order carries the identity from before a
+ * wrapping-state change (registrar labelhash vs wrapper namehash) while
+ * ens_names stores the other — falls back to fetching the asset name from
+ * OpenSea's NFT metadata endpoint and matching by name.
+ */
+async function resolveEnsNameId(
+  pool: Pool,
+  asset: { identifier: string; contract: string }
+): Promise<number | null> {
+  const byToken = await pool.query(
+    'SELECT id FROM ens_names WHERE token_id = $1',
+    [asset.identifier]
+  );
+  if (byToken.rows.length > 0) {
+    return byToken.rows[0].id;
+  }
+
+  const name = await fetchOpenSeaAssetName(asset.contract, asset.identifier);
+  if (!name) {
+    return null;
+  }
+
+  const byName = await pool.query(
+    'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+    [safeNormalize(name)]
+  );
+  if (byName.rows.length > 0) {
+    logger.info(
+      { tokenId: asset.identifier, name, ensNameId: byName.rows[0].id },
+      'Resolved order via name fallback'
+    );
+    return byName.rows[0].id;
+  }
+
+  return null;
 }
 
 const MAX_PAGES = parseInt(process.env.RECONCILE_MAX_PAGES || '5', 10);
@@ -236,19 +308,12 @@ async function reconcileOffers(pool: Pool) {
         continue;
       }
 
-      // The v2 API doesn't include the asset name, so token_id lookup is the
-      // only resolution path.
-      const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE token_id = $1',
-        [tokenId]
-      );
-
-      if (ensResult.rows.length === 0) {
+      const ensNameId = await resolveEnsNameId(pool, offer.asset!);
+      if (!ensNameId) {
         skippedNoEnsName++;
         logger.debug({ tokenId, orderHash: offer.order_hash }, 'Could not find ens_name for offer, skipping');
         continue;
       }
-      const ensNameId: number = ensResult.rows[0].id;
 
       const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
         '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
@@ -315,19 +380,12 @@ async function reconcileListings(pool: Pool) {
         continue;
       }
 
-      // The v2 API doesn't include the asset name, so token_id lookup is the
-      // only resolution path.
-      const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE token_id = $1',
-        [tokenId]
-      );
-
-      if (ensResult.rows.length === 0) {
+      const ensNameId = await resolveEnsNameId(pool, listing.asset!);
+      if (!ensNameId) {
         skippedNoEnsName++;
         logger.debug({ tokenId, orderHash: listing.order_hash }, 'Could not find ens_name for listing, skipping');
         continue;
       }
-      const ensNameId: number = ensResult.rows[0].id;
 
       await pool.query(
         `INSERT INTO listings (
@@ -355,7 +413,7 @@ async function reconcileListings(pool: Pool) {
   }
 
   if (skippedNoEnsName > 0) {
-    logger.warn({ skippedNoEnsName }, 'Listings skipped: ens_name not found by token_id');
+    logger.warn({ skippedNoEnsName }, 'Listings skipped: ens_name not found by token_id or name');
   }
 
   return { checked: activeListings.length, missing: missingListings.length, inserted, skippedNoToken, skippedNoEnsName, pagesFetched };

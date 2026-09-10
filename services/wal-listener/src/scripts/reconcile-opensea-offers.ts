@@ -21,7 +21,7 @@
  */
 
 import { Pool } from 'pg';
-import { config } from '../../../shared/src';
+import { config, safeNormalize } from '../../../shared/src';
 
 const FIX_MODE = process.argv.includes('--fix');
 const OPENSEA_API_KEY = config.opensea.apiKey;
@@ -78,6 +78,28 @@ async function fetchWithRetry(url: string, attempt = 1, allow404 = false): Promi
   }
 
   return response;
+}
+
+/**
+ * Fetch an asset's name from the OpenSea NFT metadata endpoint (the v2 order
+ * endpoints no longer include asset names). Returns null on any failure.
+ */
+async function fetchOpenSeaAssetName(contract: string, identifier: string): Promise<string | null> {
+  try {
+    const response = await fetchWithRetry(
+      `https://api.opensea.io/api/v2/chain/ethereum/contract/${contract}/nfts/${identifier}`,
+      1,
+      true
+    );
+    if (!response) {
+      return null;
+    }
+    const data = await response.json() as { nft?: { name?: string } };
+    return data.nft?.name || null;
+  } catch (error: any) {
+    console.log(`  [WARN] NFT metadata fetch failed for ${identifier}: ${error.message}`);
+    return null;
+  }
 }
 
 // Shape returned by the v2 offers endpoints (/offers/collection/{slug}/all
@@ -245,10 +267,27 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
         }
 
         // Look up ens_name_id by token_id
-        const ensNameResult = await pool.query(
+        let ensNameResult = await pool.query(
           'SELECT id, name FROM ens_names WHERE token_id = $1',
           [tokenId]
         );
+
+        if (ensNameResult.rows.length === 0 && offer.asset?.contract) {
+          // The order may carry the identity from before a wrapping-state
+          // change (registrar labelhash vs wrapper namehash) while ens_names
+          // stores the other. The v2 order endpoints no longer include asset
+          // names, so fetch the name from the NFT metadata endpoint instead.
+          const assetName = await fetchOpenSeaAssetName(offer.asset.contract, tokenId);
+          if (assetName) {
+            ensNameResult = await pool.query(
+              'SELECT id, name FROM ens_names WHERE LOWER(name) = LOWER($1)',
+              [safeNormalize(assetName)]
+            );
+            if (ensNameResult.rows.length > 0) {
+              console.log(`  [INFO] Resolved ${assetName} via metadata name fallback (token_id mismatch)`);
+            }
+          }
+        }
 
         if (ensNameResult.rows.length === 0) {
           console.log(`  [SKIP] ENS name not found for token ${tokenId}`);
