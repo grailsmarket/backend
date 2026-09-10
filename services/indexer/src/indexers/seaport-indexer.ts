@@ -10,6 +10,7 @@ import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
 import { config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
+import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
@@ -86,6 +87,11 @@ export class SeaportIndexer {
 
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
+        if (isBeyondHeadError(error)) {
+          logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
+          await new Promise(resolve => setTimeout(resolve, 250));
+          continue;
+        }
         logger.error(`Error in Seaport index loop at block ${this.currentBlock}:`, {
           error: error.message,
           code: error.code,
@@ -405,8 +411,10 @@ export class SeaportIndexer {
 
         const ensNameId = nameResult.rows[0].id;
 
-        // Fallback: if order_hash didn't match an offer, try by ens_name_id + buyer_address
-        if (!offerId && buyerAddress) {
+        // Fallback: if order_hash didn't match an offer, try by ens_name_id + buyer_address.
+        // Only valid for genuine offer acceptances (ENS in consideration) — a listing purchase
+        // must never be linked to an unrelated open offer from the same buyer.
+        if (!offerId && isOfferAcceptance && buyerAddress) {
           const fallbackOfferQuery = `
             SELECT id, source FROM offers
             WHERE ens_name_id = $1
@@ -435,9 +443,10 @@ export class SeaportIndexer {
         const saleAlreadyExists = existingSaleResult.rows.length > 0;
 
         if (!saleAlreadyExists) {
-          // For offer-driven sales, use the offer source (it tells us which platform facilitated the sale).
-          // For direct listing purchases, use the listing source.
-          const saleSource = (offerId || isOfferAcceptance)
+          // The on-chain event says definitively whether this was an offer acceptance (ENS in
+          // consideration) or a listing purchase (ENS in offer) — attribute the sale to the
+          // record that was actually executed.
+          const saleSource = isOfferAcceptance
             ? (offerSource || listingSource || 'opensea')
             : (listingSource || offerSource || 'opensea');
           try {
