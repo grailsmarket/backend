@@ -11,6 +11,7 @@ import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
 import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
 import { logger } from '../utils/logger';
+import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 
 // Define ENS ABI with proper event definitions (Base Registrar - ERC-721)
@@ -139,6 +140,11 @@ export class ENSIndexer {
 
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
+        if (isBeyondHeadError(error)) {
+          logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
+          await new Promise(resolve => setTimeout(resolve, 250));
+          continue;
+        }
         logger.error({
           err: error,
           code: error.code,

@@ -10,6 +10,7 @@ import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
 import { config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
+import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
@@ -86,6 +87,11 @@ export class SeaportIndexer {
 
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
+        if (isBeyondHeadError(error)) {
+          logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
+          await new Promise(resolve => setTimeout(resolve, 250));
+          continue;
+        }
         logger.error(`Error in Seaport index loop at block ${this.currentBlock}:`, {
           error: error.message,
           code: error.code,
