@@ -88,6 +88,43 @@ CREATE INDEX IF NOT EXISTS idx_ens_names_owner ON ens_names(owner_address);
 CREATE INDEX IF NOT EXISTS idx_ens_names_expiry ON ens_names(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_ens_names_name_lower ON ens_names(LOWER(name));
 
+-- Browser Web Push subscriptions. This mirrors API migration
+-- 0894_create_push_subscriptions.sql for schema-based bootstrap flows. The
+-- conditional block keeps this legacy schema file usable in environments where
+-- the users table is supplied by the API migration sequence instead.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'users'
+    ) THEN
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            expiration_time TIMESTAMP,
+            device_name VARCHAR(120),
+            user_agent TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
+        ON push_subscriptions(user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled_user
+        ON push_subscriptions(user_id)
+        WHERE enabled = TRUE;
+
+        CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint
+        ON push_subscriptions(endpoint);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
 CREATE INDEX IF NOT EXISTS idx_listings_seller ON listings(seller_address);
 CREATE INDEX IF NOT EXISTS idx_listings_created ON listings(created_at DESC);
@@ -127,6 +164,18 @@ CREATE TRIGGER update_listings_updated_at BEFORE UPDATE ON listings
 DROP TRIGGER IF EXISTS update_indexer_state_updated_at ON indexer_state;
 CREATE TRIGGER update_indexer_state_updated_at BEFORE UPDATE ON indexer_state
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'push_subscriptions'
+    ) THEN
+        DROP TRIGGER IF EXISTS update_push_subscriptions_updated_at ON push_subscriptions;
+        CREATE TRIGGER update_push_subscriptions_updated_at BEFORE UPDATE ON push_subscriptions
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 -- Enable logical replication for WAL listener
 -- Note: These commands need to be run as superuser
