@@ -15,7 +15,7 @@ export function buildSaleEmail(params: {
   const body = `
     ${bodyIntro(
       `${escapeHtml(ensName)} sold`,
-      `<strong>${escapeHtml(ensName)}</strong>, a name on your watchlist, just changed hands.`,
+      `<strong>${escapeHtml(ensName)}</strong>, a name on your watchlist, just changed hands.`
     )}
     ${highlight('Sale price', `${escapeHtml(priceEth)} ETH`)}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 8px 0 8px 0;">

@@ -3,7 +3,14 @@ import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
-const VALID_SORT_FIELDS = ['names_owned', 'names_in_clubs', 'expired_names', 'names_listed', 'names_sold', 'sales_volume'] as const;
+const VALID_SORT_FIELDS = [
+  'names_owned',
+  'names_in_clubs',
+  'expired_names',
+  'names_listed',
+  'names_sold',
+  'sales_volume',
+] as const;
 
 export async function leaderboardRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -34,7 +41,9 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
       const offset = (pageNum - 1) * limitNum;
 
       // Sorting
-      const sortBy = VALID_SORT_FIELDS.includes(rawQuery.sortBy as typeof VALID_SORT_FIELDS[number])
+      const sortBy = VALID_SORT_FIELDS.includes(
+        rawQuery.sortBy as (typeof VALID_SORT_FIELDS)[number]
+      )
         ? rawQuery.sortBy
         : 'names_owned';
       const sortOrder = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
@@ -192,7 +201,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
       return reply.send({
         success: true,
         data: {
-          users: dataResult.rows.map(row => ({
+          users: dataResult.rows.map((row) => ({
             address: row.address,
             names_owned: row.names_owned,
             names_in_clubs: row.names_in_clubs,

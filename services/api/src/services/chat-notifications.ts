@@ -31,13 +31,20 @@ export interface ChatNotificationRow {
  * Generalizes the insertChatModNotification pattern; chat notifications are
  * delivered in-app (bell), not via the email/send-notification queue.
  */
-export async function insertChatNotifications(pool: Pool, rows: ChatNotificationRow[]): Promise<void> {
+export async function insertChatNotifications(
+  pool: Pool,
+  rows: ChatNotificationRow[]
+): Promise<void> {
   if (rows.length === 0) return;
   await pool.query(
     `INSERT INTO notifications (user_id, type, ens_name_id, metadata, sent_at)
      SELECT u, t, NULL, m::jsonb, NOW()
        FROM unnest($1::int[], $2::text[], $3::text[]) AS x(u, t, m)`,
-    [rows.map((r) => r.userId), rows.map((r) => r.type), rows.map((r) => JSON.stringify(r.metadata))]
+    [
+      rows.map((r) => r.userId),
+      rows.map((r) => r.type),
+      rows.map((r) => JSON.stringify(r.metadata)),
+    ]
   );
 }
 
@@ -118,7 +125,10 @@ export function parseMentionTokens(body: string): string[] {
  * Never creates stub users (unlike resolveRecipientToUserId) — we only notify
  * real accounts.
  */
-export async function resolveMentionUserIds(pool: Pool, tokens: string[]): Promise<Map<string, number>> {
+export async function resolveMentionUserIds(
+  pool: Pool,
+  tokens: string[]
+): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   if (tokens.length === 0) return result;
 
@@ -172,7 +182,16 @@ export interface NotifyReplyAndMentionsArgs {
  * fan-out. Returns the distinct user ids notified (for the WS unread bump).
  */
 export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): Promise<number[]> {
-  const { pool, chatId, messageId, senderUserId, senderAddress, body, replyParentAuthorId, accessibleUserIds } = args;
+  const {
+    pool,
+    chatId,
+    messageId,
+    senderUserId,
+    senderAddress,
+    body,
+    replyParentAuthorId,
+    accessibleUserIds,
+  } = args;
   const notified = new Set<number>();
   const rows: ChatNotificationRow[] = [];
   const snip = snippet(body);
@@ -189,7 +208,13 @@ export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): 
     rows.push({
       userId: replyParentAuthorId,
       type: 'chat_reply',
-      metadata: { chatId, messageId, replyToMessageId: args.replyToMessageId ?? null, senderAddress, snippet: snip },
+      metadata: {
+        chatId,
+        messageId,
+        replyToMessageId: args.replyToMessageId ?? null,
+        senderAddress,
+        snippet: snip,
+      },
     });
     notified.add(replyParentAuthorId);
   }
@@ -202,7 +227,11 @@ export async function notifyReplyAndMentions(args: NotifyReplyAndMentionsArgs): 
     for (const userId of resolved.values()) {
       if (count >= MAX_MENTION_NOTIFICATIONS) break;
       if (notified.has(userId) || !canNotify(userId)) continue;
-      rows.push({ userId, type: 'chat_mention', metadata: { chatId, messageId, senderAddress, snippet: snip } });
+      rows.push({
+        userId,
+        type: 'chat_mention',
+        metadata: { chatId, messageId, senderAddress, snippet: snip },
+      });
       notified.add(userId);
       count++;
     }

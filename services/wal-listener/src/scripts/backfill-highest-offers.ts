@@ -75,7 +75,10 @@ async function main() {
         jobsPublished++;
         process.stdout.write(`\r  Published ${jobsPublished}/${ensNames.length} jobs...`);
       } catch (error) {
-        console.error(`\n✗ Failed to publish job for ENS name "${ensName.name}" (ID: ${ensName.id}):`, error);
+        console.error(
+          `\n✗ Failed to publish job for ENS name "${ensName.name}" (ID: ${ensName.id}):`,
+          error
+        );
       }
     }
 
@@ -92,7 +95,9 @@ async function main() {
     if (ensNames.length > 0) {
       console.log('Top 10 ENS names by offer count:');
       ensNames.slice(0, 10).forEach((ensName, index) => {
-        console.log(`  ${(index + 1).toString().padStart(2)}. ${ensName.name.padEnd(30)} - ${ensName.offer_count} active offers`);
+        console.log(
+          `  ${(index + 1).toString().padStart(2)}. ${ensName.name.padEnd(30)} - ${ensName.offer_count} active offers`
+        );
       });
       console.log();
     }
@@ -100,7 +105,6 @@ async function main() {
     console.log('Jobs have been queued for processing.');
     console.log('Monitor worker logs to track progress.');
     console.log('Highest offers will be calculated asynchronously.\n');
-
   } catch (error) {
     console.error('\n✗ Backfill failed with error:', error);
     process.exit(1);

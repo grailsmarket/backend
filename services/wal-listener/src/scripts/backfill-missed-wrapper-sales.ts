@@ -44,7 +44,9 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!inputFile) {
-  console.error('Usage: npx tsx src/scripts/backfill-missed-wrapper-sales.ts --file <json-file> [options]');
+  console.error(
+    'Usage: npx tsx src/scripts/backfill-missed-wrapper-sales.ts --file <json-file> [options]'
+  );
   console.error('');
   console.error('Options:');
   console.error('  --dry-run              Preview without making changes');
@@ -55,7 +57,7 @@ if (!inputFile) {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const GRAPH_URL = config.theGraph.ensSubgraphUrl;
@@ -80,7 +82,9 @@ interface MissedSale {
 /**
  * Resolve namehash to ENS name data via The Graph
  */
-async function resolveNamehash(tokenId: string): Promise<{ name: string; expiryDate: Date | null } | null> {
+async function resolveNamehash(
+  tokenId: string
+): Promise<{ name: string; expiryDate: Date | null } | null> {
   const hexString = BigInt(tokenId).toString(16).padStart(64, '0');
   const tokenIdAsHex = '0x' + hexString;
 
@@ -113,7 +117,7 @@ async function resolveNamehash(tokenId: string): Promise<{ name: string; expiryD
       headers,
       body: JSON.stringify({
         query,
-        variables: { namehash: tokenIdAsHex }
+        variables: { namehash: tokenIdAsHex },
       }),
     });
 
@@ -122,7 +126,7 @@ async function resolveNamehash(tokenId: string): Promise<{ name: string; expiryD
       return null;
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     if (data.errors) {
       console.error(`Graph query errors:`, data.errors);
@@ -148,14 +152,15 @@ async function resolveNamehash(tokenId: string): Promise<{ name: string; expiryD
   }
 }
 
-
 async function backfillMissedSales(): Promise<void> {
   const pool = getPostgresPool();
 
   console.log('=== Backfill Missed Name Wrapper Sales ===\n');
   console.log(`Input file: ${inputFile}`);
   console.log(`Dry run: ${dryRun}`);
-  console.log(`Throttling: ${delayMs}ms between inserts, ${batchPauseMs}ms pause every ${batchSize} records\n`);
+  console.log(
+    `Throttling: ${delayMs}ms between inserts, ${batchPauseMs}ms pause every ${batchSize} records\n`
+  );
 
   // Read the JSON file
   let missedSales: MissedSale[];
@@ -173,9 +178,11 @@ async function backfillMissedSales(): Promise<void> {
   // Estimate time
   if (!dryRun && missedSales.length > 0) {
     const numBatches = Math.ceil(missedSales.length / batchSize);
-    const totalDelayMs = (missedSales.length * delayMs) + (numBatches * batchPauseMs);
+    const totalDelayMs = missedSales.length * delayMs + numBatches * batchPauseMs;
     const estimatedMinutes = Math.ceil(totalDelayMs / 60000);
-    console.log(`Estimated time: ~${estimatedMinutes} minutes (throttling only, excludes RPC/DB time)`);
+    console.log(
+      `Estimated time: ~${estimatedMinutes} minutes (throttling only, excludes RPC/DB time)`
+    );
   }
   console.log('');
 
@@ -234,7 +241,9 @@ async function backfillMissedSales(): Promise<void> {
 
       // 3. Get price and addresses from the JSON data (already extracted by find script)
       const priceWei = sale.priceWei;
-      const currencyAddress = (sale.currencyAddress || '0x0000000000000000000000000000000000000000').toLowerCase();
+      const currencyAddress = (
+        sale.currencyAddress || '0x0000000000000000000000000000000000000000'
+      ).toLowerCase();
       const sellerAddress = sale.offerer.toLowerCase();
       const buyerAddress = sale.recipient.toLowerCase();
 
@@ -290,14 +299,17 @@ async function backfillMissedSales(): Promise<void> {
 
       // 6. Update last_sale_price and last_sale_date only if this sale is newer
       if (!currentLastSaleDate || saleDate > currentLastSaleDate) {
-        const updateResult = await pool.query(`
+        const updateResult = await pool.query(
+          `
           UPDATE ens_names
           SET last_sale_price = $1,
               last_sale_date = $2,
               updated_at = NOW()
           WHERE id = $3
             AND (last_sale_date IS NULL OR last_sale_date < $2)
-        `, [priceWei, saleDate, ensNameId]);
+        `,
+          [priceWei, saleDate, ensNameId]
+        );
 
         if (updateResult.rowCount && updateResult.rowCount > 0) {
           console.log(`  Updated last_sale_price and last_sale_date`);
@@ -306,9 +318,10 @@ async function backfillMissedSales(): Promise<void> {
           console.log(`  last_sale not updated (a newer sale exists)`);
         }
       } else {
-        console.log(`  Skipped last_sale update (current: ${currentLastSaleDate?.toISOString()}, this: ${saleDate.toISOString()})`);
+        console.log(
+          `  Skipped last_sale update (current: ${currentLastSaleDate?.toISOString()}, this: ${saleDate.toISOString()})`
+        );
       }
-
     } catch (error: any) {
       console.error(`  Error processing sale: ${error.message}`);
       errors++;
@@ -321,7 +334,9 @@ async function backfillMissedSales(): Promise<void> {
 
     // Batch pause: longer delay every N records
     if (!dryRun && batchSize > 0 && processed % batchSize === 0) {
-      console.log(`\n  Batch pause (${batchPauseMs}ms) - processed ${processed}/${missedSales.length}...`);
+      console.log(
+        `\n  Batch pause (${batchPauseMs}ms) - processed ${processed}/${missedSales.length}...`
+      );
       await sleep(batchPauseMs);
     }
   }

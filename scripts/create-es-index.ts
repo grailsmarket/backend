@@ -22,7 +22,7 @@ async function createIndex() {
       body: {
         settings: {
           index: {
-            max_ngram_diff: 8,  // Allow difference of 8 between min and max
+            max_ngram_diff: 8, // Allow difference of 8 between min and max
           },
           analysis: {
             analyzer: {
@@ -87,7 +87,6 @@ async function createIndex() {
     // Test the connection
     const health = await esClient.cluster.health();
     console.log('Cluster health:', health.status);
-
   } catch (error: any) {
     console.error('Error creating index:', error?.message || error);
     if (error?.meta?.body?.error) {

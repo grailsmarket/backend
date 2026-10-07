@@ -15,7 +15,7 @@ export function buildNewOfferEmail(params: {
   const body = `
     ${bodyIntro(
       `New offer on ${escapeHtml(ensName)}`,
-      `A new offer was just placed on <strong>${escapeHtml(ensName)}</strong>, a name on your watchlist.`,
+      `A new offer was just placed on <strong>${escapeHtml(ensName)}</strong>, a name on your watchlist.`
     )}
     ${highlight('Offer amount', `${escapeHtml(priceEth)} ETH`)}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 8px 0 8px 0;">

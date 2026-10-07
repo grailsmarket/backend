@@ -35,11 +35,7 @@ interface Discrepancy {
   ensNameId: number | null;
 }
 
-async function fixClubsSync(options: {
-  dryRun?: boolean;
-  verbose?: boolean;
-  limit?: number;
-}) {
+async function fixClubsSync(options: { dryRun?: boolean; verbose?: boolean; limit?: number }) {
   const pool = getPostgresPool();
   const dryRun = options.dryRun ?? false;
   const verbose = options.verbose ?? false;
@@ -143,7 +139,7 @@ async function fixClubsSync(options: {
         )
     `;
     const orphanResult = await pool.query(orphanQuery);
-    const orphanedClubs: Discrepancy[] = orphanResult.rows.map(row => ({
+    const orphanedClubs: Discrepancy[] = orphanResult.rows.map((row) => ({
       name: row.name,
       expected: [],
       actual: row.clubs || [],
@@ -155,7 +151,7 @@ async function fixClubsSync(options: {
     const allDiscrepancies = [...discrepancies, ...orphanedClubs];
 
     // Step 5: Report findings
-    console.log('=' .repeat(60));
+    console.log('='.repeat(60));
     console.log('=== Sync Status Report ===');
     console.log('='.repeat(60) + '\n');
 
@@ -168,11 +164,13 @@ async function fixClubsSync(options: {
 
     if (notFoundInEnsNames.length > 0 && notFoundInEnsNames.length <= 20) {
       console.log('Names not found in ens_names:');
-      notFoundInEnsNames.forEach(name => console.log(`  - ${name}`));
+      notFoundInEnsNames.forEach((name) => console.log(`  - ${name}`));
       console.log('');
     } else if (notFoundInEnsNames.length > 20) {
-      console.log(`Names not found in ens_names (showing first 20 of ${notFoundInEnsNames.length}):`);
-      notFoundInEnsNames.slice(0, 20).forEach(name => console.log(`  - ${name}`));
+      console.log(
+        `Names not found in ens_names (showing first 20 of ${notFoundInEnsNames.length}):`
+      );
+      notFoundInEnsNames.slice(0, 20).forEach((name) => console.log(`  - ${name}`));
       console.log('');
     }
 
@@ -207,10 +205,7 @@ async function fixClubsSync(options: {
             SET clubs = $1, updated_at = NOW()
             WHERE id = $2
           `;
-          await pool.query(updateQuery, [
-            d.expected.length > 0 ? d.expected : null,
-            d.ensNameId,
-          ]);
+          await pool.query(updateQuery, [d.expected.length > 0 ? d.expected : null, d.ensNameId]);
           fixed++;
         } catch (err: any) {
           console.error(`  Error fixing ${d.name}: ${err.message}`);
@@ -229,7 +224,6 @@ async function fixClubsSync(options: {
     } else {
       console.log('✅ All clubs are in sync! No fixes needed.\n');
     }
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

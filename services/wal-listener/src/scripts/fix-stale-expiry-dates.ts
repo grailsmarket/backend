@@ -94,7 +94,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fixStaleExpiryDates(options: {
@@ -164,7 +164,9 @@ async function fixStaleExpiryDates(options: {
     for (let i = 0; i < ensNameRecords.length; i += batchSize) {
       const batch = ensNameRecords.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, ensNameRecords.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, ensNameRecords.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, EnsNameRecord>();
@@ -210,11 +212,7 @@ async function fixStaleExpiryDates(options: {
                        registration_date = COALESCE(registration_date, $2),
                        updated_at = NOW()
                    WHERE id = $3`,
-                  [
-                    graphExpiryDate,
-                    registrationDate,
-                    record.id
-                  ]
+                  [graphExpiryDate, registrationDate, record.id]
                 );
                 updated++;
               } catch (updateError: any) {
@@ -240,7 +238,9 @@ async function fixStaleExpiryDates(options: {
 
       // Progress update every 10 batches
       if ((Math.floor(i / batchSize) + 1) % 10 === 0) {
-        console.log(`\n  Progress: ${processed}/${ensNameRecords.length} (${((processed / ensNameRecords.length) * 100).toFixed(1)}%) - Updated: ${updated}, Unchanged: ${unchanged}\n`);
+        console.log(
+          `\n  Progress: ${processed}/${ensNameRecords.length} (${((processed / ensNameRecords.length) * 100).toFixed(1)}%) - Updated: ${updated}, Unchanged: ${unchanged}\n`
+        );
       }
     }
 
@@ -276,7 +276,6 @@ async function fixStaleExpiryDates(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

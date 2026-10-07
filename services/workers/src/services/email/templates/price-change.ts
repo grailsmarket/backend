@@ -17,7 +17,7 @@ export function buildPriceChangeEmail(params: {
   const body = `
     ${bodyIntro(
       `Price ${direction} on ${escapeHtml(ensName)}`,
-      `The listing for <strong>${escapeHtml(ensName)}</strong> just had a price update.`,
+      `The listing for <strong>${escapeHtml(ensName)}</strong> just had a price update.`
     )}
     ${highlightCompare('Was', `${escapeHtml(oldPriceEth)} ETH`, 'Now', `${escapeHtml(newPriceEth)} ETH`)}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 8px 0 8px 0;">

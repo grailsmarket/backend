@@ -91,7 +91,7 @@ interface MissingName {
 const blockTimestampCache = new Map<bigint, Date>();
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatDuration(ms: number): string {
@@ -133,9 +133,13 @@ async function backfillRegistrations(options: Options) {
   });
 
   try {
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Registrations Script');
-    console.log('================================================================================\n');
+    console.log(
+      '================================================================================\n'
+    );
     console.log(`Mode:          ${options.dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
     console.log(`Batch size:    ${options.batchSize} blocks per RPC call`);
     console.log(`Concurrency:   ${options.concurrency} parallel requests`);
@@ -160,7 +164,9 @@ async function backfillRegistrations(options: Options) {
 
       if (maxBlock > 0n) {
         startBlock = maxBlock + 1n;
-        console.log(`Start block:   ${formatNumber(startBlock)} (auto-resume from registrations table)`);
+        console.log(
+          `Start block:   ${formatNumber(startBlock)} (auto-resume from registrations table)`
+        );
       } else {
         startBlock = DEFAULT_START_BLOCK;
         console.log(`Start block:   ${formatNumber(startBlock)} (default - controller deployment)`);
@@ -196,12 +202,14 @@ async function backfillRegistrations(options: Options) {
       const actualEndBlock = batchEndBlock > endBlock ? endBlock : batchEndBlock;
 
       if (options.verbose) {
-        console.log(`\nFetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}...`);
+        console.log(
+          `\nFetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}...`
+        );
       }
 
       try {
         // Fetch NameRegistered logs from each controller (each has different event signature)
-        const allLogs: { log: Log; controller: typeof ENS_CONTROLLERS[number] }[] = [];
+        const allLogs: { log: Log; controller: (typeof ENS_CONTROLLERS)[number] }[] = [];
 
         for (const controller of ENS_CONTROLLERS) {
           const logs = await client.getLogs({
@@ -243,25 +251,26 @@ async function backfillRegistrations(options: Options) {
         // Progress update every 10 seconds
         const now = Date.now();
         if (now - lastProgressUpdate > 10000) {
-          const progress = Number(stats.blocksProcessed) / Number(totalBlocks) * 100;
+          const progress = (Number(stats.blocksProcessed) / Number(totalBlocks)) * 100;
           const elapsed = now - startTime;
           const rate = Number(stats.blocksProcessed) / (elapsed / 1000);
           const remainingBlocks = Number(totalBlocks) - Number(stats.blocksProcessed);
-          const eta = rate > 0 ? remainingBlocks / rate * 1000 : 0;
+          const eta = rate > 0 ? (remainingBlocks / rate) * 1000 : 0;
 
           console.log(
             `Progress: ${progress.toFixed(1)}% | ` +
-            `Blocks: ${formatNumber(stats.blocksProcessed)}/${formatNumber(totalBlocks)} | ` +
-            `Events: ${formatNumber(stats.eventsFound)} | ` +
-            `Inserted: ${formatNumber(stats.inserted)} | ` +
-            `Rate: ${rate.toFixed(1)} blocks/sec | ` +
-            `ETA: ${formatDuration(eta)}`
+              `Blocks: ${formatNumber(stats.blocksProcessed)}/${formatNumber(totalBlocks)} | ` +
+              `Events: ${formatNumber(stats.eventsFound)} | ` +
+              `Inserted: ${formatNumber(stats.inserted)} | ` +
+              `Rate: ${rate.toFixed(1)} blocks/sec | ` +
+              `ETA: ${formatDuration(eta)}`
           );
           lastProgressUpdate = now;
         }
-
       } catch (batchError: any) {
-        console.error(`\nError fetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}: ${batchError.message}`);
+        console.error(
+          `\nError fetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}: ${batchError.message}`
+        );
 
         // Rate limit handling - exponential backoff
         if (batchError.message?.includes('429') || batchError.message?.includes('rate limit')) {
@@ -282,7 +291,9 @@ async function backfillRegistrations(options: Options) {
     // Print summary
     const duration = Date.now() - startTime;
 
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Registrations Summary');
     console.log('================================================================================');
     console.log(`Block range:     ${formatNumber(startBlock)} - ${formatNumber(endBlock)}`);
@@ -292,29 +303,39 @@ async function backfillRegistrations(options: Options) {
     console.log(`Missing names:   ${formatNumber(stats.missingNames)}`);
     console.log(`Errors:          ${formatNumber(stats.errors)}`);
     console.log(`Duration:        ${formatDuration(duration)}`);
-    console.log(`Rate:            ${(stats.eventsFound / (duration / 1000)).toFixed(1)} events/sec`);
+    console.log(
+      `Rate:            ${(stats.eventsFound / (duration / 1000)).toFixed(1)} events/sec`
+    );
     console.log('');
 
     if (options.dryRun) {
       console.log('DRY RUN - No changes made');
     }
 
-    console.log('================================================================================\n');
+    console.log(
+      '================================================================================\n'
+    );
 
     // Export missing names if any
     if (missingNamesList.length > 0) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const outputFile = `backfill-registrations-missing-${timestamp}.json`;
 
-      fs.writeFileSync(outputFile, JSON.stringify({
-        timestamp: new Date().toISOString(),
-        count: missingNamesList.length,
-        names: missingNamesList.slice(0, 1000), // Limit to first 1000
-      }, null, 2));
+      fs.writeFileSync(
+        outputFile,
+        JSON.stringify(
+          {
+            timestamp: new Date().toISOString(),
+            count: missingNamesList.length,
+            names: missingNamesList.slice(0, 1000), // Limit to first 1000
+          },
+          null,
+          2
+        )
+      );
 
       console.log(`Missing names exported to: ${outputFile}`);
     }
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);
@@ -326,7 +347,7 @@ async function backfillRegistrations(options: Options) {
 
 async function processLog(
   log: Log,
-  controller: typeof ENS_CONTROLLERS[number],
+  controller: (typeof ENS_CONTROLLERS)[number],
   pool: ReturnType<typeof getPostgresPool>,
   client: ReturnType<typeof createPublicClient>,
   stats: Stats,
@@ -372,7 +393,9 @@ async function processLog(
       }
     } catch (txError: any) {
       if (options.verbose) {
-        console.log(`    Could not fetch transaction, using owner as registrant: ${txError.message}`);
+        console.log(
+          `    Could not fetch transaction, using owner as registrant: ${txError.message}`
+        );
       }
     }
   }
@@ -414,10 +437,7 @@ async function processLog(
   }
 
   // Find the ens_name_id for this name
-  const ensNameResult = await pool.query(
-    'SELECT id FROM ens_names WHERE name = $1',
-    [fullName]
-  );
+  const ensNameResult = await pool.query('SELECT id FROM ens_names WHERE name = $1', [fullName]);
 
   if (ensNameResult.rows.length === 0) {
     // Name not in database

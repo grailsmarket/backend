@@ -40,10 +40,10 @@ async function findOutOfSyncRecords() {
     size: 1000,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      _source: ['name']
-    }
+      _source: ['name'],
+    },
   });
 
   scrollId = searchResponse._scroll_id;
@@ -57,11 +57,8 @@ async function findOutOfSyncRecords() {
     console.log(`  Checking batch of ${esIds.length} records (${totalChecked} total checked)...`);
 
     // First, check which IDs exist in PostgreSQL at all
-    const pgExistsResult = await pool.query(
-      'SELECT id FROM ens_names WHERE id = ANY($1)',
-      [esIds]
-    );
-    const pgExistingIds = new Set(pgExistsResult.rows.map(row => row.id));
+    const pgExistsResult = await pool.query('SELECT id FROM ens_names WHERE id = ANY($1)', [esIds]);
+    const pgExistingIds = new Set(pgExistsResult.rows.map((row) => row.id));
 
     // Find orphaned records (ES ID doesn't exist in PG)
     for (const hit of hits) {
@@ -75,7 +72,7 @@ async function findOutOfSyncRecords() {
     }
 
     // For records that exist in PG, check which ones actually have active listings
-    const existingIds = esIds.filter(id => pgExistingIds.has(id));
+    const existingIds = esIds.filter((id) => pgExistingIds.has(id));
 
     if (existingIds.length > 0) {
       const pgResult = await pool.query(
@@ -86,7 +83,7 @@ async function findOutOfSyncRecords() {
         [existingIds]
       );
 
-      const pgIdsWithListings = new Set(pgResult.rows.map(row => row.ens_name_id));
+      const pgIdsWithListings = new Set(pgResult.rows.map((row) => row.ens_name_id));
 
       // Find records that ES thinks have listings but PostgreSQL doesn't
       for (const id of existingIds) {
@@ -100,7 +97,7 @@ async function findOutOfSyncRecords() {
     if (scrollId) {
       const scrollResponse = await es.scroll({
         scroll_id: scrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       hits = scrollResponse.hits.hits;
@@ -119,7 +116,9 @@ async function findOutOfSyncRecords() {
     await es.clearScroll({ scroll_id: scrollId });
   }
 
-  console.log(`\n✓ Found ${outOfSync.length} records with stale active status (out of ${totalChecked} checked)`);
+  console.log(
+    `\n✓ Found ${outOfSync.length} records with stale active status (out of ${totalChecked} checked)`
+  );
 
   // Step 2: Find placeholder names that don't exist in PostgreSQL
   console.log('\nStep 2: Querying ES for placeholder names (token-*)...');
@@ -133,10 +132,10 @@ async function findOutOfSyncRecords() {
     size: 1000,
     body: {
       query: {
-        prefix: { 'name.keyword': 'token-' }
+        prefix: { 'name.keyword': 'token-' },
       },
-      _source: ['name', 'token_id']
-    }
+      _source: ['name', 'token_id'],
+    },
   });
 
   placeholderScrollId = placeholderSearch._scroll_id;
@@ -147,15 +146,17 @@ async function findOutOfSyncRecords() {
       esId: hit._id,
       dbId: parseInt(hit._id),
       tokenId: hit._source.token_id,
-      name: hit._source.name
+      name: hit._source.name,
     }));
 
     placeholderChecked += esData.length;
-    console.log(`  Checking batch of ${esData.length} placeholder records (${placeholderChecked} total)...`);
+    console.log(
+      `  Checking batch of ${esData.length} placeholder records (${placeholderChecked} total)...`
+    );
 
     // Check which token_ids exist in PostgreSQL and get their correct IDs
-    const dbIds = esData.map(d => d.dbId);
-    const tokenIds = esData.map(d => d.tokenId);
+    const dbIds = esData.map((d) => d.dbId);
+    const tokenIds = esData.map((d) => d.tokenId);
 
     const pgResult = await pool.query(
       `SELECT id, token_id FROM ens_names WHERE id = ANY($1) OR token_id = ANY($2)`,
@@ -187,7 +188,7 @@ async function findOutOfSyncRecords() {
     if (placeholderScrollId) {
       const scrollResponse = await es.scroll({
         scroll_id: placeholderScrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       placeholderHits = scrollResponse.hits.hits;
@@ -202,7 +203,9 @@ async function findOutOfSyncRecords() {
     await es.clearScroll({ scroll_id: placeholderScrollId });
   }
 
-  console.log(`\n✓ Found ${toDelete.length} placeholder records to delete (out of ${placeholderChecked} checked)`);
+  console.log(
+    `\n✓ Found ${toDelete.length} placeholder records to delete (out of ${placeholderChecked} checked)`
+  );
 
   return { outOfSync, toDelete };
 }
@@ -217,7 +220,9 @@ async function resyncRecords(ids: number[]) {
   for (let i = 0; i < ids.length; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
 
-    console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, ids.length)} of ${ids.length})...`);
+    console.log(
+      `Processing batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, ids.length)} of ${ids.length})...`
+    );
 
     // Fetch records from PostgreSQL with all necessary joins
     const query = `
@@ -255,7 +260,7 @@ async function resyncRecords(ids: number[]) {
     console.log(`  ✓ Synced ${synced}/${ids.length} records`);
 
     // Small delay to avoid overwhelming ES
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log(`\n✨ Resync complete! Updated ${synced} records.`);
@@ -270,12 +275,12 @@ async function deleteRecords(esIds: string[]) {
   for (let i = 0; i < esIds.length; i += batchSize) {
     const batch = esIds.slice(i, i + batchSize);
 
-    console.log(`Deleting batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, esIds.length)} of ${esIds.length})...`);
+    console.log(
+      `Deleting batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, esIds.length)} of ${esIds.length})...`
+    );
 
     // Build bulk delete body
-    const bulkBody = batch.flatMap(id => [
-      { delete: { _index: 'ens_names', _id: id } }
-    ]);
+    const bulkBody = batch.flatMap((id) => [{ delete: { _index: 'ens_names', _id: id } }]);
 
     try {
       const response = await es.bulk({ body: bulkBody });
@@ -291,7 +296,7 @@ async function deleteRecords(esIds: string[]) {
       console.error(`  ✗ Failed to delete batch: ${error.message}`);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log(`\n✨ Deletion complete! Removed ${deleted} orphaned records from ES.`);
@@ -310,8 +315,8 @@ async function main() {
     console.log(`\n📊 Summary:`);
     console.log(`   Records to resync (stale status): ${outOfSync.length}`);
     console.log(`   Records to delete (orphaned/stale): ${toDelete.length}`);
-    console.log('     - Orphaned (ID not in PG)')
-    console.log('     - Placeholder duplicates')
+    console.log('     - Orphaned (ID not in PG)');
+    console.log('     - Placeholder duplicates');
     console.log('');
 
     // Delete orphaned placeholder records

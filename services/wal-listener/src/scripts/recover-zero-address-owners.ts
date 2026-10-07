@@ -106,7 +106,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverZeroAddresses(options: {
@@ -180,7 +180,9 @@ async function recoverZeroAddresses(options: {
     for (let i = 0; i < zeroAddressRecords.length; i += batchSize) {
       const batch = zeroAddressRecords.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, zeroAddressRecords.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, zeroAddressRecords.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, ZeroAddressRecord>();
@@ -203,14 +205,18 @@ async function recoverZeroAddresses(options: {
 
         const domainData = domainDataMap.get(nameLower);
 
-        if (domainData && domainData.owner && domainData.owner.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) {
+        if (
+          domainData &&
+          domainData.owner &&
+          domainData.owner.toLowerCase() !== ZERO_ADDRESS.toLowerCase()
+        ) {
           console.log(`  ✅ ${record.name}`);
           console.log(`     New Owner: ${domainData.owner}`);
 
           batchUpdates.push({
             id: record.id,
             owner: domainData.owner.toLowerCase(),
-            name: record.name
+            name: record.name,
           });
           recovered++;
         } else if (domainData && domainData.owner === ZERO_ADDRESS) {
@@ -225,8 +231,8 @@ async function recoverZeroAddresses(options: {
       // Execute batch update if we have records to update
       if (!dryRun && batchUpdates.length > 0) {
         try {
-          const ids = batchUpdates.map(u => u.id);
-          const owners = batchUpdates.map(u => u.owner);
+          const ids = batchUpdates.map((u) => u.id);
+          const owners = batchUpdates.map((u) => u.owner);
 
           await pool.query(
             `UPDATE ens_names
@@ -288,7 +294,6 @@ async function recoverZeroAddresses(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);

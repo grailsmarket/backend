@@ -158,7 +158,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Gra
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Determine correct owner address based on wrapper status
@@ -197,7 +197,11 @@ function getCorrectTokenId(graphData: GraphDomainData): string {
 }
 
 // Compare a single record against Graph data and return validation result
-function validateRecord(record: EnsNameRecord, graphData: GraphDomainData, fixTokenIds: boolean): ValidationResult | null {
+function validateRecord(
+  record: EnsNameRecord,
+  graphData: GraphDomainData,
+  fixTokenIds: boolean
+): ValidationResult | null {
   const mismatches: string[] = [];
   const updates: ValidationResult['updates'] = {};
 
@@ -226,7 +230,9 @@ function validateRecord(record: EnsNameRecord, graphData: GraphDomainData, fixTo
       // Allow 1 second tolerance for rounding
       const isNewer = !dbExpiryDate || graphExpiryDate.getTime() > dbExpiryDate.getTime();
       if (isNewer || !dbExpiryDate) {
-        mismatches.push(`expiry_date: ${dbExpiryDate?.toISOString() || 'NULL'} → ${graphExpiryDate.toISOString()}`);
+        mismatches.push(
+          `expiry_date: ${dbExpiryDate?.toISOString() || 'NULL'} → ${graphExpiryDate.toISOString()}`
+        );
         updates.expiry_date = graphExpiryDate;
       }
     }
@@ -237,8 +243,13 @@ function validateRecord(record: EnsNameRecord, graphData: GraphDomainData, fixTo
     const graphRegistrationDate = new Date(parseInt(graphData.registrationDate) * 1000);
     const dbRegistrationDate = record.registration_date;
 
-    if (!dbRegistrationDate || Math.abs(graphRegistrationDate.getTime() - dbRegistrationDate.getTime()) > 1000) {
-      mismatches.push(`registration_date: ${dbRegistrationDate?.toISOString() || 'NULL'} → ${graphRegistrationDate.toISOString()}`);
+    if (
+      !dbRegistrationDate ||
+      Math.abs(graphRegistrationDate.getTime() - dbRegistrationDate.getTime()) > 1000
+    ) {
+      mismatches.push(
+        `registration_date: ${dbRegistrationDate?.toISOString() || 'NULL'} → ${graphRegistrationDate.toISOString()}`
+      );
       updates.registration_date = graphRegistrationDate;
     }
   }
@@ -247,7 +258,9 @@ function validateRecord(record: EnsNameRecord, graphData: GraphDomainData, fixTo
   if (fixTokenIds && graphData.labelhash) {
     const correctTokenId = getCorrectTokenId(graphData);
     if (record.token_id !== correctTokenId) {
-      mismatches.push(`token_id: ${record.token_id.substring(0, 20)}... → ${correctTokenId.substring(0, 20)}...`);
+      mismatches.push(
+        `token_id: ${record.token_id.substring(0, 20)}... → ${correctTokenId.substring(0, 20)}...`
+      );
       updates.token_id = correctTokenId;
     }
   }
@@ -357,7 +370,9 @@ async function validateEnsData(options: {
       const batch = records.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
-      console.log(`Processing batch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, records.length)})...`);
+      console.log(
+        `Processing batch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, records.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, EnsNameRecord>();
@@ -461,7 +476,9 @@ async function validateEnsData(options: {
       // Progress update every 10 batches
       if (batchNum % 10 === 0) {
         const pct = ((processed / records.length) * 100).toFixed(1);
-        console.log(`\n  Progress: ${processed}/${records.length} (${pct}%) - Valid: ${valid}, Invalid: ${invalid}\n`);
+        console.log(
+          `\n  Progress: ${processed}/${records.length} (${pct}%) - Valid: ${valid}, Invalid: ${invalid}\n`
+        );
       }
     }
 
@@ -527,7 +544,6 @@ async function validateEnsData(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

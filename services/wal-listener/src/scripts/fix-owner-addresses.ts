@@ -22,7 +22,7 @@ const VERBOSE = process.argv.includes('--verbose');
 
 // Parse --start-id argument
 let START_ID = 0;
-const startIdArg = process.argv.find(arg => arg.startsWith('--start-id='));
+const startIdArg = process.argv.find((arg) => arg.startsWith('--start-id='));
 if (startIdArg) {
   START_ID = parseInt(startIdArg.split('=')[1]);
   if (isNaN(START_ID)) {
@@ -89,9 +89,10 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
 function getCorrectOwner(domain: GraphDomain): string | null {
   // Check if fully expired (expiry + 111 days)
   if (domain.registration?.expiryDate) {
-    const expiryTimestamp = typeof domain.registration.expiryDate === 'string'
-      ? parseInt(domain.registration.expiryDate)
-      : domain.registration.expiryDate;
+    const expiryTimestamp =
+      typeof domain.registration.expiryDate === 'string'
+        ? parseInt(domain.registration.expiryDate)
+        : domain.registration.expiryDate;
     const expiryMs = expiryTimestamp * 1000;
     const fullyExpiredAt = expiryMs + TOTAL_EXPIRY_BUFFER_MS;
 
@@ -162,11 +163,17 @@ async function fixOwnerAddresses() {
 
     if (result.rows.length === 0) break;
 
-    const names = result.rows.map(r => r.name);
+    const names = result.rows.map((r) => r.name);
     const domainMap = await queryGraphByName(names);
 
     for (const row of result.rows) {
-      const { id, name, owner_address: currentOwner, expiry_date: currentExpiry, registration_date: currentRegistration } = row;
+      const {
+        id,
+        name,
+        owner_address: currentOwner,
+        expiry_date: currentExpiry,
+        registration_date: currentRegistration,
+      } = row;
 
       const domain = domainMap.get(name);
       if (!domain) {
@@ -180,18 +187,20 @@ async function fixOwnerAddresses() {
 
       // Get correct dates
       const correctExpiryTimestamp = domain.registration?.expiryDate
-        ? (typeof domain.registration.expiryDate === 'string'
-            ? parseInt(domain.registration.expiryDate)
-            : domain.registration.expiryDate)
+        ? typeof domain.registration.expiryDate === 'string'
+          ? parseInt(domain.registration.expiryDate)
+          : domain.registration.expiryDate
         : null;
       const correctExpiry = correctExpiryTimestamp ? new Date(correctExpiryTimestamp * 1000) : null;
 
       const correctRegistrationTimestamp = domain.registration?.registrationDate
-        ? (typeof domain.registration.registrationDate === 'string'
-            ? parseInt(domain.registration.registrationDate)
-            : domain.registration.registrationDate)
+        ? typeof domain.registration.registrationDate === 'string'
+          ? parseInt(domain.registration.registrationDate)
+          : domain.registration.registrationDate
         : null;
-      const correctRegistration = correctRegistrationTimestamp ? new Date(correctRegistrationTimestamp * 1000) : null;
+      const correctRegistration = correctRegistrationTimestamp
+        ? new Date(correctRegistrationTimestamp * 1000)
+        : null;
 
       // Determine what needs updating
       let ownerNeedsUpdate = false;
@@ -202,11 +211,14 @@ async function fixOwnerAddresses() {
         skippedNoOwner++;
       }
 
-      const expiryNeedsUpdate = correctExpiry &&
+      const expiryNeedsUpdate =
+        correctExpiry &&
         (!currentExpiry || new Date(currentExpiry).getTime() !== correctExpiry.getTime());
 
-      const registrationNeedsUpdate = correctRegistration &&
-        (!currentRegistration || new Date(currentRegistration).getTime() !== correctRegistration.getTime());
+      const registrationNeedsUpdate =
+        correctRegistration &&
+        (!currentRegistration ||
+          new Date(currentRegistration).getTime() !== correctRegistration.getTime());
 
       if (!ownerNeedsUpdate && !expiryNeedsUpdate && !registrationNeedsUpdate) {
         unchanged++;
@@ -245,7 +257,8 @@ async function fixOwnerAddresses() {
         console.log(`[UPDATE] ${name}`);
         if (ownerNeedsUpdate) console.log(`  Owner: ${currentOwner} -> ${correctOwner}`);
         if (expiryNeedsUpdate) console.log(`  Expiry: ${currentExpiry} -> ${correctExpiry}`);
-        if (registrationNeedsUpdate) console.log(`  Registration: ${currentRegistration} -> ${correctRegistration}`);
+        if (registrationNeedsUpdate)
+          console.log(`  Registration: ${currentRegistration} -> ${correctRegistration}`);
       }
 
       if (!DRY_RUN) {
@@ -268,9 +281,9 @@ async function fixOwnerAddresses() {
     const remaining = (total - processed) / rate;
 
     console.log(
-      `Progress: ${processed.toLocaleString()}/${total.toLocaleString()} (${Math.round((processed/total)*100)}%) | ` +
-      `Owner: ${ownerUpdated.toLocaleString()} | Expiry: ${expiryUpdated.toLocaleString()} | Reg: ${registrationUpdated.toLocaleString()} | ` +
-      `Unchanged: ${unchanged.toLocaleString()} | Rate: ${Math.round(rate)}/s | ETA: ${Math.round(remaining/60)}m | ID: ${result.rows[result.rows.length - 1].id}`
+      `Progress: ${processed.toLocaleString()}/${total.toLocaleString()} (${Math.round((processed / total) * 100)}%) | ` +
+        `Owner: ${ownerUpdated.toLocaleString()} | Expiry: ${expiryUpdated.toLocaleString()} | Reg: ${registrationUpdated.toLocaleString()} | ` +
+        `Unchanged: ${unchanged.toLocaleString()} | Rate: ${Math.round(rate)}/s | ETA: ${Math.round(remaining / 60)}m | ID: ${result.rows[result.rows.length - 1].id}`
     );
   }
 

@@ -18,10 +18,10 @@ async function main() {
     size: 1000,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      _source: ['name', 'price', 'status']
-    }
+      _source: ['name', 'price', 'status'],
+    },
   });
 
   scrollId = searchResponse._scroll_id;
@@ -34,7 +34,8 @@ async function main() {
     console.log(`Checking batch of ${esIds.length} (${totalChecked} total checked)...`);
 
     // Get actual prices from PostgreSQL
-    const pgResult = await pool.query(`
+    const pgResult = await pool.query(
+      `
       SELECT 
         en.id,
         en.name,
@@ -49,7 +50,9 @@ async function main() {
         LIMIT 1
       ) l ON true
       WHERE en.id = ANY($1)
-    `, [esIds]);
+    `,
+      [esIds]
+    );
 
     // Create a map of PG prices
     const pgPrices = new Map();
@@ -57,7 +60,7 @@ async function main() {
       pgPrices.set(row.id, {
         name: row.name,
         price: row.listing_price,
-        status: row.listing_status
+        status: row.listing_status,
       });
     }
 
@@ -69,7 +72,7 @@ async function main() {
       const esName = (hit._source as any).name;
 
       const pgData = pgPrices.get(esId);
-      
+
       if (pgData) {
         if (pgData.status !== 'active' || !pgData.price) {
           // ES says active but PG has no active listing - should have been caught earlier
@@ -89,7 +92,7 @@ async function main() {
     if (scrollId) {
       const scrollResponse = await es.scroll({
         scroll_id: scrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       hits = scrollResponse.hits.hits;

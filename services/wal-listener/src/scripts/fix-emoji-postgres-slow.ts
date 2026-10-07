@@ -24,8 +24,11 @@ const pool = getPostgresPool();
 // Parse command line args
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
-const BATCH_SIZE = parseInt(args.find(a => a.startsWith('--batch-size='))?.split('=')[1] || '20', 10);
-const DELAY_MS = parseInt(args.find(a => a.startsWith('--delay='))?.split('=')[1] || '2000', 10);
+const BATCH_SIZE = parseInt(
+  args.find((a) => a.startsWith('--batch-size='))?.split('=')[1] || '20',
+  10
+);
+const DELAY_MS = parseInt(args.find((a) => a.startsWith('--delay='))?.split('=')[1] || '2000', 10);
 
 interface NameToFix {
   id: number;
@@ -33,7 +36,7 @@ interface NameToFix {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -93,19 +96,18 @@ async function main() {
 
   for (let i = 0; i < namesToFix.length; i += BATCH_SIZE) {
     const batch = namesToFix.slice(i, i + BATCH_SIZE);
-    const ids = batch.map(r => r.id);
+    const ids = batch.map((r) => r.id);
 
-    await pool.query(
-      `UPDATE ens_names SET has_emoji = true WHERE id = ANY($1)`,
-      [ids]
-    );
+    await pool.query(`UPDATE ens_names SET has_emoji = true WHERE id = ANY($1)`, [ids]);
 
     updated += batch.length;
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     const rate = updated / elapsed || 0;
     const remaining = Math.round((namesToFix.length - updated) / rate) || 0;
 
-    console.log(`Updated ${updated}/${namesToFix.length} (${Math.round(updated/namesToFix.length*100)}%) - ETA: ${remaining}s`);
+    console.log(
+      `Updated ${updated}/${namesToFix.length} (${Math.round((updated / namesToFix.length) * 100)}%) - ETA: ${remaining}s`
+    );
 
     // Delay before next batch (unless this is the last batch)
     if (i + BATCH_SIZE < namesToFix.length) {
@@ -124,7 +126,7 @@ async function main() {
   await closeAllConnections();
 }
 
-main().catch(async err => {
+main().catch(async (err) => {
   console.error('Script failed:', err);
   await closeAllConnections();
   process.exit(1);

@@ -62,28 +62,27 @@ interface ReconcileResult {
 export async function registerReconcileVisionWorker(boss: PgBoss) {
   const pool = getPostgresPool();
 
-  await boss.work(
-    QUEUE_NAMES.RECONCILE_VISION,
-    { teamSize: 1, teamConcurrency: 1 },
-    async () => {
-      if (!config.ensvision.enabled) {
-        logger.info('ENS Vision reconciliation disabled (ENSVISION_ENABLED=false), skipping');
-        return { skipped: true };
-      }
-
-      const startTime = Date.now();
-      logger.info('Starting ENS Vision reconciliation');
-
-      try {
-        const result = await reconcileVision(pool, boss);
-        logger.info({ ...result, durationMs: Date.now() - startTime }, 'ENS Vision reconciliation completed');
-        return result;
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'ENS Vision reconciliation failed');
-        throw error;
-      }
+  await boss.work(QUEUE_NAMES.RECONCILE_VISION, { teamSize: 1, teamConcurrency: 1 }, async () => {
+    if (!config.ensvision.enabled) {
+      logger.info('ENS Vision reconciliation disabled (ENSVISION_ENABLED=false), skipping');
+      return { skipped: true };
     }
-  );
+
+    const startTime = Date.now();
+    logger.info('Starting ENS Vision reconciliation');
+
+    try {
+      const result = await reconcileVision(pool, boss);
+      logger.info(
+        { ...result, durationMs: Date.now() - startTime },
+        'ENS Vision reconciliation completed'
+      );
+      return result;
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'ENS Vision reconciliation failed');
+      throw error;
+    }
+  });
 
   await boss.schedule(QUEUE_NAMES.RECONCILE_VISION, '*/5 * * * *', {}, { tz: 'UTC' });
 
@@ -91,7 +90,7 @@ export async function registerReconcileVisionWorker(boss: PgBoss) {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -117,7 +116,8 @@ async function fetchVisionActivity(maxPages = MAX_PAGES): Promise<VisionActivity
 
   for (let page = 0; page < maxPages; page++) {
     const offset = page * ACTIVITY_LIMIT;
-    const url = `${base}/activity?eventTypes=OFFER_CREATED&limit=${ACTIVITY_LIMIT}` +
+    const url =
+      `${base}/activity?eventTypes=OFFER_CREATED&limit=${ACTIVITY_LIMIT}` +
       `&sortBy=timestamp&sortOrder=desc&isSubdomain=false&resolve=true&offset=${offset}`;
 
     const response = await fetchWithTimeout(url);
@@ -125,7 +125,7 @@ async function fetchVisionActivity(maxPages = MAX_PAGES): Promise<VisionActivity
       throw new Error(`Vision activity API error: ${response.status}`);
     }
 
-    const data = await response.json() as { activities?: VisionActivity[] };
+    const data = (await response.json()) as { activities?: VisionActivity[] };
     const activities = data.activities || [];
     all.push(...activities);
 
@@ -143,11 +143,14 @@ async function fetchFulfillment(orderHash: string): Promise<VisionFulfillment | 
   const response = await fetchWithTimeout(url);
 
   if (!response.ok) {
-    logger.warn({ orderHash, status: response.status }, 'Vision offers-fulfill returned non-200, skipping offer');
+    logger.warn(
+      { orderHash, status: response.status },
+      'Vision offers-fulfill returned non-200, skipping offer'
+    );
     return null;
   }
 
-  const data = await response.json() as VisionFulfillment;
+  const data = (await response.json()) as VisionFulfillment;
   if (!data?.orderData || !data?.signature) {
     logger.warn({ orderHash }, 'Vision offers-fulfill missing orderData/signature, skipping');
     return null;
@@ -166,14 +169,14 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
   };
 
   const activities = (await fetchVisionActivity()).filter(
-    a => a.type === 'OFFER_CREATED' && a.metadata?.offer
+    (a) => a.type === 'OFFER_CREATED' && a.metadata?.offer
   );
   result.fetched = activities.length;
   if (activities.length === 0) return result;
 
   // Map each activity to its order hash up front so we can dedupe in one query
   const withHash = activities
-    .map(a => ({ activity: a, orderHash: ORDER_HASH_RE.exec(a.id)?.[1]?.toLowerCase() || null }))
+    .map((a) => ({ activity: a, orderHash: ORDER_HASH_RE.exec(a.id)?.[1]?.toLowerCase() || null }))
     .filter((x): x is { activity: VisionActivity; orderHash: string } => {
       if (!x.orderHash) result.skippedNoHash++;
       return x.orderHash !== null;
@@ -181,11 +184,11 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
 
   const existingResult = await pool.query(
     `SELECT order_hash FROM offers WHERE source = 'vision' AND order_hash = ANY($1)`,
-    [withHash.map(x => x.orderHash)]
+    [withHash.map((x) => x.orderHash)]
   );
-  const existingHashes = new Set(existingResult.rows.map(r => r.order_hash.toLowerCase()));
+  const existingHashes = new Set(existingResult.rows.map((r) => r.order_hash.toLowerCase()));
 
-  const missing = withHash.filter(x => !existingHashes.has(x.orderHash));
+  const missing = withHash.filter((x) => !existingHashes.has(x.orderHash));
   result.alreadyStored = withHash.length - missing.length;
 
   for (const { activity, orderHash } of missing) {
@@ -201,12 +204,17 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
         if (byToken.rows.length > 0) ensNameId = byToken.rows[0].id;
       }
       if (!ensNameId && offer.domainName) {
-        const byName = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [offer.domainName]);
+        const byName = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [
+          offer.domainName,
+        ]);
         if (byName.rows.length > 0) ensNameId = byName.rows[0].id;
       }
       if (!ensNameId) {
         result.skippedNoEnsName++;
-        logger.debug({ orderHash, tokenId, name: offer.domainName }, 'Could not resolve ens_name for Vision offer, skipping');
+        logger.debug(
+          { orderHash, tokenId, name: offer.domainName },
+          'Could not resolve ens_name for Vision offer, skipping'
+        );
         continue;
       }
 
@@ -220,14 +228,20 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
 
       const params = fulfillment.orderData;
       const buyerAddress = (params.offerer || offer.maker).toLowerCase();
-      const currencyAddress = (params.offer?.[0]?.token || offer.currency || WETH_ADDRESS).toLowerCase();
+      const currencyAddress = (
+        params.offer?.[0]?.token ||
+        offer.currency ||
+        WETH_ADDRESS
+      ).toLowerCase();
       // Prefer the amount hashed into the signed order — it is the canonical on-chain
       // value the balance validator compares against. `offer.price` from the activity
       // feed is advisory metadata and can diverge from the actual order.
       const offerAmountWei = params.offer?.[0]?.startAmount || offer.price;
       const expiresAt = params.endTime
         ? new Date(Number(params.endTime) * 1000)
-        : (offer.expiry ? new Date(offer.expiry * 1000) : null);
+        : offer.expiry
+          ? new Date(offer.expiry * 1000)
+          : null;
       const orderData = JSON.stringify({ parameters: params, signature: fulfillment.signature });
 
       // created_at is the ingestion time (NOW), NOT the Vision blockTimestamp. The
@@ -267,7 +281,10 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
   }
 
   if (result.skippedNoEnsName > 0) {
-    logger.warn({ skippedNoEnsName: result.skippedNoEnsName }, 'Vision offers skipped: ens_name not found');
+    logger.warn(
+      { skippedNoEnsName: result.skippedNoEnsName },
+      'Vision offers skipped: ens_name not found'
+    );
   }
 
   return result;

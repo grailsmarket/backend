@@ -52,9 +52,8 @@ export class SeaportIndexer {
     this.isRunning = true;
 
     const lastBlock = await this.getLastProcessedBlock();
-    const startBlock = lastBlock > 0
-      ? BigInt(lastBlock) + 1n
-      : BigInt(config.blockchain.startBlock || 19000000); // Seaport deployed later
+    const startBlock =
+      lastBlock > 0 ? BigInt(lastBlock) + 1n : BigInt(config.blockchain.startBlock || 19000000); // Seaport deployed later
 
     this.currentBlock = startBlock;
     logger.info(`Starting Seaport indexer from block ${this.currentBlock}`);
@@ -75,7 +74,7 @@ export class SeaportIndexer {
         const targetBlock = latestBlock - this.confirmations;
 
         if (this.currentBlock > targetBlock) {
-          await new Promise(resolve => setTimeout(resolve, 12000));
+          await new Promise((resolve) => setTimeout(resolve, 12000));
           continue;
         }
 
@@ -88,16 +87,18 @@ export class SeaportIndexer {
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
         if (isBeyondHeadError(error)) {
-          logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
-          await new Promise(resolve => setTimeout(resolve, 250));
+          logger.debug(
+            `getLogs head not caught up at block ${this.currentBlock}, retrying shortly`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 250));
           continue;
         }
         logger.error(`Error in Seaport index loop at block ${this.currentBlock}:`, {
           error: error.message,
           code: error.code,
-          details: error.shortMessage || error.details
+          details: error.shortMessage || error.details,
         });
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }
   }
@@ -111,7 +112,7 @@ export class SeaportIndexer {
       toBlock,
     });
 
-    const relevantLogs = logs.filter(log => this.isENSRelated(log));
+    const relevantLogs = logs.filter((log) => this.isENSRelated(log));
 
     for (const log of relevantLogs) {
       await this.queue.add(async () => {
@@ -170,7 +171,7 @@ export class SeaportIndexer {
     if (typeof obj === 'bigint') {
       return obj.toString();
     } else if (Array.isArray(obj)) {
-      return obj.map(item => this.serializeBigInts(item));
+      return obj.map((item) => this.serializeBigInts(item));
     } else if (obj !== null && typeof obj === 'object') {
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
@@ -231,13 +232,10 @@ export class SeaportIndexer {
     const isENSToken = (token: string) =>
       token.toLowerCase() === ensRegistrar || token.toLowerCase() === ensNameWrapper;
 
-    const ensInOffer = offer && offer.some((item: any) =>
-      item.token && isENSToken(item.token)
-    );
+    const ensInOffer = offer && offer.some((item: any) => item.token && isENSToken(item.token));
 
-    const ensInConsideration = consideration && consideration.some((item: any) =>
-      item.token && isENSToken(item.token)
-    );
+    const ensInConsideration =
+      consideration && consideration.some((item: any) => item.token && isENSToken(item.token));
 
     if (!ensInOffer && !ensInConsideration) {
       // Not an ENS order, skip silently
@@ -265,7 +263,7 @@ export class SeaportIndexer {
       sellerAddress,
       buyerAddress,
       blockNumber: log.blockNumber,
-      transactionHash: log.transactionHash
+      transactionHash: log.transactionHash,
     });
 
     // Check if a sale already exists for this order_hash or transaction_hash
@@ -275,10 +273,15 @@ export class SeaportIndexer {
       WHERE order_hash = $1 OR transaction_hash = $2
       LIMIT 1
     `;
-    const existingSaleResult = await this.pool.query(existingSaleQuery, [orderHash, log.transactionHash]);
+    const existingSaleResult = await this.pool.query(existingSaleQuery, [
+      orderHash,
+      log.transactionHash,
+    ]);
 
     if (existingSaleResult.rows.length > 0) {
-      logger.debug(`Sale already exists for order_hash ${orderHash} or tx ${log.transactionHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation`);
+      logger.debug(
+        `Sale already exists for order_hash ${orderHash} or tx ${log.transactionHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation`
+      );
       // Still update the listing status below, but don't create duplicate sale
     }
 
@@ -355,11 +358,15 @@ export class SeaportIndexer {
       const price = totalPrice.toString();
 
       if (isWrapped) {
-        logger.info(`Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`);
+        logger.info(
+          `Processing wrapped ENS token sale (Name Wrapper): tokenId=${tokenId}, tx=${log.transactionHash}`
+        );
       }
 
       if (isOfferAcceptance) {
-        logger.info(`Processing offer acceptance sale: tokenId=${tokenId}, seller=${sellerAddress}, buyer=${buyerAddress}, price=${price}, tx=${log.transactionHash}`);
+        logger.info(
+          `Processing offer acceptance sale: tokenId=${tokenId}, seller=${sellerAddress}, buyer=${buyerAddress}, price=${price}, tx=${log.transactionHash}`
+        );
       }
 
       try {
@@ -398,7 +405,7 @@ export class SeaportIndexer {
           ownerAddress,
           expiryDate,
           registrationDate,
-          JSON.stringify(textRecords)
+          JSON.stringify(textRecords),
         ]);
 
         const ensNameId = nameResult.rows[0].id;
@@ -422,7 +429,9 @@ export class SeaportIndexer {
           if (fallbackResult.rows.length > 0) {
             offerId = fallbackResult.rows[0].id;
             offerSource = fallbackResult.rows[0].source;
-            logger.info(`Fallback offer match for ENS ${nameToStore}: offerId=${offerId}, source=${offerSource}`);
+            logger.info(
+              `Fallback offer match for ENS ${nameToStore}: offerId=${offerId}, source=${offerSource}`
+            );
           }
         }
 
@@ -439,8 +448,8 @@ export class SeaportIndexer {
           // consideration) or a listing purchase (ENS in offer) — attribute the sale to the
           // record that was actually executed.
           const saleSource = isOfferAcceptance
-            ? (offerSource || listingSource || 'opensea')
-            : (listingSource || offerSource || 'opensea');
+            ? offerSource || listingSource || 'opensea'
+            : listingSource || offerSource || 'opensea';
           try {
             const sale = await createSale({
               ensNameId,
@@ -462,14 +471,20 @@ export class SeaportIndexer {
               saleDate,
             });
 
-            logger.info(`Sale created in sales table for token ${tokenId} (source: ${saleSource}, offerAcceptance: ${isOfferAcceptance})`);
+            logger.info(
+              `Sale created in sales table for token ${tokenId} (source: ${saleSource}, offerAcceptance: ${isOfferAcceptance})`
+            );
 
             // Publish club sales stats job if sale has clubs (ETH only)
             if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
-              const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
-                clubNames: sale.clubs,
-                salePriceWei: price,
-              }, 'seaport_order_fulfilled');
+              const published = await safePublishJob(
+                QUEUE_NAMES.UPDATE_CLUB_SALES_STATS,
+                {
+                  clubNames: sale.clubs,
+                  salePriceWei: price,
+                },
+                'seaport_order_fulfilled'
+              );
 
               if (published) {
                 logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
@@ -480,7 +495,9 @@ export class SeaportIndexer {
             // Don't fail the entire handler if sale recording fails
           }
         } else {
-          logger.debug(`Skipping sale creation for ${nameToStore} - sale already exists for order_hash ${orderHash} or tx ${log.transactionHash}`);
+          logger.debug(
+            `Skipping sale creation for ${nameToStore} - sale already exists for order_hash ${orderHash} or tx ${log.transactionHash}`
+          );
         }
 
         // Cancel all other active listings for this ENS name
@@ -495,10 +512,15 @@ export class SeaportIndexer {
           RETURNING id, source
         `;
 
-        const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [ensNameId, orderHash]);
+        const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [
+          ensNameId,
+          orderHash,
+        ]);
 
         if (cancelledListings.rows.length > 0) {
-          logger.info(`Cancelled ${cancelledListings.rows.length} other active listings for ENS ${nameToStore} after sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`);
+          logger.info(
+            `Cancelled ${cancelledListings.rows.length} other active listings for ENS ${nameToStore} after sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`
+          );
         }
 
         // Insert the transaction
@@ -553,10 +575,13 @@ export class SeaportIndexer {
     const { newCounter, offerer } = args;
     const offererAddress = offerer.toLowerCase();
 
-    logger.info(`Processing CounterIncremented event for ${offererAddress}, new counter: ${newCounter}`, {
-      blockNumber: log.blockNumber,
-      transactionHash: log.transactionHash
-    });
+    logger.info(
+      `Processing CounterIncremented event for ${offererAddress}, new counter: ${newCounter}`,
+      {
+        blockNumber: log.blockNumber,
+        transactionHash: log.transactionHash,
+      }
+    );
 
     // Cancel all active listings from this seller
     // When a user increments their counter, ALL their existing Seaport orders become invalid
@@ -571,7 +596,9 @@ export class SeaportIndexer {
     const cancelledListings = await this.pool.query(cancelListingsQuery, [offererAddress]);
 
     if (cancelledListings.rows.length > 0) {
-      logger.info(`Cancelled ${cancelledListings.rows.length} active listings for ${offererAddress} due to counter increment`);
+      logger.info(
+        `Cancelled ${cancelledListings.rows.length} active listings for ${offererAddress} due to counter increment`
+      );
     }
 
     // Cancel all active offers from this buyer
@@ -587,7 +614,9 @@ export class SeaportIndexer {
     const cancelledOffers = await this.pool.query(cancelOffersQuery, [offererAddress]);
 
     if (cancelledOffers.rows.length > 0) {
-      logger.info(`Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`);
+      logger.info(
+        `Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`
+      );
     }
   }
 
@@ -611,9 +640,6 @@ export class SeaportIndexer {
           updated_at = NOW()
     `;
 
-    await this.pool.query(query, [
-      config.blockchain.seaportAddress,
-      blockNumber.toString(),
-    ]);
+    await this.pool.query(query, [config.blockchain.seaportAddress, blockNumber.toString()]);
   }
 }

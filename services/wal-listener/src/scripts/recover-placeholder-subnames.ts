@@ -36,7 +36,9 @@ interface DomainData {
 }
 
 // Query The Graph for multiple domains by token IDs in a single batch
-async function queryGraphForNamesBatch(tokenIdHexArray: string[]): Promise<Map<string, DomainData>> {
+async function queryGraphForNamesBatch(
+  tokenIdHexArray: string[]
+): Promise<Map<string, DomainData>> {
   console.log(`    Querying The Graph for ${tokenIdHexArray.length} token IDs...`);
 
   const query = `
@@ -138,7 +140,7 @@ async function queryGraphForNamesBatch(tokenIdHexArray: string[]): Promise<Map<s
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverPlaceholders(options: {
@@ -204,7 +206,9 @@ async function recoverPlaceholders(options: {
     for (let i = 0; i < placeholders.length; i += batchSize) {
       const batch = placeholders.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`
+      );
 
       // Convert all token IDs in this batch to hex
       const tokenIdMap = new Map<string, PlaceholderRecord>();
@@ -220,7 +224,7 @@ async function recoverPlaceholders(options: {
         tokenIdMap.set(tokenIdHex, placeholder);
         tokenIdHexArray.push(tokenIdHex);
       }
-console.log({tokenIdHexArray})
+      console.log({ tokenIdHexArray });
       // Query The Graph for all token IDs in this batch
       const domainDataMap = await queryGraphForNamesBatch(tokenIdHexArray);
 
@@ -233,10 +237,16 @@ console.log({tokenIdHexArray})
         if (domainData) {
           console.log(`  ✅ ${placeholder.name} → ${domainData.name}`);
           console.log(`     Owner: ${domainData.owner || 'N/A'}`);
-          console.log(`     Expiry: ${domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000).toISOString() : 'N/A'}`);
+          console.log(
+            `     Expiry: ${domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000).toISOString() : 'N/A'}`
+          );
 
-          const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
-          const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
+          const expiryDate = domainData.expiryDate
+            ? new Date(parseInt(domainData.expiryDate) * 1000)
+            : null;
+          const registrationDate = domainData.registrationDate
+            ? new Date(parseInt(domainData.registrationDate) * 1000)
+            : null;
 
           if (!dryRun) {
             // Update database
@@ -256,7 +266,7 @@ console.log({tokenIdHexArray})
                   expiryDate,
                   registrationDate,
                   JSON.stringify({ text_records: domainData.textRecords }),
-                  placeholder.id
+                  placeholder.id,
                 ]
               );
               recovered++;
@@ -268,7 +278,9 @@ console.log({tokenIdHexArray})
             recovered++;
           }
         } else {
-          console.log(`  ⚠️  ${placeholder.name} - No result from The Graph (token: ${tokenIdHex.substring(0, 10)}...)`);
+          console.log(
+            `  ⚠️  ${placeholder.name} - No result from The Graph (token: ${tokenIdHex.substring(0, 10)}...)`
+          );
           skipped++;
         }
       }
@@ -316,7 +328,6 @@ console.log({tokenIdHexArray})
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);

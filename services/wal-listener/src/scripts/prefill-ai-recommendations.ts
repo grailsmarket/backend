@@ -155,8 +155,10 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     // Handle 429 rate limit — wait for the reset time from headers
     if (response.status === 429 && attempt < MAX_RETRIES) {
       const resetMs = parseResetHeader(response.headers.get('x-ratelimit-reset-requests'));
-      const backoffMs = resetMs ?? (1000 * Math.pow(2, attempt) + Math.random() * 1000);
-      console.warn(`\n  ⏳ Rate limited (429) for "${name}", waiting ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      const backoffMs = resetMs ?? 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+      console.warn(
+        `\n  ⏳ Rate limited (429) for "${name}", waiting ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+      );
       await sleep(backoffMs);
       continue;
     }
@@ -164,7 +166,9 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     // Handle 5xx server errors with exponential backoff
     if (response.status >= 500 && attempt < MAX_RETRIES) {
       const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-      console.warn(`\n  ⏳ Server error (${response.status}) for "${name}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      console.warn(
+        `\n  ⏳ Server error (${response.status}) for "${name}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+      );
       await sleep(backoffMs);
       continue;
     }
@@ -198,7 +202,9 @@ async function callOpenAI(apiKey: string, name: string, categories?: string[]): 
     }
 
     if (data.status === 'incomplete') {
-      console.warn(`\n  ⚠ OpenAI response incomplete for "${name}", attempting to extract partial content`);
+      console.warn(
+        `\n  ⚠ OpenAI response incomplete for "${name}", attempting to extract partial content`
+      );
     }
 
     const messageItem = data.output?.find((item: { type: string }) => item.type === 'message');
@@ -297,7 +303,11 @@ async function main() {
   // Parse --limit flag
   const limitArg = process.argv.find((arg) => arg.startsWith('--limit'));
   const limit = limitArg
-    ? parseInt(limitArg.includes('=') ? limitArg.split('=')[1] : process.argv[process.argv.indexOf(limitArg) + 1])
+    ? parseInt(
+        limitArg.includes('=')
+          ? limitArg.split('=')[1]
+          : process.argv[process.argv.indexOf(limitArg) + 1]
+      )
     : DEFAULT_LIMIT;
 
   if (isNaN(limit) || limit < 1) {
@@ -308,7 +318,11 @@ async function main() {
   // Parse --concurrency flag
   const concurrencyArg = process.argv.find((arg) => arg.startsWith('--concurrency'));
   const concurrency = concurrencyArg
-    ? parseInt(concurrencyArg.includes('=') ? concurrencyArg.split('=')[1] : process.argv[process.argv.indexOf(concurrencyArg) + 1])
+    ? parseInt(
+        concurrencyArg.includes('=')
+          ? concurrencyArg.split('=')[1]
+          : process.argv[process.argv.indexOf(concurrencyArg) + 1]
+      )
     : DEFAULT_CONCURRENCY;
 
   if (isNaN(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
@@ -332,7 +346,8 @@ async function main() {
   try {
     // Fetch names with at least 5 views that don't already have fresh recommendations
     console.log('Fetching viewed names without fresh recommendations...');
-    const result = await pool.query<PopularName>(`
+    const result = await pool.query<PopularName>(
+      `
       WITH popular_names AS (
         SELECT
           en.name,
@@ -355,7 +370,9 @@ async function main() {
       WHERE ar.id IS NULL
       ORDER BY pn.popularity_score DESC
       LIMIT $1
-    `, [limit]);
+    `,
+      [limit]
+    );
 
     const names = result.rows;
     console.log(`✓ Found ${names.length} names needing recommendations\n`);
@@ -399,7 +416,10 @@ async function main() {
           }
         } else {
           failed++;
-          console.error(`\n  ✗ Failed for "${nameChunk[i].label}":`, result.reason instanceof Error ? result.reason.message : result.reason);
+          console.error(
+            `\n  ✗ Failed for "${nameChunk[i].label}":`,
+            result.reason instanceof Error ? result.reason.message : result.reason
+          );
         }
       }
 
@@ -410,7 +430,10 @@ async function main() {
           generated += toUpsert.length;
         } catch (batchError) {
           // Fallback: insert individually if batch fails
-          console.warn(`\n  ⚠ Batch insert failed, falling back to individual inserts:`, batchError instanceof Error ? batchError.message : batchError);
+          console.warn(
+            `\n  ⚠ Batch insert failed, falling back to individual inserts:`,
+            batchError instanceof Error ? batchError.message : batchError
+          );
           for (const item of toUpsert) {
             try {
               const expiresAt = new Date(Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
@@ -428,13 +451,18 @@ async function main() {
               generated++;
             } catch (individualError) {
               failed++;
-              console.error(`\n  ✗ DB insert failed for "${item.label}":`, individualError instanceof Error ? individualError.message : individualError);
+              console.error(
+                `\n  ✗ DB insert failed for "${item.label}":`,
+                individualError instanceof Error ? individualError.message : individualError
+              );
             }
           }
         }
       }
 
-      process.stdout.write(`\r  Progress: ${generated + skipped + failed}/${names.length} (${generated} generated, ${skipped} empty, ${failed} failed)`);
+      process.stdout.write(
+        `\r  Progress: ${generated + skipped + failed}/${names.length} (${generated} generated, ${skipped} empty, ${failed} failed)`
+      );
 
       // Adaptive rate limit delay between chunks (updated by callOpenAI based on response headers)
       await sleep(nextDelayMs);
@@ -444,9 +472,10 @@ async function main() {
     const elapsedMs = Date.now() - startTime;
     const elapsedSec = elapsedMs / 1000;
     const throughput = names.length > 0 ? (names.length / elapsedSec).toFixed(2) : '0';
-    const elapsedFormatted = elapsedSec >= 60
-      ? `${Math.floor(elapsedSec / 60)}m ${Math.round(elapsedSec % 60)}s`
-      : `${elapsedSec.toFixed(1)}s`;
+    const elapsedFormatted =
+      elapsedSec >= 60
+        ? `${Math.floor(elapsedSec / 60)}m ${Math.round(elapsedSec % 60)}s`
+        : `${elapsedSec.toFixed(1)}s`;
 
     console.log('\n');
     console.log('Prefill Summary:');
@@ -465,11 +494,12 @@ async function main() {
     if (generated > 0) {
       console.log(`Top ${Math.min(10, names.length)} names by popularity:`);
       names.slice(0, 10).forEach((name, index) => {
-        console.log(`  ${(index + 1).toString().padStart(2)}. ${name.label.padEnd(20)} (score: ${name.popularity_score})`);
+        console.log(
+          `  ${(index + 1).toString().padStart(2)}. ${name.label.padEnd(20)} (score: ${name.popularity_score})`
+        );
       });
       console.log();
     }
-
   } catch (error) {
     console.error('\n✗ Prefill failed with error:', error);
     process.exit(1);

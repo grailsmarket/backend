@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder } from '../../../shared/src';
+import {
+  getPostgresPool,
+  type APIResponse,
+  type SeaportOrder,
+  validateFeeInOrder,
+} from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 import { requireAuth } from '../middleware/auth';
 
@@ -32,18 +37,23 @@ const SaveOrderSchema = z.object({
 
 // Schema for bulk listing creation
 const BulkSaveOrderSchema = z.object({
-  listings: z.array(z.object({
-    type: z.literal('listing'),
-    token_id: z.string(),
-    price_wei: z.string(),
-    currency_address: z.string().default('0x0000000000000000000000000000000000000000'),
-    order_data: z.string(), // JSON string of Seaport order
-    order_hash: z.string(),
-    seller_address: z.string(),
-    traits: z.any().optional(),
-    status: z.string().default('active'),
-    source: z.string().default('grails'),
-  })).min(1).max(500),
+  listings: z
+    .array(
+      z.object({
+        type: z.literal('listing'),
+        token_id: z.string(),
+        price_wei: z.string(),
+        currency_address: z.string().default('0x0000000000000000000000000000000000000000'),
+        order_data: z.string(), // JSON string of Seaport order
+        order_hash: z.string(),
+        seller_address: z.string(),
+        traits: z.any().optional(),
+        status: z.string().default('active'),
+        source: z.string().default('grails'),
+      })
+    )
+    .min(1)
+    .max(500),
 });
 
 // Types for bulk response
@@ -122,7 +132,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
                     to: '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85', // ENS Base Registrar
                     data: '0xc87b56dd' + body.token_id.toString().padStart(64, '0'), // tokenURI(uint256)
                   },
-                  'latest'
+                  'latest',
                 ],
                 id: 1,
               }),
@@ -132,11 +142,13 @@ export async function ordersRoutes(fastify: FastifyInstance) {
               await response.json();
               // Try to parse the name from metadata
               // For now, we'll try a simpler approach: fetch from ENS subgraph
-              const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  query: `
+              const subgraphResponse = await fetch(
+                'https://api.thegraph.com/subgraphs/name/ensdomains/ens',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    query: `
                     query GetDomain($tokenId: String!) {
                       domain(id: $tokenId) {
                         name
@@ -144,11 +156,12 @@ export async function ordersRoutes(fastify: FastifyInstance) {
                       }
                     }
                   `,
-                  variables: {
-                    tokenId: '0x' + BigInt(body.token_id).toString(16).padStart(64, '0'),
-                  },
-                }),
-              });
+                    variables: {
+                      tokenId: '0x' + BigInt(body.token_id).toString(16).padStart(64, '0'),
+                    },
+                  }),
+                }
+              );
 
               if (subgraphResponse.ok) {
                 const subgraphData: any = await subgraphResponse.json();
@@ -198,7 +211,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         ]);
 
         if (cancelledResult.rows.length > 0) {
-          fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash} and source ${body.source}`);
+          fastify.log.info(
+            `Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash} and source ${body.source}`
+          );
         }
 
         // Validate fee for Grails marketplace orders
@@ -411,7 +426,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         success: false,
         error: {
           code: 'FORBIDDEN',
-          message: 'Cannot cancel another user\'s order',
+          message: "Cannot cancel another user's order",
         },
         meta: { timestamp: new Date().toISOString() },
       });
@@ -474,7 +489,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
     // Verify all listings belong to the authenticated user
     const userAddress = request.user!.address.toLowerCase();
     const unauthorizedListing = listings.find(
-      l => l.seller_address.toLowerCase() !== userAddress
+      (l) => l.seller_address.toLowerCase() !== userAddress
     );
     if (unauthorizedListing) {
       return reply.status(403).send({
@@ -487,7 +502,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       });
     }
     const results: BulkListingResult[] = [];
-    const validListings: Array<typeof listings[0] & { index: number; ensNameId?: number; expiresAt?: Date | null }> = [];
+    const validListings: Array<
+      (typeof listings)[0] & { index: number; ensNameId?: number; expiresAt?: Date | null }
+    > = [];
 
     try {
       // Step 1: Validate fees upfront for all grails source listings
@@ -540,33 +557,36 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       }
 
       // Step 2: Batch query existing ENS names
-      const tokenIds = validListings.map(l => l.token_id);
+      const tokenIds = validListings.map((l) => l.token_id);
       const existingEnsQuery = `
         SELECT id, token_id, name FROM ens_names
         WHERE token_id = ANY($1::text[])
       `;
       const existingEnsResult = await pool.query(existingEnsQuery, [tokenIds]);
       const existingEnsMap = new Map<string, { id: number; name: string }>(
-        existingEnsResult.rows.map(row => [row.token_id, { id: row.id, name: row.name }])
+        existingEnsResult.rows.map((row) => [row.token_id, { id: row.id, name: row.name }])
       );
 
       // Step 3: Identify missing ENS names and fetch from The Graph
-      const missingTokenIds = tokenIds.filter(id => !existingEnsMap.has(id));
+      const missingTokenIds = tokenIds.filter((id) => !existingEnsMap.has(id));
 
       if (missingTokenIds.length > 0) {
         // Batch fetch from The Graph in chunks of 100
-        const ensNamesToCreate: Array<{ token_id: string; name: string; owner_address: string }> = [];
+        const ensNamesToCreate: Array<{ token_id: string; name: string; owner_address: string }> =
+          [];
 
         for (let i = 0; i < missingTokenIds.length; i += 100) {
           const chunk = missingTokenIds.slice(i, i + 100);
-          const graphIds = chunk.map(id => '0x' + BigInt(id).toString(16).padStart(64, '0'));
+          const graphIds = chunk.map((id) => '0x' + BigInt(id).toString(16).padStart(64, '0'));
 
           try {
-            const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                query: `
+            const subgraphResponse = await fetch(
+              'https://api.thegraph.com/subgraphs/name/ensdomains/ens',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  query: `
                   query GetDomains($ids: [String!]!) {
                     domains(where: { id_in: $ids }) {
                       id
@@ -575,9 +595,10 @@ export async function ordersRoutes(fastify: FastifyInstance) {
                     }
                   }
                 `,
-                variables: { ids: graphIds },
-              }),
-            });
+                  variables: { ids: graphIds },
+                }),
+              }
+            );
 
             if (subgraphResponse.ok) {
               const subgraphData: any = await subgraphResponse.json();
@@ -590,36 +611,43 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
               // Match back to token IDs
               for (const tokenId of chunk) {
-                const graphId = ('0x' + BigInt(tokenId).toString(16).padStart(64, '0')).toLowerCase();
+                const graphId = (
+                  '0x' + BigInt(tokenId).toString(16).padStart(64, '0')
+                ).toLowerCase();
                 const name = graphNameMap.get(graphId) || `token-${tokenId}.eth`;
-                const listing = validListings.find(l => l.token_id === tokenId);
+                const listing = validListings.find((l) => l.token_id === tokenId);
 
                 ensNamesToCreate.push({
                   token_id: tokenId,
                   name,
-                  owner_address: listing?.seller_address || '0x0000000000000000000000000000000000000000',
+                  owner_address:
+                    listing?.seller_address || '0x0000000000000000000000000000000000000000',
                 });
               }
             } else {
               // Fallback: create placeholder names
               for (const tokenId of chunk) {
-                const listing = validListings.find(l => l.token_id === tokenId);
+                const listing = validListings.find((l) => l.token_id === tokenId);
                 ensNamesToCreate.push({
                   token_id: tokenId,
                   name: `token-${tokenId}.eth`,
-                  owner_address: listing?.seller_address || '0x0000000000000000000000000000000000000000',
+                  owner_address:
+                    listing?.seller_address || '0x0000000000000000000000000000000000000000',
                 });
               }
             }
           } catch (error: any) {
-            fastify.log.warn(`Failed to fetch ENS names from The Graph: ${error?.message || error}`);
+            fastify.log.warn(
+              `Failed to fetch ENS names from The Graph: ${error?.message || error}`
+            );
             // Fallback: create placeholder names
             for (const tokenId of chunk) {
-              const listing = validListings.find(l => l.token_id === tokenId);
+              const listing = validListings.find((l) => l.token_id === tokenId);
               ensNamesToCreate.push({
                 token_id: tokenId,
                 name: `token-${tokenId}.eth`,
-                owner_address: listing?.seller_address || '0x0000000000000000000000000000000000000000',
+                owner_address:
+                  listing?.seller_address || '0x0000000000000000000000000000000000000000',
               });
             }
           }
@@ -632,7 +660,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           let paramIndex = 1;
 
           for (const ens of ensNamesToCreate) {
-            insertEnsPlaceholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, NOW(), NOW())`);
+            insertEnsPlaceholders.push(
+              `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, NOW(), NOW())`
+            );
             insertEnsValues.push(ens.token_id, ens.name, ens.owner_address);
             paramIndex += 3;
           }
@@ -672,7 +702,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       }
 
       // Filter out listings that failed ENS resolution
-      const listingsWithEns = validListings.filter(l => l.ensNameId !== undefined);
+      const listingsWithEns = validListings.filter((l) => l.ensNameId !== undefined);
 
       if (listingsWithEns.length === 0) {
         return reply.status(207).send({
@@ -711,7 +741,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       const deletedResult = await pool.query(deleteDuplicatesQuery, deleteValues);
 
       if (deletedResult.rows.length > 0) {
-        fastify.log.info(`Deleted ${deletedResult.rows.length} existing listing(s) with duplicate order_hash before re-creating`);
+        fastify.log.info(
+          `Deleted ${deletedResult.rows.length} existing listing(s) with duplicate order_hash before re-creating`
+        );
       }
 
       // Step 5: Batch insert listings
@@ -753,7 +785,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
       // Map inserted IDs back to results
       const insertedMap = new Map<string, number>(
-        insertResult.rows.map(row => [row.order_hash, row.id])
+        insertResult.rows.map((row) => [row.order_hash, row.id])
       );
 
       // Build final results
@@ -787,9 +819,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       results.sort((a, b) => a.index - b.index);
 
       // Calculate summary
-      const succeeded = results.filter(r => r.status === 'created').length;
-      const failed = results.filter(r => r.status === 'failed').length;
-      const skipped = results.filter(r => r.status === 'skipped').length;
+      const succeeded = results.filter((r) => r.status === 'created').length;
+      const failed = results.filter((r) => r.status === 'failed').length;
+      const skipped = results.filter((r) => r.status === 'skipped').length;
 
       // Determine status code
       const statusCode = failed === 0 ? 201 : 207;

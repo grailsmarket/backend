@@ -88,7 +88,7 @@ interface StaleListing {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
@@ -101,7 +101,9 @@ async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
 
   if (response.status === 429 && attempt <= MAX_RETRIES) {
     const delay = Math.pow(2, attempt) * 1000;
-    console.log(`  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`);
+    console.log(
+      `  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`
+    );
     await sleep(delay);
     return fetchWithRetry(url, attempt + 1);
   }
@@ -129,7 +131,7 @@ async function fetchOpenSeaListingsForTokenIds(tokenIds: string[]): Promise<Open
 
   while (url) {
     const response = await fetchWithRetry(url);
-    const data = await response.json() as OpenSeaListingsResponse;
+    const data = (await response.json()) as OpenSeaListingsResponse;
 
     if (data.orders) {
       allListings.push(...data.orders);
@@ -170,7 +172,12 @@ function formatEth(weiStr: string): string {
   }
 }
 
-async function reconcileListings(pool: Pool, name?: string, limit?: number, batchSize = DEFAULT_BATCH_SIZE) {
+async function reconcileListings(
+  pool: Pool,
+  name?: string,
+  limit?: number,
+  batchSize = DEFAULT_BATCH_SIZE
+) {
   console.log('=== OpenSea Listing Reconciliation (Reverse) ===\n');
   console.log(`Mode: ${FIX_MODE ? 'FIX (will cancel stale listings)' : 'CHECK ONLY (dry run)'}`);
   if (name) console.log(`Name filter: ${name}`);
@@ -211,7 +218,7 @@ async function reconcileListings(pool: Pool, name?: string, limit?: number, batc
   }
 
   // Skip listings with null order_hash (legacy data, can't verify)
-  const verifiable = dbListings.filter(l => l.order_hash);
+  const verifiable = dbListings.filter((l) => l.order_hash);
   const skippedNull = dbListings.length - verifiable.length;
   if (skippedNull > 0) {
     console.log(`Skipping ${skippedNull} listings with null order_hash (legacy data)\n`);
@@ -342,7 +349,9 @@ async function reconcileListings(pool: Pool, name?: string, limit?: number, batc
         );
 
         if (updateResult.rowCount && updateResult.rowCount > 0) {
-          console.log(`  [OK] Cancelled ${listing.name} (${listing.order_hash.slice(0, 10)}...) — ${reason}`);
+          console.log(
+            `  [OK] Cancelled ${listing.name} (${listing.order_hash.slice(0, 10)}...) — ${reason}`
+          );
           cancelled++;
         } else {
           console.log(`  [SKIP] ${listing.name} already cancelled or status changed`);

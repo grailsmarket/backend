@@ -45,12 +45,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add viewed_at timestamp to enriched results
-    const resultsWithTimestamp = enrichedResults.map(name => {
-      const historyEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithTimestamp = enrichedResults.map((name) => {
+      const historyEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         viewed_at: historyEntry?.viewed_at,
@@ -114,12 +114,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add watchlist metadata to enriched results
-    const resultsWithMetadata = enrichedResults.map(name => {
-      const watchEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithMetadata = enrichedResults.map((name) => {
+      const watchEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         added_at: watchEntry?.added_at,
@@ -186,12 +186,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add vote metadata to enriched results
-    const resultsWithVotes = enrichedResults.map(name => {
-      const voteEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithVotes = enrichedResults.map((name) => {
+      const voteEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         my_vote: voteEntry?.vote,
@@ -231,10 +231,7 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const offset = (query.page - 1) * query.limit;
 
     // Get user's wallet address
-    const userResult = await pool.query(
-      'SELECT wallet_address FROM users WHERE id = $1',
-      [userId]
-    );
+    const userResult = await pool.query('SELECT wallet_address FROM users WHERE id = $1', [userId]);
 
     if (userResult.rows.length === 0) {
       return reply.status(404).send({
@@ -252,10 +249,9 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const walletAddress = userResult.rows[0].wallet_address;
 
     const [countResult, dataResult] = await Promise.all([
-      pool.query(
-        'SELECT COUNT(*) FROM offers WHERE LOWER(buyer_address) = LOWER($1)',
-        [walletAddress]
-      ),
+      pool.query('SELECT COUNT(*) FROM offers WHERE LOWER(buyer_address) = LOWER($1)', [
+        walletAddress,
+      ]),
 
       pool.query(
         `SELECT
@@ -280,12 +276,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add offer metadata to enriched results
-    const resultsWithOffers = enrichedResults.map(name => {
-      const offerEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithOffers = enrichedResults.map((name) => {
+      const offerEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         offer: {
@@ -331,10 +327,7 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const offset = (query.page - 1) * query.limit;
 
     // Get user's wallet address
-    const userResult = await pool.query(
-      'SELECT wallet_address FROM users WHERE id = $1',
-      [userId]
-    );
+    const userResult = await pool.query('SELECT wallet_address FROM users WHERE id = $1', [userId]);
 
     if (userResult.rows.length === 0) {
       return reply.status(404).send({
@@ -352,10 +345,9 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const walletAddress = userResult.rows[0].wallet_address;
 
     const [countResult, dataResult] = await Promise.all([
-      pool.query(
-        'SELECT COUNT(*) FROM sales WHERE LOWER(buyer_address) = LOWER($1)',
-        [walletAddress]
-      ),
+      pool.query('SELECT COUNT(*) FROM sales WHERE LOWER(buyer_address) = LOWER($1)', [
+        walletAddress,
+      ]),
 
       pool.query(
         `SELECT
@@ -379,12 +371,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add sale metadata to enriched results
-    const resultsWithSales = enrichedResults.map(name => {
-      const saleEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithSales = enrichedResults.map((name) => {
+      const saleEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         purchase: {
@@ -429,10 +421,7 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const offset = (query.page - 1) * query.limit;
 
     // Get user's wallet address
-    const userResult = await pool.query(
-      'SELECT wallet_address FROM users WHERE id = $1',
-      [userId]
-    );
+    const userResult = await pool.query('SELECT wallet_address FROM users WHERE id = $1', [userId]);
 
     if (userResult.rows.length === 0) {
       return reply.status(404).send({
@@ -450,10 +439,9 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const walletAddress = userResult.rows[0].wallet_address;
 
     const [countResult, dataResult] = await Promise.all([
-      pool.query(
-        'SELECT COUNT(*) FROM sales WHERE LOWER(seller_address) = LOWER($1)',
-        [walletAddress]
-      ),
+      pool.query('SELECT COUNT(*) FROM sales WHERE LOWER(seller_address) = LOWER($1)', [
+        walletAddress,
+      ]),
 
       pool.query(
         `SELECT
@@ -478,12 +466,12 @@ export async function userInsightsRoutes(fastify: FastifyInstance) {
     const totalPages = Math.ceil(total / query.limit);
 
     // Enrich with full name data
-    const names = dataResult.rows.map(row => row.name);
+    const names = dataResult.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add sale metadata to enriched results
-    const resultsWithSales = enrichedResults.map(name => {
-      const saleEntry = dataResult.rows.find(r => r.name === name.name);
+    const resultsWithSales = enrichedResults.map((name) => {
+      const saleEntry = dataResult.rows.find((r) => r.name === name.name);
       return {
         ...name,
         sale: {

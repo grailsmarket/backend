@@ -49,10 +49,7 @@ export async function getProfileViewCount(profileAddress: string): Promise<numbe
 
     return result.rows[0]?.count || 0;
   } catch (error: any) {
-    logger.error(
-      { error: error.message, profileAddress },
-      'Failed to get profile view count'
-    );
+    logger.error({ error: error.message, profileAddress }, 'Failed to get profile view count');
     return 0;
   }
 }

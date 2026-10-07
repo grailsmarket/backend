@@ -150,20 +150,22 @@ const DeleteGlobalMessageSchema = z.object({
   reason: z.string().trim().min(1).max(500),
 });
 
-const GlobalConfigPatchSchema = z.object({
-  enabled: z.boolean().optional(),
-  // null = unlimited for the avatar tier
-  quota_with_avatar: z.number().int().min(0).nullable().optional(),
-  quota_with_name: z.number().int().min(0).optional(),
-  quota_without_name: z.number().int().min(0).optional(),
-  max_message_length: z.number().int().min(1).max(4000).optional(),
-  rate_limit_per_minute: z.number().int().min(1).max(600).optional(),
-  // Master kill switch for image sending across all chats.
-  images_enabled: z.boolean().optional(),
-  // GLOBAL-only message cap; ALL-chats image expiry. Capped at ~10 years.
-  message_retention_days: z.number().int().min(1).max(3650).optional(),
-  image_retention_days: z.number().int().min(1).max(3650).optional(),
-}).refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
+const GlobalConfigPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    // null = unlimited for the avatar tier
+    quota_with_avatar: z.number().int().min(0).nullable().optional(),
+    quota_with_name: z.number().int().min(0).optional(),
+    quota_without_name: z.number().int().min(0).optional(),
+    max_message_length: z.number().int().min(1).max(4000).optional(),
+    rate_limit_per_minute: z.number().int().min(1).max(600).optional(),
+    // Master kill switch for image sending across all chats.
+    images_enabled: z.boolean().optional(),
+    // GLOBAL-only message cap; ALL-chats image expiry. Capped at ~10 years.
+    message_retention_days: z.number().int().min(1).max(3650).optional(),
+    image_retention_days: z.number().int().min(1).max(3650).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
 export async function chatsAdminRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -200,10 +202,9 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           return sendError(reply, 400, 'INVALID_QUERY', 'Provide an address or .eth name');
         }
 
-        const userResult = await pool.query(
-          `SELECT id, address FROM users WHERE address = $1`,
-          [address]
-        );
+        const userResult = await pool.query(`SELECT id, address FROM users WHERE address = $1`, [
+          address,
+        ]);
         if (userResult.rows.length === 0) {
           return sendError(reply, 404, 'USER_NOT_FOUND', 'No user record for this address');
         }
@@ -482,22 +483,31 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
     { preHandler: [requireAuth, requireAdmin] },
     async (request, reply) => {
       try {
-        const { sender, status, from, to, page, limit } =
-          GlobalMessagesQuerySchema.parse(request.query);
+        const { sender, status, from, to, page, limit } = GlobalMessagesQuerySchema.parse(
+          request.query
+        );
         const offset = (page - 1) * limit;
 
         let senderUserId: number | null = null;
         if (sender) {
           if (ADDRESS_RE.test(sender)) {
-            const userResult = await pool.query(
-              `SELECT id FROM users WHERE address = $1`,
-              [sender.toLowerCase()]
-            );
+            const userResult = await pool.query(`SELECT id FROM users WHERE address = $1`, [
+              sender.toLowerCase(),
+            ]);
             if (userResult.rows.length === 0) {
-              return reply.send(ok({
-                messages: [],
-                pagination: { page, limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
-              }));
+              return reply.send(
+                ok({
+                  messages: [],
+                  pagination: {
+                    page,
+                    limit,
+                    total: 0,
+                    totalPages: 0,
+                    hasNext: false,
+                    hasPrev: false,
+                  },
+                })
+              );
             }
             senderUserId = userResult.rows[0].id;
           } else if (/^\d+$/.test(sender)) {
@@ -552,10 +562,19 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           params
         );
 
-        return reply.send(ok({
-          messages: result.rows,
-          pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
-        }));
+        return reply.send(
+          ok({
+            messages: result.rows,
+            pagination: {
+              page,
+              limit,
+              total,
+              totalPages,
+              hasNext: page < totalPages,
+              hasPrev: page > 1,
+            },
+          })
+        );
       } catch (error: unknown) {
         if (error instanceof z.ZodError) {
           return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
@@ -660,10 +679,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
         }
         cols.push(`updated_at = NOW()`);
 
-        await pool.query(
-          `UPDATE global_chat_config SET ${cols.join(', ')} WHERE id = 1`,
-          params
-        );
+        await pool.query(`UPDATE global_chat_config SET ${cols.join(', ')} WHERE id = 1`, params);
         await invalidateGlobalChatConfigCache();
 
         await pool.query(

@@ -60,10 +60,9 @@ describe('GET /names/:name/bundle', () => {
       }
     } catch (error: any) {
       if (error.message?.includes('fetch failed') || error.cause?.code === 'ECONNREFUSED') {
-        throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev',
-          { cause: error }
-        );
+        throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+          cause: error,
+        });
       }
     }
   });
@@ -131,9 +130,9 @@ describe('GET /names/:name/bundle', () => {
     for (let i = 1; i < offers.length; i++) {
       // BigInt compare: amounts are wei strings in a VARCHAR column, so the
       // ordering must be numeric, not lexicographic.
-      expect(
-        BigInt(offers[i - 1].offer_amount_wei) >= BigInt(offers[i].offer_amount_wei)
-      ).toBe(true);
+      expect(BigInt(offers[i - 1].offer_amount_wei) >= BigInt(offers[i].offer_amount_wei)).toBe(
+        true
+      );
     }
   });
 

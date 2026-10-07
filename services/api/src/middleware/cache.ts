@@ -26,11 +26,7 @@ export interface CacheOptions {
  * ```
  */
 export function withCache(options: CacheOptions = {}) {
-  const {
-    ttl = config.redis.cacheTtlSeconds,
-    skipCache = () => false,
-    keyGenerator,
-  } = options;
+  const { ttl = config.redis.cacheTtlSeconds, skipCache = () => false, keyGenerator } = options;
 
   return async (request: FastifyRequest, reply: FastifyReply) => {
     // Skip cache if Redis is disabled
@@ -58,10 +54,7 @@ export function withCache(options: CacheOptions = {}) {
 
     if (cached) {
       // Send cached response
-      reply
-        .header('X-Cache', 'HIT')
-        .header('Content-Type', 'application/json')
-        .send(cached);
+      reply.header('X-Cache', 'HIT').header('Content-Type', 'application/json').send(cached);
       return;
     }
 

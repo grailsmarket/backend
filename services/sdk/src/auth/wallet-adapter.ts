@@ -85,9 +85,7 @@ export function createWagmiSigner(
  * });
  * ```
  */
-export function createCustomSigner(
-  signFn: (message: string) => Promise<string>
-): MessageSigner {
+export function createCustomSigner(signFn: (message: string) => Promise<string>): MessageSigner {
   return {
     signMessage: signFn,
   };

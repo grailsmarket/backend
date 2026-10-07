@@ -2,10 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse } from '../../../shared/src';
 import { requireAuth, requireAdmin, optionalAuth } from '../middleware/auth';
-import {
-  sanitizeCommentBody,
-  invalidateBlacklistCache,
-} from '../services/commentSanitizer';
+import { sanitizeCommentBody, invalidateBlacklistCache } from '../services/commentSanitizer';
 import {
   getCommentConfig,
   getQuotaCap,
@@ -198,9 +195,7 @@ async function upsertUserStatus(
   }
   if (cols.length === 0) return;
 
-  const setClause = cols
-    .map((c, i) => `${c} = $${i + 2}`)
-    .join(', ');
+  const setClause = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
   const insertCols = ['user_id', ...cols].join(', ');
   const insertPlaceholders = vals.map((_, i) => `$${i + 1}`).join(', ');
 
@@ -223,10 +218,9 @@ export async function commentsRoutes(fastify: FastifyInstance) {
     try {
       const { name, cursor, limit } = ListCommentsQuerySchema.parse(request.query);
 
-      const ensResult = await pool.query(
-        `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`,
-        [name]
-      );
+      const ensResult = await pool.query(`SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`, [
+        name,
+      ]);
       if (ensResult.rows.length === 0) {
         return sendError(reply, 404, 'NAME_NOT_FOUND', 'ENS name not found');
       }
@@ -286,7 +280,9 @@ export async function commentsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/feed', { preHandler: optionalAuth }, async (request, reply) => {
     try {
-      const { owner, clubs, watchlist, list_id, page, limit } = FeedQuerySchema.parse(request.query);
+      const { owner, clubs, watchlist, list_id, page, limit } = FeedQuerySchema.parse(
+        request.query
+      );
       const offset = (page - 1) * limit;
 
       // The watchlist filter needs an authenticated user to resolve their list.
@@ -491,10 +487,9 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
 
         // Attach author info to match GET shape
-        const userRow = await pool.query(
-          `SELECT address, persona_id FROM users WHERE id = $1`,
-          [userId]
-        );
+        const userRow = await pool.query(`SELECT address, persona_id FROM users WHERE id = $1`, [
+          userId,
+        ]);
 
         const comment = {
           ...inserted.rows[0],
@@ -560,13 +555,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
       } catch (error: unknown) {
         if (error instanceof z.ZodError) {
-          return sendError(
-            reply,
-            400,
-            'VALIDATION_ERROR',
-            'Invalid request body',
-            error.errors
-          );
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request body', error.errors);
         }
         fastify.log.error({ error }, 'Error creating comment');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to create comment');
@@ -581,19 +570,16 @@ export async function commentsRoutes(fastify: FastifyInstance) {
    * specifically excludes — so users can clean up their own comments freely
    * without affecting their moderation reputation.
    */
-  fastify.delete(
-    '/:id',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      try {
-        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-        const userId = parseInt(request.user!.sub, 10);
-        if (!Number.isFinite(userId)) {
-          return sendError(reply, 401, 'INVALID_TOKEN', 'Invalid user id');
-        }
+  fastify.delete('/:id', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+      const userId = parseInt(request.user!.sub, 10);
+      if (!Number.isFinite(userId)) {
+        return sendError(reply, 401, 'INVALID_TOKEN', 'Invalid user id');
+      }
 
-        const result = await pool.query(
-          `UPDATE comments
+      const result = await pool.query(
+        `UPDATE comments
               SET status = 'deleted',
                   deleted_at = NOW(),
                   deleted_by = $1,
@@ -601,31 +587,25 @@ export async function commentsRoutes(fastify: FastifyInstance) {
                   updated_at = NOW()
             WHERE id = $2 AND user_id = $1 AND status <> 'deleted'
             RETURNING id`,
-          [userId, id]
-        );
+        [userId, id]
+      );
 
-        if (result.rows.length === 0) {
-          // Either the comment doesn't exist, the caller isn't the author, or
-          // it was already deleted. Same response either way — don't leak
-          // existence to non-authors.
-          return sendError(
-            reply,
-            404,
-            'COMMENT_NOT_FOUND',
-            'Comment not found or not deletable'
-          );
-        }
-
-        return reply.send(ok({ id, deleted: true }));
-      } catch (error: unknown) {
-        if (error instanceof z.ZodError) {
-          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid id', error.errors);
-        }
-        fastify.log.error({ error }, 'Error self-deleting comment');
-        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete comment');
+      if (result.rows.length === 0) {
+        // Either the comment doesn't exist, the caller isn't the author, or
+        // it was already deleted. Same response either way — don't leak
+        // existence to non-authors.
+        return sendError(reply, 404, 'COMMENT_NOT_FOUND', 'Comment not found or not deletable');
       }
+
+      return reply.send(ok({ id, deleted: true }));
+    } catch (error: unknown) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid id', error.errors);
+      }
+      fastify.log.error({ error }, 'Error self-deleting comment');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete comment');
     }
-  );
+  });
 
   // ===========================================================================
   // Admin endpoints
@@ -635,61 +615,58 @@ export async function commentsRoutes(fastify: FastifyInstance) {
    * GET /api/v1/comments/admin
    * Chronological list with filters by author, name, date, status.
    */
-  fastify.get(
-    '/admin',
-    { preHandler: [requireAuth, requireAdmin] },
-    async (request, reply) => {
-      try {
-        const q = AdminListQuerySchema.parse(request.query);
+  fastify.get('/admin', { preHandler: [requireAuth, requireAdmin] }, async (request, reply) => {
+    try {
+      const q = AdminListQuerySchema.parse(request.query);
 
-        const where: string[] = [];
-        const params: unknown[] = [];
-        let i = 0;
-        const next = () => {
-          i += 1;
-          return `$${i}`;
-        };
+      const where: string[] = [];
+      const params: unknown[] = [];
+      let i = 0;
+      const next = () => {
+        i += 1;
+        return `$${i}`;
+      };
 
-        if (q.status !== 'all') {
-          where.push(`c.status = ${next()}`);
-          params.push(q.status);
+      if (q.status !== 'all') {
+        where.push(`c.status = ${next()}`);
+        params.push(q.status);
+      }
+      if (q.author) {
+        // Match either an Ethereum address or a userId
+        if (/^0x[a-fA-F0-9]{40}$/.test(q.author)) {
+          where.push(`LOWER(u.address) = ${next()}`);
+          params.push(q.author.toLowerCase());
+        } else if (/^\d+$/.test(q.author)) {
+          where.push(`c.user_id = ${next()}`);
+          params.push(parseInt(q.author, 10));
+        } else {
+          where.push(`LOWER(u.address) = ${next()}`);
+          params.push(q.author.toLowerCase());
         }
-        if (q.author) {
-          // Match either an Ethereum address or a userId
-          if (/^0x[a-fA-F0-9]{40}$/.test(q.author)) {
-            where.push(`LOWER(u.address) = ${next()}`);
-            params.push(q.author.toLowerCase());
-          } else if (/^\d+$/.test(q.author)) {
-            where.push(`c.user_id = ${next()}`);
-            params.push(parseInt(q.author, 10));
-          } else {
-            where.push(`LOWER(u.address) = ${next()}`);
-            params.push(q.author.toLowerCase());
-          }
-        }
-        if (q.name) {
-          where.push(`LOWER(en.name) = ${next()}`);
-          params.push(q.name.toLowerCase());
-        }
-        if (q.from) {
-          where.push(`c.created_at >= ${next()}`);
-          params.push(q.from);
-        }
-        if (q.to) {
-          where.push(`c.created_at <= ${next()}`);
-          params.push(q.to);
-        }
-        if (q.cursor) {
-          where.push(`c.created_at < ${next()}`);
-          params.push(q.cursor);
-        }
+      }
+      if (q.name) {
+        where.push(`LOWER(en.name) = ${next()}`);
+        params.push(q.name.toLowerCase());
+      }
+      if (q.from) {
+        where.push(`c.created_at >= ${next()}`);
+        params.push(q.from);
+      }
+      if (q.to) {
+        where.push(`c.created_at <= ${next()}`);
+        params.push(q.to);
+      }
+      if (q.cursor) {
+        where.push(`c.created_at < ${next()}`);
+        params.push(q.cursor);
+      }
 
-        const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-        const limitParam = next();
-        params.push(q.limit);
+      const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const limitParam = next();
+      params.push(q.limit);
 
-        const result = await pool.query(
-          `SELECT c.id,
+      const result = await pool.query(
+        `SELECT c.id,
                   c.ens_name_id,
                   c.user_id,
                   c.body,
@@ -712,29 +689,28 @@ export async function commentsRoutes(fastify: FastifyInstance) {
             ${whereClause}
             ORDER BY c.created_at DESC, c.id DESC
             LIMIT ${limitParam}`,
-          params
-        );
+        params
+      );
 
-        const nextCursor =
-          result.rows.length === q.limit
-            ? new Date(result.rows[result.rows.length - 1].created_at).toISOString()
-            : null;
+      const nextCursor =
+        result.rows.length === q.limit
+          ? new Date(result.rows[result.rows.length - 1].created_at).toISOString()
+          : null;
 
-        return reply.send(
-          ok({
-            comments: result.rows,
-            nextCursor,
-          })
-        );
-      } catch (error: unknown) {
-        if (error instanceof z.ZodError) {
-          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);
-        }
-        fastify.log.error({ error }, 'Error listing admin comments');
-        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list comments');
+      return reply.send(
+        ok({
+          comments: result.rows,
+          nextCursor,
+        })
+      );
+    } catch (error: unknown) {
+      if (error instanceof z.ZodError) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);
       }
+      fastify.log.error({ error }, 'Error listing admin comments');
+      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list comments');
     }
-  );
+  });
 
   /**
    * DELETE /api/v1/comments/admin/:id
@@ -763,12 +739,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
 
         if (result.rows.length === 0) {
-          return sendError(
-            reply,
-            404,
-            'COMMENT_NOT_FOUND',
-            'Comment not found or already deleted'
-          );
+          return sendError(reply, 404, 'COMMENT_NOT_FOUND', 'Comment not found or already deleted');
         }
 
         const { user_id: userId, ens_name_id: ensNameId } = result.rows[0];
@@ -780,21 +751,14 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
 
         // Notify the author that their comment was removed
-        await insertModerationNotification(
-          pool,
-          userId,
-          'comment_deleted',
-          ensNameId,
-          { reason, commentId: id }
-        );
+        await insertModerationNotification(pool, userId, 'comment_deleted', ensNameId, {
+          reason,
+          commentId: id,
+        });
 
         // Threshold logic: recompute and possibly auto-warn / auto-suspend.
         const config = await getCommentConfig();
-        const count = await recomputeDeletionCount(
-          pool,
-          userId,
-          config.suspension_window_days
-        );
+        const count = await recomputeDeletionCount(pool, userId, config.suspension_window_days);
         const existing = await getUserModStatus(pool, userId);
 
         let nextStatus = existing?.status ?? 'active';
@@ -807,10 +771,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
             Date.now() + config.default_suspension_days * 24 * 60 * 60 * 1000
           );
           triggered = 'suspend';
-        } else if (
-          count >= config.warning_threshold &&
-          nextStatus === 'active'
-        ) {
+        } else if (count >= config.warning_threshold && nextStatus === 'active') {
           nextStatus = 'warned';
           triggered = 'warn';
         }
@@ -835,17 +796,11 @@ export async function commentsRoutes(fastify: FastifyInstance) {
               JSON.stringify({ count, threshold: config.warning_threshold }),
             ]
           );
-          await insertModerationNotification(
-            pool,
-            userId,
-            'comment_warning',
-            null,
-            {
-              count,
-              threshold: config.warning_threshold,
-              suspensionThreshold: config.suspension_threshold,
-            }
-          );
+          await insertModerationNotification(pool, userId, 'comment_warning', null, {
+            count,
+            threshold: config.warning_threshold,
+            suspensionThreshold: config.suspension_threshold,
+          });
         } else if (triggered === 'suspend') {
           await pool.query(
             `INSERT INTO comment_moderation_log (user_id, admin_id, action, reason, metadata)
@@ -861,18 +816,12 @@ export async function commentsRoutes(fastify: FastifyInstance) {
               }),
             ]
           );
-          await insertModerationNotification(
-            pool,
-            userId,
-            'comment_suspended',
-            null,
-            {
-              count,
-              suspendedUntil: suspendedUntil?.toISOString(),
-              days: config.default_suspension_days,
-              reason: 'Auto-suspended for repeated comment deletions',
-            }
-          );
+          await insertModerationNotification(pool, userId, 'comment_suspended', null, {
+            count,
+            suspendedUntil: suspendedUntil?.toISOString(),
+            days: config.default_suspension_days,
+            reason: 'Auto-suspended for repeated comment deletions',
+          });
         }
 
         return reply.send(
@@ -886,13 +835,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
       } catch (error: unknown) {
         if (error instanceof z.ZodError) {
-          return sendError(
-            reply,
-            400,
-            'VALIDATION_ERROR',
-            'Invalid request',
-            error.errors
-          );
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
         }
         fastify.log.error({ error }, 'Error deleting comment');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete comment');
@@ -957,13 +900,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         );
       } catch (error: unknown) {
         if (error instanceof z.ZodError) {
-          return sendError(
-            reply,
-            400,
-            'VALIDATION_ERROR',
-            'Invalid request',
-            error.errors
-          );
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
         }
         fastify.log.error({ error }, 'Error fetching user mod info');
         return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to fetch user');
@@ -985,9 +922,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         const { days, reason } = SuspendSchema.parse(request.body);
         const adminId = parseInt(request.user!.sub, 10);
 
-        const suspendedUntil = new Date(
-          Date.now() + days * 24 * 60 * 60 * 1000
-        );
+        const suspendedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
         await upsertUserStatus(pool, userId, {
           status: 'suspended',
@@ -1169,9 +1104,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
     { preHandler: [requireAuth, requireAdmin] },
     async (request, reply) => {
       try {
-        const { id } = z
-          .object({ id: z.coerce.number().int().positive() })
-          .parse(request.params);
+        const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
         const adminId = parseInt(request.user!.sub, 10);
 
         const result = await pool.query(
@@ -1241,10 +1174,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         }
         cols.push(`updated_at = NOW()`);
 
-        await pool.query(
-          `UPDATE comment_config SET ${cols.join(', ')} WHERE id = 1`,
-          params
-        );
+        await pool.query(`UPDATE comment_config SET ${cols.join(', ')} WHERE id = 1`, params);
 
         await pool.query(
           `INSERT INTO comment_moderation_log (admin_id, action, reason, metadata)

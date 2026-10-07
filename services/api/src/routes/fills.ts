@@ -11,7 +11,10 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const FillReportSchema = z.object({
   transactionHash: z.string().regex(HASH32),
   fillerAddress: z.string().regex(ADDRESS), // connected wallet that executed the fill
-  orders: z.array(z.object({ orderHash: z.string().regex(HASH32) })).min(1).max(500),
+  orders: z
+    .array(z.object({ orderHash: z.string().regex(HASH32) }))
+    .min(1)
+    .max(500),
 });
 
 export async function fillsRoutes(fastify: FastifyInstance) {

@@ -76,10 +76,14 @@ function arePricesSimilar(price1: string, price2: string, tolerancePercent: numb
   }
 }
 
-function chooseBestSale(sales: SaleRecord[]): { keep: SaleRecord; delete: SaleRecord[]; reason: string } {
+function chooseBestSale(sales: SaleRecord[]): {
+  keep: SaleRecord;
+  delete: SaleRecord[];
+  reason: string;
+} {
   // First, prefer sales where buyer != seller
-  const validSales = sales.filter(s => hasCorrectBuyerSeller(s));
-  const invalidSales = sales.filter(s => !hasCorrectBuyerSeller(s));
+  const validSales = sales.filter((s) => hasCorrectBuyerSeller(s));
+  const invalidSales = sales.filter((s) => !hasCorrectBuyerSeller(s));
 
   if (validSales.length > 0) {
     // Among valid sales, pick the one with highest price
@@ -110,7 +114,7 @@ function chooseBestSale(sales: SaleRecord[]): { keep: SaleRecord; delete: SaleRe
   return {
     keep: sorted[0],
     delete: sorted.slice(1),
-    reason: 'highest price (all have buyer=seller)'
+    reason: 'highest price (all have buyer=seller)',
   };
 }
 
@@ -177,10 +181,10 @@ async function findDuplicateSales(pool: any, limit: number): Promise<DuplicateGr
       for (let j = i + 1; j < allSales.length; j++) {
         if (processed.has(allSales[j].id)) continue;
 
-        const timeDiff = Math.abs(
-          new Date(allSales[i].sale_date).getTime() -
-          new Date(allSales[j].sale_date).getTime()
-        ) / 1000;
+        const timeDiff =
+          Math.abs(
+            new Date(allSales[i].sale_date).getTime() - new Date(allSales[j].sale_date).getTime()
+          ) / 1000;
 
         const pricesSimilar = arePricesSimilar(
           allSales[i].sale_price_wei,
@@ -202,8 +206,8 @@ async function findDuplicateSales(pool: any, limit: number): Promise<DuplicateGr
           name: row.name,
           sales: group,
           keepSaleId: keep.id,
-          deleteSaleIds: toDelete.map(s => s.id),
-          reason
+          deleteSaleIds: toDelete.map((s) => s.id),
+          reason,
         });
 
         if (duplicateGroups.length >= limit) {
@@ -238,10 +242,9 @@ async function deleteDuplicates(
         WHERE metadata->>'sale_id' = ANY($1::text[])
         RETURNING id
       `;
-      const activityResult = await client.query(
-        deleteActivitiesQuery,
-        [group.deleteSaleIds.map(id => id.toString())]
-      );
+      const activityResult = await client.query(deleteActivitiesQuery, [
+        group.deleteSaleIds.map((id) => id.toString()),
+      ]);
       deletedActivities += activityResult.rowCount || 0;
 
       // Delete the duplicate sales
@@ -256,7 +259,9 @@ async function deleteDuplicates(
       await client.query('COMMIT');
 
       if (verbose) {
-        console.log(`  ✅ Deleted ${salesResult.rowCount} sale(s) and ${activityResult.rowCount} activity record(s) for ${group.name}`);
+        console.log(
+          `  ✅ Deleted ${salesResult.rowCount} sale(s) and ${activityResult.rowCount} activity record(s) for ${group.name}`
+        );
       }
     } catch (error: any) {
       await client.query('ROLLBACK');
@@ -385,13 +390,13 @@ async function main() {
         duplicateGroups: duplicateGroups.length,
         totalDuplicatesToDelete: totalDuplicates,
       },
-      groups: duplicateGroups.map(g => ({
+      groups: duplicateGroups.map((g) => ({
         name: g.name,
         ens_name_id: g.ens_name_id,
         keepSaleId: g.keepSaleId,
         deleteSaleIds: g.deleteSaleIds,
         reason: g.reason,
-        sales: g.sales.map(s => ({
+        sales: g.sales.map((s) => ({
           id: s.id,
           price: s.sale_price_wei,
           buyer: s.buyer_address,
@@ -403,7 +408,6 @@ async function main() {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);

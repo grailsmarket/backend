@@ -61,7 +61,6 @@ async function setupCDC() {
       SELECT pg_notify('table_changes', '{"test": "message"}')
     `);
     console.log('✓ Test notification sent');
-
   } catch (error: any) {
     console.error('Error setting up CDC:', error?.message || error);
     if (error?.detail) {

@@ -10,7 +10,7 @@ const DRY_RUN = process.argv.includes('--dry-run'); // Pass --dry-run flag to te
 
 // Parse --start-id argument
 let START_ID = 0;
-const startIdArg = process.argv.find(arg => arg.startsWith('--start-id='));
+const startIdArg = process.argv.find((arg) => arg.startsWith('--start-id='));
 if (startIdArg) {
   START_ID = parseInt(startIdArg.split('=')[1]);
   if (isNaN(START_ID)) {
@@ -88,11 +88,11 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
       GRAPH_ENS_SUBGRAPH_URL,
       {
         query,
-        variables: { names }
+        variables: { names },
       },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 30000 // 30 second timeout
+        timeout: 30000, // 30 second timeout
       }
     );
 
@@ -142,11 +142,11 @@ async function queryGraphByLabelhash(labelhashes: string[]): Promise<Map<string,
       GRAPH_ENS_SUBGRAPH_URL,
       {
         query,
-        variables: { labelhashes }
+        variables: { labelhashes },
       },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 30000 // 30 second timeout
+        timeout: 30000, // 30 second timeout
       }
     );
 
@@ -178,9 +178,8 @@ function getCorrectTokenId(domain: GraphDomain): string {
   const isOwnedByWrapper = ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
   // Check if expired (expiryDate is in unix timestamp seconds)
-  const expiryTimestamp = typeof domain.expiryDate === 'string'
-    ? parseInt(domain.expiryDate)
-    : domain.expiryDate;
+  const expiryTimestamp =
+    typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
   const isExpired = expiryTimestamp * 1000 < Date.now();
 
   // Logic:
@@ -202,7 +201,9 @@ async function fixTokenIds() {
   const pool = getPostgresPool();
 
   console.log('=== Token ID Fix Script ===');
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`
+  );
 
   if (DRY_RUN) {
     console.log('🔍 Running in dry-run mode - no database updates will be performed\n');
@@ -249,23 +250,25 @@ async function fixTokenIds() {
       [START_ID, BATCH_SIZE, offset]
     );
 
-    console.log(`Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`);
+    console.log(
+      `Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`
+    );
 
     // Process this batch in sub-batches for Graph queries
     for (let i = 0; i < result.rows.length; i += GRAPH_BATCH_SIZE) {
       const subBatch = result.rows.slice(i, i + GRAPH_BATCH_SIZE);
 
       // Separate placeholders from real names
-      const realNames = subBatch.filter(row => !row.name.startsWith('token-'));
-      const placeholders = subBatch.filter(row => row.name.startsWith('token-'));
+      const realNames = subBatch.filter((row) => !row.name.startsWith('token-'));
+      const placeholders = subBatch.filter((row) => row.name.startsWith('token-'));
 
       // Create a combined domain map
-      const domainMap = new Map<string, { domain: GraphDomain, dbRow: any }>();
+      const domainMap = new Map<string, { domain: GraphDomain; dbRow: any }>();
 
       // Query real names by name
       if (realNames.length > 0) {
         console.log(`  Querying Graph for ${realNames.length} real names...`);
-        const namesList = realNames.map(row => row.name);
+        const namesList = realNames.map((row) => row.name);
         const nameResults = await queryGraphByName(namesList);
 
         for (const row of realNames) {
@@ -279,7 +282,7 @@ async function fixTokenIds() {
       // Query placeholders by labelhash (using their token_id)
       if (placeholders.length > 0) {
         console.log(`  Querying Graph for ${placeholders.length} placeholders by labelhash...`);
-        const labelhashes = placeholders.map(row => decimalToHex(row.token_id));
+        const labelhashes = placeholders.map((row) => decimalToHex(row.token_id));
         const labelhashResults = await queryGraphByLabelhash(labelhashes);
 
         for (const row of placeholders) {
@@ -315,15 +318,18 @@ async function fixTokenIds() {
 
           // Check if token ID or name needs updating
           if (currentTokenId !== correctTokenId || isPlaceholder) {
-            const correctOwner = domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
-              ? domain.wrappedOwner.id?.toLowerCase()
-              : domain.owner.id?.toLowerCase();
+            const correctOwner =
+              domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
+                ? domain.wrappedOwner.id?.toLowerCase()
+                : domain.owner.id?.toLowerCase();
 
             console.log(`  [UPDATE] ${name}${isPlaceholder ? ` -> ${correctName}` : ''}`);
             console.log(`    Current:  ${currentTokenId}`);
             console.log(`    Correct:  ${correctTokenId}`);
             console.log(`    Owner:    ${correctOwner}`);
-            console.log(`    Wrapped:  ${domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()}`);
+            console.log(
+              `    Wrapped:  ${domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()}`
+            );
 
             // Check if there's a duplicate with the correct name OR correct token_id
             const duplicateCheck = await pool.query(
@@ -335,7 +341,9 @@ async function fixTokenIds() {
               const duplicateId = duplicateCheck.rows[0].id;
               const duplicateName = duplicateCheck.rows[0].name;
               const duplicateTokenId = duplicateCheck.rows[0].token_id;
-              console.log(`    Found duplicate: ${duplicateName} (id: ${duplicateId}, token_id: ${duplicateTokenId})`);
+              console.log(
+                `    Found duplicate: ${duplicateName} (id: ${duplicateId}, token_id: ${duplicateTokenId})`
+              );
 
               // Determine which record to keep based on which is a placeholder
               // If current is placeholder and duplicate is real name, keep duplicate (swap)
@@ -345,7 +353,9 @@ async function fixTokenIds() {
               const deleteId = shouldSwap ? id : duplicateId;
 
               if (shouldSwap) {
-                console.log(`    Current is placeholder, will keep duplicate (${duplicateName}) instead`);
+                console.log(
+                  `    Current is placeholder, will keep duplicate (${duplicateName}) instead`
+                );
               }
 
               // Update the database (only if not dry run)
@@ -358,30 +368,32 @@ async function fixTokenIds() {
                   await pool.query('SET LOCAL session_replication_role = replica');
 
                   // Update foreign key references from delete record to keep record
-                  await pool.query(
-                    'UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [keepId, deleteId]
-                  );
-                  await pool.query(
-                    'UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [keepId, deleteId]
-                  );
-                  await pool.query(
-                    'UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [keepId, deleteId]
-                  );
+                  await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    keepId,
+                    deleteId,
+                  ]);
+                  await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    keepId,
+                    deleteId,
+                  ]);
+                  await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    keepId,
+                    deleteId,
+                  ]);
                   await pool.query(
                     'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
                     [keepId, deleteId]
                   );
-                  await pool.query(
-                    'UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [keepId, deleteId]
-                  );
+                  await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    keepId,
+                    deleteId,
+                  ]);
 
                   // Delete the record we don't want to keep
                   await pool.query('DELETE FROM ens_names WHERE id = $1', [deleteId]);
-                  console.log(`    Deleted ${shouldSwap ? 'placeholder' : 'duplicate'}: ${shouldSwap ? name : duplicateName} (id: ${deleteId})`);
+                  console.log(
+                    `    Deleted ${shouldSwap ? 'placeholder' : 'duplicate'}: ${shouldSwap ? name : duplicateName} (id: ${deleteId})`
+                  );
 
                   // Update the record we're keeping with correct token_id, name, and owner
                   await pool.query(
@@ -390,14 +402,20 @@ async function fixTokenIds() {
                   );
 
                   await pool.query('COMMIT');
-                  console.log(`    Merged into ${shouldSwap ? duplicateName : name} (id: ${keepId}) with correct data`);
+                  console.log(
+                    `    Merged into ${shouldSwap ? duplicateName : name} (id: ${keepId}) with correct data`
+                  );
                 } catch (txError) {
                   await pool.query('ROLLBACK');
                   throw txError;
                 }
               } else {
-                console.log(`    [DRY RUN] Would delete ${shouldSwap ? 'placeholder' : 'duplicate'}: ${shouldSwap ? name : duplicateName}`);
-                console.log(`    [DRY RUN] Would update ${shouldSwap ? duplicateName : name} with correct token_id, name, and owner`);
+                console.log(
+                  `    [DRY RUN] Would delete ${shouldSwap ? 'placeholder' : 'duplicate'}: ${shouldSwap ? name : duplicateName}`
+                );
+                console.log(
+                  `    [DRY RUN] Would update ${shouldSwap ? duplicateName : name} with correct token_id, name, and owner`
+                );
               }
             } else {
               // No duplicate - just update token_id, name (if placeholder), and owner
@@ -416,7 +434,9 @@ async function fixTokenIds() {
                   throw txError;
                 }
               } else {
-                console.log(`    [DRY RUN] Would update token_id${isPlaceholder ? ', name' : ''}, and owner`);
+                console.log(
+                  `    [DRY RUN] Would update token_id${isPlaceholder ? ', name' : ''}, and owner`
+                );
               }
             }
 
@@ -426,7 +446,6 @@ async function fixTokenIds() {
           }
 
           processed++;
-
         } catch (error: any) {
           errors++;
           console.error(`  [ERROR] ${name} - ${error.message}`);
@@ -435,13 +454,15 @@ async function fixTokenIds() {
       }
 
       // Rate limit: small delay between Graph batch queries
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     offset += BATCH_SIZE;
 
     // Progress update
-    console.log(`\nProgress: ${processed}/${totalNames} (${Math.round((processed/totalNames)*100)}%)`);
+    console.log(
+      `\nProgress: ${processed}/${totalNames} (${Math.round((processed / totalNames) * 100)}%)`
+    );
     console.log(`Updated: ${updated} | Errors: ${errors} | Not Found: ${notFound}\n`);
   }
 

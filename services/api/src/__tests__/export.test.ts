@@ -80,11 +80,9 @@ function generateTestToken(userId: number, address: string): string {
   if (!secret) {
     throw new Error('JWT_SECRET is not configured');
   }
-  return jwt.sign(
-    { sub: userId.toString(), address: address.toLowerCase() },
-    secret,
-    { expiresIn: '24h' }
-  );
+  return jwt.sign({ sub: userId.toString(), address: address.toLowerCase() }, secret, {
+    expiresIn: '24h',
+  });
 }
 
 // Helper to make JSON search requests
@@ -208,12 +206,15 @@ describe('CSV Export', () => {
     // Create test user
     const pool = await getPool();
     try {
-      const userResult = await pool.query(`
+      const userResult = await pool.query(
+        `
         INSERT INTO users (address, created_at, updated_at)
         VALUES ($1, NOW(), NOW())
         ON CONFLICT (address) DO UPDATE SET updated_at = NOW()
         RETURNING id
-      `, [TEST_USER_ADDRESS.toLowerCase()]);
+      `,
+        [TEST_USER_ADDRESS.toLowerCase()]
+      );
       testUserId = userResult.rows[0].id;
 
       // Generate auth token
@@ -221,7 +222,8 @@ describe('CSV Export', () => {
 
       // Add some items to watchlist for testing
       await pool.query('DELETE FROM watchlist WHERE user_id = $1', [testUserId]);
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO watchlist (user_id, ens_name_id, added_at)
         SELECT $1, en.id, NOW()
         FROM ens_names en
@@ -230,7 +232,9 @@ describe('CSV Export', () => {
           AND en.name NOT LIKE '[%'
         ORDER BY RANDOM()
         LIMIT 100
-      `, [testUserId]);
+      `,
+        [testUserId]
+      );
     } finally {
       await pool.end();
     }
@@ -273,9 +277,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -292,9 +296,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -311,9 +315,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -330,9 +334,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -349,9 +353,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -368,9 +372,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -387,16 +391,17 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
     });
 
     it('export matches JSON for combined filters', async () => {
-      const params = 'filters[hasNumbers]=true&filters[minLength]=3&filters[maxLength]=5&filters[showListings]=true&limit=20';
+      const params =
+        'filters[hasNumbers]=true&filters[minLength]=3&filters[maxLength]=5&filters[showListings]=true&limit=20';
 
       const [jsonResponse, csvResponse] = await Promise.all([
         searchJSON(params),
@@ -406,9 +411,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       // May have no results
       if (jsonNames.length === 0) {
@@ -437,7 +442,8 @@ describe('CSV Export', () => {
       const { status, text } = await searchCSV('limit=5');
       expect(status).toBe(200);
 
-      const expectedHeaders = 'id,name,token_id,owner_address,expiry_date,status,list_price,registration_date,clubs,view_count';
+      const expectedHeaders =
+        'id,name,token_id,owner_address,expiry_date,status,list_price,registration_date,clubs,view_count';
       expect(text.split('\n')[0]).toBe(expectedHeaders);
     });
 
@@ -502,9 +508,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -521,9 +527,9 @@ describe('CSV Export', () => {
       expect(jsonResponse.success).toBe(true);
       expect(csvResponse.status).toBe(200);
 
-      const jsonNames = jsonResponse.data!.results.map(r => r.name);
+      const jsonNames = jsonResponse.data!.results.map((r) => r.name);
       const csvRows = parseCSV(csvResponse.text);
-      const csvNames = csvRows.map(r => r.name);
+      const csvNames = csvRows.map((r) => r.name);
 
       expect(csvNames.length).toBe(jsonNames.length);
       expect(csvNames).toEqual(jsonNames);
@@ -534,7 +540,8 @@ describe('CSV Export', () => {
     it('returns CSV with only headers for no results', async () => {
       // Use multiple filters that combined should return no results
       // (26+ character names that have numbers, no emoji, only letters - contradictory)
-      const params = 'filters[minLength]=26&filters[maxLength]=27&filters[digits]=only&filters[letters]=only&limit=10';
+      const params =
+        'filters[minLength]=26&filters[maxLength]=27&filters[digits]=only&filters[letters]=only&limit=10';
 
       const { status, text } = await searchCSV(params);
       expect(status).toBe(200);
@@ -542,7 +549,9 @@ describe('CSV Export', () => {
       const lines = text.trim().split('\n');
       // Should have just headers or very few results (the filter combination is contradictory)
       expect(lines.length).toBeLessThanOrEqual(2); // Headers + maybe 1 result max
-      expect(lines[0]).toBe('id,name,token_id,owner_address,expiry_date,status,list_price,registration_date,clubs,view_count');
+      expect(lines[0]).toBe(
+        'id,name,token_id,owner_address,expiry_date,status,list_price,registration_date,clubs,view_count'
+      );
     });
   });
 });

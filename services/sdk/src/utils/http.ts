@@ -4,12 +4,7 @@
 
 import type { ResolvedConfig } from '../config.js';
 import type { APIResponse } from '../types/api.js';
-import {
-  createAPIError,
-  NetworkError,
-  TimeoutError,
-  RateLimitError,
-} from '../errors/api-error.js';
+import { createAPIError, NetworkError, TimeoutError, RateLimitError } from '../errors/api-error.js';
 
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -83,14 +78,18 @@ export class HttpClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await this.fetchWithTimeout(url, {
-          method,
-          headers: requestHeaders,
-          body: body ? JSON.stringify(body) : undefined,
-        }, timeout);
+        const response = await this.fetchWithTimeout(
+          url,
+          {
+            method,
+            headers: requestHeaders,
+            body: body ? JSON.stringify(body) : undefined,
+          },
+          timeout
+        );
 
         // Parse response
-        const data = await response.json() as APIResponse<T>;
+        const data = (await response.json()) as APIResponse<T>;
 
         // Handle error responses
         if (!response.ok || !data.success) {
@@ -141,7 +140,8 @@ export class HttpClient {
           !(error instanceof TimeoutError)
         ) {
           // Check if it's a server error that we might want to retry
-          const statusCode = 'statusCode' in error ? (error as { statusCode: number }).statusCode : undefined;
+          const statusCode =
+            'statusCode' in error ? (error as { statusCode: number }).statusCode : undefined;
           if (error.name !== 'GrailsAPIError' || (statusCode !== undefined && statusCode < 500)) {
             throw error;
           }
@@ -161,7 +161,11 @@ export class HttpClient {
   /**
    * Make a GET request
    */
-  async get<T>(path: string, params?: Record<string, string | number | boolean | undefined>, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+  async get<T>(
+    path: string,
+    params?: Record<string, string | number | boolean | undefined>,
+    options?: Omit<RequestOptions, 'method' | 'body'>
+  ): Promise<T> {
     let fullPath = path;
     if (params) {
       const url = new URL(path, 'http://placeholder');
@@ -178,21 +182,33 @@ export class HttpClient {
   /**
    * Make a POST request
    */
-  async post<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+  async post<T>(
+    path: string,
+    body?: unknown,
+    options?: Omit<RequestOptions, 'method' | 'body'>
+  ): Promise<T> {
     return this.request<T>(path, { ...options, method: 'POST', body });
   }
 
   /**
    * Make a PUT request
    */
-  async put<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+  async put<T>(
+    path: string,
+    body?: unknown,
+    options?: Omit<RequestOptions, 'method' | 'body'>
+  ): Promise<T> {
     return this.request<T>(path, { ...options, method: 'PUT', body });
   }
 
   /**
    * Make a PATCH request
    */
-  async patch<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+  async patch<T>(
+    path: string,
+    body?: unknown,
+    options?: Omit<RequestOptions, 'method' | 'body'>
+  ): Promise<T> {
     return this.request<T>(path, { ...options, method: 'PATCH', body });
   }
 

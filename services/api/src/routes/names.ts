@@ -15,9 +15,7 @@ import type { SearchResult } from '../utils/response-builder';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 // Name Wrapper ABI - just the ownerOf function we need
-const NAME_WRAPPER_ABI = [
-  'function ownerOf(uint256 id) view returns (address)'
-];
+const NAME_WRAPPER_ABI = ['function ownerOf(uint256 id) view returns (address)'];
 
 // NOTE: The Graph has two expiry fields:
 // - domain.expiryDate: includes 90-day grace period (END of grace period)
@@ -35,17 +33,21 @@ const ListNamesQuerySchema = z.object({
 
 // FE-focused bundle endpoint: details + offers + roles in one response
 const NameBundleParamsSchema = z.object({
-  name: z.string().min(1).refine(
-    (val) => val.endsWith('.eth') || val.includes('.'),
-    { message: 'Must be a valid ENS name (e.g., name.eth)' }
-  ),
+  name: z
+    .string()
+    .min(1)
+    .refine((val) => val.endsWith('.eth') || val.includes('.'), {
+      message: 'Must be a valid ENS name (e.g., name.eth)',
+    }),
 });
 
 const NameBundleQuerySchema = z.object({
   offersLimit: z.coerce.number().min(1).max(100).default(20),
   // Mirrors the SDK OfferStatus contract; the standalone offers endpoint does
   // not restrict status, so the bundle must accept the same set (incl. unfunded).
-  offersStatus: z.enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded']).default('pending'),
+  offersStatus: z
+    .enum(['pending', 'accepted', 'rejected', 'expired', 'unfunded'])
+    .default('pending'),
 });
 
 /**
@@ -116,9 +118,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
       whereConditions.push(`en.expiry_date < NOW() + INTERVAL '30 days'`);
     }
 
-    const whereClause = whereConditions.length > 0
-      ? `WHERE ${whereConditions.join(' AND ')}`
-      : '';
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
     const orderByMap: Record<string, string> = {
       name: 'en.name',
@@ -135,15 +135,19 @@ export async function namesRoutes(fastify: FastifyInstance) {
       SELECT COUNT(*) FROM ens_names en ${whereClause}
     `;
 
-    const priceCTE = needsPriceCTE ? `
+    const priceCTE = needsPriceCTE
+      ? `
       WITH active_prices AS (
         SELECT DISTINCT ON (ens_name_id) ens_name_id, price_wei
         FROM listings WHERE status = 'active'
         ORDER BY ens_name_id, created_at DESC
-      )` : '';
+      )`
+      : '';
 
-    const priceJoin = needsPriceCTE ? `
-      LEFT JOIN active_prices ap ON ap.ens_name_id = en.id` : '';
+    const priceJoin = needsPriceCTE
+      ? `
+      LEFT JOIN active_prices ap ON ap.ens_name_id = en.id`
+      : '';
 
     const dataQuery = `
       ${priceCTE}
@@ -465,7 +469,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
     let result = await pool.query(query, [name]);
 
     // Check if owner is Name Wrapper contract and update if needed
-    if (result.rows.length > 0 && result.rows[0].owner_address?.toLowerCase() === NAME_WRAPPER_ADDRESS) {
+    if (
+      result.rows.length > 0 &&
+      result.rows[0].owner_address?.toLowerCase() === NAME_WRAPPER_ADDRESS
+    ) {
       fastify.log.info({ name }, 'Owner is Name Wrapper contract, fetching correct owner');
 
       try {
@@ -515,7 +522,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
         // If no wrappedOwner or registrant, query the Name Wrapper contract directly
         if (!correctOwner) {
-          fastify.log.info({ name }, 'No wrappedOwner or registrant found, querying Name Wrapper contract');
+          fastify.log.info(
+            { name },
+            'No wrappedOwner or registrant found, querying Name Wrapper contract'
+          );
           correctOwner = await getWrappedNameOwner(name);
         }
 
@@ -526,7 +536,10 @@ export async function namesRoutes(fastify: FastifyInstance) {
             [correctOwner.toLowerCase(), name]
           );
 
-          fastify.log.info({ name, correctOwner }, 'Updated owner from Name Wrapper to actual owner');
+          fastify.log.info(
+            { name, correctOwner },
+            'Updated owner from Name Wrapper to actual owner'
+          );
 
           // Re-query to get updated data
           result = await pool.query(query, [name]);
@@ -651,8 +664,14 @@ export async function namesRoutes(fastify: FastifyInstance) {
             ownerAddress = registrant;
           }
         }
-        const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
-        const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
+        const expiryDate = domain.registration?.expiryDate
+          ? new Date(parseInt(domain.registration.expiryDate) * 1000)
+          : null;
+        const registrationDate = domain.registration?.registrationDate
+          ? new Date(parseInt(domain.registration.registrationDate) * 1000)
+          : domain.createdAt
+            ? new Date(parseInt(domain.createdAt) * 1000)
+            : null;
 
         await pool.query(upsertQuery, [
           tokenId,

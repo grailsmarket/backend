@@ -18,7 +18,7 @@ export function buildCommentReceivedEmail(params: {
   const body = `
     ${bodyIntro(
       `New comment on ${escapeHtml(ensName)}`,
-      `Someone just posted a comment on <strong>${escapeHtml(ensName)}</strong>.`,
+      `Someone just posted a comment on <strong>${escapeHtml(ensName)}</strong>.`
     )}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 16px 0 8px 0;">
       ${button(nameUrl, 'View on Grails')}

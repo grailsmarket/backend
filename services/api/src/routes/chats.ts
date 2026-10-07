@@ -20,10 +20,7 @@ import {
   broadcastNotificationBump,
 } from './websocket';
 import { GLOBAL_CHAT_ID, getGlobalChatConfig } from '../services/global-chat';
-import {
-  callerIsBannedFromChat,
-  callerIsBannedFromGlobalChat,
-} from '../services/chat-moderation';
+import { callerIsBannedFromChat, callerIsBannedFromGlobalChat } from '../services/chat-moderation';
 import {
   notifyReplyAndMentions,
   validateReplyTarget,
@@ -44,18 +41,18 @@ import {
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
 
-const RecipientSchema = z.string().refine(
-  (v) => ADDRESS_RE.test(v) || ENS_RE.test(v),
-  { message: 'Recipient must be an Ethereum address or ENS name (.eth)' }
-);
+const RecipientSchema = z.string().refine((v) => ADDRESS_RE.test(v) || ENS_RE.test(v), {
+  message: 'Recipient must be an Ethereum address or ENS name (.eth)',
+});
 
-const CreateChatSchema = z.object({
-  recipient: RecipientSchema.optional(),
-  recipients: z.array(RecipientSchema).optional(),
-}).refine(
-  (v) => Boolean(v.recipient) !== Boolean(v.recipients && v.recipients.length),
-  { message: 'Provide either `recipient` or non-empty `recipients`' }
-);
+const CreateChatSchema = z
+  .object({
+    recipient: RecipientSchema.optional(),
+    recipients: z.array(RecipientSchema).optional(),
+  })
+  .refine((v) => Boolean(v.recipient) !== Boolean(v.recipients && v.recipients.length), {
+    message: 'Provide either `recipient` or non-empty `recipients`',
+  });
 
 const SendMessageSchema = z.object({
   body: z.string().trim().min(1).max(4000),
@@ -66,9 +63,11 @@ const MarkReadSchema = z.object({
   up_to_message_id: z.string().uuid(),
 });
 
-const PatchChatSchema = z.object({
-  muted: z.boolean().optional(),
-}).refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
+const PatchChatSchema = z
+  .object({
+    muted: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
 const ListMessagesQuerySchema = z.object({
   before: z.string().uuid().optional(),
@@ -97,7 +96,10 @@ const PEER_SUBGRAPH_CAP = 1000;
  * intersecting) gives complete recall — "jack" finds jackflash.eth even though
  * thousands of jack* names exist globally. Returns matched peer addresses.
  */
-async function resolveNameMatchesAmongPeers(search: string, peerAddresses: string[]): Promise<string[]> {
+async function resolveNameMatchesAmongPeers(
+  search: string,
+  peerAddresses: string[]
+): Promise<string[]> {
   const url = config.theGraph.ensSubgraphUrl;
   if (!url || peerAddresses.length === 0) return [];
 
@@ -124,14 +126,19 @@ async function resolveNameMatchesAmongPeers(search: string, peerAddresses: strin
       body: JSON.stringify({
         query: gql,
         // Subgraph stores names/account-ids lowercase.
-        variables: { search: search.toLowerCase(), addresses: peerAddresses.slice(0, PEER_SUBGRAPH_CAP) },
+        variables: {
+          search: search.toLowerCase(),
+          addresses: peerAddresses.slice(0, PEER_SUBGRAPH_CAP),
+        },
       }),
       // User-facing/interactive search — bound the latency so a slow subgraph
       // can't hold the request handler open.
       signal: AbortSignal.timeout(10_000),
     });
     if (!resp.ok) return [];
-    const json = (await resp.json()) as { data?: { domains?: { resolvedAddress?: { id?: string } | null }[] } };
+    const json = (await resp.json()) as {
+      data?: { domains?: { resolvedAddress?: { id?: string } | null }[] };
+    };
     const ids = (json.data?.domains ?? [])
       .map((d) => d.resolvedAddress?.id?.toLowerCase())
       .filter((x): x is string => !!x);
@@ -165,11 +172,13 @@ const hasOnlyEmojiSafeChars = (v: string): boolean => {
   return true;
 };
 
-const EmojiSchema = z.string().min(1).max(32)
+const EmojiSchema = z
+  .string()
+  .min(1)
+  .max(32)
   .refine(hasOnlyEmojiSafeChars, { message: 'Invalid emoji' })
   .refine(
-    (v) =>
-      /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\u{FE0F}?\u{20E3}/u.test(v),
+    (v) => /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\u{FE0F}?\u{20E3}/u.test(v),
     { message: 'Must be an emoji' }
   );
 
@@ -327,128 +336,142 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * Create or fetch a direct chat. Idempotent via dm_key.
    * v1: only direct (1:1). Groups respond 501.
    */
-  fastify.post('/', {
-    preHandler: requireAuth,
-    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    try {
-      const body = CreateChatSchema.parse(request.body);
-      const recipients = body.recipients ?? [body.recipient!];
+  fastify.post(
+    '/',
+    {
+      preHandler: requireAuth,
+      config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      try {
+        const body = CreateChatSchema.parse(request.body);
+        const recipients = body.recipients ?? [body.recipient!];
 
-      if (recipients.length > 1) {
-        return sendError(reply, 501, 'NOT_IMPLEMENTED', 'Group chats are not supported in v1');
-      }
+        if (recipients.length > 1) {
+          return sendError(reply, 501, 'NOT_IMPLEMENTED', 'Group chats are not supported in v1');
+        }
 
-      const callerId = parseInt(request.user!.sub, 10);
-      if (!Number.isFinite(callerId)) {
-        fastify.log.error({ sub: request.user!.sub }, 'POST /chats: non-numeric JWT sub');
-        return sendError(reply, 401, 'INVALID_TOKEN', 'Authenticated user id is invalid');
-      }
+        const callerId = parseInt(request.user!.sub, 10);
+        if (!Number.isFinite(callerId)) {
+          fastify.log.error({ sub: request.user!.sub }, 'POST /chats: non-numeric JWT sub');
+          return sendError(reply, 401, 'INVALID_TOKEN', 'Authenticated user id is invalid');
+        }
 
-      // Confirm the caller's user row actually exists before we try to use the
-      // id as a foreign key. In normal operation SIWE verify committed it before
-      // the JWT was issued, but if the row was deleted between sign-in and now
-      // (or the JWT is stale), the chat_participants insert below would fail
-      // with a confusing FK violation. Surface a clearer error instead.
-      const callerCheck = await pool.query(
-        `SELECT 1 FROM users WHERE id = $1`,
-        [callerId]
-      );
-      if (callerCheck.rows.length === 0) {
-        fastify.log.error({ callerId }, 'POST /chats: caller user row missing');
-        return sendError(reply, 401, 'USER_NOT_FOUND', 'Your user record was not found — please sign in again');
-      }
+        // Confirm the caller's user row actually exists before we try to use the
+        // id as a foreign key. In normal operation SIWE verify committed it before
+        // the JWT was issued, but if the row was deleted between sign-in and now
+        // (or the JWT is stale), the chat_participants insert below would fail
+        // with a confusing FK violation. Surface a clearer error instead.
+        const callerCheck = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [callerId]);
+        if (callerCheck.rows.length === 0) {
+          fastify.log.error({ callerId }, 'POST /chats: caller user row missing');
+          return sendError(
+            reply,
+            401,
+            'USER_NOT_FOUND',
+            'Your user record was not found — please sign in again'
+          );
+        }
 
-      if (await callerIsBannedFromChat(pool, callerId)) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
+        if (await callerIsBannedFromChat(pool, callerId)) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+        }
 
-      const resolved = await resolveRecipientToUserId(pool, recipients[0]);
-      if ('error' in resolved) {
-        return sendError(reply, 404, 'RECIPIENT_NOT_FOUND', resolved.error);
-      }
-      if (resolved.userId === callerId) {
-        return sendError(reply, 400, 'SELF_CHAT_FORBIDDEN', 'Cannot start a chat with yourself');
-      }
+        const resolved = await resolveRecipientToUserId(pool, recipients[0]);
+        if ('error' in resolved) {
+          return sendError(reply, 404, 'RECIPIENT_NOT_FOUND', resolved.error);
+        }
+        if (resolved.userId === callerId) {
+          return sendError(reply, 400, 'SELF_CHAT_FORBIDDEN', 'Cannot start a chat with yourself');
+        }
 
-      const blockCheck = await pool.query(
-        `SELECT 1 FROM message_blocks
+        const blockCheck = await pool.query(
+          `SELECT 1 FROM message_blocks
           WHERE (blocker_user_id = $1 AND blocked_user_id = $2)
              OR (blocker_user_id = $2 AND blocked_user_id = $1)
           LIMIT 1`,
-        [callerId, resolved.userId]
-      );
-      if (blockCheck.rows.length > 0) {
-        return sendError(reply, 403, 'BLOCKED', 'Messaging is blocked between these users');
-      }
+          [callerId, resolved.userId]
+        );
+        if (blockCheck.rows.length > 0) {
+          return sendError(reply, 403, 'BLOCKED', 'Messaging is blocked between these users');
+        }
 
-      const recipientPrefs = await pool.query(
-        `SELECT accept_messages FROM users WHERE id = $1`,
-        [resolved.userId]
-      );
-      if (recipientPrefs.rows.length === 0 || recipientPrefs.rows[0].accept_messages === false) {
-        return sendError(reply, 403, 'RECIPIENT_OPTED_OUT', 'Recipient is not accepting messages');
-      }
+        const recipientPrefs = await pool.query(`SELECT accept_messages FROM users WHERE id = $1`, [
+          resolved.userId,
+        ]);
+        if (recipientPrefs.rows.length === 0 || recipientPrefs.rows[0].accept_messages === false) {
+          return sendError(
+            reply,
+            403,
+            'RECIPIENT_OPTED_OUT',
+            'Recipient is not accepting messages'
+          );
+        }
 
-      const dmKey = dmKeyForUserPair(callerId, resolved.userId);
+        const dmKey = dmKeyForUserPair(callerId, resolved.userId);
 
-      // Idempotent insert via dm_key unique index.
-      const insertResult = await pool.query(
-        `INSERT INTO chats (type, dm_key, created_by_user_id)
+        // Idempotent insert via dm_key unique index.
+        const insertResult = await pool.query(
+          `INSERT INTO chats (type, dm_key, created_by_user_id)
          VALUES ('direct', $1, $2)
          ON CONFLICT (dm_key) DO NOTHING
          RETURNING *`,
-        [dmKey, callerId]
-      );
+          [dmKey, callerId]
+        );
 
-      let chat;
-      let isNew = false;
-      if (insertResult.rows.length > 0) {
-        chat = insertResult.rows[0];
-        isNew = true;
-        // Insert two participants on first creation
-        await pool.query(
-          `INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)
+        let chat;
+        let isNew = false;
+        if (insertResult.rows.length > 0) {
+          chat = insertResult.rows[0];
+          isNew = true;
+          // Insert two participants on first creation
+          await pool.query(
+            `INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)
            ON CONFLICT DO NOTHING`,
-          [chat.id, callerId, resolved.userId]
-        );
-      } else {
-        const existing = await pool.query(`SELECT * FROM chats WHERE dm_key = $1`, [dmKey]);
-        chat = existing.rows[0];
-      }
+            [chat.id, callerId, resolved.userId]
+          );
+        } else {
+          const existing = await pool.query(`SELECT * FROM chats WHERE dm_key = $1`, [dmKey]);
+          chat = existing.rows[0];
+        }
 
-      if (isNew) {
-        // Notify the other participant that they're in a new chat (if they're connected).
-        broadcastChatCreatedEvent({ chat, participantUserIds: [callerId, resolved.userId] });
-      }
+        if (isNew) {
+          // Notify the other participant that they're in a new chat (if they're connected).
+          broadcastChatCreatedEvent({ chat, participantUserIds: [callerId, resolved.userId] });
+        }
 
-      return reply.status(isNew ? 201 : 200).send(ok({ chat, created: isNew }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request body', error.errors);
+        return reply.status(isNew ? 201 : 200).send(ok({ chat, created: isNew }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request body', error.errors);
+        }
+        // Translate common Postgres errors so the frontend can show something
+        // meaningful and so we can diagnose without server-log access.
+        // 23503 = foreign_key_violation, 23505 = unique_violation, 23514 = check_violation
+        const pgCode = error?.code as string | undefined;
+        const detail = error?.detail as string | undefined;
+        fastify.log.error({ error, pgCode, detail }, 'Error creating chat');
+        if (pgCode === '23503') {
+          return sendError(
+            reply,
+            409,
+            'FOREIGN_KEY_VIOLATION',
+            'Could not create chat: referenced user no longer exists',
+            { detail }
+          );
+        }
+        if (pgCode === '23505') {
+          return sendError(reply, 409, 'CONFLICT', 'A conflicting chat row already exists', {
+            detail,
+          });
+        }
+        const message = error?.message
+          ? `Failed to create chat: ${error.message}`
+          : 'Failed to create chat';
+        return sendError(reply, 500, 'INTERNAL_ERROR', message, { pgCode, detail });
       }
-      // Translate common Postgres errors so the frontend can show something
-      // meaningful and so we can diagnose without server-log access.
-      // 23503 = foreign_key_violation, 23505 = unique_violation, 23514 = check_violation
-      const pgCode = error?.code as string | undefined;
-      const detail = error?.detail as string | undefined;
-      fastify.log.error({ error, pgCode, detail }, 'Error creating chat');
-      if (pgCode === '23503') {
-        return sendError(
-          reply,
-          409,
-          'FOREIGN_KEY_VIOLATION',
-          'Could not create chat: referenced user no longer exists',
-          { detail }
-        );
-      }
-      if (pgCode === '23505') {
-        return sendError(reply, 409, 'CONFLICT', 'A conflicting chat row already exists', { detail });
-      }
-      const message = error?.message ? `Failed to create chat: ${error.message}` : 'Failed to create chat';
-      return sendError(reply, 500, 'INTERNAL_ERROR', message, { pgCode, detail });
     }
-  });
+  );
 
   /**
    * GET /api/v1/chats
@@ -481,10 +504,19 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       const total = totalResult.rows[0].count;
       const totalPages = Math.ceil(total / limit);
 
-      return reply.send(ok({
-        chats: inbox.rows,
-        pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
-      }));
+      return reply.send(
+        ok({
+          chats: inbox.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        })
+      );
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);
@@ -719,16 +751,20 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       );
 
       // Don't leak the raw deleter id; expose only the admin-vs-author distinction.
-      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrls({
-        ...m,
-        body: m.deleted_at ? null : m.body,
-        deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
-      }));
+      const messages = result.rows.map(({ deleted_by, ...m }) =>
+        withAttachmentUrls({
+          ...m,
+          body: m.deleted_at ? null : m.body,
+          deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
+        })
+      );
 
-      return reply.send(ok({
-        messages,
-        nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
-      }));
+      return reply.send(
+        ok({
+          messages,
+          nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
+        })
+      );
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
@@ -744,65 +780,78 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * Enforcement: caller is participant; nobody in chat has blocked caller; all other
    * participants have accept_messages = TRUE.
    */
-  fastify.post('/:id/messages', {
-    preHandler: requireAuth,
-    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    try {
-      const { id } = ChatIdParamsSchema.parse(request.params);
-      const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.post(
+    '/:id/messages',
+    {
+      preHandler: requireAuth,
+      config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      try {
+        const { id } = ChatIdParamsSchema.parse(request.params);
+        const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
+        const callerId = parseInt(request.user!.sub, 10);
 
-      if (await callerIsBannedFromChat(pool, callerId)) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
+        if (await callerIsBannedFromChat(pool, callerId)) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+        }
 
-      const others = await pool.query(
-        `SELECT cp.user_id, u.accept_messages
+        const others = await pool.query(
+          `SELECT cp.user_id, u.accept_messages
            FROM chat_participants cp
            JOIN users u ON u.id = cp.user_id
           WHERE cp.chat_id = $1 AND cp.left_at IS NULL`,
-        [id]
-      );
-      const callerInChat = others.rows.find((r) => r.user_id === callerId);
-      if (!callerInChat) {
-        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
-      }
-      const otherIds = others.rows.filter((r) => r.user_id !== callerId).map((r) => r.user_id);
+          [id]
+        );
+        const callerInChat = others.rows.find((r) => r.user_id === callerId);
+        if (!callerInChat) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
+        const otherIds = others.rows.filter((r) => r.user_id !== callerId).map((r) => r.user_id);
 
-      if (otherIds.length > 0) {
-        const blocked = await pool.query(
-          `SELECT 1 FROM message_blocks
+        if (otherIds.length > 0) {
+          const blocked = await pool.query(
+            `SELECT 1 FROM message_blocks
             WHERE blocker_user_id = ANY($1::int[]) AND blocked_user_id = $2
             LIMIT 1`,
-          [otherIds, callerId]
-        );
-        if (blocked.rows.length > 0) {
-          return sendError(reply, 403, 'BLOCKED', 'You are blocked from messaging this chat');
+            [otherIds, callerId]
+          );
+          if (blocked.rows.length > 0) {
+            return sendError(reply, 403, 'BLOCKED', 'You are blocked from messaging this chat');
+          }
+
+          const allAccept = others.rows
+            .filter((r) => r.user_id !== callerId)
+            .every((r) => r.accept_messages !== false);
+          if (!allAccept) {
+            return sendError(
+              reply,
+              403,
+              'RECIPIENT_OPTED_OUT',
+              'A recipient is not accepting messages'
+            );
+          }
         }
 
-        const allAccept = others.rows
-          .filter((r) => r.user_id !== callerId)
-          .every((r) => r.accept_messages !== false);
-        if (!allAccept) {
-          return sendError(reply, 403, 'RECIPIENT_OPTED_OUT', 'A recipient is not accepting messages');
+        // Reply target must be a live message in this chat.
+        let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
+        if (reply_to_message_id) {
+          replyContext = await validateReplyTarget(pool, id, reply_to_message_id);
+          if (!replyContext) {
+            return sendError(
+              reply,
+              400,
+              'INVALID_REPLY_TARGET',
+              'Reply target not found in this chat'
+            );
+          }
         }
-      }
 
-      // Reply target must be a live message in this chat.
-      let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
-      if (reply_to_message_id) {
-        replyContext = await validateReplyTarget(pool, id, reply_to_message_id);
-        if (!replyContext) {
-          return sendError(reply, 400, 'INVALID_REPLY_TARGET', 'Reply target not found in this chat');
-        }
-      }
-
-      // CTE: insert + join users so we return sender_address alongside the row.
-      // Without this, the frontend's optimistic-replace step loses sender_address
-      // and renders the message on the wrong side until the next refresh.
-      const inserted = await pool.query(
-        `WITH new_msg AS (
+        // CTE: insert + join users so we return sender_address alongside the row.
+        // Without this, the frontend's optimistic-replace step loses sender_address
+        // and renders the message on the wrong side until the next refresh.
+        const inserted = await pool.query(
+          `WITH new_msg AS (
            INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
            VALUES ($1, $2, $3, 'text', $4)
            RETURNING *
@@ -810,41 +859,47 @@ export async function chatsRoutes(fastify: FastifyInstance) {
          SELECT m.*, u.address AS sender_address
            FROM new_msg m
            JOIN users u ON u.id = m.sender_user_id`,
-        [id, callerId, body, reply_to_message_id ?? null]
-      );
+          [id, callerId, body, reply_to_message_id ?? null]
+        );
 
-      // Fire reply/@-mention notifications out-of-band; never fail the send on it.
-      // DM → restrict targets to the chat's participants.
-      const participantIds = others.rows.map((r) => r.user_id);
-      try {
-        const notified = await notifyReplyAndMentions({
-          pool,
-          chatId: id,
-          messageId: inserted.rows[0].id,
-          senderUserId: callerId,
-          senderAddress: inserted.rows[0].sender_address,
-          body,
-          replyToMessageId: reply_to_message_id ?? null,
-          replyParentAuthorId: replyContext?.parentAuthorId ?? null,
-          accessibleUserIds: participantIds,
-        });
-        broadcastNotificationBump(notified);
-      } catch (notifyError) {
-        fastify.log.error({ notifyError }, 'Error creating chat notifications (DM send)');
-      }
+        // Fire reply/@-mention notifications out-of-band; never fail the send on it.
+        // DM → restrict targets to the chat's participants.
+        const participantIds = others.rows.map((r) => r.user_id);
+        try {
+          const notified = await notifyReplyAndMentions({
+            pool,
+            chatId: id,
+            messageId: inserted.rows[0].id,
+            senderUserId: callerId,
+            senderAddress: inserted.rows[0].sender_address,
+            body,
+            replyToMessageId: reply_to_message_id ?? null,
+            replyParentAuthorId: replyContext?.parentAuthorId ?? null,
+            accessibleUserIds: participantIds,
+          });
+          broadcastNotificationBump(notified);
+        } catch (notifyError) {
+          fastify.log.error({ notifyError }, 'Error creating chat notifications (DM send)');
+        }
 
-      // Trigger fires pg_notify; ChatNotifier handles fan-out.
-      // reactions/attachments keep the shape consistent with GET /:id/messages.
-      const message = { ...inserted.rows[0], reactions: [], reply_to: replyContext?.replyTo ?? null, attachments: [] };
-      return reply.status(201).send(ok({ message }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        // Trigger fires pg_notify; ChatNotifier handles fan-out.
+        // reactions/attachments keep the shape consistent with GET /:id/messages.
+        const message = {
+          ...inserted.rows[0],
+          reactions: [],
+          reply_to: replyContext?.replyTo ?? null,
+          attachments: [],
+        };
+        return reply.status(201).send(ok({ message }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error sending message');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send message');
       }
-      fastify.log.error({ error }, 'Error sending message');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send message');
     }
-  });
+  );
 
   /**
    * POST /api/v1/chats/:id/messages/image
@@ -852,106 +907,136 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * optional `reply_to_message_id`). Same enforcement as text sends, gated by the
    * global `images_enabled` master switch.
    */
-  fastify.post('/:id/messages/image', {
-    preHandler: requireAuth,
-    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    const uploadedKeys: string[] = [];
-    try {
-      const { id } = ChatIdParamsSchema.parse(request.params);
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.post(
+    '/:id/messages/image',
+    {
+      preHandler: requireAuth,
+      config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      const uploadedKeys: string[] = [];
+      try {
+        const { id } = ChatIdParamsSchema.parse(request.params);
+        const callerId = parseInt(request.user!.sub, 10);
 
-      const chatConfig = await getGlobalChatConfig();
-      if (!chatConfig.images_enabled) {
-        return sendError(reply, 403, 'IMAGES_DISABLED', 'Image messages are currently disabled');
-      }
-      if (!isStorageEnabled()) {
-        return sendError(reply, 503, 'STORAGE_UNAVAILABLE', 'Image storage is not configured');
-      }
+        const chatConfig = await getGlobalChatConfig();
+        if (!chatConfig.images_enabled) {
+          return sendError(reply, 403, 'IMAGES_DISABLED', 'Image messages are currently disabled');
+        }
+        if (!isStorageEnabled()) {
+          return sendError(reply, 503, 'STORAGE_UNAVAILABLE', 'Image storage is not configured');
+        }
 
-      if (await callerIsBannedFromChat(pool, callerId)) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
+        if (await callerIsBannedFromChat(pool, callerId)) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+        }
 
-      const others = await pool.query(
-        `SELECT cp.user_id, u.accept_messages
+        const others = await pool.query(
+          `SELECT cp.user_id, u.accept_messages
            FROM chat_participants cp
            JOIN users u ON u.id = cp.user_id
           WHERE cp.chat_id = $1 AND cp.left_at IS NULL`,
-        [id]
-      );
-      const callerInChat = others.rows.find((r) => r.user_id === callerId);
-      if (!callerInChat) {
-        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
-      }
-      const otherIds = others.rows.filter((r) => r.user_id !== callerId).map((r) => r.user_id);
+          [id]
+        );
+        const callerInChat = others.rows.find((r) => r.user_id === callerId);
+        if (!callerInChat) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
+        const otherIds = others.rows.filter((r) => r.user_id !== callerId).map((r) => r.user_id);
 
-      if (otherIds.length > 0) {
-        const blocked = await pool.query(
-          `SELECT 1 FROM message_blocks
+        if (otherIds.length > 0) {
+          const blocked = await pool.query(
+            `SELECT 1 FROM message_blocks
             WHERE blocker_user_id = ANY($1::int[]) AND blocked_user_id = $2
             LIMIT 1`,
-          [otherIds, callerId]
-        );
-        if (blocked.rows.length > 0) {
-          return sendError(reply, 403, 'BLOCKED', 'You are blocked from messaging this chat');
+            [otherIds, callerId]
+          );
+          if (blocked.rows.length > 0) {
+            return sendError(reply, 403, 'BLOCKED', 'You are blocked from messaging this chat');
+          }
+          const allAccept = others.rows
+            .filter((r) => r.user_id !== callerId)
+            .every((r) => r.accept_messages !== false);
+          if (!allAccept) {
+            return sendError(
+              reply,
+              403,
+              'RECIPIENT_OPTED_OUT',
+              'A recipient is not accepting messages'
+            );
+          }
         }
-        const allAccept = others.rows
-          .filter((r) => r.user_id !== callerId)
-          .every((r) => r.accept_messages !== false);
-        if (!allAccept) {
-          return sendError(reply, 403, 'RECIPIENT_OPTED_OUT', 'A recipient is not accepting messages');
+
+        const parsed = await parseImageUpload(request);
+        if ('error' in parsed) {
+          const map: Record<string, [number, string, string]> = {
+            NO_FILE: [400, 'NO_FILE', 'No image file provided'],
+            FILE_TOO_LARGE: [
+              413,
+              'FILE_TOO_LARGE',
+              `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`,
+            ],
+            TOO_MANY_IMAGES: [
+              400,
+              'TOO_MANY_IMAGES',
+              `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`,
+            ],
+            UNSUPPORTED_TYPE: [
+              400,
+              'UNSUPPORTED_TYPE',
+              'Unsupported image type (allowed: jpeg, png, gif, webp)',
+            ],
+          };
+          const [status, code, message] = map[parsed.error];
+          return sendError(reply, status, code, message);
         }
-      }
 
-      const parsed = await parseImageUpload(request);
-      if ('error' in parsed) {
-        const map: Record<string, [number, string, string]> = {
-          NO_FILE: [400, 'NO_FILE', 'No image file provided'],
-          FILE_TOO_LARGE: [413, 'FILE_TOO_LARGE', `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`],
-          TOO_MANY_IMAGES: [400, 'TOO_MANY_IMAGES', `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`],
-          UNSUPPORTED_TYPE: [400, 'UNSUPPORTED_TYPE', 'Unsupported image type (allowed: jpeg, png, gif, webp)'],
-        };
-        const [status, code, message] = map[parsed.error];
-        return sendError(reply, status, code, message);
-      }
-
-      const caption = (parsed.fields.body ?? '').trim();
-      if (caption.length > 4000) {
-        return sendError(reply, 400, 'MESSAGE_TOO_LONG', 'Caption exceeds the maximum length of 4000 characters');
-      }
-      const replyToRaw = parsed.fields.reply_to_message_id || null;
-      if (replyToRaw && !z.string().uuid().safeParse(replyToRaw).success) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid reply_to_message_id');
-      }
-
-      // Reply target must be a live message in this chat.
-      let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
-      if (replyToRaw) {
-        replyContext = await validateReplyTarget(pool, id, replyToRaw);
-        if (!replyContext) {
-          return sendError(reply, 400, 'INVALID_REPLY_TARGET', 'Reply target not found in this chat');
+        const caption = (parsed.fields.body ?? '').trim();
+        if (caption.length > 4000) {
+          return sendError(
+            reply,
+            400,
+            'MESSAGE_TOO_LONG',
+            'Caption exceeds the maximum length of 4000 characters'
+          );
         }
-      }
+        const replyToRaw = parsed.fields.reply_to_message_id || null;
+        if (replyToRaw && !z.string().uuid().safeParse(replyToRaw).success) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid reply_to_message_id');
+        }
 
-      // Upload every image first, tracking keys so any failure cleans them all up.
-      const attachments = parsed.files.map((f) => ({
-        key: buildChatImageKey(id, f.ext),
-        mimetype: f.mimetype,
-        byteSize: f.buffer.length,
-      }));
-      for (let i = 0; i < parsed.files.length; i++) {
-        await uploadFile(attachments[i].key, parsed.files[i].buffer, attachments[i].mimetype);
-        uploadedKeys.push(attachments[i].key);
-      }
+        // Reply target must be a live message in this chat.
+        let replyContext: Awaited<ReturnType<typeof validateReplyTarget>> = null;
+        if (replyToRaw) {
+          replyContext = await validateReplyTarget(pool, id, replyToRaw);
+          if (!replyContext) {
+            return sendError(
+              reply,
+              400,
+              'INVALID_REPLY_TARGET',
+              'Reply target not found in this chat'
+            );
+          }
+        }
 
-      // Insert message + attachments atomically.
-      const client = await pool.connect();
-      let messageRow: any;
-      try {
-        await client.query('BEGIN');
-        const inserted = await client.query(
-          `WITH new_msg AS (
+        // Upload every image first, tracking keys so any failure cleans them all up.
+        const attachments = parsed.files.map((f) => ({
+          key: buildChatImageKey(id, f.ext),
+          mimetype: f.mimetype,
+          byteSize: f.buffer.length,
+        }));
+        for (let i = 0; i < parsed.files.length; i++) {
+          await uploadFile(attachments[i].key, parsed.files[i].buffer, attachments[i].mimetype);
+          uploadedKeys.push(attachments[i].key);
+        }
+
+        // Insert message + attachments atomically.
+        const client = await pool.connect();
+        let messageRow: any;
+        try {
+          await client.query('BEGIN');
+          const inserted = await client.query(
+            `WITH new_msg AS (
              INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
              VALUES ($1, $2, $3, 'image', $4)
              RETURNING *
@@ -959,67 +1044,68 @@ export async function chatsRoutes(fastify: FastifyInstance) {
            SELECT m.*, u.address AS sender_address
              FROM new_msg m
              JOIN users u ON u.id = m.sender_user_id`,
-          [id, callerId, caption, replyToRaw]
-        );
-        messageRow = inserted.rows[0];
-        for (let i = 0; i < attachments.length; i++) {
-          const a = attachments[i];
-          await client.query(
-            `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size, position)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [messageRow.id, id, a.key, a.mimetype, a.byteSize, i]
+            [id, callerId, caption, replyToRaw]
           );
+          messageRow = inserted.rows[0];
+          for (let i = 0; i < attachments.length; i++) {
+            const a = attachments[i];
+            await client.query(
+              `INSERT INTO message_attachments (message_id, chat_id, storage_key, content_type, byte_size, position)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+              [messageRow.id, id, a.key, a.mimetype, a.byteSize, i]
+            );
+          }
+          await client.query('COMMIT');
+        } catch (txError) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txError;
+        } finally {
+          client.release();
         }
-        await client.query('COMMIT');
-      } catch (txError) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw txError;
-      } finally {
-        client.release();
-      }
 
-      // Fire reply/@-mention notifications out-of-band; never fail the send on it.
-      const participantIds = others.rows.map((r) => r.user_id);
-      try {
-        const notified = await notifyReplyAndMentions({
-          pool,
-          chatId: id,
-          messageId: messageRow.id,
-          senderUserId: callerId,
-          senderAddress: messageRow.sender_address,
-          body: caption,
-          replyToMessageId: replyToRaw,
-          replyParentAuthorId: replyContext?.parentAuthorId ?? null,
-          accessibleUserIds: participantIds,
-        });
-        broadcastNotificationBump(notified);
-      } catch (notifyError) {
-        fastify.log.error({ notifyError }, 'Error creating chat notifications (DM image send)');
-      }
+        // Fire reply/@-mention notifications out-of-band; never fail the send on it.
+        const participantIds = others.rows.map((r) => r.user_id);
+        try {
+          const notified = await notifyReplyAndMentions({
+            pool,
+            chatId: id,
+            messageId: messageRow.id,
+            senderUserId: callerId,
+            senderAddress: messageRow.sender_address,
+            body: caption,
+            replyToMessageId: replyToRaw,
+            replyParentAuthorId: replyContext?.parentAuthorId ?? null,
+            accessibleUserIds: participantIds,
+          });
+          broadcastNotificationBump(notified);
+        } catch (notifyError) {
+          fastify.log.error({ notifyError }, 'Error creating chat notifications (DM image send)');
+        }
 
-      const message = {
-        ...messageRow,
-        reactions: [],
-        reply_to: replyContext?.replyTo ?? null,
-        attachments: attachments.map((a) => ({
-          url: chatImageUrl(a.key),
-          content_type: a.mimetype,
-          width: null,
-          height: null,
-          byte_size: a.byteSize,
-          expired: false,
-        })),
-      };
-      return reply.status(201).send(ok({ message }));
-    } catch (error: any) {
-      await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        const message = {
+          ...messageRow,
+          reactions: [],
+          reply_to: replyContext?.replyTo ?? null,
+          attachments: attachments.map((a) => ({
+            url: chatImageUrl(a.key),
+            content_type: a.mimetype,
+            width: null,
+            height: null,
+            byte_size: a.byteSize,
+            expired: false,
+          })),
+        };
+        return reply.status(201).send(ok({ message }));
+      } catch (error: any) {
+        await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error sending DM image');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send image');
       }
-      fastify.log.error({ error }, 'Error sending DM image');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send image');
     }
-  });
+  );
 
   /**
    * POST /api/v1/chats/:id/read
@@ -1036,10 +1122,10 @@ export async function chatsRoutes(fastify: FastifyInstance) {
       }
 
       // Validate that the message belongs to the chat
-      const msgCheck = await pool.query(
-        `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2`,
-        [up_to_message_id, id]
-      );
+      const msgCheck = await pool.query(`SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2`, [
+        up_to_message_id,
+        id,
+      ]);
       if (msgCheck.rows.length === 0) {
         return sendError(reply, 400, 'INVALID_MESSAGE', 'Message does not belong to this chat');
       }
@@ -1072,51 +1158,55 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * DELETE /api/v1/chats/:id/messages/:messageId
    * Soft-delete caller's own message.
    */
-  fastify.delete('/:id/messages/:messageId', { preHandler: requireAuth }, async (request, reply) => {
-    try {
-      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.delete(
+    '/:id/messages/:messageId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      try {
+        const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+        const callerId = parseInt(request.user!.sub, 10);
 
-      const result = await pool.query(
-        `UPDATE messages SET deleted_at = NOW(), deleted_by = $3
+        const result = await pool.query(
+          `UPDATE messages SET deleted_at = NOW(), deleted_by = $3
           WHERE id = $1 AND chat_id = $2 AND sender_user_id = $3 AND deleted_at IS NULL
           RETURNING id`,
-        [messageId, id, callerId]
-      );
-      if (result.rows.length === 0) {
-        // Either not found, not in chat, not the sender, or already deleted.
-        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not deletable');
-      }
+          [messageId, id, callerId]
+        );
+        if (result.rows.length === 0) {
+          // Either not found, not in chat, not the sender, or already deleted.
+          return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not deletable');
+        }
 
-      // Pull any attached image from the bucket immediately (best-effort) — a
-      // user deleting a message they regret posting shouldn't leave the image
-      // reachable until the 180-day sweep. Mirrors the admin-delete path.
-      await expireMessageAttachments(pool, [messageId]);
+        // Pull any attached image from the bucket immediately (best-effort) — a
+        // user deleting a message they regret posting shouldn't leave the image
+        // reachable until the 180-day sweep. Mirrors the admin-delete path.
+        await expireMessageAttachments(pool, [messageId]);
 
-      // Self-delete → deleted_by_admin: false. The global room has no
-      // chat_participants rows, so it must fan out to global subscribers
-      // instead of the (empty) participant set.
-      if (id === GLOBAL_CHAT_ID) {
-        broadcastGlobalChatDeletedEvent({ messageId, deletedByAdmin: false });
-      } else {
-        const participantIds = await getChatParticipantUserIds(pool, id);
-        broadcastChatDeletedEvent({
-          chatId: id,
-          messageId,
-          participantUserIds: participantIds,
-          deletedByAdmin: false,
-        });
-      }
+        // Self-delete → deleted_by_admin: false. The global room has no
+        // chat_participants rows, so it must fan out to global subscribers
+        // instead of the (empty) participant set.
+        if (id === GLOBAL_CHAT_ID) {
+          broadcastGlobalChatDeletedEvent({ messageId, deletedByAdmin: false });
+        } else {
+          const participantIds = await getChatParticipantUserIds(pool, id);
+          broadcastChatDeletedEvent({
+            chatId: id,
+            messageId,
+            participantUserIds: participantIds,
+            deletedByAdmin: false,
+          });
+        }
 
-      return reply.send(ok({ chat_id: id, message_id: messageId, deleted: true }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        return reply.send(ok({ chat_id: id, message_id: messageId, deleted: true }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error deleting message');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete message');
       }
-      fastify.log.error({ error }, 'Error deleting message');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to delete message');
     }
-  });
+  );
 
   /**
    * PATCH /api/v1/chats/:id/messages/:messageId
@@ -1125,47 +1215,51 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * any time; `edited_at` is stamped so clients can show an "(edited)" tag.
    * Cannot edit a soft-deleted message.
    */
-  fastify.patch('/:id/messages/:messageId', {
-    preHandler: requireAuth,
-    config: { rateLimit: { max: 30, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    try {
-      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
-      const { body } = SendMessageSchema.parse(request.body);
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.patch(
+    '/:id/messages/:messageId',
+    {
+      preHandler: requireAuth,
+      config: { rateLimit: { max: 30, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      try {
+        const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+        const { body } = SendMessageSchema.parse(request.body);
+        const callerId = parseInt(request.user!.sub, 10);
 
-      // Same moderation boundary as sending: editing injects new content, so a
-      // banned user must not be able to do it. Scope-aware (global-only vs
-      // all-chats ban), mirroring the send + reaction routes.
-      const banned = id === GLOBAL_CHAT_ID
-        ? await callerIsBannedFromGlobalChat(pool, callerId)
-        : await callerIsBannedFromChat(pool, callerId);
-      if (banned) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
-      // Must still be able to see the chat (participant for DMs; anyone for the
-      // global room) — an evicted DM member can't rewrite old messages.
-      if (!(await canAccessChatMessages(id, callerId))) {
-        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
-      }
-
-      // Global room enforces its admin-configurable max length (may be < 4000).
-      if (id === GLOBAL_CHAT_ID) {
-        const config = await getGlobalChatConfig();
-        if (body.length > config.max_message_length) {
-          return sendError(
-            reply,
-            400,
-            'MESSAGE_TOO_LONG',
-            `Message exceeds the maximum length of ${config.max_message_length} characters`
-          );
+        // Same moderation boundary as sending: editing injects new content, so a
+        // banned user must not be able to do it. Scope-aware (global-only vs
+        // all-chats ban), mirroring the send + reaction routes.
+        const banned =
+          id === GLOBAL_CHAT_ID
+            ? await callerIsBannedFromGlobalChat(pool, callerId)
+            : await callerIsBannedFromChat(pool, callerId);
+        if (banned) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
         }
-      }
+        // Must still be able to see the chat (participant for DMs; anyone for the
+        // global room) — an evicted DM member can't rewrite old messages.
+        if (!(await canAccessChatMessages(id, callerId))) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
 
-      // Ownership is enforced in the WHERE (sender_user_id = caller). The CTE
-      // joins users so the broadcast/response carry sender_address, same as send.
-      const result = await pool.query(
-        `WITH upd AS (
+        // Global room enforces its admin-configurable max length (may be < 4000).
+        if (id === GLOBAL_CHAT_ID) {
+          const config = await getGlobalChatConfig();
+          if (body.length > config.max_message_length) {
+            return sendError(
+              reply,
+              400,
+              'MESSAGE_TOO_LONG',
+              `Message exceeds the maximum length of ${config.max_message_length} characters`
+            );
+          }
+        }
+
+        // Ownership is enforced in the WHERE (sender_user_id = caller). The CTE
+        // joins users so the broadcast/response carry sender_address, same as send.
+        const result = await pool.query(
+          `WITH upd AS (
            UPDATE messages SET body = $4, edited_at = NOW()
              WHERE id = $1 AND chat_id = $2 AND sender_user_id = $3 AND deleted_at IS NULL
              RETURNING *
@@ -1173,36 +1267,37 @@ export async function chatsRoutes(fastify: FastifyInstance) {
          SELECT m.*, u.address AS sender_address
            FROM upd m
            JOIN users u ON u.id = m.sender_user_id`,
-        [messageId, id, callerId, body]
-      );
-      if (result.rows.length === 0) {
-        // Not found, not in chat, not the sender, or already deleted.
-        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not editable');
-      }
+          [messageId, id, callerId, body]
+        );
+        if (result.rows.length === 0) {
+          // Not found, not in chat, not the sender, or already deleted.
+          return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found or not editable');
+        }
 
-      // Keep the public message shape consistent with the read paths: expose
-      // deleted_by_admin, not the raw deleter id. (Both null here — not deleted.)
-      const { deleted_by, deleted_reason, ...row } = result.rows[0];
-      void deleted_by;
-      void deleted_reason;
-      const message = { ...row, deleted_by_admin: false, reactions: [] };
+        // Keep the public message shape consistent with the read paths: expose
+        // deleted_by_admin, not the raw deleter id. (Both null here — not deleted.)
+        const { deleted_by, deleted_reason, ...row } = result.rows[0];
+        void deleted_by;
+        void deleted_reason;
+        const message = { ...row, deleted_by_admin: false, reactions: [] };
 
-      if (id === GLOBAL_CHAT_ID) {
-        broadcastGlobalChatEditedEvent({ message });
-      } else {
-        const participantIds = await getChatParticipantUserIds(pool, id);
-        broadcastChatEditedEvent({ message, participantUserIds: participantIds });
-      }
+        if (id === GLOBAL_CHAT_ID) {
+          broadcastGlobalChatEditedEvent({ message });
+        } else {
+          const participantIds = await getChatParticipantUserIds(pool, id);
+          broadcastChatEditedEvent({ message, participantUserIds: participantIds });
+        }
 
-      return reply.send(ok({ message }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        return reply.send(ok({ message }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error editing message');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to edit message');
       }
-      fastify.log.error({ error }, 'Error editing message');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to edit message');
     }
-  });
+  );
 
   /** Participant of the chat, or anyone for the global room. */
   async function canAccessChatMessages(chatId: string, userId: number): Promise<boolean> {
@@ -1224,31 +1319,34 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * Who reacted, grouped by emoji (each with the reactor addresses, oldest
    * first). Public for the global room; participants only for DMs.
    */
-  fastify.get('/:id/messages/:messageId/reactions', { preHandler: optionalAuth }, async (request, reply) => {
-    try {
-      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
-      const callerId = request.user ? parseInt(request.user.sub, 10) : null;
+  fastify.get(
+    '/:id/messages/:messageId/reactions',
+    { preHandler: optionalAuth },
+    async (request, reply) => {
+      try {
+        const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+        const callerId = request.user ? parseInt(request.user.sub, 10) : null;
 
-      // Global room is publicly readable; DMs require a participant.
-      if (id !== GLOBAL_CHAT_ID) {
-        if (callerId === null) {
-          return sendError(reply, 401, 'UNAUTHORIZED', 'Authentication required');
+        // Global room is publicly readable; DMs require a participant.
+        if (id !== GLOBAL_CHAT_ID) {
+          if (callerId === null) {
+            return sendError(reply, 401, 'UNAUTHORIZED', 'Authentication required');
+          }
+          if (!(await canAccessChatMessages(id, callerId))) {
+            return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+          }
         }
-        if (!(await canAccessChatMessages(id, callerId))) {
-          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+
+        const msg = await pool.query(`SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2`, [
+          messageId,
+          id,
+        ]);
+        if (msg.rows.length === 0) {
+          return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
         }
-      }
 
-      const msg = await pool.query(
-        `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2`,
-        [messageId, id]
-      );
-      if (msg.rows.length === 0) {
-        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
-      }
-
-      const result = await pool.query(
-        `SELECT mr.emoji,
+        const result = await pool.query(
+          `SELECT mr.emoji,
                 COUNT(*)::int AS count,
                 json_agg(json_build_object('address', u.address) ORDER BY mr.created_at) AS users
            FROM message_reactions mr
@@ -1256,18 +1354,19 @@ export async function chatsRoutes(fastify: FastifyInstance) {
           WHERE mr.message_id = $1
           GROUP BY mr.emoji
           ORDER BY COUNT(*) DESC, mr.emoji`,
-        [messageId]
-      );
+          [messageId]
+        );
 
-      return reply.send(ok({ message_id: messageId, reactions: result.rows }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        return reply.send(ok({ message_id: messageId, reactions: result.rows }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error listing message reactions');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list reactions');
       }
-      fastify.log.error({ error }, 'Error listing message reactions');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to list reactions');
     }
-  });
+  );
 
   /**
    * POST /api/v1/chats/:id/messages/:messageId/reactions
@@ -1275,86 +1374,94 @@ export async function chatsRoutes(fastify: FastifyInstance) {
    * (`added: false`) and does not broadcast. Works for DMs (participants only)
    * and the global room (any authenticated, non-banned user).
    */
-  fastify.post('/:id/messages/:messageId/reactions', {
-    preHandler: requireAuth,
-    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    try {
-      const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
-      const { emoji } = AddReactionSchema.parse(request.body);
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.post(
+    '/:id/messages/:messageId/reactions',
+    {
+      preHandler: requireAuth,
+      config: { rateLimit: { max: 60, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      try {
+        const { id, messageId } = ChatMessageIdParamsSchema.parse(request.params);
+        const { emoji } = AddReactionSchema.parse(request.body);
+        const callerId = parseInt(request.user!.sub, 10);
 
-      // Scope-aware: a global-only ban silences reactions in the global room
-      // but leaves DM reactions alone.
-      const banned = id === GLOBAL_CHAT_ID
-        ? await callerIsBannedFromGlobalChat(pool, callerId)
-        : await callerIsBannedFromChat(pool, callerId);
-      if (banned) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
-      if (!(await canAccessChatMessages(id, callerId))) {
-        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
-      }
+        // Scope-aware: a global-only ban silences reactions in the global room
+        // but leaves DM reactions alone.
+        const banned =
+          id === GLOBAL_CHAT_ID
+            ? await callerIsBannedFromGlobalChat(pool, callerId)
+            : await callerIsBannedFromChat(pool, callerId);
+        if (banned) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+        }
+        if (!(await canAccessChatMessages(id, callerId))) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
 
-      const msg = await pool.query(
-        `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL`,
-        [messageId, id]
-      );
-      if (msg.rows.length === 0) {
-        return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
-      }
+        const msg = await pool.query(
+          `SELECT 1 FROM messages WHERE id = $1 AND chat_id = $2 AND deleted_at IS NULL`,
+          [messageId, id]
+        );
+        if (msg.rows.length === 0) {
+          return sendError(reply, 404, 'MESSAGE_NOT_FOUND', 'Message not found');
+        }
 
-      const inserted = await pool.query(
-        `INSERT INTO message_reactions (message_id, user_id, emoji)
+        const inserted = await pool.query(
+          `INSERT INTO message_reactions (message_id, user_id, emoji)
          VALUES ($1, $2, $3)
          ON CONFLICT (message_id, user_id, emoji) DO NOTHING
          RETURNING 1`,
-        [messageId, callerId, emoji]
-      );
-      const added = inserted.rows.length > 0;
+          [messageId, callerId, emoji]
+        );
+        const added = inserted.rows.length > 0;
 
-      if (added) {
-        const count = await getReactionCount(messageId, emoji);
-        broadcastChatReactionEvent({
-          chatId: id,
-          messageId,
-          userId: callerId,
-          address: request.user!.address,
-          emoji,
-          count,
-          action: 'added',
-          audience: id === GLOBAL_CHAT_ID ? 'global' : await getChatParticipantUserIds(pool, id),
-        });
-      }
+        if (added) {
+          const count = await getReactionCount(messageId, emoji);
+          broadcastChatReactionEvent({
+            chatId: id,
+            messageId,
+            userId: callerId,
+            address: request.user!.address,
+            emoji,
+            count,
+            action: 'added',
+            audience: id === GLOBAL_CHAT_ID ? 'global' : await getChatParticipantUserIds(pool, id),
+          });
+        }
 
-      return reply.send(ok({ chat_id: id, message_id: messageId, emoji, added }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        return reply.send(ok({ chat_id: id, message_id: messageId, emoji, added }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error adding reaction');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to add reaction');
       }
-      fastify.log.error({ error }, 'Error adding reaction');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to add reaction');
     }
-  });
+  );
 
   /**
    * DELETE /api/v1/chats/:id/messages/:messageId/reactions/:emoji
    * Remove the caller's reaction. :emoji is URL-encoded.
    */
-  fastify.delete('/:id/messages/:messageId/reactions/:emoji', {
-    preHandler: requireAuth,
-  }, async (request, reply) => {
-    try {
-      const params = ReactionParamsSchema.parse(request.params);
-      const emoji = EmojiSchema.parse(decodeURIComponent(params.emoji));
-      const callerId = parseInt(request.user!.sub, 10);
+  fastify.delete(
+    '/:id/messages/:messageId/reactions/:emoji',
+    {
+      preHandler: requireAuth,
+    },
+    async (request, reply) => {
+      try {
+        const params = ReactionParamsSchema.parse(request.params);
+        const emoji = EmojiSchema.parse(decodeURIComponent(params.emoji));
+        const callerId = parseInt(request.user!.sub, 10);
 
-      if (!(await canAccessChatMessages(params.id, callerId))) {
-        return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
-      }
+        if (!(await canAccessChatMessages(params.id, callerId))) {
+          return sendError(reply, 404, 'CHAT_NOT_FOUND', 'Chat not found');
+        }
 
-      const deleted = await pool.query(
-        `DELETE FROM message_reactions mr
+        const deleted = await pool.query(
+          `DELETE FROM message_reactions mr
           USING messages m
           WHERE mr.message_id = m.id
             AND m.chat_id = $1
@@ -1362,38 +1469,42 @@ export async function chatsRoutes(fastify: FastifyInstance) {
             AND mr.user_id = $3
             AND mr.emoji = $4
           RETURNING 1`,
-        [params.id, params.messageId, callerId, emoji]
-      );
-      if (deleted.rows.length === 0) {
-        return sendError(reply, 404, 'REACTION_NOT_FOUND', 'Reaction not found');
-      }
+          [params.id, params.messageId, callerId, emoji]
+        );
+        if (deleted.rows.length === 0) {
+          return sendError(reply, 404, 'REACTION_NOT_FOUND', 'Reaction not found');
+        }
 
-      const count = await getReactionCount(params.messageId, emoji);
-      broadcastChatReactionEvent({
-        chatId: params.id,
-        messageId: params.messageId,
-        userId: callerId,
-        address: request.user!.address,
-        emoji,
-        count,
-        action: 'removed',
-        audience:
-          params.id === GLOBAL_CHAT_ID ? 'global' : await getChatParticipantUserIds(pool, params.id),
-      });
+        const count = await getReactionCount(params.messageId, emoji);
+        broadcastChatReactionEvent({
+          chatId: params.id,
+          messageId: params.messageId,
+          userId: callerId,
+          address: request.user!.address,
+          emoji,
+          count,
+          action: 'removed',
+          audience:
+            params.id === GLOBAL_CHAT_ID
+              ? 'global'
+              : await getChatParticipantUserIds(pool, params.id),
+        });
 
-      return reply.send(ok({
-        chat_id: params.id,
-        message_id: params.messageId,
-        emoji,
-        removed: true,
-      }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        return reply.send(
+          ok({
+            chat_id: params.id,
+            message_id: params.messageId,
+            emoji,
+            removed: true,
+          })
+        );
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error removing reaction');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to remove reaction');
       }
-      fastify.log.error({ error }, 'Error removing reaction');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to remove reaction');
     }
-  });
+  );
 }
-

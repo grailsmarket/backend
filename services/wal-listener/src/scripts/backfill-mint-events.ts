@@ -111,15 +111,15 @@ async function queryTheGraph(names: string[]): Promise<Domain[]> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: BATCH_REGISTRATION_QUERY,
-        variables: { names }
-      })
+        variables: { names },
+      }),
     });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const result = await response.json() as GraphQLResponse;
+    const result = (await response.json()) as GraphQLResponse;
 
     if (result.errors) {
       throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
@@ -147,7 +147,11 @@ async function saveProgress(progress: Progress): Promise<void> {
   await fs.writeFile(PROGRESS_FILE, JSON.stringify(progress, null, 2));
 }
 
-async function updateExistingMintEvents(progress: Progress, dryRun: boolean, missingCostOnly: boolean): Promise<void> {
+async function updateExistingMintEvents(
+  progress: Progress,
+  dryRun: boolean,
+  missingCostOnly: boolean
+): Promise<void> {
   console.log('\n📝 Phase 1: Updating Existing Mint Events\n');
   console.log('Processing mint events in batches (cursor-based)...\n');
   if (missingCostOnly) {
@@ -183,13 +187,11 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
     if (result.rows.length === 0) break;
 
     // Collect names for batch Graph query
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
 
     // Query The Graph for all domains in this batch at once
     const domains = await queryTheGraph(names);
-    const domainMap = new Map(
-      domains.map(domain => [domain.name.toLowerCase(), domain])
-    );
+    const domainMap = new Map(domains.map((domain) => [domain.name.toLowerCase(), domain]));
 
     // Process each record in this DB batch
     for (let i = 0; i < result.rows.length; i++) {
@@ -221,7 +223,7 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
           token_id: row.token_id,
           cost: domain.registration.cost,
           from_address: '0x0000000000000000000000000000000000000000',
-          labelhash: domain.labelhash
+          labelhash: domain.labelhash,
         };
 
         if (dryRun) {
@@ -231,7 +233,8 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
           console.log(`    Block: ${event.blockNumber}`);
           console.log(`    Cost: ${domain.registration.cost} wei`);
         } else {
-          await pool.query(`
+          await pool.query(
+            `
             UPDATE activity_history
             SET
               created_at = $1,
@@ -245,17 +248,21 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
               price_wei = $5,
               currency_address = $6
             WHERE id = $7
-          `, [
-            registrationDate,
-            event.transactionID,
-            parseInt(event.blockNumber),
-            JSON.stringify(metadata),
-            domain.registration.cost,
-            '0x0000000000000000000000000000000000000000',
-            row.id
-          ]);
+          `,
+            [
+              registrationDate,
+              event.transactionID,
+              parseInt(event.blockNumber),
+              JSON.stringify(metadata),
+              domain.registration.cost,
+              '0x0000000000000000000000000000000000000000',
+              row.id,
+            ]
+          );
 
-          console.log(`  ✅ Updated ${row.name} (cost: ${(parseFloat(domain.registration.cost) / 1e18).toFixed(4)} ETH)`);
+          console.log(
+            `  ✅ Updated ${row.name} (cost: ${(parseFloat(domain.registration.cost) / 1e18).toFixed(4)} ETH)`
+          );
         }
 
         progress.updated++;
@@ -265,13 +272,12 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
         processedCount++;
 
         console.log(`  ✅ Updated ${row.name} (processed: ${processedCount})`);
-
       } catch (error: any) {
         console.error(`  ❌ Error processing ${row.name}:`, error.message);
         progress.errors.push({
           id: row.id,
           name: row.name,
-          error: error.message
+          error: error.message,
         });
         progress.skipped++;
         progress.lastProcessedId = row.id;
@@ -289,7 +295,7 @@ async function updateExistingMintEvents(progress: Progress, dryRun: boolean, mis
     // Delay 5 seconds after completing this batch before starting the next one
     if (hasMore) {
       console.log(`\n⏳ Waiting 5 seconds before next batch...\n`);
-      await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
   }
 
@@ -333,13 +339,11 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
     if (result.rows.length === 0) break;
 
     // Collect names for batch Graph query
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
 
     // Query The Graph for all domains in this batch at once
     const domains = await queryTheGraph(names);
-    const domainMap = new Map(
-      domains.map(domain => [domain.name.toLowerCase(), domain])
-    );
+    const domainMap = new Map(domains.map((domain) => [domain.name.toLowerCase(), domain]));
 
     // Process each record in this DB batch
     for (let i = 0; i < result.rows.length; i++) {
@@ -370,7 +374,7 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
           token_id: row.token_id,
           cost: domain.registration.cost,
           from_address: '0x0000000000000000000000000000000000000000',
-          labelhash: domain.labelhash
+          labelhash: domain.labelhash,
         };
 
         if (dryRun) {
@@ -381,7 +385,8 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
           console.log(`    Block: ${event.blockNumber}`);
           console.log(`    Cost: ${domain.registration.cost} wei`);
         } else {
-          await pool.query(`
+          await pool.query(
+            `
             INSERT INTO activity_history (
               ens_name_id,
               event_type,
@@ -396,22 +401,26 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
               price_wei,
               currency_address
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          `, [
-            row.id,
-            'mint',
-            domain.registration.registrant.id.toLowerCase(),
-            null,
-            'blockchain',
-            1,
-            event.transactionID,
-            parseInt(event.blockNumber),
-            JSON.stringify(metadata),
-            registrationDate,
-            domain.registration.cost,
-            '0x0000000000000000000000000000000000000000'
-          ]);
+          `,
+            [
+              row.id,
+              'mint',
+              domain.registration.registrant.id.toLowerCase(),
+              null,
+              'blockchain',
+              1,
+              event.transactionID,
+              parseInt(event.blockNumber),
+              JSON.stringify(metadata),
+              registrationDate,
+              domain.registration.cost,
+              '0x0000000000000000000000000000000000000000',
+            ]
+          );
 
-          console.log(`  ✅ Inserted mint event for ${row.name} (cost: ${(parseFloat(domain.registration.cost) / 1e18).toFixed(4)} ETH)`);
+          console.log(
+            `  ✅ Inserted mint event for ${row.name} (cost: ${(parseFloat(domain.registration.cost) / 1e18).toFixed(4)} ETH)`
+          );
         }
 
         progress.inserted++;
@@ -421,13 +430,12 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
         processedCount++;
 
         console.log(`  ✅ Inserted ${row.name} (processed: ${processedCount})`);
-
       } catch (error: any) {
         console.error(`  ❌ Error processing ${row.name}:`, error.message);
         progress.errors.push({
           id: row.id,
           name: row.name,
-          error: error.message
+          error: error.message,
         });
         progress.skipped++;
         progress.lastProcessedId = row.id;
@@ -445,7 +453,7 @@ async function insertMissingMintEvents(progress: Progress, dryRun: boolean): Pro
     // Delay 5 seconds after completing this batch before starting the next one
     if (hasMore) {
       console.log(`\n⏳ Waiting 5 seconds before next batch...\n`);
-      await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
   }
 
@@ -467,7 +475,9 @@ async function main() {
   }
 
   if (missingCostOnly) {
-    console.log('🎯 MISSING-COST-ONLY MODE - Only repairing mints with no price; insert phase skipped\n');
+    console.log(
+      '🎯 MISSING-COST-ONLY MODE - Only repairing mints with no price; insert phase skipped\n'
+    );
   }
 
   try {
@@ -492,7 +502,7 @@ async function main() {
         skipped: 0,
         errors: [],
         startTime: new Date().toISOString(),
-        lastUpdateTime: new Date().toISOString()
+        lastUpdateTime: new Date().toISOString(),
       };
       await saveProgress(progress);
       console.log('📝 Starting fresh backfill process\n');
@@ -503,7 +513,9 @@ async function main() {
     // block (wrong phase) and the insert block (missingCostOnly), then exit as a silent no-op that
     // looks successful. Force the update phase to run from the start instead.
     if (missingCostOnly && progress.phase !== 'update') {
-      console.warn(`⚠️  Saved progress is in '${progress.phase}' phase; resetting to 'update' for the missing-cost-only repair.\n`);
+      console.warn(
+        `⚠️  Saved progress is in '${progress.phase}' phase; resetting to 'update' for the missing-cost-only repair.\n`
+      );
       progress.phase = 'update';
       progress.lastProcessedId = 0;
       await saveProgress(progress);
@@ -527,12 +539,14 @@ async function main() {
     console.log(`Inserted: ${progress.inserted}`);
     console.log(`Skipped: ${progress.skipped}`);
     console.log(`Errors: ${progress.errors.length}`);
-    console.log(`Duration: ${Math.floor((new Date().getTime() - new Date(progress.startTime).getTime()) / 1000)}s`);
+    console.log(
+      `Duration: ${Math.floor((new Date().getTime() - new Date(progress.startTime).getTime()) / 1000)}s`
+    );
     console.log('═══════════════════════════════════════════════\n');
 
     if (progress.errors.length > 0) {
       console.log('⚠️  Errors encountered:');
-      progress.errors.slice(0, 10).forEach(err => {
+      progress.errors.slice(0, 10).forEach((err) => {
         console.log(`   ${err.name} (ID: ${err.id}): ${err.error}`);
       });
       if (progress.errors.length > 10) {

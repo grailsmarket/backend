@@ -65,19 +65,27 @@ export async function usersRoutes(fastify: FastifyInstance) {
           }
 
           if (!response.ok) {
-            fastify.log.warn({ status: response.status, address, collectionId }, 'POAP API error for collection');
+            fastify.log.warn(
+              { status: response.status, address, collectionId },
+              'POAP API error for collection'
+            );
             return null;
           }
 
           return await response.json();
         } catch (error) {
-          fastify.log.error({ error, address, collectionId }, 'Failed to fetch POAP badge for collection');
+          fastify.log.error(
+            { error, address, collectionId },
+            'Failed to fetch POAP badge for collection'
+          );
           return null;
         }
       });
 
       const badgeResults = await Promise.all(badgePromises);
-      const badges = badgeResults.filter((badge): badge is NonNullable<typeof badge> => badge !== null);
+      const badges = badgeResults.filter(
+        (badge): badge is NonNullable<typeof badge> => badge !== null
+      );
 
       const apiResponse: APIResponse = {
         success: true,
@@ -146,7 +154,10 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
-      fastify.log.error({ error, address: (request.params as any)?.address }, 'Error fetching balances');
+      fastify.log.error(
+        { error, address: (request.params as any)?.address },
+        'Error fetching balances'
+      );
 
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
@@ -196,7 +207,10 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       return reply.send(response);
     } catch (error: any) {
-      fastify.log.error({ error, address: (request.params as any)?.address }, 'Error fetching unclaimed deposits');
+      fastify.log.error(
+        { error, address: (request.params as any)?.address },
+        'Error fetching unclaimed deposits'
+      );
 
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
@@ -248,10 +262,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user.sub);
 
       // Get current user data to check if email changed
-      const currentUserResult = await pool.query(
-        'SELECT email FROM users WHERE id = $1',
-        [userId]
-      );
+      const currentUserResult = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
 
       if (currentUserResult.rows.length === 0) {
         return reply.status(404).send({
@@ -407,7 +418,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
           notifyOnOfferReceived: user.notify_on_offer_received,
           notifyOnListingSold: user.notify_on_listing_sold,
           notifyOnCommentReceived: user.notify_on_comment_received,
-          minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+          minOfferThreshold:
+            user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
           acceptMessages: user.accept_messages,
           updatedAt: user.updated_at,
         },

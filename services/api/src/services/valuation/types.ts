@@ -381,17 +381,29 @@ export type PublicValuationResult = {
  * retained). These types encode that truncation so internal/audit readers of the
  * cached row get accurate types instead of a full-`ValuationEvidenceResult` lie.
  */
-export type StoredValuationActivityRow = Pick<ValuationActivitySale, 'name' | 'created_at' | 'price_wei'>;
+export type StoredValuationActivityRow = Pick<
+  ValuationActivitySale,
+  'name' | 'created_at' | 'price_wei'
+>;
 
-export type StoredValuationEvidence = Omit<ValuationEvidence, 'marketActivity' | 'categoryMarketActivity'> & {
-  marketActivity: Omit<ValuationMarketActivityEvidence, 'sales' | 'mintEvents' | 'premiumRegistrations'> & {
+export type StoredValuationEvidence = Omit<
+  ValuationEvidence,
+  'marketActivity' | 'categoryMarketActivity'
+> & {
+  marketActivity: Omit<
+    ValuationMarketActivityEvidence,
+    'sales' | 'mintEvents' | 'premiumRegistrations'
+  > & {
     sales: StoredValuationActivityRow[];
     mintEvents: StoredValuationActivityRow[];
     premiumRegistrations: StoredValuationActivityRow[];
   };
   categoryMarketActivity: Omit<ValuationCategoryMarketActivityEvidence, 'categories'> & {
     categories: Array<
-      Omit<ValuationCategoryMarketActivityEvidence['categories'][number], 'sales' | 'mintEvents'> & {
+      Omit<
+        ValuationCategoryMarketActivityEvidence['categories'][number],
+        'sales' | 'mintEvents'
+      > & {
         sales: StoredValuationActivityRow[];
         mintEvents: StoredValuationActivityRow[];
       }

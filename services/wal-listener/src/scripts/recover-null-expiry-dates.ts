@@ -93,7 +93,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverNullExpiryDates(options: {
@@ -162,7 +162,9 @@ async function recoverNullExpiryDates(options: {
     for (let i = 0; i < nullExpiryRecords.length; i += batchSize) {
       const batch = nullExpiryRecords.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, nullExpiryRecords.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, nullExpiryRecords.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, NullExpiryRecord>();
@@ -203,11 +205,7 @@ async function recoverNullExpiryDates(options: {
                  SET expiry_date = $1,
                      registration_date = COALESCE(registration_date, $2)
                  WHERE id = $3`,
-                [
-                  expiryDate,
-                  registrationDate,
-                  record.id
-                ]
+                [expiryDate, registrationDate, record.id]
               );
               recovered++;
             } catch (updateError: any) {
@@ -264,7 +262,6 @@ async function recoverNullExpiryDates(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

@@ -78,7 +78,7 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }
-      const data = await response.json() as ClubsResponse;
+      const data = (await response.json()) as ClubsResponse;
       if (!data.data?.clubs.length) {
         throw new Error('No clubs found in database');
       }
@@ -114,9 +114,7 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const { data } = await getClubs();
       expect(data?.clubs.length).toBeGreaterThan(1);
 
-      const volumes = data!.clubs.map((c) =>
-        BigInt(c.total_sales_volume_wei || '0')
-      );
+      const volumes = data!.clubs.map((c) => BigInt(c.total_sales_volume_wei || '0'));
 
       // Verify descending order
       for (let i = 1; i < volumes.length; i++) {
@@ -139,11 +137,16 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('ethmojis')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
-      expect(failures, `Clubs without ethmojis classification:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Clubs without ethmojis classification:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('class[]=digits returns only digit clubs', async () => {
@@ -156,11 +159,15 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('digits')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
-      expect(failures, `Clubs without digits classification:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `Clubs without digits classification:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
 
     it('class[]=palindromes returns only palindrome clubs', async () => {
@@ -173,11 +180,16 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('palindromes')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
-      expect(failures, `Clubs without palindromes classification:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Clubs without palindromes classification:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('class[]=prepunk returns only prepunk clubs', async () => {
@@ -190,11 +202,16 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('prepunk')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
-      expect(failures, `Clubs without prepunk classification:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Clubs without prepunk classification:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('class[]=geo returns only geographic clubs', async () => {
@@ -207,7 +224,9 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('geo')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
@@ -224,26 +243,30 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (!club.classifications?.includes('letters')) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
-      expect(failures, `Clubs without letters classification:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Clubs without letters classification:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('multiple classifications filter with OR logic', async () => {
       const { data } = await getClubs('class[]=ethmojis&class[]=geo');
-      expect(
-        data?.clubs.length,
-        'No ethmoji or geo clubs found'
-      ).toBeGreaterThan(0);
+      expect(data?.clubs.length, 'No ethmoji or geo clubs found').toBeGreaterThan(0);
 
       const failures: string[] = [];
       for (const club of data!.clubs) {
         const hasEthmojis = club.classifications?.includes('ethmojis');
         const hasGeo = club.classifications?.includes('geo');
         if (!hasEthmojis && !hasGeo) {
-          failures.push(`${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`);
+          failures.push(
+            `${club.name}: classifications=[${club.classifications?.join(', ') ?? 'null'}]`
+          );
         }
       }
 
@@ -517,19 +540,14 @@ describe('Clubs API Filters, Sorting, and Search', () => {
 
       expect(invalidData?.clubs.length).toBeGreaterThan(0);
       // Should match default ordering
-      expect(invalidData!.clubs.map((c) => c.name)).toEqual(
-        defaultData!.clubs.map((c) => c.name)
-      );
+      expect(invalidData!.clubs.map((c) => c.name)).toEqual(defaultData!.clubs.map((c) => c.name));
     });
   });
 
   describe('Search', () => {
     it('search finds clubs by name (partial match)', async () => {
       const { data } = await getClubs('search=ethmoji');
-      expect(
-        data?.clubs.length,
-        'No clubs found matching "ethmoji"'
-      ).toBeGreaterThan(0);
+      expect(data?.clubs.length, 'No clubs found matching "ethmoji"').toBeGreaterThan(0);
 
       const failures: string[] = [];
       for (const club of data!.clubs) {
@@ -545,10 +563,7 @@ describe('Clubs API Filters, Sorting, and Search', () => {
 
     it('search finds clubs by description (partial match)', async () => {
       const { data } = await getClubs('search=digit');
-      expect(
-        data?.clubs.length,
-        'No clubs found matching "digit"'
-      ).toBeGreaterThan(0);
+      expect(data?.clubs.length, 'No clubs found matching "digit"').toBeGreaterThan(0);
 
       const failures: string[] = [];
       for (const club of data!.clubs) {
@@ -592,8 +607,7 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       // Verify at least one result has "countr" in name or description
       const hasMatch = data!.clubs.some(
         (c) =>
-          c.name.toLowerCase().includes('countr') ||
-          c.description?.toLowerCase().includes('countr')
+          c.name.toLowerCase().includes('countr') || c.description?.toLowerCase().includes('countr')
       );
       expect(hasMatch).toBe(true);
     });
@@ -641,10 +655,7 @@ describe('Clubs API Filters, Sorting, and Search', () => {
 
     it('classification filter with search', async () => {
       const { data } = await getClubs('class[]=digits&search=palindrome');
-      expect(
-        data?.clubs.length,
-        'No digit palindrome clubs found'
-      ).toBeGreaterThan(0);
+      expect(data?.clubs.length, 'No digit palindrome clubs found').toBeGreaterThan(0);
 
       for (const club of data!.clubs) {
         // Must have digits classification
@@ -692,13 +703,19 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (club.sales_count_1w > club.sales_count_1mo) {
-          failures.push(`${club.name}: 1w count (${club.sales_count_1w}) > 1mo count (${club.sales_count_1mo})`);
+          failures.push(
+            `${club.name}: 1w count (${club.sales_count_1w}) > 1mo count (${club.sales_count_1mo})`
+          );
         }
         if (club.sales_count_1mo > club.sales_count_1y) {
-          failures.push(`${club.name}: 1mo count (${club.sales_count_1mo}) > 1y count (${club.sales_count_1y})`);
+          failures.push(
+            `${club.name}: 1mo count (${club.sales_count_1mo}) > 1y count (${club.sales_count_1y})`
+          );
         }
         if (club.sales_count_1y > club.total_sales_count) {
-          failures.push(`${club.name}: 1y count (${club.sales_count_1y}) > total count (${club.total_sales_count})`);
+          failures.push(
+            `${club.name}: 1y count (${club.sales_count_1y}) > total count (${club.total_sales_count})`
+          );
         }
       }
 
@@ -712,17 +729,26 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       const failures: string[] = [];
       for (const club of data!.clubs) {
         if (club.reg_count_1w > club.reg_count_1mo) {
-          failures.push(`${club.name}: 1w reg count (${club.reg_count_1w}) > 1mo reg count (${club.reg_count_1mo})`);
+          failures.push(
+            `${club.name}: 1w reg count (${club.reg_count_1w}) > 1mo reg count (${club.reg_count_1mo})`
+          );
         }
         if (club.reg_count_1mo > club.reg_count_1y) {
-          failures.push(`${club.name}: 1mo reg count (${club.reg_count_1mo}) > 1y reg count (${club.reg_count_1y})`);
+          failures.push(
+            `${club.name}: 1mo reg count (${club.reg_count_1mo}) > 1y reg count (${club.reg_count_1y})`
+          );
         }
         if (club.reg_count_1y > club.total_reg_count) {
-          failures.push(`${club.name}: 1y reg count (${club.reg_count_1y}) > total reg count (${club.total_reg_count})`);
+          failures.push(
+            `${club.name}: 1y reg count (${club.reg_count_1y}) > total reg count (${club.total_reg_count})`
+          );
         }
       }
 
-      expect(failures, `Time-based reg count inconsistencies:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Time-based reg count inconsistencies:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('time-based volumes are less than or equal to all-time volumes', async () => {
@@ -747,7 +773,9 @@ describe('Clubs API Filters, Sorting, and Search', () => {
         }
       }
 
-      expect(failures, `Time-based volume inconsistencies:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `Time-based volume inconsistencies:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
   });
 
@@ -821,7 +849,9 @@ describe('Clubs API Filters, Sorting, and Search', () => {
           );
         }
       }
-      expect(failures, `Holders count exceeded member count:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `Holders count exceeded member count:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
 
     it('holders_ratio is correctly calculated as (holders_count / member_count) * 100', async () => {
@@ -832,7 +862,8 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       for (const club of data!.clubs) {
         if (club.member_count === 0) continue; // Skip clubs with no members
 
-        const expectedRatio = Math.round((club.holders_count / club.member_count) * 100 * 100) / 100;
+        const expectedRatio =
+          Math.round((club.holders_count / club.member_count) * 100 * 100) / 100;
         // Allow for small floating point differences
         if (Math.abs(club.holders_ratio - expectedRatio) > 0.01) {
           failures.push(
@@ -941,14 +972,16 @@ describe('Clubs API Filters, Sorting, and Search', () => {
 
       const failures: string[] = [];
       for (const club of data!.clubs) {
-        const total = club.registered_count + club.grace_count + club.premium_count + club.available_count;
+        const total =
+          club.registered_count + club.grace_count + club.premium_count + club.available_count;
         if (total !== club.member_count) {
-          failures.push(
-            `${club.name}: sum (${total}) != member_count (${club.member_count})`
-          );
+          failures.push(`${club.name}: sum (${total}) != member_count (${club.member_count})`);
         }
       }
-      expect(failures, `Status counts don't add up to member_count:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Status counts don't add up to member_count:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('listings_count is less than or equal to member_count', async () => {
@@ -963,7 +996,10 @@ describe('Clubs API Filters, Sorting, and Search', () => {
           );
         }
       }
-      expect(failures, `Listings count exceeded member count:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Listings count exceeded member count:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
 
     it('sortBy=registered_count&sortOrder=desc sorts correctly', async () => {

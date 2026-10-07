@@ -57,7 +57,10 @@ async function updateHighestOffer(data: UpdateHighestOfferJob): Promise<void> {
         logger.debug({ ensNameId }, 'Synced highest offer to Elasticsearch');
       } catch (esSyncError) {
         // Log but don't fail the job - ES will eventually be consistent via WAL listener
-        logger.warn({ error: esSyncError, ensNameId }, 'Failed to sync highest offer to Elasticsearch');
+        logger.warn(
+          { error: esSyncError, ensNameId },
+          'Failed to sync highest offer to Elasticsearch'
+        );
       }
     } else {
       logger.debug({ ensNameId, offerId }, 'Offer not higher than current highest, no update');
@@ -104,12 +107,7 @@ async function recalculateHighestOffer(data: RecalculateHighestOfferJob): Promis
              highest_offer_currency = $3,
              last_offer_update = NOW()
          WHERE id = $4`,
-        [
-          highestOffer.offer_amount_wei,
-          highestOffer.id,
-          highestOffer.currency_address,
-          ensNameId,
-        ]
+        [highestOffer.offer_amount_wei, highestOffer.id, highestOffer.currency_address, ensNameId]
       );
 
       logger.info(
@@ -138,7 +136,10 @@ async function recalculateHighestOffer(data: RecalculateHighestOfferJob): Promis
       logger.debug({ ensNameId }, 'Synced highest offer to Elasticsearch');
     } catch (esSyncError) {
       // Log but don't fail the job - ES will eventually be consistent via WAL listener
-      logger.warn({ error: esSyncError, ensNameId }, 'Failed to sync highest offer to Elasticsearch');
+      logger.warn(
+        { error: esSyncError, ensNameId },
+        'Failed to sync highest offer to Elasticsearch'
+      );
     }
   } catch (error) {
     logger.error({ error, ensNameId }, 'Failed to recalculate highest offer');
@@ -157,10 +158,7 @@ export async function registerHighestOfferWorker(boss: PgBoss): Promise<void> {
     async (job) => {
       const { ensNameId, offerId, offerAmountWei, currencyAddress } = job.data;
 
-      logger.debug(
-        { ensNameId, offerId, offerAmountWei },
-        'Processing update-highest-offer job'
-      );
+      logger.debug({ ensNameId, offerId, offerAmountWei }, 'Processing update-highest-offer job');
 
       await updateHighestOffer({
         ensNameId,

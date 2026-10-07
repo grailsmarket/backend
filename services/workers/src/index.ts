@@ -1,6 +1,10 @@
 import { getQueueClient, closeQueueClient } from './queue';
 import { registerExpiryWorker, registerBatchExpiryWorker } from './workers/expiry';
-import { registerEnsSyncWorker, registerDailyEnsSyncScheduler, registerMetadataBackfillScheduler } from './workers/ens-sync';
+import {
+  registerEnsSyncWorker,
+  registerDailyEnsSyncScheduler,
+  registerMetadataBackfillScheduler,
+} from './workers/ens-sync';
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
 import { registerNotificationWorker } from './workers/notifications';
@@ -90,7 +94,6 @@ async function start() {
         logger.error({ error }, 'Error fetching queue statistics');
       }
     }, 60000);
-
   } catch (error) {
     logger.error({ error }, 'Failed to start worker service');
     process.exit(1);

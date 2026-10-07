@@ -32,8 +32,9 @@ const CONTROLLER_V2_ABI = parseAbi([
 ]);
 
 // Use the V2 controller address (second in the list)
-const V2_CONTROLLER_ADDRESS = config.blockchain.ensControllerAddresses[1]?.toLowerCase()
-  || '0x59e16fccd424cc24e280be16e11bcd56fb0ce547';
+const V2_CONTROLLER_ADDRESS =
+  config.blockchain.ensControllerAddresses[1]?.toLowerCase() ||
+  '0x59e16fccd424cc24e280be16e11bcd56fb0ce547';
 
 interface Options {
   dryRun: boolean;
@@ -51,7 +52,7 @@ interface Stats {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function backfillRegistrationReferrers(options: Options) {
@@ -66,9 +67,13 @@ async function backfillRegistrationReferrers(options: Options) {
   });
 
   try {
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Registration Referrers Script');
-    console.log('================================================================================\n');
+    console.log(
+      '================================================================================\n'
+    );
     console.log(`Mode:              ${options.dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
     console.log(`Batch size:        ${options.batchSize} registrations`);
     console.log(`Limit:             ${options.limit || 'unlimited'}`);
@@ -77,7 +82,9 @@ async function backfillRegistrationReferrers(options: Options) {
     console.log(`V2 Controller:     ${V2_CONTROLLER_ADDRESS}`);
     console.log('');
 
-    const blockFilter = options.fromBlock ? `AND r.block_number >= ${Number(options.fromBlock)}` : '';
+    const blockFilter = options.fromBlock
+      ? `AND r.block_number >= ${Number(options.fromBlock)}`
+      : '';
 
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM registrations r WHERE r.referrer IS NULL ${blockFilter}`
@@ -96,25 +103,26 @@ async function backfillRegistrationReferrers(options: Options) {
         : options.batchSize;
 
       // Fetch batch of registrations without referrer
-      const batchResult: any = lastId === null
-        ? await pool.query(
-            `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
+      const batchResult: any =
+        lastId === null
+          ? await pool.query(
+              `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
              FROM registrations r
              JOIN ens_names en ON r.ens_name_id = en.id
              WHERE r.referrer IS NULL ${blockFilter}
              ORDER BY r.id ASC
              LIMIT $1`,
-            [currentBatchSize]
-          )
-        : await pool.query(
-            `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
+              [currentBatchSize]
+            )
+          : await pool.query(
+              `SELECT r.id, r.transaction_hash, r.ens_name_id, en.name
              FROM registrations r
              JOIN ens_names en ON r.ens_name_id = en.id
              WHERE r.referrer IS NULL AND r.id > $1 ${blockFilter}
              ORDER BY r.id ASC
              LIMIT $2`,
-            [lastId, currentBatchSize]
-          );
+              [lastId, currentBatchSize]
+            );
 
       const batch: any[] = batchResult.rows;
       if (batch.length === 0) break;
@@ -128,7 +136,9 @@ async function backfillRegistrationReferrers(options: Options) {
           // Small delay between RPC calls to reduce memory pressure
           await sleep(50);
 
-          const receipt = await client.getTransactionReceipt({ hash: row.transaction_hash as `0x${string}` });
+          const receipt = await client.getTransactionReceipt({
+            hash: row.transaction_hash as `0x${string}`,
+          });
 
           // Look for V2 Controller NameRegistered event in receipt logs
           let referrer: string | null = null;
@@ -179,26 +189,31 @@ async function backfillRegistrationReferrers(options: Options) {
             console.log(`  [UPDATED] ${row.name}: referrer=${referrer}`);
           }
         } catch (error: any) {
-          console.error(`  Error processing registration ${row.id} (${row.name}): ${error.message}`);
+          console.error(
+            `  Error processing registration ${row.id} (${row.name}): ${error.message}`
+          );
           stats.failed++;
         }
       }
 
-      const memLine = batchNum % 10 === 0
-        ? ` | heap ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
-        : '';
+      const memLine =
+        batchNum % 10 === 0
+          ? ` | heap ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+          : '';
       console.log(
         `Batch ${batchNum}: ${stats.processed} processed | ` +
-        `${stats.updated} updated | ` +
-        `${stats.noReferrer} no referrer | ` +
-        `${stats.failed} failed${memLine}`
+          `${stats.updated} updated | ` +
+          `${stats.noReferrer} no referrer | ` +
+          `${stats.failed} failed${memLine}`
       );
 
       await sleep(500);
     }
 
     const duration = Date.now() - startTime;
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Registration Referrers Summary');
     console.log('================================================================================');
     console.log(`Processed:     ${stats.processed}`);
@@ -209,8 +224,9 @@ async function backfillRegistrationReferrers(options: Options) {
     if (options.dryRun) {
       console.log('\nDRY RUN - No changes made');
     }
-    console.log('================================================================================\n');
-
+    console.log(
+      '================================================================================\n'
+    );
   } catch (error: any) {
     console.error('\nFatal error:', error.message);
     console.error(error.stack);

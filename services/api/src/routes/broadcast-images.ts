@@ -60,7 +60,11 @@ export async function broadcastImagesRoutes(fastify: FastifyInstance) {
       }
 
       evictStaleImages();
-      imageCache.set(fullKey, { body: file.body, contentType: file.contentType, cachedAt: Date.now() });
+      imageCache.set(fullKey, {
+        body: file.body,
+        contentType: file.contentType,
+        cachedAt: Date.now(),
+      });
 
       return reply
         .header('Content-Type', file.contentType)

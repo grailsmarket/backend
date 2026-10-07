@@ -58,29 +58,28 @@ interface ReconcileResult {
 export async function registerReconcileOpenseaWorker(boss: PgBoss) {
   const pool = getPostgresPool();
 
-  await boss.work(
-    QUEUE_NAMES.RECONCILE_OPENSEA,
-    { teamSize: 1, teamConcurrency: 1 },
-    async () => {
-      const startTime = Date.now();
-      logger.info('Starting OpenSea reconciliation');
+  await boss.work(QUEUE_NAMES.RECONCILE_OPENSEA, { teamSize: 1, teamConcurrency: 1 }, async () => {
+    const startTime = Date.now();
+    logger.info('Starting OpenSea reconciliation');
 
-      try {
-        const result = await reconcileOpenSea(pool);
+    try {
+      const result = await reconcileOpenSea(pool);
 
-        const duration = Date.now() - startTime;
-        logger.info({
+      const duration = Date.now() - startTime;
+      logger.info(
+        {
           ...result,
           durationMs: duration,
-        }, 'OpenSea reconciliation completed');
+        },
+        'OpenSea reconciliation completed'
+      );
 
-        return result;
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'OpenSea reconciliation failed');
-        throw error;
-      }
+      return result;
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'OpenSea reconciliation failed');
+      throw error;
     }
-  );
+  });
 
   await boss.schedule(QUEUE_NAMES.RECONCILE_OPENSEA, '*/5 * * * *', {}, { tz: 'UTC' });
 
@@ -88,7 +87,7 @@ export async function registerReconcileOpenseaWorker(boss: PgBoss) {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -112,14 +111,20 @@ async function fetchOpenSeaAssetName(contract: string, identifier: string): Prom
     );
 
     if (!response.ok) {
-      logger.warn({ contract, identifier, status: response.status }, 'OpenSea NFT metadata fetch failed');
+      logger.warn(
+        { contract, identifier, status: response.status },
+        'OpenSea NFT metadata fetch failed'
+      );
       return null;
     }
 
-    const data = await response.json() as { nft?: { name?: string } };
+    const data = (await response.json()) as { nft?: { name?: string } };
     return data.nft?.name || null;
   } catch (error: any) {
-    logger.warn({ contract, identifier, error: error.message }, 'OpenSea NFT metadata fetch failed');
+    logger.warn(
+      { contract, identifier, error: error.message },
+      'OpenSea NFT metadata fetch failed'
+    );
     return null;
   }
 }
@@ -135,10 +140,9 @@ async function resolveEnsNameId(
   pool: Pool,
   asset: { identifier: string; contract: string }
 ): Promise<number | null> {
-  const byToken = await pool.query(
-    'SELECT id FROM ens_names WHERE token_id = $1',
-    [asset.identifier]
-  );
+  const byToken = await pool.query('SELECT id FROM ens_names WHERE token_id = $1', [
+    asset.identifier,
+  ]);
   if (byToken.rows.length > 0) {
     return byToken.rows[0].id;
   }
@@ -148,10 +152,9 @@ async function resolveEnsNameId(
     return null;
   }
 
-  const byName = await pool.query(
-    'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
-    [safeNormalize(name)]
-  );
+  const byName = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [
+    safeNormalize(name),
+  ]);
   if (byName.rows.length > 0) {
     logger.info(
       { tokenId: asset.identifier, name, ensNameId: byName.rows[0].id },
@@ -222,10 +225,10 @@ async function fetchOpenSeaOffers(maxPages = MAX_PAGES): Promise<OpenSeaOffer[]>
       throw new Error(`OpenSea offers API error: ${response.status}`);
     }
 
-    const data = await response.json() as { offers?: OpenSeaOffer[]; next?: string };
+    const data = (await response.json()) as { offers?: OpenSeaOffer[]; next?: string };
     // Keep item offers only — criteria offers are collection/trait-wide and
     // don't map to a single ens_name.
-    allOffers.push(...(data.offers || []).filter(o => !o.criteria && o.asset?.identifier));
+    allOffers.push(...(data.offers || []).filter((o) => !o.criteria && o.asset?.identifier));
 
     cursor = data.next || null;
     if (!cursor) break;
@@ -234,11 +237,22 @@ async function fetchOpenSeaOffers(maxPages = MAX_PAGES): Promise<OpenSeaOffer[]>
     if (page < maxPages - 1) await sleep(300);
   }
 
-  logger.info({ pages: Math.min(maxPages, allOffers.length > 0 ? Math.ceil(allOffers.length / RECONCILE_LIMIT) : 1), total: allOffers.length }, 'Fetched offers from OpenSea');
+  logger.info(
+    {
+      pages: Math.min(
+        maxPages,
+        allOffers.length > 0 ? Math.ceil(allOffers.length / RECONCILE_LIMIT) : 1
+      ),
+      total: allOffers.length,
+    },
+    'Fetched offers from OpenSea'
+  );
   return allOffers;
 }
 
-async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: OpenSeaListing[]; pagesFetched: number }> {
+async function fetchOpenSeaListings(
+  maxPages = MAX_PAGES
+): Promise<{ listings: OpenSeaListing[]; pagesFetched: number }> {
   if (!OPENSEA_API_KEY) {
     logger.warn('OPENSEA_API_KEY not configured, skipping listing reconciliation');
     return { listings: [], pagesFetched: 0 };
@@ -263,8 +277,8 @@ async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: O
       throw new Error(`OpenSea listings API error: ${response.status}`);
     }
 
-    const data = await response.json() as { listings?: OpenSeaListing[]; next?: string };
-    allListings.push(...(data.listings || []).filter(l => l.asset?.identifier));
+    const data = (await response.json()) as { listings?: OpenSeaListing[]; next?: string };
+    allListings.push(...(data.listings || []).filter((l) => l.asset?.identifier));
     pagesFetched++;
 
     cursor = data.next || null;
@@ -280,21 +294,21 @@ async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: O
 
 async function reconcileOffers(pool: Pool) {
   const osOffers = await fetchOpenSeaOffers();
-  const activeOffers = osOffers.filter(o => o.status === 'ACTIVE');
+  const activeOffers = osOffers.filter((o) => o.status === 'ACTIVE');
 
   if (activeOffers.length === 0) {
     return { checked: 0, missing: 0, inserted: 0, skippedNoToken: 0, skippedNoEnsName: 0 };
   }
 
-  const orderHashes = activeOffers.map(o => o.order_hash);
+  const orderHashes = activeOffers.map((o) => o.order_hash);
 
   const existingResult = await pool.query(
     `SELECT order_hash FROM offers WHERE order_hash = ANY($1)`,
     [orderHashes]
   );
-  const existingHashes = new Set(existingResult.rows.map(r => r.order_hash));
+  const existingHashes = new Set(existingResult.rows.map((r) => r.order_hash));
 
-  const missingOffers = activeOffers.filter(o => !existingHashes.has(o.order_hash));
+  const missingOffers = activeOffers.filter((o) => !existingHashes.has(o.order_hash));
 
   let inserted = 0;
   let skippedNoToken = 0;
@@ -311,11 +325,15 @@ async function reconcileOffers(pool: Pool) {
       const ensNameId = await resolveEnsNameId(pool, offer.asset!);
       if (!ensNameId) {
         skippedNoEnsName++;
-        logger.debug({ tokenId, orderHash: offer.order_hash }, 'Could not find ens_name for offer, skipping');
+        logger.debug(
+          { tokenId, orderHash: offer.order_hash },
+          'Could not find ens_name for offer, skipping'
+        );
         continue;
       }
 
-      const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
+      const currencyAddress =
+        offer.protocol_data?.parameters?.offer?.[0]?.token ||
         '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 
       await pool.query(
@@ -347,26 +365,39 @@ async function reconcileOffers(pool: Pool) {
     logger.warn({ skippedNoEnsName }, 'Offers skipped: ens_name not found by token_id or name');
   }
 
-  return { checked: activeOffers.length, missing: missingOffers.length, inserted, skippedNoToken, skippedNoEnsName };
+  return {
+    checked: activeOffers.length,
+    missing: missingOffers.length,
+    inserted,
+    skippedNoToken,
+    skippedNoEnsName,
+  };
 }
 
 async function reconcileListings(pool: Pool) {
   const { listings: osListings, pagesFetched } = await fetchOpenSeaListings();
-  const activeListings = osListings.filter(l => l.status === 'ACTIVE');
+  const activeListings = osListings.filter((l) => l.status === 'ACTIVE');
 
   if (activeListings.length === 0) {
-    return { checked: 0, missing: 0, inserted: 0, skippedNoToken: 0, skippedNoEnsName: 0, pagesFetched };
+    return {
+      checked: 0,
+      missing: 0,
+      inserted: 0,
+      skippedNoToken: 0,
+      skippedNoEnsName: 0,
+      pagesFetched,
+    };
   }
 
-  const orderHashes = activeListings.map(l => l.order_hash);
+  const orderHashes = activeListings.map((l) => l.order_hash);
 
   const existingResult = await pool.query(
     `SELECT order_hash FROM listings WHERE order_hash = ANY($1)`,
     [orderHashes]
   );
-  const existingHashes = new Set(existingResult.rows.map(r => r.order_hash));
+  const existingHashes = new Set(existingResult.rows.map((r) => r.order_hash));
 
-  const missingListings = activeListings.filter(l => !existingHashes.has(l.order_hash));
+  const missingListings = activeListings.filter((l) => !existingHashes.has(l.order_hash));
 
   let inserted = 0;
   let skippedNoToken = 0;
@@ -383,7 +414,10 @@ async function reconcileListings(pool: Pool) {
       const ensNameId = await resolveEnsNameId(pool, listing.asset!);
       if (!ensNameId) {
         skippedNoEnsName++;
-        logger.debug({ tokenId, orderHash: listing.order_hash }, 'Could not find ens_name for listing, skipping');
+        logger.debug(
+          { tokenId, orderHash: listing.order_hash },
+          'Could not find ens_name for listing, skipping'
+        );
         continue;
       }
 
@@ -408,7 +442,10 @@ async function reconcileListings(pool: Pool) {
 
       logger.info({ orderHash: listing.order_hash, tokenId }, 'Inserted missing listing');
     } catch (error: any) {
-      logger.warn({ error: error.message, orderHash: listing.order_hash }, 'Failed to insert listing');
+      logger.warn(
+        { error: error.message, orderHash: listing.order_hash },
+        'Failed to insert listing'
+      );
     }
   }
 
@@ -416,5 +453,12 @@ async function reconcileListings(pool: Pool) {
     logger.warn({ skippedNoEnsName }, 'Listings skipped: ens_name not found by token_id or name');
   }
 
-  return { checked: activeListings.length, missing: missingListings.length, inserted, skippedNoToken, skippedNoEnsName, pagesFetched };
+  return {
+    checked: activeListings.length,
+    missing: missingListings.length,
+    inserted,
+    skippedNoToken,
+    skippedNoEnsName,
+    pagesFetched,
+  };
 }

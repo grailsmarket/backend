@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
+import {
+  getPostgresPool,
+  type APIResponse,
+  type Offer,
+  validateFeeInOrder,
+} from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 
 const CreateOfferSchema = z.object({
@@ -90,7 +95,10 @@ export async function offersRoutes(fastify: FastifyInstance) {
             { type: 'offer', id: offer.id },
             { startAfter: new Date(offer.expires_at) }
           );
-          fastify.log.info({ offerId: offer.id, expiresAt: offer.expires_at }, 'Scheduled offer expiry job');
+          fastify.log.info(
+            { offerId: offer.id, expiresAt: offer.expires_at },
+            'Scheduled offer expiry job'
+          );
         }
 
         // Publish highest offer update job
@@ -100,11 +108,14 @@ export async function offersRoutes(fastify: FastifyInstance) {
           offerAmountWei: offer.offer_amount_wei,
           currencyAddress: offer.currency_address,
         });
-        fastify.log.info({ offerId: offer.id, ensNameId: offer.ens_name_id }, 'Published highest offer update job');
+        fastify.log.info(
+          { offerId: offer.id, ensNameId: offer.ens_name_id },
+          'Published highest offer update job'
+        );
 
         // Trigger immediate balance validation for new offer
         await boss.send('validate-offer-balance', {
-          offerId: offer.id
+          offerId: offer.id,
         });
         fastify.log.info({ offerId: offer.id }, 'Triggered offer balance validation');
       } catch (queueError) {
@@ -180,13 +191,9 @@ export async function offersRoutes(fastify: FastifyInstance) {
       ${status ? 'AND status = $2' : ''}
     `;
 
-    const queryParams = status
-      ? [ensNameId, limit, offset, status]
-      : [ensNameId, limit, offset];
+    const queryParams = status ? [ensNameId, limit, offset, status] : [ensNameId, limit, offset];
 
-    const countParams = status
-      ? [ensNameId, status]
-      : [ensNameId];
+    const countParams = status ? [ensNameId, status] : [ensNameId];
 
     const [offersResult, countResult] = await Promise.all([
       pool.query(offersQuery, queryParams),
@@ -260,12 +267,15 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const body = UpdateOfferSchema.parse(request.body);
 
     // Verify the user is authorized to update this offer
-    const offerCheck = await pool.query(`
+    const offerCheck = await pool.query(
+      `
       SELECT o.buyer_address, o.status, en.owner_address
       FROM offers o
       JOIN ens_names en ON o.ens_name_id = en.id
       WHERE o.id = $1
-    `, [id]);
+    `,
+      [id]
+    );
 
     if (offerCheck.rows.length === 0) {
       return reply.status(404).send({
@@ -401,7 +411,10 @@ export async function offersRoutes(fastify: FastifyInstance) {
           offerAmountWei: updatedOffer.offer_amount_wei,
           currencyAddress: updatedOffer.currency_address,
         });
-        fastify.log.info({ offerId: updatedOffer.id }, 'Published highest offer update for amount change');
+        fastify.log.info(
+          { offerId: updatedOffer.id },
+          'Published highest offer update for amount change'
+        );
       }
 
       // If status changed from pending to something else, recalculate highest offer
@@ -416,7 +429,10 @@ export async function offersRoutes(fastify: FastifyInstance) {
           await boss.send('recalculate-highest-offer', {
             ensNameId: updatedOffer.ens_name_id,
           });
-          fastify.log.info({ offerId: updatedOffer.id, ensNameId: updatedOffer.ens_name_id }, 'Published recalculate highest offer (was highest)');
+          fastify.log.info(
+            { offerId: updatedOffer.id, ensNameId: updatedOffer.ens_name_id },
+            'Published recalculate highest offer (was highest)'
+          );
         }
       }
     } catch (queueError) {
@@ -457,13 +473,9 @@ export async function offersRoutes(fastify: FastifyInstance) {
       ${status ? 'AND status = $2' : ''}
     `;
 
-    const queryParams = status
-      ? [address, limit, offset, status]
-      : [address, limit, offset];
+    const queryParams = status ? [address, limit, offset, status] : [address, limit, offset];
 
-    const countParams = status
-      ? [address, status]
-      : [address];
+    const countParams = status ? [address, status] : [address];
 
     const [offersResult, countResult] = await Promise.all([
       pool.query(offersQuery, queryParams),
@@ -518,13 +530,9 @@ export async function offersRoutes(fastify: FastifyInstance) {
       ${status ? 'AND o.status = $2' : ''}
     `;
 
-    const queryParams = status
-      ? [address, limit, offset, status]
-      : [address, limit, offset];
+    const queryParams = status ? [address, limit, offset, status] : [address, limit, offset];
 
-    const countParams = status
-      ? [address, status]
-      : [address];
+    const countParams = status ? [address, status] : [address];
 
     const [offersResult, countResult] = await Promise.all([
       pool.query(offersQuery, queryParams),

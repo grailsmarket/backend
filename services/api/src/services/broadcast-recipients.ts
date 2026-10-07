@@ -13,9 +13,7 @@ export interface BroadcastRecipient {
  */
 export async function getAllBroadcastRecipients(): Promise<BroadcastRecipient[]> {
   const pool = getPostgresPool();
-  const result = await pool.query(
-    `SELECT id AS user_id, email, email_verified FROM users`
-  );
+  const result = await pool.query(`SELECT id AS user_id, email, email_verified FROM users`);
   return result.rows.map((r) => ({
     userId: r.user_id,
     email: r.email,
@@ -37,9 +35,7 @@ export async function getUnverifiedEmailRecipients(): Promise<BroadcastRecipient
   }));
 }
 
-export async function getRecipientsByAddresses(
-  addresses: string[]
-): Promise<BroadcastRecipient[]> {
+export async function getRecipientsByAddresses(addresses: string[]): Promise<BroadcastRecipient[]> {
   if (addresses.length === 0) return [];
   const lowered = addresses.map((a) => a.toLowerCase());
   const pool = getPostgresPool();

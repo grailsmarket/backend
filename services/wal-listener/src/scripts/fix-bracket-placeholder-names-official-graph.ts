@@ -22,7 +22,8 @@ import { normalizeEnsName } from '../../../shared/src/utils/ens-normalize';
 import * as fs from 'fs';
 
 // The paid Graph gateway has label preimages that the ensnode endpoint lacks
-const GRAPH_ENS_SUBGRAPH_URL = 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH';
+const GRAPH_ENS_SUBGRAPH_URL =
+  'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH';
 const GRAPH_API_KEY = process.env.THE_GRAPH_API_KEY || '';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const ETH_NODE = '0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae';
@@ -58,7 +59,7 @@ function decimalToHex(decimal: string): string {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function processDomain(domain: any): DomainData {
@@ -85,9 +86,8 @@ function processDomain(domain: any): DomainData {
   // Check expiry
   let isExpired = false;
   if (domain.expiryDate) {
-    const expiryTimestamp = typeof domain.expiryDate === 'string'
-      ? parseInt(domain.expiryDate)
-      : domain.expiryDate;
+    const expiryTimestamp =
+      typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
     isExpired = expiryTimestamp * 1000 < Date.now();
   }
 
@@ -136,7 +136,10 @@ async function queryGraphByIds(tokenIdHexArray: string[]): Promise<Map<string, D
   try {
     const response = await fetch(GRAPH_ENS_SUBGRAPH_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(GRAPH_API_KEY ? { 'Authorization': `Bearer ${GRAPH_API_KEY}` } : {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(GRAPH_API_KEY ? { Authorization: `Bearer ${GRAPH_API_KEY}` } : {}),
+      },
       body: JSON.stringify({ query, variables: { ids: tokenIdHexArray } }),
     });
 
@@ -180,7 +183,10 @@ async function queryGraphByLabelhashes(labelhashes: string[]): Promise<Map<strin
   try {
     const response = await fetch(GRAPH_ENS_SUBGRAPH_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(GRAPH_API_KEY ? { 'Authorization': `Bearer ${GRAPH_API_KEY}` } : {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(GRAPH_API_KEY ? { Authorization: `Bearer ${GRAPH_API_KEY}` } : {}),
+      },
       body: JSON.stringify({ query, variables: { labelhashes } }),
     });
 
@@ -238,9 +244,13 @@ async function fixBracketPlaceholderNames(options: {
   try {
     console.log('\n=== Fix [hash].eth Bracket Placeholder Names ===\n');
     console.log(`Graph endpoint: ${GRAPH_ENS_SUBGRAPH_URL}`);
-    console.log(`Graph API key: ${GRAPH_API_KEY ? GRAPH_API_KEY.substring(0, 8) + '...' : 'NOT SET'}`);
+    console.log(
+      `Graph API key: ${GRAPH_API_KEY ? GRAPH_API_KEY.substring(0, 8) + '...' : 'NOT SET'}`
+    );
     if (!GRAPH_API_KEY) {
-      console.error('\n❌ THE_GRAPH_API_KEY is required (paid gateway has label preimages the free endpoint lacks)');
+      console.error(
+        '\n❌ THE_GRAPH_API_KEY is required (paid gateway has label preimages the free endpoint lacks)'
+      );
       console.error('Set it via: THE_GRAPH_API_KEY=<key> node ...');
       await pool.end();
       return;
@@ -294,7 +304,9 @@ async function fixBracketPlaceholderNames(options: {
       const batch = placeholders.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
-      console.log(`\nBatch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`);
+      console.log(
+        `\nBatch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`
+      );
 
       // Convert all token_ids to hex for batch lookup
       const tokenIdHexMap = new Map<string, PlaceholderRecord>();
@@ -324,7 +336,9 @@ async function fixBracketPlaceholderNames(options: {
 
       let byLabelhashResults = new Map<string, DomainData>();
       if (unresolvedHexes.length > 0) {
-        console.log(`  ${byIdResults.size} resolved by ID, ${unresolvedHexes.length} falling back to labelhash...`);
+        console.log(
+          `  ${byIdResults.size} resolved by ID, ${unresolvedHexes.length} falling back to labelhash...`
+        );
         byLabelhashResults = await queryGraphByLabelhashes(unresolvedHexes);
       } else {
         console.log(`  All ${byIdResults.size} resolved by ID`);
@@ -338,14 +352,18 @@ async function fixBracketPlaceholderNames(options: {
         const domainData = byIdResults.get(tokenIdHex) || byLabelhashResults.get(tokenIdHex);
 
         if (!domainData || !domainData.name) {
-          console.log(`  ⚠️  ID ${placeholder.id} ${placeholder.name} - Not found in Graph (hex: ${tokenIdHex})`);
+          console.log(
+            `  ⚠️  ID ${placeholder.id} ${placeholder.name} - Not found in Graph (hex: ${tokenIdHex})`
+          );
           skipped++;
           continue;
         }
 
         // The Graph returns [hash].eth when the label preimage is unknown — treat as unresolved
         if (/^\[[0-9a-fA-F]{64}\]\.eth$/.test(domainData.name)) {
-          console.log(`  ⚠️  ID ${placeholder.id} ${placeholder.name} - Graph returned unknown label (no preimage), graph name: ${domainData.name}`);
+          console.log(
+            `  ⚠️  ID ${placeholder.id} ${placeholder.name} - Graph returned unknown label (no preimage), graph name: ${domainData.name}`
+          );
           skipped++;
           continue;
         }
@@ -353,12 +371,16 @@ async function fixBracketPlaceholderNames(options: {
         // Normalize and validate — only insert names that pass ENS normalization
         const normResult = normalizeEnsName(domainData.name);
         if (!normResult.isValid) {
-          console.log(`  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (${normResult.error || 'normalization failed'})`);
+          console.log(
+            `  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (${normResult.error || 'normalization failed'})`
+          );
           skipped++;
           continue;
         }
         if (normResult.normalized !== domainData.name) {
-          console.log(`  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (contains non-normalized characters)`);
+          console.log(
+            `  ⚠️  ID ${placeholder.id} → ${domainData.name} — invalid (contains non-normalized characters)`
+          );
           skipped++;
           continue;
         }
@@ -371,8 +393,12 @@ async function fixBracketPlaceholderNames(options: {
         }
 
         const correctTokenId = getCorrectTokenId(domainData);
-        const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
-        const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
+        const expiryDate = domainData.expiryDate
+          ? new Date(parseInt(domainData.expiryDate) * 1000)
+          : null;
+        const registrationDate = domainData.registrationDate
+          ? new Date(parseInt(domainData.registrationDate) * 1000)
+          : null;
 
         console.log(`  ✅ ID ${placeholder.id} ${placeholder.name} → ${domainData.name}`);
 
@@ -393,7 +419,10 @@ async function fixBracketPlaceholderNames(options: {
             console.log(`     Duplicate found: id=${dup.id}, name=${dup.name}`);
 
             // Current is placeholder, keep whichever has the real name (or the duplicate if it's real)
-            const dupIsPlaceholder = dup.name.startsWith('token-') || dup.name.startsWith('#') || /^\[[0-9a-fA-F]{64}\]\.eth$/.test(dup.name);
+            const dupIsPlaceholder =
+              dup.name.startsWith('token-') ||
+              dup.name.startsWith('#') ||
+              /^\[[0-9a-fA-F]{64}\]\.eth$/.test(dup.name);
             const keepId = dupIsPlaceholder ? placeholder.id : dup.id;
             const deleteId = dupIsPlaceholder ? dup.id : placeholder.id;
 
@@ -404,11 +433,26 @@ async function fixBracketPlaceholderNames(options: {
               await pool.query('SET LOCAL session_replication_role = replica');
 
               // Move FK references from deleted record to kept record
-              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
+              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query(
+                'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
+                [keepId, deleteId]
+              );
+              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
 
               // Delete the unwanted record
               await pool.query('DELETE FROM ens_names WHERE id = $1', [deleteId]);

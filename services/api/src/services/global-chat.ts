@@ -110,8 +110,7 @@ async function fetchGlobalChatConfig(): Promise<GlobalChatConfig> {
   const row = result.rows[0];
   return {
     enabled: Boolean(row.enabled),
-    quota_with_avatar:
-      row.quota_with_avatar === null ? null : Number(row.quota_with_avatar),
+    quota_with_avatar: row.quota_with_avatar === null ? null : Number(row.quota_with_avatar),
     quota_with_name: Number(row.quota_with_name),
     quota_without_name: Number(row.quota_without_name),
     max_message_length: Number(row.max_message_length),
@@ -166,10 +165,7 @@ export async function getUserTier(address: string): Promise<GlobalChatTier> {
   return tier;
 }
 
-export function tierLimit(
-  tier: GlobalChatTier,
-  config: GlobalChatConfig
-): number | null {
+export function tierLimit(tier: GlobalChatTier, config: GlobalChatConfig): number | null {
   switch (tier) {
     case 'avatar':
       return config.quota_with_avatar;
@@ -184,10 +180,7 @@ export function tierLimit(
  * Accepts an optional PoolClient so the send path can run the count inside
  * the same advisory-locked transaction as the INSERT (see chats-global.ts).
  */
-export async function getQuotaUsedToday(
-  userId: number,
-  db?: Pool | PoolClient
-): Promise<number> {
+export async function getQuotaUsedToday(userId: number, db?: Pool | PoolClient): Promise<number> {
   const executor = db ?? getPostgresPool();
   // Soft-deleted messages still count: deleting your own message doesn't
   // refund quota. created_at is assumed UTC (same as the rest of the schema).

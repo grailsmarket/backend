@@ -49,9 +49,12 @@ interface BulkOrdersResponse {
 }
 
 // Test token IDs (random large numbers that probably don't exist)
-const TEST_TOKEN_ID_1 = '99999999999999999999999999999999999999999999999999999999999999999999999001';
-const TEST_TOKEN_ID_2 = '99999999999999999999999999999999999999999999999999999999999999999999999002';
-const TEST_TOKEN_ID_3 = '99999999999999999999999999999999999999999999999999999999999999999999999003';
+const TEST_TOKEN_ID_1 =
+  '99999999999999999999999999999999999999999999999999999999999999999999999001';
+const TEST_TOKEN_ID_2 =
+  '99999999999999999999999999999999999999999999999999999999999999999999999002';
+const TEST_TOKEN_ID_3 =
+  '99999999999999999999999999999999999999999999999999999999999999999999999003';
 
 // Test seller address
 const TEST_SELLER = '0x1234567890123456789012345678901234567890';
@@ -98,7 +101,9 @@ function createTestOrderData(tokenId: string, price: string, seller: string): st
 
 // Helper to generate unique order hash
 function generateOrderHash(): string {
-  return '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return (
+    '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+  );
 }
 
 // Helper to get database pool
@@ -115,16 +120,22 @@ describe('Bulk Orders Endpoint', () => {
     const pool = await getPool();
     try {
       // Clean up test listings
-      await pool.query(`
+      await pool.query(
+        `
         DELETE FROM listings
         WHERE seller_address = $1
-      `, [TEST_SELLER.toLowerCase()]);
+      `,
+        [TEST_SELLER.toLowerCase()]
+      );
 
       // Clean up test ENS names
-      await pool.query(`
+      await pool.query(
+        `
         DELETE FROM ens_names
         WHERE token_id IN ($1, $2, $3)
-      `, [TEST_TOKEN_ID_1, TEST_TOKEN_ID_2, TEST_TOKEN_ID_3]);
+      `,
+        [TEST_TOKEN_ID_1, TEST_TOKEN_ID_2, TEST_TOKEN_ID_3]
+      );
     } finally {
       await pool.end();
     }
@@ -138,10 +149,9 @@ describe('Bulk Orders Endpoint', () => {
         throw new Error(`Server returned ${response.status}`);
       }
     } catch (error) {
-      throw new Error(
-        'API server not running. Start with: cd services/api && npm run dev',
-        { cause: error }
-      );
+      throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+        cause: error,
+      });
     }
   });
 
@@ -154,7 +164,7 @@ describe('Bulk Orders Endpoint', () => {
       });
 
       expect(response.status).toBe(400);
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       expect(data.success).toBe(false);
       expect(data.error!.code).toBe('VALIDATION_ERROR');
     });
@@ -177,7 +187,7 @@ describe('Bulk Orders Endpoint', () => {
       });
 
       expect(response.status).toBe(400);
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       expect(data.success).toBe(false);
       expect(data.error!.code).toBe('VALIDATION_ERROR');
     });
@@ -187,19 +197,21 @@ describe('Bulk Orders Endpoint', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listings: [{
-            type: 'offer', // Not allowed in bulk
-            token_id: TEST_TOKEN_ID_1,
-            price_wei: '1000000000000000000',
-            order_data: createTestOrderData(TEST_TOKEN_ID_1, '1000000000000000000', TEST_SELLER),
-            order_hash: generateOrderHash(),
-            seller_address: TEST_SELLER,
-          }],
+          listings: [
+            {
+              type: 'offer', // Not allowed in bulk
+              token_id: TEST_TOKEN_ID_1,
+              price_wei: '1000000000000000000',
+              order_data: createTestOrderData(TEST_TOKEN_ID_1, '1000000000000000000', TEST_SELLER),
+              order_hash: generateOrderHash(),
+              seller_address: TEST_SELLER,
+            },
+          ],
         }),
       });
 
       expect(response.status).toBe(400);
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       expect(data.success).toBe(false);
     });
   });
@@ -237,7 +249,7 @@ describe('Bulk Orders Endpoint', () => {
       });
 
       expect(response.status).toBe(201);
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       expect(data.success).toBe(true);
       expect(data.data!.summary.total).toBe(2);
       expect(data.data!.summary.succeeded).toBe(2);
@@ -257,15 +269,17 @@ describe('Bulk Orders Endpoint', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listings: [{
-            type: 'listing',
-            token_id: TEST_TOKEN_ID_3,
-            price_wei: '1000000000000000000',
-            order_data: createTestOrderData(TEST_TOKEN_ID_3, '1000000000000000000', TEST_SELLER),
-            order_hash: orderHash,
-            seller_address: TEST_SELLER,
-            source: 'opensea',
-          }],
+          listings: [
+            {
+              type: 'listing',
+              token_id: TEST_TOKEN_ID_3,
+              price_wei: '1000000000000000000',
+              order_data: createTestOrderData(TEST_TOKEN_ID_3, '1000000000000000000', TEST_SELLER),
+              order_hash: orderHash,
+              seller_address: TEST_SELLER,
+              source: 'opensea',
+            },
+          ],
         }),
       });
 
@@ -276,20 +290,22 @@ describe('Bulk Orders Endpoint', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listings: [{
-            type: 'listing',
-            token_id: TEST_TOKEN_ID_3,
-            price_wei: '2000000000000000000', // Different price
-            order_data: createTestOrderData(TEST_TOKEN_ID_3, '2000000000000000000', TEST_SELLER),
-            order_hash: orderHash,
-            seller_address: TEST_SELLER,
-            source: 'opensea',
-          }],
+          listings: [
+            {
+              type: 'listing',
+              token_id: TEST_TOKEN_ID_3,
+              price_wei: '2000000000000000000', // Different price
+              order_data: createTestOrderData(TEST_TOKEN_ID_3, '2000000000000000000', TEST_SELLER),
+              order_hash: orderHash,
+              seller_address: TEST_SELLER,
+              source: 'opensea',
+            },
+          ],
         }),
       });
 
       // Should succeed - old listing was auto-cancelled
-      const data2 = await response2.json() as BulkOrdersResponse;
+      const data2 = (await response2.json()) as BulkOrdersResponse;
       if (response2.status !== 201) {
         console.log('Duplicate test failed with:', JSON.stringify(data2, null, 2));
       }
@@ -304,8 +320,12 @@ describe('Bulk Orders Endpoint', () => {
       const listings = Array.from({ length: 5 }, (_, i) => ({
         type: 'listing' as const,
         token_id: `${TEST_TOKEN_ID_1}${i}`,
-        price_wei: `${(i + 1)}000000000000000000`,
-        order_data: createTestOrderData(`${TEST_TOKEN_ID_1}${i}`, `${(i + 1)}000000000000000000`, TEST_SELLER),
+        price_wei: `${i + 1}000000000000000000`,
+        order_data: createTestOrderData(
+          `${TEST_TOKEN_ID_1}${i}`,
+          `${i + 1}000000000000000000`,
+          TEST_SELLER
+        ),
         order_hash: generateOrderHash(),
         seller_address: TEST_SELLER,
         source: 'opensea',
@@ -317,7 +337,7 @@ describe('Bulk Orders Endpoint', () => {
         body: JSON.stringify({ listings }),
       });
 
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       expect(data.data!.results).toHaveLength(5);
 
       // Verify results are in index order
@@ -333,19 +353,21 @@ describe('Bulk Orders Endpoint', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          listings: [{
-            type: 'listing',
-            token_id: testTokenId,
-            price_wei: '1000000000000000000',
-            order_data: createTestOrderData(testTokenId, '1000000000000000000', TEST_SELLER),
-            order_hash: generateOrderHash(),
-            seller_address: TEST_SELLER,
-            source: 'opensea',
-          }],
+          listings: [
+            {
+              type: 'listing',
+              token_id: testTokenId,
+              price_wei: '1000000000000000000',
+              order_data: createTestOrderData(testTokenId, '1000000000000000000', TEST_SELLER),
+              order_hash: generateOrderHash(),
+              seller_address: TEST_SELLER,
+              source: 'opensea',
+            },
+          ],
         }),
       });
 
-      const data = await response.json() as BulkOrdersResponse;
+      const data = (await response.json()) as BulkOrdersResponse;
       if (!data.data) {
         console.log('Summary test failed with:', JSON.stringify(data, null, 2));
       }

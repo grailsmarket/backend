@@ -36,12 +36,12 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
@@ -49,7 +49,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period_views: metrics?.period_views || 0,
           unique_viewers: metrics?.unique_viewers || 0,
           total_views: metrics?.total_views || 0,
-        }
+        },
       };
     });
 
@@ -61,7 +61,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period: query.period,
           type: 'views',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -95,19 +95,19 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
           period: query.period,
           period_additions: metrics?.period_additions || 0,
           total_watchers: metrics?.total_watchers || 0,
-        }
+        },
       };
     });
 
@@ -119,7 +119,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period: query.period,
           type: 'watchlist',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -155,12 +155,12 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
@@ -169,7 +169,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period_downvotes: metrics?.period_downvotes || 0,
           period_votes: metrics?.period_votes || 0,
           net_score_total: metrics?.net_score_total || 0,
-        }
+        },
       };
     });
 
@@ -181,7 +181,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period: query.period,
           type: 'votes',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -218,12 +218,12 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
@@ -233,7 +233,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           avg_price: metrics?.avg_price || '0',
           max_price: metrics?.max_price || '0',
           min_price: metrics?.min_price || '0',
-        }
+        },
       };
     });
 
@@ -245,7 +245,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period: query.period,
           type: 'sales',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -281,12 +281,12 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
@@ -295,7 +295,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           highest_offer: metrics?.highest_offer || '0',
           avg_offer: metrics?.avg_offer || '0',
           unique_bidders: metrics?.unique_bidders || 0,
-        }
+        },
       };
     });
 
@@ -307,7 +307,7 @@ export async function trendingRoutes(fastify: FastifyInstance) {
           period: query.period,
           type: 'offers',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -345,12 +345,12 @@ export async function trendingRoutes(fastify: FastifyInstance) {
     );
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add trending metrics to enriched results
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         trending_metrics: {
@@ -362,8 +362,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
             votes: metrics?.period_votes || 0,
             offers: metrics?.period_offers || 0,
             sales: metrics?.period_sales || 0,
-          }
-        }
+          },
+        },
       };
     });
 
@@ -383,8 +383,8 @@ export async function trendingRoutes(fastify: FastifyInstance) {
             offers: 10,
             listings: 8,
             sales: 50,
-          }
-        }
+          },
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),

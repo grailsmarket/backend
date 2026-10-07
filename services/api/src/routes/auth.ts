@@ -37,10 +37,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       const nonce = crypto.randomBytes(16).toString('hex');
 
       // Delete any existing unused nonces for this address
-      await pool.query(
-        'DELETE FROM nonces WHERE address = $1 AND used = FALSE',
-        [normalizedAddress]
-      );
+      await pool.query('DELETE FROM nonces WHERE address = $1 AND used = FALSE', [
+        normalizedAddress,
+      ]);
 
       // Store nonce in database with 5-minute expiration (using PostgreSQL NOW() for consistent timezone)
       const insertResult = await pool.query(
@@ -50,12 +49,15 @@ export async function authRoutes(fastify: FastifyInstance) {
         [nonce, normalizedAddress]
       );
 
-      fastify.log.info({
-        nonce,
-        address: normalizedAddress,
-        expiresAt: insertResult.rows[0].expires_at,
-        inserted: insertResult.rows[0]
-      }, 'Nonce created');
+      fastify.log.info(
+        {
+          nonce,
+          address: normalizedAddress,
+          expiresAt: insertResult.rows[0].expires_at,
+          inserted: insertResult.rows[0],
+        },
+        'Nonce created'
+      );
 
       const response: APIResponse = {
         success: true,
@@ -143,10 +145,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       // Check nonce exists and hasn't been used or expired
       const normalizedAddress = siweMessage.address.toLowerCase();
 
-      fastify.log.info({
-        nonce: siweMessage.nonce,
-        address: normalizedAddress
-      }, 'Verifying nonce');
+      fastify.log.info(
+        {
+          nonce: siweMessage.nonce,
+          address: normalizedAddress,
+        },
+        'Verifying nonce'
+      );
 
       const nonceResult = await pool.query(
         `SELECT * FROM nonces
@@ -154,24 +159,29 @@ export async function authRoutes(fastify: FastifyInstance) {
         [siweMessage.nonce, normalizedAddress]
       );
 
-      fastify.log.info({
-        found: nonceResult.rows.length,
-        rows: nonceResult.rows
-      }, 'Nonce query result');
+      fastify.log.info(
+        {
+          found: nonceResult.rows.length,
+          rows: nonceResult.rows,
+        },
+        'Nonce query result'
+      );
 
       if (nonceResult.rows.length === 0) {
         // Check if nonce exists at all
-        const allNoncesResult = await pool.query(
-          'SELECT * FROM nonces WHERE nonce = $1',
-          [siweMessage.nonce]
-        );
+        const allNoncesResult = await pool.query('SELECT * FROM nonces WHERE nonce = $1', [
+          siweMessage.nonce,
+        ]);
 
-        fastify.log.warn({
-          nonce: siweMessage.nonce,
-          address: normalizedAddress,
-          existsWithDifferentAddress: allNoncesResult.rows.length > 0,
-          actualNonce: allNoncesResult.rows[0]
-        }, 'Nonce not found or already used');
+        fastify.log.warn(
+          {
+            nonce: siweMessage.nonce,
+            address: normalizedAddress,
+            existsWithDifferentAddress: allNoncesResult.rows.length > 0,
+            actualNonce: allNoncesResult.rows[0],
+          },
+          'Nonce not found or already used'
+        );
 
         return reply.status(401).send({
           success: false,
@@ -266,7 +276,10 @@ export async function authRoutes(fastify: FastifyInstance) {
 
             // Signature valid — fall through to mark nonce as used
           } catch (viemError: any) {
-            fastify.log.error('Smart wallet signature verification error:', viemError?.message || 'Unknown error');
+            fastify.log.error(
+              'Smart wallet signature verification error:',
+              viemError?.message || 'Unknown error'
+            );
             return reply.status(401).send({
               success: false,
               error: {
@@ -294,10 +307,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
 
       // Mark nonce as used
-      await pool.query(
-        'UPDATE nonces SET used = TRUE WHERE nonce = $1',
-        [siweMessage.nonce]
-      );
+      await pool.query('UPDATE nonces SET used = TRUE WHERE nonce = $1', [siweMessage.nonce]);
 
       // Upsert user record. Also clear is_stub: chat-system stubs are upgraded to
       // real users on first SIWE auth.
@@ -329,7 +339,8 @@ export async function authRoutes(fastify: FastifyInstance) {
             notifyOnOfferReceived: user.notify_on_offer_received,
             notifyOnListingSold: user.notify_on_listing_sold,
             notifyOnCommentReceived: user.notify_on_comment_received,
-            minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+            minOfferThreshold:
+              user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
             createdAt: user.created_at,
             lastSignIn: user.last_sign_in,
           },
@@ -392,10 +403,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
 
       // Fetch user from database
-      const userResult = await pool.query(
-        'SELECT * FROM users WHERE id = $1',
-        [parseInt(request.user.sub)]
-      );
+      const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [
+        parseInt(request.user.sub),
+      ]);
 
       if (userResult.rows.length === 0) {
         return reply.status(404).send({
@@ -424,7 +434,8 @@ export async function authRoutes(fastify: FastifyInstance) {
           notifyOnOfferReceived: user.notify_on_offer_received,
           notifyOnListingSold: user.notify_on_listing_sold,
           notifyOnCommentReceived: user.notify_on_comment_received,
-          minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+          minOfferThreshold:
+            user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
           createdAt: user.created_at,
           updatedAt: user.updated_at,
           lastSignIn: user.last_sign_in,

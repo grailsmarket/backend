@@ -54,7 +54,9 @@ export class ListingsAPI {
    * @param filters - Optional filters and pagination
    * @returns Paginated list of listings
    */
-  async list(filters?: ListingFilters & { page?: number; limit?: number }): Promise<PaginatedListingsResponse<Listing>> {
+  async list(
+    filters?: ListingFilters & { page?: number; limit?: number }
+  ): Promise<PaginatedListingsResponse<Listing>> {
     const params: Record<string, string | number | boolean | undefined> = {
       page: filters?.page,
       limit: filters?.limit,

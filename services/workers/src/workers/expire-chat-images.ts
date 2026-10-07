@@ -25,70 +25,71 @@ async function getImageRetentionDays(pool: ReturnType<typeof getPostgresPool>): 
 }
 
 export async function registerExpireChatImagesWorker(boss: PgBoss) {
-  await boss.work(
-    QUEUE_NAME,
-    { teamSize: 1, teamConcurrency: 1 },
-    async (job) => {
-      logger.info({ jobId: job.id }, 'Starting chat image expiry');
-      try {
-        if (!isStorageEnabled()) {
-          logger.warn({ jobId: job.id }, 'Storage not configured; skipping chat image expiry');
-          return { success: true, expired: 0, skipped: true };
+  await boss.work(QUEUE_NAME, { teamSize: 1, teamConcurrency: 1 }, async (job) => {
+    logger.info({ jobId: job.id }, 'Starting chat image expiry');
+    try {
+      if (!isStorageEnabled()) {
+        logger.warn({ jobId: job.id }, 'Storage not configured; skipping chat image expiry');
+        return { success: true, expired: 0, skipped: true };
+      }
+
+      const pool = getPostgresPool();
+      const days = await getImageRetentionDays(pool);
+
+      let expired = 0;
+      let failed = 0;
+      let lastCreated: string | null = null;
+      let lastId: string | null = null;
+
+      for (;;) {
+        const params: unknown[] = [days, BATCH_SIZE];
+        let cursorClause = '';
+        if (lastCreated !== null && lastId !== null) {
+          params.push(lastCreated, lastId);
+          cursorClause = `AND (created_at, id) > ($3, $4)`;
         }
-
-        const pool = getPostgresPool();
-        const days = await getImageRetentionDays(pool);
-
-        let expired = 0;
-        let failed = 0;
-        let lastCreated: string | null = null;
-        let lastId: string | null = null;
-
-        for (;;) {
-          const params: unknown[] = [days, BATCH_SIZE];
-          let cursorClause = '';
-          if (lastCreated !== null && lastId !== null) {
-            params.push(lastCreated, lastId);
-            cursorClause = `AND (created_at, id) > ($3, $4)`;
-          }
-          const batch = await pool.query<{ id: string; storage_key: string; created_at: string }>(
-            `SELECT id, storage_key, created_at FROM message_attachments
+        const batch = await pool.query<{ id: string; storage_key: string; created_at: string }>(
+          `SELECT id, storage_key, created_at FROM message_attachments
               WHERE expired_at IS NULL
                 AND created_at < NOW() - make_interval(days => $1::int)
                 ${cursorClause}
               ORDER BY created_at, id
               LIMIT $2`,
-            params
-          );
-          if (batch.rows.length === 0) break;
+          params
+        );
+        if (batch.rows.length === 0) break;
 
-          for (const a of batch.rows) {
-            try {
-              await deleteFile(a.storage_key);
-              await pool.query(`UPDATE message_attachments SET expired_at = NOW() WHERE id = $1`, [a.id]);
-              expired += 1;
-            } catch (err) {
-              failed += 1;
-              logger.error({ err, key: a.storage_key }, 'Failed to expire chat image; will retry next run');
-            }
+        for (const a of batch.rows) {
+          try {
+            await deleteFile(a.storage_key);
+            await pool.query(`UPDATE message_attachments SET expired_at = NOW() WHERE id = $1`, [
+              a.id,
+            ]);
+            expired += 1;
+          } catch (err) {
+            failed += 1;
+            logger.error(
+              { err, key: a.storage_key },
+              'Failed to expire chat image; will retry next run'
+            );
           }
-
-          // Advance the cursor regardless of per-row success → guaranteed progress.
-          const last = batch.rows[batch.rows.length - 1];
-          lastCreated = last.created_at;
-          lastId = last.id;
-
-          if (batch.rows.length < BATCH_SIZE) break;
         }
 
-        logger.info({ jobId: job.id, days, expired, failed }, 'Chat image expiry completed');
-        return { success: true, expired, failed };
-      } catch (error) {
-        logger.error({ jobId: job.id, err: error }, 'Chat image expiry failed');
-        throw error;
+        // Advance the cursor regardless of per-row success → guaranteed progress.
+        const last = batch.rows[batch.rows.length - 1];
+        lastCreated = last.created_at;
+        lastId = last.id;
+
+        if (batch.rows.length < BATCH_SIZE) break;
       }
+
+      logger.info({ jobId: job.id, days, expired, failed }, 'Chat image expiry completed');
+      return { success: true, expired, failed };
+    } catch (error) {
+      logger.error({ jobId: job.id, err: error }, 'Chat image expiry failed');
+      throw error;
     }
-  );
+  });
 
   await boss.schedule(QUEUE_NAME, CRON_SCHEDULE, {}, { tz: 'UTC' });
 

@@ -50,13 +50,10 @@ async function findAndFixStaleOffers() {
       body: {
         query: {
           bool: {
-            must: [
-              { exists: { field: 'highest_offer' } },
-              { range: { highest_offer: { gt: 0 } } }
-            ]
-          }
-        }
-      }
+            must: [{ exists: { field: 'highest_offer' } }, { range: { highest_offer: { gt: 0 } } }],
+          },
+        },
+      },
     });
 
     const totalWithOffers = countResult.count;
@@ -79,15 +76,12 @@ async function findAndFixStaleOffers() {
       body: {
         query: {
           bool: {
-            must: [
-              { exists: { field: 'highest_offer' } },
-              { range: { highest_offer: { gt: 0 } } }
-            ]
-          }
+            must: [{ exists: { field: 'highest_offer' } }, { range: { highest_offer: { gt: 0 } } }],
+          },
         },
         size: BATCH_SIZE,
-        _source: ['name', 'highest_offer', 'active_offers_count']
-      }
+        _source: ['name', 'highest_offer', 'active_offers_count'],
+      },
     });
 
     let scrollId = scrollResponse._scroll_id;
@@ -127,12 +121,13 @@ async function findAndFixStaleOffers() {
     console.log('Checking offer data in PostgreSQL...');
 
     const dbOfferData = new Map<number, DBOfferData>();
-    const allIds = allEsRecords.map(r => r.id);
+    const allIds = allEsRecords.map((r) => r.id);
 
     for (let i = 0; i < allIds.length; i += DB_BATCH_SIZE) {
       const batchIds = allIds.slice(i, i + DB_BATCH_SIZE);
 
-      const dbResult = await pool.query(`
+      const dbResult = await pool.query(
+        `
         SELECT
           en.id,
           en.highest_offer_wei,
@@ -144,7 +139,9 @@ async function findAndFixStaleOffers() {
         LEFT JOIN offers o ON o.ens_name_id = en.id
         WHERE en.id = ANY($1)
         GROUP BY en.id
-      `, [batchIds]);
+      `,
+        [batchIds]
+      );
 
       for (const row of dbResult.rows) {
         dbOfferData.set(row.id, {
@@ -154,7 +151,9 @@ async function findAndFixStaleOffers() {
         });
       }
 
-      process.stdout.write(`\r  Checked ${Math.min(i + DB_BATCH_SIZE, allIds.length)} / ${allIds.length} against DB...`);
+      process.stdout.write(
+        `\r  Checked ${Math.min(i + DB_BATCH_SIZE, allIds.length)} / ${allIds.length} against DB...`
+      );
     }
 
     console.log(`\n  Completed: ${dbOfferData.size} records checked in DB\n`);
@@ -232,9 +231,10 @@ async function findAndFixStaleOffers() {
     console.log('\n=== Stale Records (first 30 by offer amount) ===\n');
 
     for (const { esRecord, dbData, reason } of staleRecords.slice(0, 30)) {
-      const offerDisplay = esRecord.highestOffer && esRecord.highestOffer > 1e20
-        ? `${esRecord.highestOffer.toExponential(2)} wei`
-        : `${esRecord.highestOffer || 0} wei`;
+      const offerDisplay =
+        esRecord.highestOffer && esRecord.highestOffer > 1e20
+          ? `${esRecord.highestOffer.toExponential(2)} wei`
+          : `${esRecord.highestOffer || 0} wei`;
 
       console.log(`${esRecord.name}`);
       console.log(`  ID: ${esRecord.id}`);
@@ -278,7 +278,6 @@ async function findAndFixStaleOffers() {
       console.log('\n=== To fix these records, run with --fix flag ===');
       console.log('npx tsx src/scripts/fix-stale-offers-es.ts --fix\n');
     }
-
   } catch (error) {
     console.error('Error during analysis:', error);
   } finally {

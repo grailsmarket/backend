@@ -12,7 +12,9 @@ async function backfillCancelledEventPrices() {
   const pool = getPostgresPool();
 
   console.log('=== Backfill Cancelled Event Prices ===');
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`
+  );
 
   if (DRY_RUN) {
     console.log('🔍 Running in dry-run mode - no database updates will be performed\n');

@@ -23,7 +23,9 @@ export class ActivityNotifier {
     });
 
     await this.client.connect();
-    console.log(`[ActivityNotifier] Connected using ${usingDirect ? 'direct' : 'pooled'} connection`);
+    console.log(
+      `[ActivityNotifier] Connected using ${usingDirect ? 'direct' : 'pooled'} connection`
+    );
 
     // Listen for activity_created notifications
     await this.client.query('LISTEN activity_created');
@@ -87,14 +89,13 @@ export class ActivityNotifier {
         const activityData = result.rows[0];
 
         // Filter muted addresses - skip broadcast if actor or counterparty is muted
-        if (mutelistService.isAnyMuted(activityData.actor_address, activityData.counterparty_address)) {
-          console.log(
-            `Skipping broadcast for activity ${activityId} - muted address detected`,
-            {
-              actor: activityData.actor_address,
-              counterparty: activityData.counterparty_address,
-            }
-          );
+        if (
+          mutelistService.isAnyMuted(activityData.actor_address, activityData.counterparty_address)
+        ) {
+          console.log(`Skipping broadcast for activity ${activityId} - muted address detected`, {
+            actor: activityData.actor_address,
+            counterparty: activityData.counterparty_address,
+          });
           return;
         }
 

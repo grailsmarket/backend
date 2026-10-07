@@ -41,7 +41,7 @@ async function querySubgraph(body: any): Promise<{ status: number; data: Subgrap
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await response.json() as SubgraphResponse;
+  const data = (await response.json()) as SubgraphResponse;
   return { status: response.status, data };
 }
 
@@ -60,10 +60,9 @@ describe('Subgraph Relay API', () => {
       }
     } catch (error: any) {
       if (error.message?.includes('fetch failed') || error.cause?.code === 'ECONNREFUSED') {
-        throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev',
-          { cause: error }
-        );
+        throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+          cause: error,
+        });
       }
       // Other errors are OK - the endpoint exists
     }

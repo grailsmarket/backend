@@ -117,8 +117,10 @@ async function callOpenAIRaw(apiKey: string, body: string, label: string): Promi
     // Handle rate limit (429) with backoff
     if (response.status === 429 && attempt < MAX_RETRIES) {
       const resetMs = parseResetHeader(response.headers.get('x-ratelimit-reset-requests'));
-      const backoffMs = resetMs ?? (1000 * Math.pow(2, attempt) + Math.random() * 1000);
-      console.warn(`[openai] Rate limited (429) for "${label}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      const backoffMs = resetMs ?? 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+      console.warn(
+        `[openai] Rate limited (429) for "${label}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+      );
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
       continue;
     }
@@ -129,7 +131,9 @@ async function callOpenAIRaw(apiKey: string, body: string, label: string): Promi
       lastError = new Error(`OpenAI HTTP ${response.status}: ${errorText}`);
       if (response.status >= 500 && attempt < MAX_RETRIES) {
         const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-        console.warn(`[openai] Server error (${response.status}) for "${label}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+        console.warn(
+          `[openai] Server error (${response.status}) for "${label}", retrying in ${Math.round(backoffMs)}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+        );
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
         continue;
       }
@@ -149,7 +153,10 @@ async function callOpenAIRaw(apiKey: string, body: string, label: string): Promi
     }
 
     if (data.status === 'incomplete') {
-      console.warn('[openai] Response incomplete, attempting to extract partial content:', data.incomplete_details);
+      console.warn(
+        '[openai] Response incomplete, attempting to extract partial content:',
+        data.incomplete_details
+      );
     }
 
     // Find the message item in output (may have reasoning item before it)
@@ -183,7 +190,12 @@ async function callOpenAIRaw(apiKey: string, body: string, label: string): Promi
  * @returns Array of normalized, deduplicated name suggestions (up to 10)
  * @throws On non-retryable HTTP errors or after exhausting retries
  */
-async function callOpenAI(apiKey: string, name: string, categories?: string[], count: number = 10): Promise<string[]> {
+async function callOpenAI(
+  apiKey: string,
+  name: string,
+  categories?: string[],
+  count: number = 10
+): Promise<string[]> {
   // Filter out excluded categories
   const filteredCategories = categories?.filter(
     (cat) => !EXCLUDED_CATEGORIES.includes(cat.toLowerCase())
@@ -320,7 +332,9 @@ async function callOpenAIExpansions(apiKey: string, query: string): Promise<stri
   const validWords: string[] = [];
   for (const raw of rawWords) {
     if (typeof raw !== 'string') continue;
-    const cleaned = raw.toLowerCase().replace(/[^a-z0-9\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '');
+    const cleaned = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '');
     if (cleaned.length < 1 || cleaned.length > 20) continue;
     if (seen.has(cleaned)) continue;
     seen.add(cleaned);
@@ -369,9 +383,7 @@ export async function generateSimilarNames(
  * @param query - Search query string
  * @returns Array of expansion words, or null on failure
  */
-export async function generateSemanticExpansions(
-  query: string
-): Promise<string[] | null> {
+export async function generateSemanticExpansions(query: string): Promise<string[] | null> {
   const apiKey = config.openai.apiKey;
   if (!apiKey) {
     console.error('[openai] Missing OPENAI_API_KEY — cannot generate semantic expansions');

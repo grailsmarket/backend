@@ -14,7 +14,10 @@ const SMTP_CONFIG = {
 const isSmtpConfigured = SMTP_CONFIG.server && SMTP_CONFIG.login && SMTP_CONFIG.password;
 
 if (isSmtpConfigured && ENABLE_EMAIL) {
-  logger.info({ server: SMTP_CONFIG.server, port: SMTP_CONFIG.port }, 'Email service initialized with nodemailer');
+  logger.info(
+    { server: SMTP_CONFIG.server, port: SMTP_CONFIG.port },
+    'Email service initialized with nodemailer'
+  );
 } else {
   logger.warn('Email service disabled (missing SMTP config or ENABLE_EMAIL=false)');
 }
@@ -51,7 +54,10 @@ export async function sendEmail(to: string, template: EmailTemplate): Promise<vo
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    logger.info({ to, subject: template.subject, messageId: info.messageId }, 'Email sent successfully');
+    logger.info(
+      { to, subject: template.subject, messageId: info.messageId },
+      'Email sent successfully'
+    );
   } catch (error: any) {
     const errorMessage = error?.message || String(error);
 

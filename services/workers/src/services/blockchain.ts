@@ -1,5 +1,11 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName } from '../../../shared/src';
+import {
+  config,
+  needsEnsWorkerFallback,
+  fetchTextRecordsFromEnsWorker,
+  fetchTextRecordsOnChain,
+  isPlaceholderName,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
@@ -16,9 +22,7 @@ export function getBlockchainProvider(): ethers.JsonRpcProvider {
 }
 
 // Name Wrapper ABI (minimal - just ownerOf)
-const NAME_WRAPPER_ABI = [
-  'function ownerOf(uint256 id) view returns (address)',
-];
+const NAME_WRAPPER_ABI = ['function ownerOf(uint256 id) view returns (address)'];
 
 export interface ENSMetadata {
   [key: string]: string | undefined;
@@ -97,18 +101,30 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
     }
 
     // Fallback to ENS worker if resolver doesn't emit values to The Graph
-    if (needsEnsWorkerFallback(domain.resolver.address, domain.resolver.texts, domain.resolver.textChangeds)) {
+    if (
+      needsEnsWorkerFallback(
+        domain.resolver.address,
+        domain.resolver.texts,
+        domain.resolver.textChangeds
+      )
+    ) {
       try {
         const workerRecords = await fetchTextRecordsFromEnsWorker(name);
         Object.assign(metadata, workerRecords);
-        logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker fallback used for text records');
+        logger.info(
+          { name, keys: Object.keys(workerRecords) },
+          'ENS worker fallback used for text records'
+        );
       } catch (error) {
         logger.warn({ error, name }, 'ENS worker fallback failed, trying on-chain resolution');
         try {
           const textKeys = domain.resolver.texts || [];
           const onChainRecords = await fetchTextRecordsOnChain(name, textKeys);
           Object.assign(metadata, onChainRecords);
-          logger.info({ name, keys: Object.keys(onChainRecords) }, 'On-chain text record resolution succeeded');
+          logger.info(
+            { name, keys: Object.keys(onChainRecords) },
+            'On-chain text record resolution succeeded'
+          );
         } catch (onChainError) {
           logger.error({ error: onChainError, name }, 'All text record sources failed');
         }
@@ -146,11 +162,7 @@ export async function fetchENSOwner(tokenId: string): Promise<string> {
   );
 
   // Name Wrapper contract
-  const nameWrapper = new ethers.Contract(
-    NAME_WRAPPER_ADDRESS,
-    NAME_WRAPPER_ABI,
-    provider
-  );
+  const nameWrapper = new ethers.Contract(NAME_WRAPPER_ADDRESS, NAME_WRAPPER_ABI, provider);
 
   try {
     // First, try Base Registrar with the token ID
@@ -170,7 +182,10 @@ export async function fetchENSOwner(tokenId: string): Promise<string> {
           return wrappedOwner;
         }
       } catch (wrapperError: any) {
-        logger.warn({ tokenId, error: wrapperError.message }, 'Name Wrapper ownerOf failed, returning registrar owner');
+        logger.warn(
+          { tokenId, error: wrapperError.message },
+          'Name Wrapper ownerOf failed, returning registrar owner'
+        );
       }
       // Fall back to registrar owner (Name Wrapper address)
       return registrarOwner;
@@ -182,7 +197,10 @@ export async function fetchENSOwner(tokenId: string): Promise<string> {
     // 1. The token ID is a namehash (for wrapped names) but not a valid labelhash
     // 2. The name doesn't exist or is expired
 
-    logger.debug({ tokenId, error: registrarError.message }, 'Base Registrar ownerOf failed, trying Name Wrapper');
+    logger.debug(
+      { tokenId, error: registrarError.message },
+      'Base Registrar ownerOf failed, trying Name Wrapper'
+    );
 
     // Try Name Wrapper directly with the token ID (might be a namehash)
     try {
@@ -238,16 +256,19 @@ export async function resolveTokenIdToName(tokenId: string): Promise<string | nu
       headers,
       body: JSON.stringify({
         query,
-        variables: { labelhash }
+        variables: { labelhash },
       }),
     });
 
     if (!response.ok) {
-      logger.error({ status: response.status, statusText: response.statusText, tokenId }, 'Graph API error');
+      logger.error(
+        { status: response.status, statusText: response.statusText, tokenId },
+        'Graph API error'
+      );
       return null;
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     if (data.errors) {
       logger.error({ errors: data.errors, tokenId }, 'Graph query errors');
@@ -268,7 +289,6 @@ export async function resolveTokenIdToName(tokenId: string): Promise<string | nu
 
     logger.debug({ tokenId }, 'No ENS name found for token ID');
     return null;
-
   } catch (error) {
     logger.error({ error, tokenId }, 'Error resolving ENS name');
     return null;

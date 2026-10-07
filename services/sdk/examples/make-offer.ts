@@ -7,12 +7,7 @@
 
 import { createWalletClient, custom } from 'viem';
 import { mainnet } from 'viem/chains';
-import {
-  GrailsClient,
-  SeaportOrderBuilder,
-  createViemSigner,
-  WETH_ADDRESS,
-} from '@grails/sdk';
+import { GrailsClient, SeaportOrderBuilder, createViemSigner, WETH_ADDRESS } from '@grails/sdk';
 
 async function main() {
   // Create clients
@@ -45,8 +40,7 @@ async function main() {
   const existingOffers = await grails.offers.getByName(ensName);
   if (existingOffers.offers.length > 0) {
     const highestOffer = existingOffers.offers[0];
-    const highestOfferEth =
-      BigInt(highestOffer.offer_amount_wei) / BigInt(10 ** 18);
+    const highestOfferEth = BigInt(highestOffer.offer_amount_wei) / BigInt(10 ** 18);
     console.log(`Highest current offer: ${highestOfferEth} WETH`);
   }
 

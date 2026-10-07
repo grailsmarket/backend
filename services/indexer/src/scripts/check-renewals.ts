@@ -17,7 +17,9 @@ async function main() {
   `);
   console.log('Indexer State:');
   for (const row of indexerState.rows) {
-    const updatedAgo = row.updated_at ? Math.round((Date.now() - new Date(row.updated_at).getTime()) / 1000) : 'unknown';
+    const updatedAgo = row.updated_at
+      ? Math.round((Date.now() - new Date(row.updated_at).getTime()) / 1000)
+      : 'unknown';
     console.log(`  ${row.contract_address}:`);
     console.log(`    last_processed_block: ${row.last_processed_block}`);
     console.log(`    updated_at: ${row.updated_at?.toISOString()} (${updatedAgo}s ago)`);
@@ -69,7 +71,9 @@ async function main() {
     console.log('  No renewal transactions recorded');
   } else {
     for (const row of renewals.rows) {
-      console.log(`  ${row.name}: block ${row.block_number}, tx ${row.transaction_hash?.slice(0, 20)}...`);
+      console.log(
+        `  ${row.name}: block ${row.block_number}, tx ${row.transaction_hash?.slice(0, 20)}...`
+      );
     }
   }
   console.log();
@@ -102,13 +106,15 @@ async function main() {
   `);
   console.log('Most recently updated ens_names:');
   for (const row of recentUpdates.rows) {
-    console.log(`  ${row.name}: expiry=${row.expiry_date?.toISOString()?.slice(0,10)}, updated=${row.updated_at?.toISOString()}`);
+    console.log(
+      `  ${row.name}: expiry=${row.expiry_date?.toISOString()?.slice(0, 10)}, updated=${row.updated_at?.toISOString()}`
+    );
   }
 
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Error:', err);
   process.exit(1);
 });

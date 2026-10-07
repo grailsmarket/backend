@@ -7,11 +7,7 @@
 
 import { getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
-import {
-  type ValidationResult,
-  type ListingWithOwner,
-  ENS_REGISTRAR_ADDRESS
-} from './types';
+import { type ValidationResult, type ListingWithOwner, ENS_REGISTRAR_ADDRESS } from './types';
 
 const pool = getPostgresPool();
 
@@ -29,7 +25,8 @@ export function initializeProvider(rpcUrl: string) {
  * Fetch listing with current owner from database
  */
 async function fetchListingWithOwner(listingId: number): Promise<ListingWithOwner | null> {
-  const result = await pool.query(`
+  const result = await pool.query(
+    `
     SELECT
       l.id,
       l.seller_address,
@@ -41,7 +38,9 @@ async function fetchListingWithOwner(listingId: number): Promise<ListingWithOwne
     FROM listings l
     JOIN ens_names en ON en.id = l.ens_name_id
     WHERE l.id = $1
-  `, [listingId]);
+  `,
+    [listingId]
+  );
 
   if (result.rows.length === 0) {
     return null;
@@ -134,12 +133,13 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
       return {
         isValid: false,
         reason: 'listing_not_found',
-        checkedAt: new Date()
+        checkedAt: new Date(),
       };
     }
 
     // 2. Check if seller still owns the name (database check)
-    const dbOwnerMatches = listing.current_owner?.toLowerCase() === listing.seller_address.toLowerCase();
+    const dbOwnerMatches =
+      listing.current_owner?.toLowerCase() === listing.seller_address.toLowerCase();
 
     if (!dbOwnerMatches) {
       // Database shows different owner - listing is unfunded
@@ -149,8 +149,8 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
         checkedAt: new Date(),
         details: {
           expectedOwner: listing.seller_address,
-          currentOwner: listing.current_owner
-        }
+          currentOwner: listing.current_owner,
+        },
       };
     }
 
@@ -169,8 +169,8 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
             checkedAt: new Date(),
             details: {
               expectedOwner: listing.seller_address,
-              currentOwner: onChainOwner
-            }
+              currentOwner: onChainOwner,
+            },
           };
         }
       } catch (error: any) {
@@ -182,9 +182,8 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
     // 4. All checks passed - listing is valid
     return {
       isValid: true,
-      checkedAt: new Date()
+      checkedAt: new Date(),
     };
-
   } catch (error: any) {
     // Unexpected error during validation
     console.error(`Error validating listing ${listingId}:`, error);
@@ -195,7 +194,9 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
 /**
  * Batch validate multiple listings (for periodic validation)
  */
-export async function batchValidateListings(listingIds: number[]): Promise<Map<number, ValidationResult>> {
+export async function batchValidateListings(
+  listingIds: number[]
+): Promise<Map<number, ValidationResult>> {
   const results = new Map<number, ValidationResult>();
 
   for (const listingId of listingIds) {
@@ -207,7 +208,7 @@ export async function batchValidateListings(listingIds: number[]): Promise<Map<n
       results.set(listingId, {
         isValid: false,
         reason: 'validation_error',
-        checkedAt: new Date()
+        checkedAt: new Date(),
       });
     }
   }

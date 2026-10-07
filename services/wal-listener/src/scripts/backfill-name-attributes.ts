@@ -71,11 +71,11 @@ async function backfillNameAttributes() {
       console.log(`Progress: ${processed}/${totalRows} (${percentage}%)`);
 
       // Small delay to avoid overwhelming database
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     console.log(`\n✓ Backfill complete! Updated ${processed} records.`);
-    console.log('\n⚠️  Don\'t forget to resync Elasticsearch: npm run resync');
+    console.log("\n⚠️  Don't forget to resync Elasticsearch: npm run resync");
 
     await closeAllConnections();
     process.exit(0);

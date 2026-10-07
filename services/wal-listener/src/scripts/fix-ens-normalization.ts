@@ -57,13 +57,16 @@ async function main() {
   let offset = 0;
 
   while (offset < totalCount) {
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT id, name
       FROM ens_names
       WHERE name !~ '^(token-[0-9]+|#[0-9]+|\\[[0-9a-fA-F]{64}\\]\\.eth)$'
       ORDER BY id
       LIMIT $1 OFFSET $2
-    `, [BATCH_SIZE, offset]);
+    `,
+      [BATCH_SIZE, offset]
+    );
 
     if (result.rows.length === 0) break;
 
@@ -101,7 +104,9 @@ async function main() {
       if (conflictCheck.rows.length > 0) {
         // Conflict exists → delete this illegitimate record
         if (VERBOSE) {
-          console.log(`[DELETE-CONFLICT] id=${id} "${name}" → "${normalized}" (exists as id=${conflictCheck.rows[0].id})`);
+          console.log(
+            `[DELETE-CONFLICT] id=${id} "${name}" → "${normalized}" (exists as id=${conflictCheck.rows[0].id})`
+          );
         }
         if (!DRY_RUN) {
           await pool.query('DELETE FROM ens_names WHERE id = $1', [id]);
@@ -113,17 +118,19 @@ async function main() {
           console.log(`[NORMALIZE] id=${id} "${name}" → "${normalized}"`);
         }
         if (!DRY_RUN) {
-          await pool.query(
-            'UPDATE ens_names SET name = $1, updated_at = NOW() WHERE id = $2',
-            [normalized, id]
-          );
+          await pool.query('UPDATE ens_names SET name = $1, updated_at = NOW() WHERE id = $2', [
+            normalized,
+            id,
+          ]);
         }
         stats.normalized++;
       }
     }
 
     offset += result.rows.length;
-    console.log(`Progress: ${stats.processed}/${totalCount} | Normalized: ${stats.normalized} | Invalid: ${stats.deletedInvalid} | Conflicts: ${stats.deletedConflict}`);
+    console.log(
+      `Progress: ${stats.processed}/${totalCount} | Normalized: ${stats.normalized} | Invalid: ${stats.deletedInvalid} | Conflicts: ${stats.deletedConflict}`
+    );
   }
 
   console.log('\n=== Summary ===');

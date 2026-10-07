@@ -38,42 +38,77 @@ const fixtures: Array<{ slug: string; label: string; build: () => EmailTemplate 
   {
     slug: 'new-listing',
     label: 'New listing (watcher)',
-    build: () => buildNewListingEmail({ ensName: ENS, priceEth: '4.20', listingUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildNewListingEmail({
+        ensName: ENS,
+        priceEth: '4.20',
+        listingUrl: URL,
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'price-change-drop',
     label: 'Price change — drop (watcher)',
-    build: () => buildPriceChangeEmail({ ensName: ENS, oldPriceEth: '5.00', newPriceEth: '3.75', listingUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildPriceChangeEmail({
+        ensName: ENS,
+        oldPriceEth: '5.00',
+        newPriceEth: '3.75',
+        listingUrl: URL,
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'price-change-rise',
     label: 'Price change — rise (watcher)',
-    build: () => buildPriceChangeEmail({ ensName: ENS, oldPriceEth: '3.00', newPriceEth: '4.50', listingUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildPriceChangeEmail({
+        ensName: ENS,
+        oldPriceEth: '3.00',
+        newPriceEth: '4.50',
+        listingUrl: URL,
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'sale',
     label: 'Sale (watcher)',
-    build: () => buildSaleEmail({ ensName: ENS, priceEth: '4.20', listingUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildSaleEmail({ ensName: ENS, priceEth: '4.20', listingUrl: URL, unsubscribeUrl: UNSUB }),
   },
   {
     slug: 'new-offer',
     label: 'New offer (watcher)',
-    build: () => buildNewOfferEmail({ ensName: ENS, priceEth: '2.10', offerUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildNewOfferEmail({ ensName: ENS, priceEth: '2.10', offerUrl: URL, unsubscribeUrl: UNSUB }),
   },
   {
     slug: 'listing-cancelled',
     label: 'Listing cancelled (ownership change)',
-    build: () => buildListingCancelledEmail({ ensName: ENS, listingUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildListingCancelledEmail({ ensName: ENS, listingUrl: URL, unsubscribeUrl: UNSUB }),
   },
   {
     slug: 'offer-received',
     label: 'Offer received (owner)',
-    build: () => buildOfferReceivedEmail({ ensName: ENS, priceEth: '2.10', offerUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildOfferReceivedEmail({
+        ensName: ENS,
+        priceEth: '2.10',
+        offerUrl: URL,
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'listing-sold',
     label: 'Listing sold (seller)',
-    build: () => buildListingSoldEmail({ ensName: ENS, priceEth: '4.20', saleUrl: URL, unsubscribeUrl: UNSUB }),
+    build: () =>
+      buildListingSoldEmail({
+        ensName: ENS,
+        priceEth: '4.20',
+        saleUrl: URL,
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'comment-received',
@@ -83,26 +118,31 @@ const fixtures: Array<{ slug: string; label: string; build: () => EmailTemplate 
   {
     slug: 'email-verification',
     label: 'Email verification',
-    build: () => buildEmailVerificationEmail({ verificationUrl: 'https://grails.app/verify-email?token=preview-token-abc123def456' }),
+    build: () =>
+      buildEmailVerificationEmail({
+        verificationUrl: 'https://grails.app/verify-email?token=preview-token-abc123def456',
+      }),
   },
   {
     slug: 'admin-broadcast-with-cta',
     label: 'Admin broadcast (with CTA + image)',
-    build: () => buildAdminBroadcastEmail({
-      title: 'Grails Premium is launching',
-      body: `We're rolling out Grails Premium in the coming weeks.\n\nPremium includes priority indexing, advanced filters, and bulk-tool quotas.`,
-      linkUrl: 'https://grails.app/premium',
-      unsubscribeUrl: UNSUB,
-    }),
+    build: () =>
+      buildAdminBroadcastEmail({
+        title: 'Grails Premium is launching',
+        body: `We're rolling out Grails Premium in the coming weeks.\n\nPremium includes priority indexing, advanced filters, and bulk-tool quotas.`,
+        linkUrl: 'https://grails.app/premium',
+        unsubscribeUrl: UNSUB,
+      }),
   },
   {
     slug: 'admin-broadcast-plain',
     label: 'Admin broadcast (plain)',
-    build: () => buildAdminBroadcastEmail({
-      title: 'Scheduled maintenance Sunday 02:00 UTC',
-      body: `Grails will be briefly unavailable on Sunday at 02:00 UTC for routine maintenance. Expected downtime is under 10 minutes.`,
-      unsubscribeUrl: UNSUB,
-    }),
+    build: () =>
+      buildAdminBroadcastEmail({
+        title: 'Scheduled maintenance Sunday 02:00 UTC',
+        body: `Grails will be briefly unavailable on Sunday at 02:00 UTC for routine maintenance. Expected downtime is under 10 minutes.`,
+        unsubscribeUrl: UNSUB,
+      }),
   },
 ];
 
@@ -149,8 +189,14 @@ ${indexEntries.join('\n')}
 fs.writeFileSync(path.join(outDir, 'index.html'), indexHtml, 'utf8');
 
 const indexPath = path.join(outDir, 'index.html');
-process.stdout.write(`\nWrote ${fixtures.length} previews to ${outDir}\nOpen: file://${indexPath}\n\n`);
+process.stdout.write(
+  `\nWrote ${fixtures.length} previews to ${outDir}\nOpen: file://${indexPath}\n\n`
+);
 
 function escape(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

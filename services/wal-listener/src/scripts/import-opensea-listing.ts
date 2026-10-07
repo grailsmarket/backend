@@ -51,7 +51,7 @@ interface OpenSeaListingsResponse {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
@@ -64,7 +64,9 @@ async function fetchWithRetry(url: string, attempt = 1): Promise<Response> {
 
   if (response.status === 429 && attempt <= MAX_RETRIES) {
     const delay = Math.pow(2, attempt) * 1000;
-    console.log(`  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`);
+    console.log(
+      `  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`
+    );
     await sleep(delay);
     return fetchWithRetry(url, attempt + 1);
   }
@@ -90,7 +92,7 @@ async function fetchOpenSeaListingsForToken(tokenId: string): Promise<OpenSeaLis
 
   while (url) {
     const response = await fetchWithRetry(url);
-    const data = await response.json() as OpenSeaListingsResponse;
+    const data = (await response.json()) as OpenSeaListingsResponse;
 
     if (data.orders) {
       allListings.push(...data.orders);
@@ -127,10 +129,9 @@ async function importListing(pool: Pool, name: string) {
   console.log(`Name: ${name}\n`);
 
   // 1. Look up the ENS name in DB
-  const ensResult = await pool.query(
-    'SELECT id, name, token_id FROM ens_names WHERE name = $1',
-    [name]
-  );
+  const ensResult = await pool.query('SELECT id, name, token_id FROM ens_names WHERE name = $1', [
+    name,
+  ]);
 
   if (ensResult.rows.length === 0) {
     console.error(`ENS name "${name}" not found in database.`);
@@ -170,7 +171,7 @@ async function importListing(pool: Pool, name: string) {
   }
 
   // 4. Filter to active listings
-  const activeListings = osListings.filter(l => !l.cancelled && !l.finalized);
+  const activeListings = osListings.filter((l) => !l.cancelled && !l.finalized);
   const skipped = osListings.length - activeListings.length;
   if (skipped > 0) {
     console.log(`Skipped ${skipped} cancelled/finalized listing(s)`);
@@ -182,7 +183,7 @@ async function importListing(pool: Pool, name: string) {
   }
 
   // 5. Skip listings already in our DB
-  const newListings = activeListings.filter(l => !existingHashes.has(l.order_hash));
+  const newListings = activeListings.filter((l) => !existingHashes.has(l.order_hash));
 
   if (newListings.length === 0) {
     console.log('All active OpenSea listings already exist in our DB. Nothing to import.');
@@ -196,7 +197,9 @@ async function importListing(pool: Pool, name: string) {
     console.log(`  ${name}`);
     console.log(`    Order Hash: ${listing.order_hash}`);
     console.log(`    Seller:     ${listing.maker.address.toLowerCase()}`);
-    console.log(`    Price:      ${formatEth(listing.current_price)} ETH (${listing.current_price} wei)`);
+    console.log(
+      `    Price:      ${formatEth(listing.current_price)} ETH (${listing.current_price} wei)`
+    );
     console.log(`    Expires:    ${expiresAt.toISOString()}`);
     console.log(`    Created:    ${listing.created_date}`);
     console.log('');
@@ -230,13 +233,17 @@ async function importListing(pool: Pool, name: string) {
         );
 
         if (result.rowCount && result.rowCount > 0) {
-          console.log(`  [OK] Inserted ${listing.order_hash.slice(0, 16)}... (${formatEth(listing.current_price)} ETH)`);
+          console.log(
+            `  [OK] Inserted ${listing.order_hash.slice(0, 16)}... (${formatEth(listing.current_price)} ETH)`
+          );
           inserted++;
         } else {
           console.log(`  [SKIP] ${listing.order_hash.slice(0, 16)}... already exists (conflict)`);
         }
       } catch (error: any) {
-        console.log(`  [ERROR] Failed to insert ${listing.order_hash.slice(0, 16)}...: ${error.message}`);
+        console.log(
+          `  [ERROR] Failed to insert ${listing.order_hash.slice(0, 16)}...: ${error.message}`
+        );
         failed++;
       }
     }

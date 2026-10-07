@@ -45,11 +45,9 @@ async function createMigrationsTable(): Promise<void> {
  * Get list of already applied migrations
  */
 async function getAppliedMigrations(): Promise<Set<string>> {
-  const result = await pool.query(
-    'SELECT filename FROM migrations_log ORDER BY applied_at'
-  );
+  const result = await pool.query('SELECT filename FROM migrations_log ORDER BY applied_at');
 
-  return new Set(result.rows.map(row => row.filename));
+  return new Set(result.rows.map((row) => row.filename));
 }
 
 /**
@@ -62,9 +60,10 @@ function getMigrationFiles(): MigrationFile[] {
     throw new Error(`Migrations directory not found: ${migrationsDir}`);
   }
 
-  const files = fs.readdirSync(migrationsDir)
-    .filter(f => f.endsWith('.sql'))
-    .map(filename => {
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .map((filename) => {
       // Extract sequence number from filename (e.g., 0010_fix_duplicate.sql -> 10)
       const match = filename.match(/^(\d+)_/);
       const sequence = match ? parseInt(match[1], 10) : 0;
@@ -72,7 +71,7 @@ function getMigrationFiles(): MigrationFile[] {
       return {
         filename,
         filepath: path.join(migrationsDir, filename),
-        sequence
+        sequence,
       };
     })
     .sort((a, b) => a.sequence - b.sequence);
@@ -159,7 +158,7 @@ async function runMigrations() {
     // Filter out already applied migrations (unless force mode)
     const pendingMigrations = force
       ? migrations
-      : migrations.filter(m => !appliedMigrations.has(m.filename));
+      : migrations.filter((m) => !appliedMigrations.has(m.filename));
 
     if (pendingMigrations.length === 0) {
       console.log('✓ All migrations are up to date!\n');
@@ -175,7 +174,6 @@ async function runMigrations() {
 
     console.log('=== Migration Complete ===\n');
     console.log(`✓ Successfully applied ${pendingMigrations.length} migrations`);
-
   } catch (error: any) {
     console.error('\n=== Migration Failed ===\n');
     console.error(`Error: ${error.message}`);

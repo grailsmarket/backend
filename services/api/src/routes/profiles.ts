@@ -13,9 +13,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
   const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
   // Name Wrapper ABI - just the ownerOf function we need
-  const NAME_WRAPPER_ABI = [
-    'function ownerOf(uint256 id) view returns (address)'
-  ];
+  const NAME_WRAPPER_ABI = ['function ownerOf(uint256 id) view returns (address)'];
 
   /**
    * Get the actual owner of a wrapped ENS name by querying the Name Wrapper contract
@@ -43,7 +41,9 @@ export async function profilesRoutes(fastify: FastifyInstance) {
   /**
    * Fetch ENS name from The Graph and create database record
    */
-  async function fetchAndCreateEnsName(ensName: string): Promise<{ tokenId: string; ownerAddress: string } | null> {
+  async function fetchAndCreateEnsName(
+    ensName: string
+  ): Promise<{ tokenId: string; ownerAddress: string } | null> {
     try {
       const query = `
         query GetENSName($name: String!) {
@@ -80,7 +80,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         headers,
         body: JSON.stringify({
           query,
-          variables: { name: ensName }
+          variables: { name: ensName },
         }),
       });
 
@@ -89,7 +89,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         return null;
       }
 
-      const data = await response.json() as any;
+      const data = (await response.json()) as any;
 
       if (data.errors) {
         fastify.log.error({ errors: data.errors }, 'The Graph query errors');
@@ -127,7 +127,9 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       // Fetch ENS records from EFP API
       let metadata = null;
       try {
-        const efpResponse = await fetch(`https://api.ethfollow.xyz/api/v1/users/${ensName}/details`);
+        const efpResponse = await fetch(
+          `https://api.ethfollow.xyz/api/v1/users/${ensName}/details`
+        );
         if (efpResponse.ok) {
           const efpData: any = await efpResponse.json();
 
@@ -176,8 +178,14 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         RETURNING id
       `;
 
-      const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
-      const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
+      const expiryDate = domain.registration?.expiryDate
+        ? new Date(parseInt(domain.registration.expiryDate) * 1000)
+        : null;
+      const registrationDate = domain.registration?.registrationDate
+        ? new Date(parseInt(domain.registration.registrationDate) * 1000)
+        : domain.createdAt
+          ? new Date(parseInt(domain.createdAt) * 1000)
+          : null;
 
       await pool.query(insertQuery, [
         tokenId,
@@ -185,10 +193,13 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         ownerAddress.toLowerCase(),
         expiryDate,
         registrationDate,
-        metadata ? JSON.stringify(metadata) : null
+        metadata ? JSON.stringify(metadata) : null,
       ]);
 
-      fastify.log.info({ ensName, tokenId, ownerAddress }, 'Created ENS name from The Graph with metadata');
+      fastify.log.info(
+        { ensName, tokenId, ownerAddress },
+        'Created ENS name from The Graph with metadata'
+      );
 
       return { tokenId, ownerAddress: ownerAddress.toLowerCase() };
     } catch (error: any) {
@@ -224,7 +235,10 @@ export async function profilesRoutes(fastify: FastifyInstance) {
 
         if (nameResult.rows.length === 0) {
           // Not found in database, try to fetch from The Graph
-          fastify.log.info({ ensName: addressOrName }, 'ENS name not found in database, fetching from The Graph');
+          fastify.log.info(
+            { ensName: addressOrName },
+            'ENS name not found in database, fetching from The Graph'
+          );
 
           const graphResult = await fetchAndCreateEnsName(addressOrName);
 
@@ -247,17 +261,26 @@ export async function profilesRoutes(fastify: FastifyInstance) {
 
           // Check if the owner is the Name Wrapper contract
           if (ownerAddress === NAME_WRAPPER_ADDRESS) {
-            fastify.log.info({ ensName: addressOrName }, 'Owner is Name Wrapper contract, fetching correct owner');
+            fastify.log.info(
+              { ensName: addressOrName },
+              'Owner is Name Wrapper contract, fetching correct owner'
+            );
 
             // First try fetching from The Graph (which includes resolver.addr.id)
             const graphResult = await fetchAndCreateEnsName(addressOrName);
 
             if (graphResult && graphResult.ownerAddress !== NAME_WRAPPER_ADDRESS) {
               ownerAddress = graphResult.ownerAddress;
-              fastify.log.info({ ensName: addressOrName, newOwner: ownerAddress }, 'Updated owner from Name Wrapper via The Graph');
+              fastify.log.info(
+                { ensName: addressOrName, newOwner: ownerAddress },
+                'Updated owner from Name Wrapper via The Graph'
+              );
             } else {
               // If The Graph didn't help, query Name Wrapper contract directly
-              fastify.log.info({ ensName: addressOrName }, 'Querying Name Wrapper contract directly');
+              fastify.log.info(
+                { ensName: addressOrName },
+                'Querying Name Wrapper contract directly'
+              );
               const wrappedOwner = await getWrappedNameOwner(addressOrName);
 
               if (wrappedOwner && wrappedOwner !== NAME_WRAPPER_ADDRESS) {
@@ -269,7 +292,10 @@ export async function profilesRoutes(fastify: FastifyInstance) {
                   [wrappedOwner, addressOrName]
                 );
 
-                fastify.log.info({ ensName: addressOrName, newOwner: ownerAddress }, 'Updated owner from Name Wrapper via contract call');
+                fastify.log.info(
+                  { ensName: addressOrName, newOwner: ownerAddress },
+                  'Updated owner from Name Wrapper via contract call'
+                );
               } else {
                 fastify.log.warn({ ensName: addressOrName }, 'Failed to fetch correct owner');
               }
@@ -326,7 +352,9 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       // Helper for EFP fetch that won't throw
       async function fetchEnsRecords(address: string) {
         try {
-          const efpResponse = await fetch(`https://api.ethfollow.xyz/api/v1/users/${address}/details`);
+          const efpResponse = await fetch(
+            `https://api.ethfollow.xyz/api/v1/users/${address}/details`
+          );
           if (efpResponse.ok) {
             return await efpResponse.json();
           }
@@ -381,9 +409,14 @@ export async function profilesRoutes(fastify: FastifyInstance) {
       }
 
       // Process persona result
-      const persona = personaResult.rows.length > 0
-        ? { slug: personaResult.rows[0].slug, name: personaResult.rows[0].name, icon: personaResult.rows[0].icon }
-        : null;
+      const persona =
+        personaResult.rows.length > 0
+          ? {
+              slug: personaResult.rows[0].slug,
+              name: personaResult.rows[0].name,
+              icon: personaResult.rows[0].icon,
+            }
+          : null;
       const lastSeenAt = personaResult.rows[0]?.last_seen_at || null;
 
       // Process onchain activity cache and queue refresh if stale
@@ -396,23 +429,31 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         if (lastChecked < sixHoursAgo) {
           try {
             const boss = await getQueueClient();
-            await boss.send(QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
+            await boss.send(
+              QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
               { address: ownerAddress },
-              { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 },
+              { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 }
             );
           } catch (err) {
-            fastify.log.warn({ err, address: ownerAddress }, 'Failed to queue onchain activity refresh');
+            fastify.log.warn(
+              { err, address: ownerAddress },
+              'Failed to queue onchain activity refresh'
+            );
           }
         }
       } else {
         try {
           const boss = await getQueueClient();
-          await boss.send(QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
+          await boss.send(
+            QUEUE_NAMES.FETCH_ONCHAIN_ACTIVITY,
             { address: ownerAddress },
-            { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 },
+            { singletonKey: `onchain-${ownerAddress}`, singletonMinutes: 360 }
           );
         } catch (err) {
-          fastify.log.warn({ err, address: ownerAddress }, 'Failed to queue onchain activity lookup');
+          fastify.log.warn(
+            { err, address: ownerAddress },
+            'Failed to queue onchain activity lookup'
+          );
         }
       }
 
@@ -431,7 +472,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
           ownedNames: ownedNamesResult.rows,
           stats: {
             totalNames: ownedNamesResult.rows.length,
-            listedNames: ownedNamesResult.rows.filter(n => n.is_listed).length,
+            listedNames: ownedNamesResult.rows.filter((n) => n.is_listed).length,
             totalActivity: parseInt(activityCountResult.rows[0].total),
             viewCount,
           },

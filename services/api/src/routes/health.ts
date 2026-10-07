@@ -32,7 +32,7 @@ export async function healthRoutes(fastify: FastifyInstance) {
       request.log.error({ error }, 'Elasticsearch health check failed');
     }
 
-    const allHealthy = Object.values(checks).every(check => check);
+    const allHealthy = Object.values(checks).every((check) => check);
 
     return reply.status(allHealthy ? 200 : 503).send({
       status: allHealthy ? 'ready' : 'not ready',

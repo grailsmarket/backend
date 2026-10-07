@@ -1,6 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, APIResponse, normalizeEnsName, fetchKeywordMetrics, hasRealData, cacheGoogleMetrics } from '../../../shared/src';
+import {
+  getPostgresPool,
+  APIResponse,
+  normalizeEnsName,
+  fetchKeywordMetrics,
+  hasRealData,
+  cacheGoogleMetrics,
+} from '../../../shared/src';
 import { cacheHandler } from '../middleware/cache';
 import { optionalAuth } from '../middleware/auth';
 import { generateCacheKey, setCachedResponse } from '../utils/redis';
@@ -26,160 +33,163 @@ export async function googleMetricsRoutes(fastify: FastifyInstance) {
    *
    * Response: { success: true, data: { avgMonthlySearches, avgCpc, monthlyTrend, competition } }
    */
-  fastify.get('/:name', {
-    preHandler: [optionalAuth, cacheHandler],
-    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
-  }, async (request, reply) => {
-    const params = GoogleMetricsParamsSchema.parse(request.params);
+  fastify.get(
+    '/:name',
+    {
+      preHandler: [optionalAuth, cacheHandler],
+      config: { rateLimit: { max: 60, timeWindow: 60_000 } },
+    },
+    async (request, reply) => {
+      const params = GoogleMetricsParamsSchema.parse(request.params);
 
-    // Strip .eth suffix, then ENS-normalize to canonical form
-    const stripped = params.name.replace(/\.eth$/i, '').trim();
-    const normalizedResult = normalizeEnsName(stripped);
-    const baseName = normalizedResult.normalized;
+      // Strip .eth suffix, then ENS-normalize to canonical form
+      const stripped = params.name.replace(/\.eth$/i, '').trim();
+      const normalizedResult = normalizeEnsName(stripped);
+      const baseName = normalizedResult.normalized;
 
-    if (!baseName) {
-      const response: APIResponse = {
-        success: false,
-        error: {
-          code: 'INVALID_NAME',
-          message: 'Invalid ENS name',
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
-      };
-      return reply.status(400).send(response);
-    }
-
-    if (baseName.length > 20) {
-      const response: APIResponse = {
-        success: false,
-        error: {
-          code: 'INVALID_NAME',
-          message: 'Name must be 20 characters or fewer',
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
-      };
-      return reply.status(400).send(response);
-    }
-
-    try {
-      // Check DB cache first
-      const cached = await pool.query(
-        `SELECT metrics FROM google_metrics
-         WHERE name = $1 AND expires_at > NOW()`,
-        [baseName],
-      );
-
-      if (cached.rows.length > 0) {
-        const response: APIResponse = {
-          success: true,
-          data: cached.rows[0].metrics,
-          meta: {
-            timestamp: new Date().toISOString(),
-          },
-        };
-        return reply.header('X-Cache', 'HIT').send(response);
-      }
-
-      // Cache miss: only authenticated users can trigger a fresh fetch
-      if (!request.user) {
-        request.log.debug({ name: baseName }, 'Google metrics cache miss, auth required');
+      if (!baseName) {
         const response: APIResponse = {
           success: false,
           error: {
-            code: 'UNAUTHORIZED',
-            message: 'Log in to view Google metrics',
+            code: 'INVALID_NAME',
+            message: 'Invalid ENS name',
           },
           meta: {
             timestamp: new Date().toISOString(),
           },
         };
-        return reply.status(401).send(response);
+        return reply.status(400).send(response);
       }
 
-      // Cache miss — name must exist in ens_names to prevent abuse
-      const nameRow = await pool.query(
-        `SELECT 1 FROM ens_names WHERE name = $1`,
-        [`${baseName}.eth`],
-      );
-
-      if (nameRow.rows.length === 0) {
+      if (baseName.length > 20) {
         const response: APIResponse = {
-          success: true,
-          data: null,
+          success: false,
+          error: {
+            code: 'INVALID_NAME',
+            message: 'Name must be 20 characters or fewer',
+          },
           meta: {
             timestamp: new Date().toISOString(),
           },
         };
-
-        // Cache negative result briefly to reduce repeated DB lookups for unknown names
-        const cacheKey = generateCacheKey(request.url, request.query as Record<string, unknown>);
-        await setCachedResponse(cacheKey, response, NEGATIVE_CACHE_TTL_SECONDS);
-
-        return reply.send(response);
+        return reply.status(400).send(response);
       }
 
-      // Fetch from Google Ads API
-      const metrics = await fetchKeywordMetrics(baseName);
-
-      if (!metrics) {
-        // API failed or not configured — return empty (don't cache failures)
-        const response: APIResponse = {
-          success: true,
-          data: null,
-          meta: {
-            timestamp: new Date().toISOString(),
-          },
-        };
-        return reply.header('X-Cache', 'MISS').send(response);
-      }
-
-      // Google responded with all-null fields (unknown keyword or transient hiccup).
-      // Let cacheGoogleMetrics decide: it will mark as no_data but won't overwrite
-      // an existing success row. Return last-known-good if we have one.
-      if (!hasRealData(metrics)) {
-        await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
-        const lastKnownGood = await pool.query(
+      try {
+        // Check DB cache first
+        const cached = await pool.query(
           `SELECT metrics FROM google_metrics
-           WHERE name = $1 AND status = 'success'`,
-          [baseName],
+         WHERE name = $1 AND expires_at > NOW()`,
+          [baseName]
         );
+
+        if (cached.rows.length > 0) {
+          const response: APIResponse = {
+            success: true,
+            data: cached.rows[0].metrics,
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          };
+          return reply.header('X-Cache', 'HIT').send(response);
+        }
+
+        // Cache miss: only authenticated users can trigger a fresh fetch
+        if (!request.user) {
+          request.log.debug({ name: baseName }, 'Google metrics cache miss, auth required');
+          const response: APIResponse = {
+            success: false,
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'Log in to view Google metrics',
+            },
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          };
+          return reply.status(401).send(response);
+        }
+
+        // Cache miss — name must exist in ens_names to prevent abuse
+        const nameRow = await pool.query(`SELECT 1 FROM ens_names WHERE name = $1`, [
+          `${baseName}.eth`,
+        ]);
+
+        if (nameRow.rows.length === 0) {
+          const response: APIResponse = {
+            success: true,
+            data: null,
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          };
+
+          // Cache negative result briefly to reduce repeated DB lookups for unknown names
+          const cacheKey = generateCacheKey(request.url, request.query as Record<string, unknown>);
+          await setCachedResponse(cacheKey, response, NEGATIVE_CACHE_TTL_SECONDS);
+
+          return reply.send(response);
+        }
+
+        // Fetch from Google Ads API
+        const metrics = await fetchKeywordMetrics(baseName);
+
+        if (!metrics) {
+          // API failed or not configured — return empty (don't cache failures)
+          const response: APIResponse = {
+            success: true,
+            data: null,
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          };
+          return reply.header('X-Cache', 'MISS').send(response);
+        }
+
+        // Google responded with all-null fields (unknown keyword or transient hiccup).
+        // Let cacheGoogleMetrics decide: it will mark as no_data but won't overwrite
+        // an existing success row. Return last-known-good if we have one.
+        if (!hasRealData(metrics)) {
+          await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+          const lastKnownGood = await pool.query(
+            `SELECT metrics FROM google_metrics
+           WHERE name = $1 AND status = 'success'`,
+            [baseName]
+          );
+          const response: APIResponse = {
+            success: true,
+            data: lastKnownGood.rows[0]?.metrics ?? metrics,
+            meta: {
+              timestamp: new Date().toISOString(),
+            },
+          };
+          return reply.header('X-Cache', 'MISS').send(response);
+        }
+
+        await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
+
         const response: APIResponse = {
           success: true,
-          data: lastKnownGood.rows[0]?.metrics ?? metrics,
+          data: metrics,
           meta: {
             timestamp: new Date().toISOString(),
           },
         };
         return reply.header('X-Cache', 'MISS').send(response);
+      } catch (error) {
+        const response: APIResponse = {
+          success: false,
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to fetch Google metrics',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+          },
+        };
+        request.log.error({ err: error, name: baseName }, 'Google metrics failed');
+        return reply.status(500).send(response);
       }
-
-      await cacheGoogleMetrics(baseName, metrics, CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
-
-      const response: APIResponse = {
-        success: true,
-        data: metrics,
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
-      };
-      return reply.header('X-Cache', 'MISS').send(response);
-    } catch (error) {
-      const response: APIResponse = {
-        success: false,
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: 'Failed to fetch Google metrics',
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
-      };
-      request.log.error({ err: error, name: baseName }, 'Google metrics failed');
-      return reply.status(500).send(response);
     }
-  });
+  );
 }

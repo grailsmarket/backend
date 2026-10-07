@@ -14,13 +14,7 @@
  *   npm run build && node dist/wal-listener/src/scripts/fix-renewal-durations.js --verbose
  */
 
-import {
-  createPublicClient,
-  http,
-  decodeEventLog,
-  decodeFunctionData,
-  parseAbi,
-} from 'viem';
+import { createPublicClient, http, decodeEventLog, decodeFunctionData, parseAbi } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
 import { config, getPostgresPool } from '../../../shared/src';
@@ -50,7 +44,9 @@ const CONTROLLER_FUNCTION_ABI = parseAbi([
 ]);
 
 const EVENT_EMITTER_ADDRESS = config.blockchain.ensBulkRenewalEventEmitter.toLowerCase();
-const CONTROLLER_ADDRESSES = config.blockchain.ensControllerAddresses.map((a: string) => a.toLowerCase());
+const CONTROLLER_ADDRESSES = config.blockchain.ensControllerAddresses.map((a: string) =>
+  a.toLowerCase()
+);
 
 const client = createPublicClient({
   chain: mainnet,
@@ -189,7 +185,7 @@ async function getDurationFromExpiry(
   pool: Pool,
   ensNameId: number,
   renewalId: number,
-  newExpiresEpoch: number,
+  newExpiresEpoch: number
 ): Promise<number | null> {
   // Find the previous expiry: either the preceding renewal's new_expiry_date
   // or the registration's expiry_date if this is the first renewal
@@ -226,7 +222,9 @@ async function getDurationFromExpiry(
   }
 
   if (VERBOSE) {
-    console.log(`    Expiry computation out of range: ${duration}s (${Math.round(duration / 86400)}d)`);
+    console.log(
+      `    Expiry computation out of range: ${duration}s (${Math.round(duration / 86400)}d)`
+    );
   }
   return null;
 }
@@ -299,7 +297,9 @@ async function main() {
 
       if (VERBOSE || (diagnosticSamples < 5 && !receiptResult?.renewalReferredDuration)) {
         if (receiptResult) {
-          console.log(`  ${txHash.slice(0, 20)}... — ${receiptResult.totalLogs} logs, ${receiptResult.eventEmitterLogs} event_emitter, ${receiptResult.controllerLogs} controller, ${receiptResult.controllerExpires.size} expires found`);
+          console.log(
+            `  ${txHash.slice(0, 20)}... — ${receiptResult.totalLogs} logs, ${receiptResult.eventEmitterLogs} event_emitter, ${receiptResult.controllerLogs} controller, ${receiptResult.controllerExpires.size} expires found`
+          );
         } else {
           console.log(`  ${txHash.slice(0, 20)}... — receipt fetch failed`);
         }
@@ -337,7 +337,12 @@ async function main() {
           continue;
         }
         const newExpiresEpoch = Math.floor(new Date(row.new_expiry_date).getTime() / 1000);
-        const duration = await getDurationFromExpiry(pool, row.ens_name_id, row.id, newExpiresEpoch);
+        const duration = await getDurationFromExpiry(
+          pool,
+          row.ens_name_id,
+          row.id,
+          newExpiresEpoch
+        );
         if (duration != null) {
           await applyFix(pool, row, duration, 'expiry', stats);
           stats.fixedFromExpiry++;
@@ -429,18 +434,20 @@ async function applyFix(
   row: { id: number; name: string; ens_name_id: number; transaction_hash: string },
   duration: number,
   source: string,
-  stats: Stats,
+  stats: Stats
 ) {
   if (VERBOSE) {
-    console.log(`  FIX ${row.name} (${row.transaction_hash.slice(0, 20)}...) → ${duration}s (${Math.round(duration / 86400)}d) via ${source}`);
+    console.log(
+      `  FIX ${row.name} (${row.transaction_hash.slice(0, 20)}...) → ${duration}s (${Math.round(duration / 86400)}d) via ${source}`
+    );
   }
 
   if (!DRY_RUN) {
     try {
-      await pool.query(
-        'UPDATE renewals SET duration_seconds = $1 WHERE id = $2',
-        [duration, row.id]
-      );
+      await pool.query('UPDATE renewals SET duration_seconds = $1 WHERE id = $2', [
+        duration,
+        row.id,
+      ]);
 
       const actResult = await pool.query(
         `UPDATE activity_history
@@ -465,7 +472,7 @@ async function applyFix(
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
 });

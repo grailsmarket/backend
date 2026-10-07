@@ -180,12 +180,26 @@ function mapToEnsNameRecord(row: CSVRow): any {
     downvotes: parseInteger(row.downvotes),
     net_score: parseInteger(row.net_score),
     last_sale_date: parseTimestamp(row.last_sale_date),
-    last_sale_price: row.last_sale_price && row.last_sale_price !== 'NULL' && row.last_sale_price !== '' ? row.last_sale_price.trim() : null,
+    last_sale_price:
+      row.last_sale_price && row.last_sale_price !== 'NULL' && row.last_sale_price !== ''
+        ? row.last_sale_price.trim()
+        : null,
     last_sale_currency: cleanAddress(row.last_sale_currency),
-    last_sale_price_usd: row.last_sale_price_usd && row.last_sale_price_usd !== 'NULL' && row.last_sale_price_usd !== '' ? parseFloat(row.last_sale_price_usd) : null,
-    highest_offer_wei: row.highest_offer_wei && row.highest_offer_wei !== 'NULL' && row.highest_offer_wei !== '' ? row.highest_offer_wei.trim() : null,
+    last_sale_price_usd:
+      row.last_sale_price_usd &&
+      row.last_sale_price_usd !== 'NULL' &&
+      row.last_sale_price_usd !== ''
+        ? parseFloat(row.last_sale_price_usd)
+        : null,
+    highest_offer_wei:
+      row.highest_offer_wei && row.highest_offer_wei !== 'NULL' && row.highest_offer_wei !== ''
+        ? row.highest_offer_wei.trim()
+        : null,
     highest_offer_currency: cleanAddress(row.highest_offer_currency),
-    highest_offer_id: row.highest_offer_id && row.highest_offer_id !== 'NULL' && row.highest_offer_id !== '' ? parseInteger(row.highest_offer_id) : null,
+    highest_offer_id:
+      row.highest_offer_id && row.highest_offer_id !== 'NULL' && row.highest_offer_id !== ''
+        ? parseInteger(row.highest_offer_id)
+        : null,
     last_offer_update: parseTimestamp(row.last_offer_update),
     view_count: parseInteger(row.view_count),
     created_at: parseTimestamp(row.created_at) || new Date(),
@@ -196,11 +210,7 @@ function mapToEnsNameRecord(row: CSVRow): any {
 /**
  * Import batch with conflict handling - skips duplicates instead of upserting
  */
-async function importBatch(
-  records: any[],
-  stats: ImportStats,
-  dryRun: boolean
-): Promise<void> {
+async function importBatch(records: any[], stats: ImportStats, dryRun: boolean): Promise<void> {
   if (records.length === 0) return;
 
   if (dryRun) {
@@ -344,7 +354,7 @@ async function importEnsNamesCSV(options: ImportOptions) {
 
   const stats: ImportStats = {
     rowsRead: 0,
-    rowsSkipped: skipRows || (previousProgress?.lastProcessedRow || 0),
+    rowsSkipped: skipRows || previousProgress?.lastProcessedRow || 0,
     rowsImported: previousProgress?.totalImported || 0,
     rowsErrored: 0,
     duplicates: 0,
@@ -417,10 +427,10 @@ async function importEnsNamesCSV(options: ImportOptions) {
       const rate = stats.rowsRead / elapsed;
       console.log(
         `Progress: ${rowNumber.toLocaleString()} rows processed, ` +
-        `${stats.rowsImported.toLocaleString()} imported, ` +
-        `${stats.duplicates.toLocaleString()} duplicates skipped, ` +
-        `${stats.rowsErrored.toLocaleString()} errors, ` +
-        `${rate.toFixed(0)} rows/sec`
+          `${stats.rowsImported.toLocaleString()} imported, ` +
+          `${stats.duplicates.toLocaleString()} duplicates skipped, ` +
+          `${stats.rowsErrored.toLocaleString()} errors, ` +
+          `${rate.toFixed(0)} rows/sec`
       );
     }
   }
@@ -479,10 +489,14 @@ if (!csvPath) {
   console.error('  --dry-run                 Preview without writing to database');
   console.error('  --batch-size=<n>          Batch size (default: 50)');
   console.error('  --skip-rows=<n>           Skip first N rows (for manual resuming)');
-  console.error('  --progress-file=<path>    Progress tracking file (default: .import-progress.json)');
+  console.error(
+    '  --progress-file=<path>    Progress tracking file (default: .import-progress.json)'
+  );
   console.error('\nExamples:');
   console.error('  npm run import-csv -- ~/Desktop/EFP/GRAILS/db/first_mil_names.csv');
-  console.error('  npm run import-csv -- ~/Desktop/EFP/GRAILS/db/first_mil_names.csv --batch-size=100');
+  console.error(
+    '  npm run import-csv -- ~/Desktop/EFP/GRAILS/db/first_mil_names.csv --batch-size=100'
+  );
   console.error('  npm run import-csv:dry -- ~/Desktop/EFP/GRAILS/db/first_mil_names.csv');
   process.exit(1);
 }
@@ -490,12 +504,13 @@ if (!csvPath) {
 const options: ImportOptions = {
   csvPath,
   dryRun: args.includes('--dry-run'),
-  batchSize: Number(args.find(a => a.startsWith('--batch-size='))?.split('=')[1] || '1000'),
-  skipRows: Number(args.find(a => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
-  progressFile: args.find(a => a.startsWith('--progress-file='))?.split('=')[1] || '.import-progress.json',
+  batchSize: Number(args.find((a) => a.startsWith('--batch-size='))?.split('=')[1] || '1000'),
+  skipRows: Number(args.find((a) => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
+  progressFile:
+    args.find((a) => a.startsWith('--progress-file='))?.split('=')[1] || '.import-progress.json',
 };
 
-importEnsNamesCSV(options).catch(error => {
+importEnsNamesCSV(options).catch((error) => {
   console.error('Import failed:', error);
   process.exit(1);
 });

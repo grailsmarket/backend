@@ -7,11 +7,7 @@
 
 import { createWalletClient, custom } from 'viem';
 import { mainnet } from 'viem/chains';
-import {
-  GrailsClient,
-  SeaportOrderBuilder,
-  createViemSigner,
-} from '@grails/sdk';
+import { GrailsClient, SeaportOrderBuilder, createViemSigner } from '@grails/sdk';
 
 async function main() {
   // Create clients

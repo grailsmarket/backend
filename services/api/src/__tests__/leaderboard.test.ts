@@ -52,10 +52,12 @@ interface LeaderboardResponse {
 }
 
 // Helper to make leaderboard requests
-async function getLeaderboard(params: string = ''): Promise<{ status: number; data: LeaderboardResponse }> {
+async function getLeaderboard(
+  params: string = ''
+): Promise<{ status: number; data: LeaderboardResponse }> {
   const url = params ? `${API_BASE}?${params}` : API_BASE;
   const response = await fetch(url);
-  const data = await response.json() as LeaderboardResponse;
+  const data = (await response.json()) as LeaderboardResponse;
   return { status: response.status, data };
 }
 
@@ -67,16 +69,15 @@ describe('Leaderboard API', () => {
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }
-      const data = await response.json() as LeaderboardResponse;
+      const data = (await response.json()) as LeaderboardResponse;
       if (!data.success) {
         throw new Error('API returned error');
       }
     } catch (error: any) {
       if (error.message?.includes('fetch failed') || error.cause?.code === 'ECONNREFUSED') {
-        throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev',
-          { cause: error }
-        );
+        throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+          cause: error,
+        });
       }
       throw error;
     }

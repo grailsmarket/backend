@@ -42,14 +42,16 @@ export class ActivityLogger {
       let idx = 1;
 
       for (const entry of entries) {
-        placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5})`);
+        placeholders.push(
+          `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5})`
+        );
         values.push(
           entry.userId,
           entry.address,
           entry.method,
           entry.route,
           entry.path,
-          entry.queryParams ? JSON.stringify(entry.queryParams) : null,
+          entry.queryParams ? JSON.stringify(entry.queryParams) : null
         );
         idx += 6;
       }
@@ -57,7 +59,7 @@ export class ActivityLogger {
       await this.pool.query(
         `INSERT INTO api_request_logs (user_id, address, method, route, path, query_params)
          VALUES ${placeholders.join(', ')}`,
-        values,
+        values
       );
     } catch (err) {
       logger.error({ err, count: entries.length }, 'Failed to insert api_request_logs');
@@ -80,10 +82,9 @@ export class ActivityLogger {
 
     if (usersToUpdate.length > 0) {
       try {
-        await this.pool.query(
-          `UPDATE users SET last_seen_at = NOW() WHERE id = ANY($1)`,
-          [usersToUpdate],
-        );
+        await this.pool.query(`UPDATE users SET last_seen_at = NOW() WHERE id = ANY($1)`, [
+          usersToUpdate,
+        ]);
       } catch (err) {
         logger.error({ err, userIds: usersToUpdate }, 'Failed to update last_seen_at');
       }

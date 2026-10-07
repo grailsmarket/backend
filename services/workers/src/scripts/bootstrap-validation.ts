@@ -64,20 +64,23 @@ async function main() {
 
       for (let i = 0; i < listingsResult.rows.length; i += LISTING_BATCH_SIZE) {
         const batch = listingsResult.rows.slice(i, i + LISTING_BATCH_SIZE);
-        const jobs = batch.map(row => ({
+        const jobs = batch.map((row) => ({
           name: 'validate-listing-ownership',
           data: { listingId: row.id },
-          singletonKey: `listing-${row.id}`
+          singletonKey: `listing-${row.id}`,
         }));
 
         await boss.insert(jobs);
         stats.listingsQueued += jobs.length;
 
-        logger.info({
-          queued: stats.listingsQueued,
-          total: stats.totalListings,
-          percent: Math.round((stats.listingsQueued / stats.totalListings) * 100)
-        }, 'Listing validation progress');
+        logger.info(
+          {
+            queued: stats.listingsQueued,
+            total: stats.totalListings,
+            percent: Math.round((stats.listingsQueued / stats.totalListings) * 100),
+          },
+          'Listing validation progress'
+        );
       }
 
       logger.info(
@@ -106,17 +109,20 @@ async function main() {
 
       for (let i = 0; i < offersResult.rows.length; i += OFFER_BATCH_SIZE) {
         const batch = offersResult.rows.slice(i, i + OFFER_BATCH_SIZE);
-        const offerIds = batch.map(row => row.id);
+        const offerIds = batch.map((row) => row.id);
 
         // Use batch validation for efficiency
         await boss.send('batch-validate-offers', { offerIds });
         stats.offersQueued += offerIds.length;
 
-        logger.info({
-          queued: stats.offersQueued,
-          total: stats.totalOffers,
-          percent: Math.round((stats.offersQueued / stats.totalOffers) * 100)
-        }, 'Offer validation progress');
+        logger.info(
+          {
+            queued: stats.offersQueued,
+            total: stats.totalOffers,
+            percent: Math.round((stats.offersQueued / stats.totalOffers) * 100),
+          },
+          'Offer validation progress'
+        );
       }
 
       logger.info(
@@ -131,12 +137,15 @@ async function main() {
     stats.endTime = new Date();
     const duration = (stats.endTime.getTime() - stats.startTime.getTime()) / 1000;
 
-    logger.info({
-      listingsQueued: stats.listingsQueued,
-      offersQueued: stats.offersQueued,
-      totalQueued: stats.listingsQueued + stats.offersQueued,
-      durationSeconds: duration
-    }, 'Bootstrap validation complete');
+    logger.info(
+      {
+        listingsQueued: stats.listingsQueued,
+        offersQueued: stats.offersQueued,
+        totalQueued: stats.listingsQueued + stats.offersQueued,
+        durationSeconds: duration,
+      },
+      'Bootstrap validation complete'
+    );
 
     console.log('\n========================================');
     console.log('Bootstrap Validation Summary');

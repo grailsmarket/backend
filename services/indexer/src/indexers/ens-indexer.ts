@@ -9,7 +9,14 @@ import {
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
+import {
+  config,
+  getPostgresPool,
+  type BlockchainEvent,
+  hasEmoji,
+  getRegistrationSource,
+  safeNormalize,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
@@ -105,9 +112,8 @@ export class ENSIndexer {
     this.isRunning = true;
 
     const lastBlock = await this.getLastProcessedBlock();
-    const startBlock = lastBlock > 0
-      ? BigInt(lastBlock) + 1n
-      : BigInt(config.blockchain.startBlock || 0);
+    const startBlock =
+      lastBlock > 0 ? BigInt(lastBlock) + 1n : BigInt(config.blockchain.startBlock || 0);
 
     this.currentBlock = startBlock;
     logger.info(`Starting from block ${this.currentBlock}`);
@@ -128,7 +134,7 @@ export class ENSIndexer {
         const targetBlock = latestBlock - this.confirmations;
 
         if (this.currentBlock > targetBlock) {
-          await new Promise(resolve => setTimeout(resolve, 12000));
+          await new Promise((resolve) => setTimeout(resolve, 12000));
           continue;
         }
 
@@ -141,16 +147,21 @@ export class ENSIndexer {
         this.currentBlock = actualToBlock + 1n;
       } catch (error: any) {
         if (isBeyondHeadError(error)) {
-          logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
-          await new Promise(resolve => setTimeout(resolve, 250));
+          logger.debug(
+            `getLogs head not caught up at block ${this.currentBlock}, retrying shortly`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 250));
           continue;
         }
-        logger.error({
-          err: error,
-          code: error.code,
-          details: error.shortMessage || error.details
-        }, `Error in index loop at block ${this.currentBlock}`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        logger.error(
+          {
+            err: error,
+            code: error.code,
+            details: error.shortMessage || error.details,
+          },
+          `Error in index loop at block ${this.currentBlock}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }
   }
@@ -188,11 +199,14 @@ export class ENSIndexer {
     // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
     // The Controller handler guards against reading an already-updated expiry by decoding the
     // duration from transaction calldata, falling back to treating duration <= 0 as null.
-    const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
-      ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
-      ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
-      ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
-      ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
+    const allLogs: {
+      log: Log;
+      source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter';
+    }[] = [
+      ...registrarLogs.map((log) => ({ log, source: 'registrar' as const })),
+      ...nameWrapperLogs.map((log) => ({ log, source: 'nameWrapper' as const })),
+      ...controllerLogs.map((log) => ({ log, source: 'controller' as const })),
+      ...eventEmitterLogs.map((log) => ({ log, source: 'eventEmitter' as const })),
     ];
 
     allLogs.sort((a, b) => {
@@ -256,12 +270,15 @@ export class ENSIndexer {
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
       // Only log actual errors, not decode failures
-      logger.error({
-        err: error,
-        code: error.code,
-        transactionHash: log.transactionHash,
-        topics: log.topics?.slice(0, 2),
-      }, `Error processing log at block ${log.blockNumber}`);
+      logger.error(
+        {
+          err: error,
+          code: error.code,
+          transactionHash: log.transactionHash,
+          topics: log.topics?.slice(0, 2),
+        },
+        `Error processing log at block ${log.blockNumber}`
+      );
     }
   }
 
@@ -298,11 +315,14 @@ export class ENSIndexer {
         await this.handleNameWrapperTransferBatch(decodedLog.args, log);
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        code: error.code,
-        transactionHash: log.transactionHash,
-      }, `Error processing Name Wrapper log at block ${log.blockNumber}`);
+      logger.error(
+        {
+          err: error,
+          code: error.code,
+          transactionHash: log.transactionHash,
+        },
+        `Error processing Name Wrapper log at block ${log.blockNumber}`
+      );
     }
   }
 
@@ -314,13 +334,17 @@ export class ENSIndexer {
 
     // Skip mint events (from zero address) - these are handled when wrapping via Base Registrar
     if (from.toLowerCase() === ZERO_ADDRESS) {
-      logger.debug(`Name Wrapper mint event for token ${tokenIdStr}, skipping (handled by Base Registrar)`);
+      logger.debug(
+        `Name Wrapper mint event for token ${tokenIdStr}, skipping (handled by Base Registrar)`
+      );
       return;
     }
 
     // Skip burn events (to zero address) - these are handled when unwrapping via Base Registrar
     if (to.toLowerCase() === ZERO_ADDRESS) {
-      logger.debug(`Name Wrapper burn event for token ${tokenIdStr}, skipping (handled by Base Registrar)`);
+      logger.debug(
+        `Name Wrapper burn event for token ${tokenIdStr}, skipping (handled by Base Registrar)`
+      );
       return;
     }
 
@@ -387,12 +411,16 @@ export class ENSIndexer {
 
           if (insertResult.rows.length > 0) {
             ensNameId = insertResult.rows[0].id;
-            logger.info(`Created new record for wrapped name ${nameToStore} with owner ${ownerToStore}`);
+            logger.info(
+              `Created new record for wrapped name ${nameToStore} with owner ${ownerToStore}`
+            );
           }
         } catch (insertError: any) {
           if (insertError.code === '23505') {
             // Unique constraint violation on name - fall back to UPDATE by name
-            logger.warn(`Constraint violation during Name Wrapper insert for ${nameToStore}, falling back to UPDATE by name: ${insertError.detail}`);
+            logger.warn(
+              `Constraint violation during Name Wrapper insert for ${nameToStore}, falling back to UPDATE by name: ${insertError.detail}`
+            );
             const fallbackResult = await this.pool.query(
               `UPDATE ens_names SET
                 owner_address = $1,
@@ -404,7 +432,9 @@ export class ENSIndexer {
             );
             if (fallbackResult.rows.length > 0) {
               ensNameId = fallbackResult.rows[0].id;
-              logger.info(`Updated ownership for wrapped name ${nameToStore} to ${ownerToStore} (fallback)`);
+              logger.info(
+                `Updated ownership for wrapped name ${nameToStore} to ${ownerToStore} (fallback)`
+              );
             }
           } else {
             throw insertError;
@@ -412,12 +442,15 @@ export class ENSIndexer {
         }
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: tokenIdStr,
-        from,
-        to
-      }, 'Failed to process Name Wrapper TransferSingle');
+      logger.error(
+        {
+          err: error,
+          tokenId: tokenIdStr,
+          from,
+          to,
+        },
+        'Failed to process Name Wrapper TransferSingle'
+      );
       throw error;
     }
 
@@ -434,13 +467,19 @@ export class ENSIndexer {
           transactionHash: log.transactionHash || '',
         });
 
-        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() }, 'Published ownership update job for wrapped name transfer');
+        logger.debug(
+          { ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() },
+          'Published ownership update job for wrapped name transfer'
+        );
       } catch (queueError: any) {
-        logger.error({
-          errorMessage: queueError?.message || String(queueError),
-          errorStack: queueError?.stack,
-          ensNameId
-        }, 'Failed to publish ownership update job for wrapped name transfer');
+        logger.error(
+          {
+            errorMessage: queueError?.message || String(queueError),
+            errorStack: queueError?.stack,
+            ensNameId,
+          },
+          'Failed to publish ownership update job for wrapped name transfer'
+        );
       }
     }
 
@@ -472,11 +511,14 @@ export class ENSIndexer {
         ]);
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: tokenIdStr,
-        transactionHash: log.transactionHash
-      }, 'Failed to insert wrapped transfer transaction');
+      logger.error(
+        {
+          err: error,
+          tokenId: tokenIdStr,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to insert wrapped transfer transaction'
+      );
     }
   }
 
@@ -485,10 +527,7 @@ export class ENSIndexer {
 
     // Process each token in the batch as a single transfer
     for (const tokenId of ids) {
-      await this.handleNameWrapperTransferSingle(
-        { from, to, id: tokenId },
-        log
-      );
+      await this.handleNameWrapperTransferSingle({ from, to, id: tokenId }, log);
     }
   }
 
@@ -520,7 +559,9 @@ export class ENSIndexer {
       }
 
       if (decodedLog) {
-        logger.debug(`Processing Controller NameRegistered event at block ${log.blockNumber} (${isV2 ? 'V2' : 'Original'})`);
+        logger.debug(
+          `Processing Controller NameRegistered event at block ${log.blockNumber} (${isV2 ? 'V2' : 'Original'})`
+        );
         await this.handleControllerNameRegistered(decodedLog.args, log, isV2);
         return;
       }
@@ -549,15 +590,20 @@ export class ENSIndexer {
       }
 
       if (decodedLog) {
-        logger.debug(`Processing Controller NameRenewed event at block ${log.blockNumber} (${isRenewalV2 ? 'V2' : 'Original'})`);
+        logger.debug(
+          `Processing Controller NameRenewed event at block ${log.blockNumber} (${isRenewalV2 ? 'V2' : 'Original'})`
+        );
         await this.handleControllerNameRenewed(decodedLog.args, log, isRenewalV2);
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        code: error.code,
-        transactionHash: log.transactionHash,
-      }, `Error processing Controller log at block ${log.blockNumber}`);
+      logger.error(
+        {
+          err: error,
+          code: error.code,
+          transactionHash: log.transactionHash,
+        },
+        `Error processing Controller log at block ${log.blockNumber}`
+      );
     }
   }
 
@@ -587,7 +633,9 @@ export class ENSIndexer {
           registrantAddress = tx.from.toLowerCase();
         }
       } catch (txError: any) {
-        logger.warn(`Could not fetch transaction for Controller event, using owner as registrant: ${txError.message}`);
+        logger.warn(
+          `Could not fetch transaction for Controller event, using owner as registrant: ${txError.message}`
+        );
       }
     }
 
@@ -600,16 +648,17 @@ export class ENSIndexer {
       const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
       registrationDate = new Date(Number(block.timestamp) * 1000);
     } catch (blockError: any) {
-      logger.warn(`Could not fetch block for registration date, using current time: ${blockError.message}`);
+      logger.warn(
+        `Could not fetch block for registration date, using current time: ${blockError.message}`
+      );
       registrationDate = new Date();
     }
 
     try {
       // Find the ens_name_id for this name
-      const ensNameResult = await this.pool.query(
-        'SELECT id FROM ens_names WHERE name = $1',
-        [fullName]
-      );
+      const ensNameResult = await this.pool.query('SELECT id FROM ens_names WHERE name = $1', [
+        fullName,
+      ]);
 
       let ensNameId: number;
       if (ensNameResult.rows.length > 0) {
@@ -628,7 +677,9 @@ export class ENSIndexer {
         try {
           bootstrapTokenId = BigInt(labelHash).toString();
         } catch {
-          logger.warn(`Controller NameRegistered: could not derive token_id from labelHash ${labelHash} for ${fullName}, skipping cost capture`);
+          logger.warn(
+            `Controller NameRegistered: could not derive token_id from labelHash ${labelHash} for ${fullName}, skipping cost capture`
+          );
           return;
         }
         const { has_numbers, has_emoji } = this.calculateNameAttributes(fullName);
@@ -657,7 +708,9 @@ export class ENSIndexer {
           ]
         );
         ensNameId = bootstrap.rows[0].id;
-        logger.info(`Controller NameRegistered: bootstrapped ens_names row for ${fullName} (token ${bootstrapTokenId}) ahead of Graph sync`);
+        logger.info(
+          `Controller NameRegistered: bootstrapped ens_names row for ${fullName} (token ${bootstrapTokenId}) ahead of Graph sync`
+        );
       }
 
       // Extract referrer from V2 controller events
@@ -693,7 +746,9 @@ export class ENSIndexer {
         ]
       );
 
-      logger.info(`Recorded registration cost for ${fullName}: base=${baseCostWei}, premium=${premiumWei}, total=${totalCostWei}`);
+      logger.info(
+        `Recorded registration cost for ${fullName}: base=${baseCostWei}, premium=${premiumWei}, total=${totalCostWei}`
+      );
 
       // Update the mint activity record with cost metadata if it exists
       const registrationSource = referrer ? getRegistrationSource(referrer) : null;
@@ -710,7 +765,9 @@ export class ENSIndexer {
             base_cost_wei: baseCostWei,
             premium_wei: premiumWei,
             total_cost_wei: totalCostWei,
-            duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000),
+            duration_seconds: Math.floor(
+              (expiryDate.getTime() - registrationDate.getTime()) / 1000
+            ),
             ...(referrer ? { referrer, registration_source: registrationSource } : {}),
           }),
           ensNameId,
@@ -719,13 +776,15 @@ export class ENSIndexer {
           ...(registrationSource ? [registrationSource] : []),
         ]
       );
-
     } catch (error: any) {
-      logger.error({
-        err: error,
-        name: fullName,
-        transactionHash: log.transactionHash
-      }, 'Failed to record registration cost');
+      logger.error(
+        {
+          err: error,
+          name: fullName,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to record registration cost'
+      );
       throw error;
     }
   }
@@ -749,7 +808,9 @@ export class ENSIndexer {
       const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
       renewalDate = new Date(Number(block.timestamp) * 1000);
     } catch (blockError: any) {
-      logger.warn(`Could not fetch block for renewal date, using current time: ${blockError.message}`);
+      logger.warn(
+        `Could not fetch block for renewal date, using current time: ${blockError.message}`
+      );
       renewalDate = new Date();
     }
 
@@ -778,7 +839,9 @@ export class ENSIndexer {
           }
         }
       } catch (txError: any) {
-        logger.warn(`Could not fetch transaction for Controller NameRenewed event: ${txError.message}`);
+        logger.warn(
+          `Could not fetch transaction for Controller NameRenewed event: ${txError.message}`
+        );
       }
     }
 
@@ -795,7 +858,8 @@ export class ENSIndexer {
         // Name not in ens_names (registered before indexer started or backfill gap).
         // Create a minimal record so the renewal isn't lost.
         const labelHash = isV2 ? args.labelhash : args.label;
-        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const tokenIdStr =
+          typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
         const attributes = this.calculateNameAttributes(fullName);
 
         logger.info(`Controller NameRenewed: name ${fullName} not in ens_names, creating record`);
@@ -807,7 +871,14 @@ export class ENSIndexer {
              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
              updated_at = NOW()
            RETURNING id`,
-          [tokenIdStr, fullName, renewerAddress, expiryDate, attributes.has_numbers, attributes.has_emoji]
+          [
+            tokenIdStr,
+            fullName,
+            renewerAddress,
+            expiryDate,
+            attributes.has_numbers,
+            attributes.has_emoji,
+          ]
         );
 
         ensNameId = insertResult.rows[0].id;
@@ -822,7 +893,7 @@ export class ENSIndexer {
         const rawDuration = oldExpiryDate
           ? Math.floor((expiryDate.getTime() - new Date(oldExpiryDate).getTime()) / 1000)
           : null;
-        durationSeconds = (rawDuration != null && rawDuration > 0) ? rawDuration : null;
+        durationSeconds = rawDuration != null && rawDuration > 0 ? rawDuration : null;
       }
 
       // Insert renewal record
@@ -899,13 +970,18 @@ export class ENSIndexer {
         );
       }
 
-      logger.info(`Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`);
+      logger.info(
+        `Recorded renewal cost for ${fullName}: cost=${costWei}${referrer ? `, referrer=${referrer}` : ''}`
+      );
     } catch (error: any) {
-      logger.error({
-        err: error,
-        name: fullName,
-        transactionHash: log.transactionHash,
-      }, 'Failed to record renewal cost');
+      logger.error(
+        {
+          err: error,
+          name: fullName,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to record renewal cost'
+      );
       throw error;
     }
   }
@@ -943,7 +1019,9 @@ export class ENSIndexer {
         const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
         renewalDate = new Date(Number(block.timestamp) * 1000);
       } catch (blockError: any) {
-        logger.warn(`Could not fetch block for RenewalReferred date, using current time: ${blockError.message}`);
+        logger.warn(
+          `Could not fetch block for RenewalReferred date, using current time: ${blockError.message}`
+        );
         renewalDate = new Date();
       }
 
@@ -951,7 +1029,9 @@ export class ENSIndexer {
       let renewerAddress = '0x0000000000000000000000000000000000000000';
       if (log.transactionHash) {
         try {
-          const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+          const tx = await this.client.getTransaction({
+            hash: log.transactionHash as `0x${string}`,
+          });
           if (tx && tx.from) {
             renewerAddress = tx.from.toLowerCase();
           }
@@ -972,7 +1052,8 @@ export class ENSIndexer {
         // Name not in ens_names (registered before indexer started or backfill gap).
         // Create a minimal record so the renewal isn't lost.
         const labelHash = decodedLog.args.labelHash;
-        const tokenIdStr = typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
+        const tokenIdStr =
+          typeof labelHash === 'bigint' ? labelHash.toString() : BigInt(labelHash).toString();
         const attributes = this.calculateNameAttributes(fullName);
 
         logger.info(`RenewalReferred: name ${fullName} not in ens_names, creating record`);
@@ -993,7 +1074,8 @@ export class ENSIndexer {
 
       // Use existing expiry_date as the new_expiry_date (the Base Registrar NameRenewed event
       // will have already updated it, or will update it shortly)
-      const newExpiryDate = (ensNameResult.rows.length > 0 && ensNameResult.rows[0].expiry_date) || renewalDate;
+      const newExpiryDate =
+        (ensNameResult.rows.length > 0 && ensNameResult.rows[0].expiry_date) || renewalDate;
 
       // Insert renewal record
       await this.pool.query(
@@ -1087,12 +1169,17 @@ export class ENSIndexer {
         );
       }
 
-      logger.info(`Recorded RenewalReferred for ${fullName}: cost=${costWei}, duration=${durationSeconds}s, referrer=${referrer}`);
+      logger.info(
+        `Recorded RenewalReferred for ${fullName}: cost=${costWei}, duration=${durationSeconds}s, referrer=${referrer}`
+      );
     } catch (error: any) {
-      logger.error({
-        err: error,
-        transactionHash: log.transactionHash,
-      }, `Error processing RenewalReferred log at block ${log.blockNumber}`);
+      logger.error(
+        {
+          err: error,
+          transactionHash: log.transactionHash,
+        },
+        `Error processing RenewalReferred log at block ${log.blockNumber}`
+      );
     }
   }
 
@@ -1123,7 +1210,7 @@ export class ENSIndexer {
     if (typeof obj === 'bigint') {
       return obj.toString();
     } else if (Array.isArray(obj)) {
-      return obj.map(item => this.serializeBigInts(item));
+      return obj.map((item) => this.serializeBigInts(item));
     } else if (obj !== null && typeof obj === 'object') {
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
@@ -1165,11 +1252,14 @@ export class ENSIndexer {
           logger.debug(`Unhandled event type: ${eventName}`);
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        args,
-        blockNumber: log.blockNumber?.toString()
-      }, `Error processing ${eventName} event`);
+      logger.error(
+        {
+          err: error,
+          args,
+          blockNumber: log.blockNumber?.toString(),
+        },
+        `Error processing ${eventName} event`
+      );
       throw error;
     }
   }
@@ -1202,7 +1292,9 @@ export class ENSIndexer {
 
         // Require successful resolution for Name Wrapper transfers
         if (!resolvedData || !resolvedData.name) {
-          logger.warn(`Could not resolve Name Wrapper transfer from The Graph for token ${tokenIdStr}, skipping Transfer event`);
+          logger.warn(
+            `Could not resolve Name Wrapper transfer from The Graph for token ${tokenIdStr}, skipping Transfer event`
+          );
           return;
         }
 
@@ -1223,14 +1315,23 @@ export class ENSIndexer {
         if (contractOwner) {
           // Got authoritative owner from the blockchain
           ownerToStore = contractOwner;
-          logger.debug(`Name Wrapper transfer for ${nameToStore}: got owner from contract: ${ownerToStore}`);
+          logger.debug(
+            `Name Wrapper transfer for ${nameToStore}: got owner from contract: ${ownerToStore}`
+          );
         } else if (isWrapping) {
           // Wrapping but contract query failed - try The Graph, otherwise skip
-          if (resolvedData.ownerAddress && resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
+          if (
+            resolvedData.ownerAddress &&
+            resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()
+          ) {
             ownerToStore = resolvedData.ownerAddress;
-            logger.debug(`Wrapping transfer for ${nameToStore}: using resolved owner: ${ownerToStore}`);
+            logger.debug(
+              `Wrapping transfer for ${nameToStore}: using resolved owner: ${ownerToStore}`
+            );
           } else {
-            logger.info(`Wrapping transfer for ${nameToStore}: cannot determine real owner, skipping`);
+            logger.info(
+              `Wrapping transfer for ${nameToStore}: cannot determine real owner, skipping`
+            );
             return;
           }
         } else if (isUnwrapping) {
@@ -1242,7 +1343,9 @@ export class ENSIndexer {
             // for the upcoming NameRegistered event which will use labelhash
             const labelhashTokenId = this.resolver.getLabelhashTokenId(nameToStore);
             if (labelhashTokenId && labelhashTokenId !== correctTokenId) {
-              logger.info(`Unwrap burn for ${nameToStore}: updating token_id from namehash ${correctTokenId} to labelhash ${labelhashTokenId}`);
+              logger.info(
+                `Unwrap burn for ${nameToStore}: updating token_id from namehash ${correctTokenId} to labelhash ${labelhashTokenId}`
+              );
 
               // Update token_id by name (since the name is unique)
               await this.pool.query(
@@ -1255,7 +1358,9 @@ export class ENSIndexer {
 
               logger.info(`Updated token_id for ${nameToStore} to labelhash format`);
             } else {
-              logger.debug(`Unwrap burn for ${nameToStore}: token_id already in labelhash format or could not compute labelhash`);
+              logger.debug(
+                `Unwrap burn for ${nameToStore}: token_id already in labelhash format or could not compute labelhash`
+              );
             }
             // Don't update owner for burn transfers - the NameRegistered event will set the new owner
             return;
@@ -1273,7 +1378,9 @@ export class ENSIndexer {
           return;
         }
 
-        logger.debug(`Name Wrapper transfer: using correctTokenId ${correctTokenId}, owner ${ownerToStore} for ${nameToStore}`);
+        logger.debug(
+          `Name Wrapper transfer: using correctTokenId ${correctTokenId}, owner ${ownerToStore} for ${nameToStore}`
+        );
       } else {
         // Standard unwrapped transfer - use blockchain event data
         // First check if we already have this name in the database
@@ -1297,7 +1404,9 @@ export class ENSIndexer {
             has_emoji = attributes.has_emoji;
           } else {
             // Can't resolve - skip this transfer
-            logger.warn(`Could not resolve name for unwrapped transfer token ${tokenIdStr}, skipping Transfer event`);
+            logger.warn(
+              `Could not resolve name for unwrapped transfer token ${tokenIdStr}, skipping Transfer event`
+            );
             return;
           }
         }
@@ -1322,7 +1431,9 @@ export class ENSIndexer {
         if (duplicateName.rows.length > 0) {
           // Name exists with different token_id - update the existing record by name
           // Also update token_id to match the new wrapped/unwrapped state
-          logger.info(`Updating token_id for ${nameToStore} from ${duplicateName.rows[0].token_id} to ${correctTokenId} (wrap/unwrap transition)`);
+          logger.info(
+            `Updating token_id for ${nameToStore} from ${duplicateName.rows[0].token_id} to ${correctTokenId} (wrap/unwrap transition)`
+          );
           result = await this.pool.query(
             `UPDATE ens_names SET
               token_id = $1,
@@ -1362,13 +1473,15 @@ export class ENSIndexer {
             nameToStore,
             ownerToStore,
             has_numbers,
-            has_emoji
+            has_emoji,
           ]);
         }
       } catch (upsertError: any) {
         if (upsertError.code === '23505') {
           // Unique constraint violation (token_id or name) - fall back to UPDATE by name
-          logger.warn(`Constraint violation during Transfer upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`);
+          logger.warn(
+            `Constraint violation during Transfer upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`
+          );
           result = await this.pool.query(
             `UPDATE ens_names SET
               owner_address = $1,
@@ -1387,11 +1500,14 @@ export class ENSIndexer {
         ensNameId = result.rows[0].id;
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: tokenIdStr,
-        to
-      }, 'Failed to process Transfer event');
+      logger.error(
+        {
+          err: error,
+          tokenId: tokenIdStr,
+          to,
+        },
+        'Failed to process Transfer event'
+      );
       throw error;
     }
 
@@ -1408,14 +1524,20 @@ export class ENSIndexer {
           transactionHash: log.transactionHash || '',
         });
 
-        logger.debug({ ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() }, 'Published ownership update job');
+        logger.debug(
+          { ensNameId, tokenId: tokenIdStr, newOwner: resolvedOwner || to.toLowerCase() },
+          'Published ownership update job'
+        );
       } catch (queueError: any) {
         // Don't fail indexing if queue publishing fails
-        logger.error({
-          errorMessage: queueError?.message || String(queueError),
-          errorStack: queueError?.stack,
-          ensNameId
-        }, 'Failed to publish ownership update job');
+        logger.error(
+          {
+            errorMessage: queueError?.message || String(queueError),
+            errorStack: queueError?.stack,
+            ensNameId,
+          },
+          'Failed to publish ownership update job'
+        );
       }
     }
 
@@ -1442,11 +1564,14 @@ export class ENSIndexer {
         new Date(Number(block.timestamp) * 1000),
       ]);
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: tokenIdStr,
-        transactionHash: log.transactionHash
-      }, 'Failed to insert transaction');
+      logger.error(
+        {
+          err: error,
+          tokenId: tokenIdStr,
+          transactionHash: log.transactionHash,
+        },
+        'Failed to insert transaction'
+      );
       // Don't rethrow - we can continue even if transaction insert fails
     }
   }
@@ -1474,12 +1599,16 @@ export class ENSIndexer {
 
       if (isWrappedRegistration) {
         // Name Wrapper registration - resolve from The Graph to get correct data
-        logger.debug(`Name Wrapper registration detected for token ${tokenIdStr}, querying The Graph`);
+        logger.debug(
+          `Name Wrapper registration detected for token ${tokenIdStr}, querying The Graph`
+        );
         const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
 
         // Require successful resolution for wrapped registrations
         if (!resolvedData || !resolvedData.name) {
-          logger.warn(`Could not resolve Name Wrapper registration from The Graph for token ${tokenIdStr}, skipping NameRegistered event`);
+          logger.warn(
+            `Could not resolve Name Wrapper registration from The Graph for token ${tokenIdStr}, skipping NameRegistered event`
+          );
           return;
         }
 
@@ -1494,18 +1623,29 @@ export class ENSIndexer {
 
         if (contractOwner) {
           ownerAddress = contractOwner;
-          logger.debug(`Name Wrapper registration for ${nameToStore}: got owner from contract: ${ownerAddress}`);
-        } else if (resolvedData.ownerAddress && resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
+          logger.debug(
+            `Name Wrapper registration for ${nameToStore}: got owner from contract: ${ownerAddress}`
+          );
+        } else if (
+          resolvedData.ownerAddress &&
+          resolvedData.ownerAddress !== NAME_WRAPPER_ADDRESS.toLowerCase()
+        ) {
           ownerAddress = resolvedData.ownerAddress;
-          logger.debug(`Name Wrapper registration for ${nameToStore}: using resolved owner: ${ownerAddress}`);
+          logger.debug(
+            `Name Wrapper registration for ${nameToStore}: using resolved owner: ${ownerAddress}`
+          );
         } else {
-          logger.info(`Name Wrapper registration for ${nameToStore}: cannot determine real owner, skipping`);
+          logger.info(
+            `Name Wrapper registration for ${nameToStore}: cannot determine real owner, skipping`
+          );
           return;
         }
 
         // Final safety check
         if (ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
-          logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore} registration, skipping`);
+          logger.warn(
+            `Refusing to store Name Wrapper as owner for ${nameToStore} registration, skipping`
+          );
           return;
         }
 
@@ -1516,7 +1656,9 @@ export class ENSIndexer {
         registrationDate = resolvedData.registrationDate;
         creationDate = resolvedData.creationDate;
 
-        logger.debug(`Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`);
+        logger.debug(
+          `Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`
+        );
       } else {
         // Standard unwrapped registration - resolve name from The Graph but use event data for ownership
         const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
@@ -1546,12 +1688,16 @@ export class ENSIndexer {
               WHERE token_id = $3`,
               [expiryFromEvent, owner.toLowerCase(), tokenIdStr]
             );
-            logger.info(`Graph lookup failed but updated existing token ${tokenIdStr} (${existingName.rows[0].name}) with expiry ${expiryFromEvent.toISOString()} from NameRegistered event`);
+            logger.info(
+              `Graph lookup failed but updated existing token ${tokenIdStr} (${existingName.rows[0].name}) with expiry ${expiryFromEvent.toISOString()} from NameRegistered event`
+            );
             return;
           }
 
           // Can't resolve name and don't have it in DB - skip this registration
-          logger.warn(`Could not resolve name for registration token ${tokenIdStr}, skipping NameRegistered event`);
+          logger.warn(
+            `Could not resolve name for registration token ${tokenIdStr}, skipping NameRegistered event`
+          );
           return;
         }
 
@@ -1564,7 +1710,9 @@ export class ENSIndexer {
         registrantAddress = owner.toLowerCase();
         expiryDate = new Date(Number(expires) * 1000);
 
-        logger.debug(`Standard registration: token ${tokenIdStr}, name ${nameToStore}, owner ${ownerAddress}`);
+        logger.debug(
+          `Standard registration: token ${tokenIdStr}, name ${nameToStore}, owner ${ownerAddress}`
+        );
       }
 
       // Check if this name exists with a different token_id (wrapping/unwrapping transition)
@@ -1591,7 +1739,17 @@ export class ENSIndexer {
               updated_at = NOW()
             WHERE name = $8
             RETURNING id`,
-            [correctTokenId, ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, nameToStore, creationDate]
+            [
+              correctTokenId,
+              ownerAddress,
+              registrantAddress,
+              expiryDate,
+              registrationDate,
+              has_numbers,
+              has_emoji,
+              nameToStore,
+              creationDate,
+            ]
           );
         } else {
           // Upsert by token_id
@@ -1630,13 +1788,15 @@ export class ENSIndexer {
             nameToStore,
             has_numbers,
             has_emoji,
-            creationDate
+            creationDate,
           ]);
         }
       } catch (upsertError: any) {
         if (upsertError.code === '23505') {
           // Unique constraint violation (token_id or name) - fall back to UPDATE by name
-          logger.warn(`Constraint violation during NameRegistered upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`);
+          logger.warn(
+            `Constraint violation during NameRegistered upsert for ${nameToStore}, falling back to UPDATE by name: ${upsertError.detail}`
+          );
           result = await this.pool.query(
             `UPDATE ens_names SET
               owner_address = $1,
@@ -1649,7 +1809,16 @@ export class ENSIndexer {
               updated_at = NOW()
             WHERE name = $8
             RETURNING id`,
-            [ownerAddress, registrantAddress, expiryDate, registrationDate, has_numbers, has_emoji, creationDate, nameToStore]
+            [
+              ownerAddress,
+              registrantAddress,
+              expiryDate,
+              registrationDate,
+              has_numbers,
+              has_emoji,
+              creationDate,
+              nameToStore,
+            ]
           );
         } else {
           throw upsertError;
@@ -1666,13 +1835,19 @@ export class ENSIndexer {
           let actualMinter = registrantAddress;
           if (log.transactionHash) {
             try {
-              const tx = await this.client.getTransaction({ hash: log.transactionHash as `0x${string}` });
+              const tx = await this.client.getTransaction({
+                hash: log.transactionHash as `0x${string}`,
+              });
               if (tx && tx.from) {
                 actualMinter = tx.from.toLowerCase();
-                logger.debug(`Mint activity: using tx.from ${actualMinter} instead of event owner ${registrantAddress}`);
+                logger.debug(
+                  `Mint activity: using tx.from ${actualMinter} instead of event owner ${registrantAddress}`
+                );
               }
             } catch (txError: any) {
-              logger.warn(`Could not fetch transaction for mint activity, using event owner: ${txError.message}`);
+              logger.warn(
+                `Could not fetch transaction for mint activity, using event owner: ${txError.message}`
+              );
             }
           }
 
@@ -1685,7 +1860,9 @@ export class ENSIndexer {
           let mintPlatform = 'blockchain';
           const mintMetadata: Record<string, unknown> = {
             token_id: correctTokenId,
-            duration_seconds: Math.floor((expiryDate.getTime() - registrationDate.getTime()) / 1000),
+            duration_seconds: Math.floor(
+              (expiryDate.getTime() - registrationDate.getTime()) / 1000
+            ),
           };
           if (log.transactionHash) {
             const regRow = await this.pool.query(
@@ -1734,25 +1911,33 @@ export class ENSIndexer {
               log.blockNumber?.toString() || null,
               mintPriceWei,
               JSON.stringify(mintMetadata),
-              registrationDate
+              registrationDate,
             ]
           );
-          logger.debug(`Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}, minter: ${actualMinter}`);
+          logger.debug(
+            `Created mint activity for ${nameToStore} (token ${correctTokenId}) with registration date ${registrationDate.toISOString()}, minter: ${actualMinter}`
+          );
         } catch (activityError: any) {
-          logger.error({
-            err: activityError,
-            tokenId: correctTokenId,
-            ensNameId
-          }, 'Failed to create mint activity');
+          logger.error(
+            {
+              err: activityError,
+              tokenId: correctTokenId,
+              ensNameId,
+            },
+            'Failed to create mint activity'
+          );
           // Don't fail the entire registration if activity creation fails
         }
       }
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: tokenIdStr,
-        owner
-      }, 'Failed to handle NameRegistered');
+      logger.error(
+        {
+          err: error,
+          tokenId: tokenIdStr,
+          owner,
+        },
+        'Failed to handle NameRegistered'
+      );
       throw error;
     }
 
@@ -1785,10 +1970,13 @@ export class ENSIndexer {
         timestamp,
       ]);
     } catch (error: any) {
-      logger.error({
-        err: error,
-        tokenId: correctTokenId
-      }, 'Failed to insert registration transaction');
+      logger.error(
+        {
+          err: error,
+          tokenId: correctTokenId,
+        },
+        'Failed to insert registration transaction'
+      );
     }
   }
 
@@ -1810,7 +1998,9 @@ export class ENSIndexer {
     if (resolvedData && resolvedData.name) {
       // Successfully resolved - update by name (works for both wrapped and unwrapped)
       nameForTx = resolvedData.name;
-      logger.info(`NameRenewed: resolved labelhash ${tokenIdStr} to name ${nameForTx}, updating expiry to ${expiryDate.toISOString()}`);
+      logger.info(
+        `NameRenewed: resolved labelhash ${tokenIdStr} to name ${nameForTx}, updating expiry to ${expiryDate.toISOString()}`
+      );
 
       const updateQuery = `
         UPDATE ens_names
@@ -1821,7 +2011,9 @@ export class ENSIndexer {
     } else {
       // Could not resolve from The Graph - fall back to token_id lookup
       // This handles unwrapped names that might not be in The Graph yet
-      logger.debug(`NameRenewed: could not resolve labelhash ${tokenIdStr}, falling back to token_id lookup`);
+      logger.debug(
+        `NameRenewed: could not resolve labelhash ${tokenIdStr}, falling back to token_id lookup`
+      );
 
       const updateQuery = `
         UPDATE ens_names
@@ -1832,9 +2024,13 @@ export class ENSIndexer {
     }
 
     if (updateResult.rowCount === 0) {
-      logger.warn(`NameRenewed: no rows updated for token ${tokenIdStr}${nameForTx ? ` (${nameForTx})` : ''}`);
+      logger.warn(
+        `NameRenewed: no rows updated for token ${tokenIdStr}${nameForTx ? ` (${nameForTx})` : ''}`
+      );
     } else {
-      logger.info(`NameRenewed: updated expiry for ${nameForTx || `token ${tokenIdStr}`} to ${expiryDate.toISOString()}`);
+      logger.info(
+        `NameRenewed: updated expiry for ${nameForTx || `token ${tokenIdStr}`} to ${expiryDate.toISOString()}`
+      );
     }
 
     // Record the renewal transaction
@@ -1888,9 +2084,6 @@ export class ENSIndexer {
           updated_at = NOW()
     `;
 
-    await this.pool.query(query, [
-      config.blockchain.ensRegistrarAddress,
-      blockNumber.toString(),
-    ]);
+    await this.pool.query(query, [config.blockchain.ensRegistrarAddress, blockNumber.toString()]);
   }
 }

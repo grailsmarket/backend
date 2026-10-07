@@ -7,10 +7,9 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENS_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i;
 
 const BlockTargetSchema = z.object({
-  user: z.string().refine(
-    (v) => ADDRESS_RE.test(v) || ENS_RE.test(v),
-    { message: 'Target must be an Ethereum address or ENS name (.eth)' }
-  ),
+  user: z.string().refine((v) => ADDRESS_RE.test(v) || ENS_RE.test(v), {
+    message: 'Target must be an Ethereum address or ENS name (.eth)',
+  }),
 });
 
 const UserIdParamsSchema = z.object({
@@ -113,11 +112,13 @@ export async function blocksRoutes(fastify: FastifyInstance) {
         [callerId, resolved.userId]
       );
 
-      return reply.status(201).send(ok({
-        blocker_user_id: callerId,
-        blocked_user_id: resolved.userId,
-        address: resolved.address,
-      }));
+      return reply.status(201).send(
+        ok({
+          blocker_user_id: callerId,
+          blocked_user_id: resolved.userId,
+          address: resolved.address,
+        })
+      );
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);

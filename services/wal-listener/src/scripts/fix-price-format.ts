@@ -27,10 +27,10 @@ async function main() {
     size: 1000,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      _source: false
-    }
+      _source: false,
+    },
   });
 
   scrollId = searchResponse._scroll_id;
@@ -46,7 +46,7 @@ async function main() {
     if (scrollId) {
       const scrollResponse = await es.scroll({
         scroll_id: scrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       hits = scrollResponse.hits.hits;
@@ -70,7 +70,9 @@ async function main() {
   for (let i = 0; i < activeIds.length; i += batchSize) {
     const batch = activeIds.slice(i, i + batchSize);
 
-    console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, activeIds.length)} of ${activeIds.length})...`);
+    console.log(
+      `Processing batch ${Math.floor(i / batchSize) + 1} (${i + 1}-${Math.min(i + batchSize, activeIds.length)} of ${activeIds.length})...`
+    );
 
     for (const id of batch) {
       try {
@@ -84,7 +86,7 @@ async function main() {
     console.log(`  ✓ Synced ${synced}/${activeIds.length} records`);
 
     // Small delay to avoid overwhelming ES
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log(`\n✨ Fix complete! Updated ${synced} records with correct price format.`);
@@ -93,7 +95,7 @@ async function main() {
   process.exit(0);
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error('💥 Error:', error.message);
   console.error(error.stack);
   closeAllConnections();

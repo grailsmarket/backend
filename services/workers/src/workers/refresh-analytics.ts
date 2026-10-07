@@ -52,7 +52,7 @@ export async function refreshAnalytics(job: Job<RefreshAnalyticsJob>): Promise<v
       const startTime = Date.now();
 
       // Refresh views in parallel for speed
-      await Promise.all(views.map(viewName => refreshView(viewName)));
+      await Promise.all(views.map((viewName) => refreshView(viewName)));
 
       const duration = Date.now() - startTime;
       logger.info(
@@ -80,18 +80,12 @@ async function refreshView(viewName: string): Promise<void> {
     await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
 
     const duration = Date.now() - startTime;
-    logger.debug(
-      { viewName, duration },
-      'Refreshed materialized view'
-    );
+    logger.debug({ viewName, duration }, 'Refreshed materialized view');
   } catch (error: any) {
     // If CONCURRENTLY fails (usually because of missing UNIQUE index),
     // fall back to blocking refresh
     if (error.message.includes('CONCURRENTLY') || error.message.includes('unique index')) {
-      logger.warn(
-        { viewName },
-        'CONCURRENTLY refresh failed, falling back to blocking refresh'
-      );
+      logger.warn({ viewName }, 'CONCURRENTLY refresh failed, falling back to blocking refresh');
 
       await pool.query(`REFRESH MATERIALIZED VIEW ${viewName}`);
 

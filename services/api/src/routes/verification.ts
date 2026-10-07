@@ -46,16 +46,15 @@ export async function verificationRoutes(fastify: FastifyInstance) {
       const { id: tokenId, user_id: userId, email } = tokenResult.rows[0];
 
       // Update user email_verified
-      await pool.query(
-        `UPDATE users SET email_verified = true WHERE id = $1 AND email = $2`,
-        [userId, email]
-      );
+      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1 AND email = $2`, [
+        userId,
+        email,
+      ]);
 
       // Mark token as used
-      await pool.query(
-        `UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1`,
-        [tokenId]
-      );
+      await pool.query(`UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1`, [
+        tokenId,
+      ]);
 
       fastify.log.info({ userId, email }, 'Email verified successfully');
 
@@ -121,10 +120,9 @@ export async function verificationRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user.sub);
 
       // Get user info
-      const userResult = await pool.query(
-        'SELECT email, email_verified FROM users WHERE id = $1',
-        [userId]
-      );
+      const userResult = await pool.query('SELECT email, email_verified FROM users WHERE id = $1', [
+        userId,
+      ]);
 
       if (userResult.rows.length === 0) {
         return reply.status(404).send({

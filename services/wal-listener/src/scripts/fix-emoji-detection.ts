@@ -13,7 +13,13 @@
  *   npx tsx src/scripts/fix-emoji-detection.ts [--dry-run]
  */
 
-import { getPostgresPool, getElasticsearchClient, closeAllConnections, hasEmoji, config } from '../../../shared/src';
+import {
+  getPostgresPool,
+  getElasticsearchClient,
+  closeAllConnections,
+  hasEmoji,
+  config,
+} from '../../../shared/src';
 
 const pool = getPostgresPool();
 const esClient = getElasticsearchClient();
@@ -30,7 +36,9 @@ async function main() {
   console.log('='.repeat(60));
   console.log('Fix Emoji Detection Script');
   console.log('='.repeat(60));
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (will update Elasticsearch)'}`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (will update Elasticsearch)'}`
+  );
   console.log('='.repeat(60));
   console.log();
 
@@ -83,9 +91,9 @@ async function main() {
   for (let i = 0; i < namesToFix.length; i += ES_BATCH_SIZE) {
     const batch = namesToFix.slice(i, i + ES_BATCH_SIZE);
 
-    const operations = batch.flatMap(row => [
+    const operations = batch.flatMap((row) => [
       { update: { _index: indexName, _id: row.token_id } },
-      { doc: { has_emoji: true } }
+      { doc: { has_emoji: true } },
     ]);
 
     const response = await esClient.bulk({ operations, refresh: false });
@@ -118,7 +126,7 @@ async function main() {
   await closeAllConnections();
 }
 
-main().catch(async err => {
+main().catch(async (err) => {
   console.error('Script failed:', err);
   await closeAllConnections();
   process.exit(1);

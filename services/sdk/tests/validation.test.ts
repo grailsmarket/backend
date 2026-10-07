@@ -26,8 +26,9 @@ describe('Validation utilities', () => {
 
   describe('normalizeAddress', () => {
     it('should lowercase valid addresses', () => {
-      expect(normalizeAddress('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'))
-        .toBe('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
+      expect(normalizeAddress('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')).toBe(
+        '0xd8da6bf26964af9d7eed9e03e53415d37aa96045'
+      );
     });
 
     it('should throw for invalid addresses', () => {

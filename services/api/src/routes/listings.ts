@@ -32,10 +32,7 @@ const ListListingsQuerySchema = z.object({
  * Helper function to get clubs for an ENS name
  */
 async function getClubsForEnsName(pool: any, ensNameId: number): Promise<string[]> {
-  const result = await pool.query(
-    'SELECT clubs FROM ens_names WHERE id = $1',
-    [ensNameId]
-  );
+  const result = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [ensNameId]);
   return result.rows[0]?.clubs || [];
 }
 
@@ -45,7 +42,9 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   // GET all listings with filtering and pagination
   fastify.get('/', async (request, reply) => {
     const query = ListListingsQuerySchema.parse(request.query);
-    fastify.log.info(`GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`);
+    fastify.log.info(
+      `GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`
+    );
     const offset = (query.page - 1) * query.limit;
 
     const whereConditions: string[] = [];
@@ -85,9 +84,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       paramCount++;
     }
 
-    const whereClause = whereConditions.length > 0
-      ? `WHERE ${whereConditions.join(' AND ')}`
-      : '';
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
     const orderByMap: { [key: string]: string } = {
       price: 'CAST(l.price_wei AS NUMERIC)',
@@ -134,7 +131,9 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       const total = parseInt(countResult.rows[0].count);
       const totalPages = Math.ceil(total / query.limit);
 
-      fastify.log.info(`Regular listings pagination: page=${query.page}, total=${total}, totalPages=${totalPages}, hasNext=${query.page < totalPages}`);
+      fastify.log.info(
+        `Regular listings pagination: page=${query.page}, total=${total}, totalPages=${totalPages}, hasNext=${query.page < totalPages}`
+      );
 
       const response: APIResponse<{
         listings: any[];
@@ -309,7 +308,10 @@ export async function listingsRoutes(fastify: FastifyInstance) {
             { type: 'listing', id: listing.id },
             { startAfter: new Date(listing.expires_at) }
           );
-          fastify.log.info({ listingId: listing.id, expiresAt: listing.expires_at }, 'Scheduled expiry job');
+          fastify.log.info(
+            { listingId: listing.id, expiresAt: listing.expires_at },
+            'Scheduled expiry job'
+          );
         }
 
         // 2. Trigger immediate ENS metadata sync
@@ -336,7 +338,10 @@ export async function listingsRoutes(fastify: FastifyInstance) {
             eventType: 'create',
             listingPrice: body.priceWei,
           });
-          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update');
+          fastify.log.info(
+            { clubs, listingPrice: body.priceWei },
+            'Scheduled club floor price update'
+          );
         }
       } catch (queueError) {
         // Don't fail the request if queue publishing fails
@@ -470,10 +475,16 @@ export async function listingsRoutes(fastify: FastifyInstance) {
             eventType: 'update',
             listingPrice: body.priceWei,
           });
-          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update after price change');
+          fastify.log.info(
+            { clubs, listingPrice: body.priceWei },
+            'Scheduled club floor price update after price change'
+          );
         }
       } catch (queueError) {
-        fastify.log.error({ error: queueError }, 'Failed to publish club stats job for listing update');
+        fastify.log.error(
+          { error: queueError },
+          'Failed to publish club stats job for listing update'
+        );
       }
     }
 
@@ -553,10 +564,16 @@ export async function listingsRoutes(fastify: FastifyInstance) {
           eventType: 'delete',
           listingPrice: cancelledListing.price_wei,
         });
-        fastify.log.info({ clubs }, 'Scheduled club floor price recalculation after listing cancellation');
+        fastify.log.info(
+          { clubs },
+          'Scheduled club floor price recalculation after listing cancellation'
+        );
       }
     } catch (queueError) {
-      fastify.log.error({ error: queueError }, 'Failed to publish club stats job for listing cancellation');
+      fastify.log.error(
+        { error: queueError },
+        'Failed to publish club stats job for listing cancellation'
+      );
     }
 
     const response: APIResponse = {

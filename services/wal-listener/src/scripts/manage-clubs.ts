@@ -66,14 +66,14 @@ function loadNamesFromFile(filePath: string): string[] {
   } else if (ext === '.csv' || ext === '.txt') {
     names = content
       .split('\n')
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('#')); // Filter empty lines and comments
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#')); // Filter empty lines and comments
   } else {
     throw new Error(`Unsupported file format: ${ext}. Use .json, .csv, or .txt`);
   }
 
   // Normalize all names per ENSIP-15
-  return names.map(name => safeNormalize(name));
+  return names.map((name) => safeNormalize(name));
 }
 
 function generateNamesFromPattern(pattern: string): string[] {
@@ -158,7 +158,9 @@ async function addNamesToClub(clubName: string, names: string[], description?: s
   }
   console.log(`  Total processed: ${names.length}`);
   console.log(`\n✓ Triggers have auto-synced to ens_names.clubs`);
-  console.log(`⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`);
+  console.log(
+    `⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`
+  );
 }
 
 async function removeNamesFromClub(clubName: string, names: string[]) {
@@ -189,7 +191,9 @@ async function removeNamesFromClub(clubName: string, names: string[]) {
   console.log(`  Not in club: ${notInClub}`);
   console.log(`  Total processed: ${names.length}`);
   console.log(`\n✓ Triggers have auto-synced to ens_names.clubs`);
-  console.log(`⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`);
+  console.log(
+    `⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`
+  );
 }
 
 async function listAllClubs() {
@@ -268,10 +272,7 @@ async function listNamesInClub(clubName: string) {
 
 async function clearClub(clubName: string) {
   // Check if club exists
-  const clubResult = await pool.query(
-    'SELECT member_count FROM clubs WHERE name = $1',
-    [clubName]
-  );
+  const clubResult = await pool.query('SELECT member_count FROM clubs WHERE name = $1', [clubName]);
 
   if (clubResult.rows.length === 0) {
     console.log(`Club "${clubName}" not found.`);
@@ -294,15 +295,14 @@ async function clearClub(clubName: string) {
 
   console.log(`✓ Removed ${result.rowCount} names from club "${clubName}".`);
   console.log(`✓ Triggers have auto-synced to ens_names.clubs`);
-  console.log(`⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`);
+  console.log(
+    `⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`
+  );
 }
 
 async function deleteClub(clubName: string) {
   // Check if club exists
-  const clubResult = await pool.query(
-    'SELECT member_count FROM clubs WHERE name = $1',
-    [clubName]
-  );
+  const clubResult = await pool.query('SELECT member_count FROM clubs WHERE name = $1', [clubName]);
 
   if (clubResult.rows.length === 0) {
     console.log(`Club "${clubName}" not found.`);
@@ -312,21 +312,22 @@ async function deleteClub(clubName: string) {
   const memberCount = clubResult.rows[0].member_count;
 
   if (!process.argv.includes('--confirm')) {
-    console.log(`⚠️  This will PERMANENTLY DELETE club "${clubName}" and remove it from ${memberCount} names.`);
+    console.log(
+      `⚠️  This will PERMANENTLY DELETE club "${clubName}" and remove it from ${memberCount} names.`
+    );
     console.log('This action cannot be undone.');
     console.log('\nUse --confirm flag to proceed.');
     return;
   }
 
   // Delete will cascade to club_memberships due to foreign key
-  await pool.query(
-    'DELETE FROM clubs WHERE name = $1 RETURNING name',
-    [clubName]
-  );
+  await pool.query('DELETE FROM clubs WHERE name = $1 RETURNING name', [clubName]);
 
   console.log(`✓ Deleted club "${clubName}" and removed from ${memberCount} names.`);
   console.log(`✓ Triggers have auto-synced to ens_names.clubs`);
-  console.log(`⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`);
+  console.log(
+    `⚠️  Don't forget to resync Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts`
+  );
 }
 
 async function main() {
@@ -342,7 +343,9 @@ async function main() {
         const description = descIndex !== -1 ? args[descIndex + 1] : undefined;
 
         if (!clubName || !filePath) {
-          console.error('Usage: manage-clubs.ts add <club-name> <names-file> [--description "text"]');
+          console.error(
+            'Usage: manage-clubs.ts add <club-name> <names-file> [--description "text"]'
+          );
           process.exit(1);
         }
 
@@ -358,7 +361,9 @@ async function main() {
         const description = descIndex !== -1 ? args[descIndex + 1] : undefined;
 
         if (!clubName || !pattern) {
-          console.error('Usage: manage-clubs.ts add-pattern <club-name> <pattern> [--description "text"]');
+          console.error(
+            'Usage: manage-clubs.ts add-pattern <club-name> <pattern> [--description "text"]'
+          );
           console.error('\nSupported patterns:');
           console.error('  3-digits (or 3-digit, 1k)  - Generates 000.eth through 999.eth');
           console.error('  4-digits (or 4-digit, 10k) - Generates 0000.eth through 9999.eth');

@@ -162,11 +162,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   // Exclude placeholder names from all searches
   filter.push({
     bool: {
-      must_not: [
-        { prefix: { 'name.keyword': 'token-' } },
-        { prefix: { 'name.keyword': '[' } }
-      ]
-    }
+      must_not: [{ prefix: { 'name.keyword': 'token-' } }, { prefix: { 'name.keyword': '[' } }],
+    },
   });
 
   // Determine when to apply the "exclude premium/available" filter
@@ -181,7 +178,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   // Skip the filter when:
   // - includeExpired is explicitly true
   // - explicit expiration/status filters are set (user knows what they want)
-  const hasExplicitStatusFilter = status !== undefined &&
+  const hasExplicitStatusFilter =
+    status !== undefined &&
     (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
   const hasExplicitExpirationFilter =
     isExpired !== undefined ||
@@ -194,17 +192,21 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     includeExpired !== true &&
     includeExpired !== 'true' &&
     !hasExplicitExpirationFilter &&
-    (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry');
+    (resolvedOwnerAddress ||
+      sortBy === 'expiry_date' ||
+      sortBy === 'price' ||
+      sortBy === 'listing_date' ||
+      sortBy === 'listing_expiry');
 
   if (shouldExcludePremiumAvailable) {
     filter.push({
       bool: {
         should: [
           { bool: { must_not: { exists: { field: 'expiry_date' } } } },
-          { range: { expiry_date: { gte: 'now-90d' } } }
+          { range: { expiry_date: { gte: 'now-90d' } } },
         ],
-        minimum_should_match: 1
-      }
+        minimum_should_match: 1,
+      },
     });
   }
 
@@ -214,26 +216,39 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       must_not: [
         { wildcard: { 'name.keyword': '*.*.eth' } },
         { prefix: { 'name.keyword': 'token-' } },
-        { prefix: { 'name.keyword': '[' } }
-      ]
-    }
+        { prefix: { 'name.keyword': '[' } },
+      ],
+    },
   });
 
   // Restrict to specific ENS names (for watchlist)
   if (ensNames && ensNames.length > 0) {
     filter.push({
-      terms: { 'name.keyword': ensNames.map(n => n.toLowerCase()) }
+      terms: { 'name.keyword': ensNames.map((n) => n.toLowerCase()) },
     });
   }
 
   // Filter by listing status
-  if (listed === 'true' || listed === true || showListings === true || showListings === 'true' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry') {
+  if (
+    listed === 'true' ||
+    listed === true ||
+    showListings === true ||
+    showListings === 'true' ||
+    sortBy === 'price' ||
+    sortBy === 'listing_date' ||
+    sortBy === 'listing_expiry'
+  ) {
     filter.push({ term: { status: 'active' } });
-  } else if (listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true') {
+  } else if (
+    listed === 'false' ||
+    listed === false ||
+    showUnlisted === true ||
+    showUnlisted === 'true'
+  ) {
     filter.push({
       bool: {
-        must_not: [{ term: { status: 'active' } }]
-      }
+        must_not: [{ term: { status: 'active' } }],
+      },
     });
   }
 
@@ -241,28 +256,27 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   if (hasOffer === 'true' || hasOffer === true) {
     filter.push({
       bool: {
-        must: [
-          { exists: { field: 'highest_offer' } },
-          { range: { highest_offer: { gt: 0 } } }
-        ]
-      }
+        must: [{ exists: { field: 'highest_offer' } }, { range: { highest_offer: { gt: 0 } } }],
+      },
     });
   } else if (hasOffer === 'false' || hasOffer === false) {
     filter.push({
       bool: {
         should: [
           { bool: { must_not: { exists: { field: 'highest_offer' } } } },
-          { range: { highest_offer: { lte: 0 } } }
+          { range: { highest_offer: { lte: 0 } } },
         ],
-        minimum_should_match: 1
-      }
+        minimum_should_match: 1,
+      },
     });
   }
 
   // Search query
   if (q) {
     const normalizedQuery = q.toLowerCase();
-    const queryWithEth = normalizedQuery.endsWith('.eth') ? normalizedQuery : `${normalizedQuery}.eth`;
+    const queryWithEth = normalizedQuery.endsWith('.eth')
+      ? normalizedQuery
+      : `${normalizedQuery}.eth`;
 
     must.push({
       bool: {
@@ -298,10 +312,14 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   if (minLength || maxLength) {
     const scriptConditions: string[] = [];
     if (minLength) {
-      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(String(minLength))}`);
+      scriptConditions.push(
+        `doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(String(minLength))}`
+      );
     }
     if (maxLength) {
-      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(String(maxLength))}`);
+      scriptConditions.push(
+        `doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(String(maxLength))}`
+      );
     }
     filter.push({
       script: {
@@ -320,9 +338,9 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       wildcard: {
         'name.keyword': {
           value: `*${normalizedContains}*`,
-          case_insensitive: true
-        }
-      }
+          case_insensitive: true,
+        },
+      },
     });
   }
 
@@ -332,9 +350,9 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       prefix: {
         'name.keyword': {
           value: normalizedStartsWith,
-          case_insensitive: true
-        }
-      }
+          case_insensitive: true,
+        },
+      },
     });
   }
 
@@ -344,9 +362,9 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       wildcard: {
         'name.keyword': {
           value: `*${normalizedEndsWith}.eth`,
-          case_insensitive: true
-        }
-      }
+          case_insensitive: true,
+        },
+      },
     });
   }
 
@@ -358,11 +376,11 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
           wildcard: {
             'name.keyword': {
               value: `*${normalizedDoesNotContain}*`,
-              case_insensitive: true
-            }
-          }
-        }
-      }
+              case_insensitive: true,
+            },
+          },
+        },
+      },
     });
   }
 
@@ -374,11 +392,11 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
           wildcard: {
             'name.keyword': {
               value: `${normalizedDoesNotStartWith}*`,
-              case_insensitive: true
-            }
-          }
-        }
-      }
+              case_insensitive: true,
+            },
+          },
+        },
+      },
     });
   }
 
@@ -390,11 +408,11 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
           wildcard: {
             'name.keyword': {
               value: `*${normalizedDoesNotEndWith}.eth`,
-              case_insensitive: true
-            }
-          }
-        }
-      }
+              case_insensitive: true,
+            },
+          },
+        },
+      },
     });
   }
 
@@ -536,7 +554,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
 
   // Unified status filter - supports single value or array (OR logic for multiple)
   if (status && status !== 'all') {
-    const statuses = Array.isArray(status) ? status.filter(s => s !== 'all') : [status];
+    const statuses = Array.isArray(status) ? status.filter((s) => s !== 'all') : [status];
 
     if (statuses.length > 0) {
       filter.push({ exists: { field: 'expiry_date' } });
@@ -565,16 +583,14 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
         }
       } else {
         // Multiple statuses - use bool.should (OR logic)
-        const shouldClauses = statuses
-          .map(buildStatusRange)
-          .filter((q): q is any => q !== null);
+        const shouldClauses = statuses.map(buildStatusRange).filter((q): q is any => q !== null);
 
         if (shouldClauses.length > 0) {
           filter.push({
             bool: {
               should: shouldClauses,
-              minimum_should_match: 1
-            }
+              minimum_should_match: 1,
+            },
           });
         }
       }
@@ -602,10 +618,10 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
         bool: {
           should: [
             { range: { expiry_date: { gt: 'now' } } },
-            { range: { expiry_date: { lte: 'now-90d' } } }
+            { range: { expiry_date: { lte: 'now-90d' } } },
           ],
-          minimum_should_match: 1
-        }
+          minimum_should_match: 1,
+        },
       });
     }
   }
@@ -620,10 +636,10 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
         bool: {
           should: [
             { range: { expiry_date: { gt: 'now-90d' } } },
-            { range: { expiry_date: { lte: 'now-111d' } } }
+            { range: { expiry_date: { lte: 'now-111d' } } },
           ],
-          minimum_should_match: 1
-        }
+          minimum_should_match: 1,
+        },
       });
     }
   }
@@ -634,7 +650,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       bool: {
         must: [
           { exists: { field: 'expiry_date' } },
-          { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
+          { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } },
         ],
       },
     });
@@ -716,45 +732,45 @@ export function buildESSort(options: {
 
     if (sortBy === 'price') {
       sort.push({
-        'price_usd': {
+        price_usd: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'last_sale_price') {
       sort.push({
-        'last_sale_price_usd': {
+        last_sale_price_usd: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'offer') {
       sort.push({
-        'highest_offer': {
+        highest_offer: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'watchers_count') {
       sort.push({
         [sortBy]: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'listing_date') {
       sort.push({
-        'listing_created_at': {
+        listing_created_at: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'listing_expiry') {
       sort.push({
-        'listing_expires_at': {
+        listing_expires_at: {
           order,
-          missing: '_last'
-        }
+          missing: '_last',
+        },
       });
     } else if (sortBy === 'google_monthly_searches' || sortBy === 'google_avg_cpc') {
       sort.push({ [sortBy]: { order, missing: '_last' } });

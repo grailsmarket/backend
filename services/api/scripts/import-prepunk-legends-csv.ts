@@ -217,7 +217,9 @@ async function importPrepunkLegendsCSV(options: ImportOptions) {
       if (!row.tx_hash) missing.push('tx_hash');
       if (!row.minter_address) missing.push('minter_address');
       if (!row.name) missing.push('name');
-      console.log(`[SKIPPED] Row ${stats.rowsRead}: missing ${missing.join(', ')} | tx_hash=${row.tx_hash || '(empty)'} | minter=${row.minter_address || '(empty)'}`);
+      console.log(
+        `[SKIPPED] Row ${stats.rowsRead}: missing ${missing.join(', ')} | tx_hash=${row.tx_hash || '(empty)'} | minter=${row.minter_address || '(empty)'}`
+      );
       stats.rowsErrored++;
       continue;
     }
@@ -236,8 +238,8 @@ async function importPrepunkLegendsCSV(options: ImportOptions) {
       const rate = stats.rowsRead / elapsed;
       console.log(
         `Progress: ${stats.rowsRead.toLocaleString()} rows read, ` +
-        `${stats.rowsImported.toLocaleString()} imported, ` +
-        `${rate.toFixed(0)} rows/sec`
+          `${stats.rowsImported.toLocaleString()} imported, ` +
+          `${rate.toFixed(0)} rows/sec`
       );
     }
   }
@@ -280,11 +282,11 @@ if (!csvPath) {
 const options: ImportOptions = {
   csvPath,
   dryRun: args.includes('--dry-run'),
-  batchSize: parseInt(args.find(a => a.startsWith('--batch-size='))?.split('=')[1] || '500'),
-  skipRows: parseInt(args.find(a => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
+  batchSize: parseInt(args.find((a) => a.startsWith('--batch-size='))?.split('=')[1] || '500'),
+  skipRows: parseInt(args.find((a) => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
 };
 
-importPrepunkLegendsCSV(options).catch(error => {
+importPrepunkLegendsCSV(options).catch((error) => {
   console.error('Import failed:', error);
   process.exit(1);
 });

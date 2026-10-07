@@ -51,11 +51,14 @@ async function cleanupTestListings(): Promise<void> {
     const pool = await getPool();
 
     // Delete listings created by test seller addresses with broker_address set
-    await pool.query(`
+    await pool.query(
+      `
       DELETE FROM listings
       WHERE seller_address = ANY($1)
       AND broker_address IS NOT NULL
-    `, [TEST_SELLER_ADDRESSES]);
+    `,
+      [TEST_SELLER_ADDRESSES]
+    );
 
     // Also clean up any ENS names created for test tokens
     await pool.query(`
@@ -77,25 +80,28 @@ async function createTestEnsNames(): Promise<void> {
     // Create ENS name records for all the test token IDs we'll use
     // Use unique names based on full token_id to avoid duplicate name constraint
     const testTokenIds = [
-      TEST_TOKEN_ID,          // Base test token
-      TEST_TOKEN_ID + '1',    // For minimum fee test
-      TEST_TOKEN_ID + '2',    // For address normalization test
-      TEST_TOKEN_ID + '3',    // For large fee test
-      TEST_TOKEN_ID + '4',    // For complex consideration test
-      TEST_TOKEN_ID + '5',    // For duplicate order_hash test
+      TEST_TOKEN_ID, // Base test token
+      TEST_TOKEN_ID + '1', // For minimum fee test
+      TEST_TOKEN_ID + '2', // For address normalization test
+      TEST_TOKEN_ID + '3', // For large fee test
+      TEST_TOKEN_ID + '4', // For complex consideration test
+      TEST_TOKEN_ID + '5', // For duplicate order_hash test
     ];
 
     for (const tokenId of testTokenIds) {
       // Use full token_id in name to ensure uniqueness (name column has unique constraint)
       const uniqueName = `brokertest-${tokenId.slice(-12)}.eth`;
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
         VALUES ($1, $2, $3, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
           name = EXCLUDED.name,
           owner_address = EXCLUDED.owner_address,
           updated_at = NOW()
-      `, [tokenId, uniqueName, TEST_SELLER.toLowerCase()]);
+      `,
+        [tokenId, uniqueName, TEST_SELLER.toLowerCase()]
+      );
     }
 
     await pool.end();
@@ -206,7 +212,7 @@ async function apiRequest(
   }
 
   const response = await fetch(url, options);
-  const data = await response.json() as APIResponse;
+  const data = (await response.json()) as APIResponse;
   return { status: response.status, data };
 }
 
@@ -226,12 +232,10 @@ describe('Brokered Listings API', () => {
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }
-      const data = await response.json() as APIResponse;
+      const data = (await response.json()) as APIResponse;
       minFeeBps = data.data?.minFeeBasisPoints ?? 100;
     } catch {
-      throw new Error(
-        'API server not running. Start with: cd services/api && npm run dev'
-      );
+      throw new Error('API server not running. Start with: cd services/api && npm run dev');
     }
   });
 
@@ -432,7 +436,8 @@ describe('Brokered Listings API', () => {
       });
 
       it('returns 404 when ENS name does not exist', async () => {
-        const nonExistentTokenId = '99999999999999999999999999999999999999999999999999999999999999999';
+        const nonExistentTokenId =
+          '99999999999999999999999999999999999999999999999999999999999999999';
         const orderData = createMockOrderData({
           sellerAddress: TEST_SELLER,
           brokerAddress: TEST_BROKER,
@@ -460,7 +465,7 @@ describe('Brokered Listings API', () => {
         const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
         const brokerFeeBps = Math.max(minFeeBps, 250); // At least min, or 2.5%
         const priceWei = '1000000000000000000'; // 1 ETH
-        const brokerFeeWei = (BigInt(priceWei) * BigInt(brokerFeeBps) / BigInt(10000)).toString();
+        const brokerFeeWei = ((BigInt(priceWei) * BigInt(brokerFeeBps)) / BigInt(10000)).toString();
 
         const orderData = createMockOrderData({
           sellerAddress: TEST_SELLER,
@@ -491,7 +496,7 @@ describe('Brokered Listings API', () => {
       it('creates listing with minimum allowed broker fee', async () => {
         const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
         const priceWei = '1000000000000000000';
-        const brokerFeeWei = (BigInt(priceWei) * BigInt(minFeeBps) / BigInt(10000)).toString();
+        const brokerFeeWei = ((BigInt(priceWei) * BigInt(minFeeBps)) / BigInt(10000)).toString();
 
         const orderData = createMockOrderData({
           sellerAddress: TEST_SELLER,
@@ -519,7 +524,7 @@ describe('Brokered Listings API', () => {
         const upperBroker = '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
         const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
         const priceWei = '1000000000000000000';
-        const brokerFeeWei = (BigInt(priceWei) * BigInt(250) / BigInt(10000)).toString();
+        const brokerFeeWei = ((BigInt(priceWei) * BigInt(250)) / BigInt(10000)).toString();
 
         const orderData = createMockOrderData({
           sellerAddress: upperSeller,
@@ -573,28 +578,20 @@ describe('Brokered Listings API', () => {
     });
 
     it('returns results filtered by status', async () => {
-      const { status, data } = await apiRequest(
-        'GET',
-        `/broker/${TEST_BROKER}?status=active`
-      );
+      const { status, data } = await apiRequest('GET', `/broker/${TEST_BROKER}?status=active`);
 
       expect(status).toBe(200);
       expect(data.success).toBe(true);
 
       // All returned results should have active listings
       for (const result of data.data.results) {
-        const hasActiveListing = result.listings?.some(
-          (l: any) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l: any) => l.status === 'active');
         expect(hasActiveListing).toBe(true);
       }
     });
 
     it('supports pagination', async () => {
-      const { status, data } = await apiRequest(
-        'GET',
-        `/broker/${TEST_BROKER}?page=1&limit=5`
-      );
+      const { status, data } = await apiRequest('GET', `/broker/${TEST_BROKER}?page=1&limit=5`);
 
       expect(status).toBe(200);
       expect(data.success).toBe(true);
@@ -605,10 +602,7 @@ describe('Brokered Listings API', () => {
 
     it('returns empty array for address with no listings', async () => {
       const noListingsAddress = '0x0000000000000000000000000000000000000001';
-      const { status, data } = await apiRequest(
-        'GET',
-        `/broker/${noListingsAddress}`
-      );
+      const { status, data } = await apiRequest('GET', `/broker/${noListingsAddress}`);
 
       expect(status).toBe(200);
       expect(data.success).toBe(true);
@@ -617,10 +611,7 @@ describe('Brokered Listings API', () => {
     });
 
     it('rejects invalid address format', async () => {
-      const { status, data } = await apiRequest(
-        'GET',
-        '/broker/invalid-address'
-      );
+      const { status, data } = await apiRequest('GET', '/broker/invalid-address');
 
       expect(status).toBe(400);
       expect(data.success).toBe(false);
@@ -675,7 +666,7 @@ describe('Brokered Listings API', () => {
       const orderHash = '0x' + Math.random().toString(16).slice(2).padStart(64, '0');
       const priceWei = '1000000000000000000';
       const brokerFeeBps = 9999; // 99.99%
-      const brokerFeeWei = (BigInt(priceWei) * BigInt(brokerFeeBps) / BigInt(10000)).toString();
+      const brokerFeeWei = ((BigInt(priceWei) * BigInt(brokerFeeBps)) / BigInt(10000)).toString();
 
       const orderData = createMockOrderData({
         sellerAddress: TEST_SELLER,

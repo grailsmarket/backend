@@ -14,7 +14,13 @@
  *   npm run resync:fast
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, hasEmoji } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  closeAllConnections,
+  hasEmoji,
+} from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -102,12 +108,17 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
 
   if (response.errors) {
     const errors = response.items?.filter((item: any) => item.index?.error);
-    console.error(`Batch had ${errors?.length || 0} errors. First error:`, errors?.[0]?.index?.error);
+    console.error(
+      `Batch had ${errors?.length || 0} errors. First error:`,
+      errors?.[0]?.index?.error
+    );
   }
 
   const endRange = Math.min(offset + result.rows.length, totalRows);
   const percentage = ((endRange / totalRows) * 100).toFixed(1);
-  console.log(`[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`);
+  console.log(
+    `[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`
+  );
 
   return result.rows.length;
 }
@@ -131,17 +142,19 @@ async function fastResync() {
 
     // Disable refresh for speed
     console.log('Optimizing index settings for bulk import...');
-    await esClient.indices.putSettings({
-      index: config.elasticsearch.index,
-      body: {
-        index: {
-          refresh_interval: '-1', // Disable auto-refresh
-          number_of_replicas: 0,   // Disable replicas during import
+    await esClient.indices
+      .putSettings({
+        index: config.elasticsearch.index,
+        body: {
+          index: {
+            refresh_interval: '-1', // Disable auto-refresh
+            number_of_replicas: 0, // Disable replicas during import
+          },
         },
-      },
-    }).catch(() => {
-      console.log('Note: Could not adjust settings (index might not exist yet)');
-    });
+      })
+      .catch(() => {
+        console.log('Note: Could not adjust settings (index might not exist yet)');
+      });
 
     console.log(`Batch size: ${BATCH_SIZE.toLocaleString()}`);
     console.log(`Concurrent batches: ${CONCURRENT_BATCHES}\n`);
@@ -171,7 +184,7 @@ async function fastResync() {
 
       // Small delay between batch groups
       if (offset < totalRows) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
@@ -182,7 +195,7 @@ async function fastResync() {
       body: {
         index: {
           refresh_interval: '1s', // Restore default
-          number_of_replicas: 1,   // Restore replicas
+          number_of_replicas: 1, // Restore replicas
         },
       },
     });

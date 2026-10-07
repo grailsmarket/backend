@@ -69,7 +69,7 @@ export async function createSale(params: CreateSaleParams) {
     platformFeeWei,
     creatorFeeWei,
     metadata,
-    saleDate
+    saleDate,
   } = params;
 
   const normalizedSeller = sellerAddress.toLowerCase();
@@ -78,7 +78,8 @@ export async function createSale(params: CreateSaleParams) {
   // Where the order was actually filled (e.g. 'grails'). Use the caller-supplied value if any,
   // otherwise consult the order_fills attribution log. `source` (origin marketplace) is unaffected.
   const effectiveFilledVia =
-    filledVia ?? (await resolveFilledVia(orderHash, transactionHash, normalizedBuyer, normalizedSeller));
+    filledVia ??
+    (await resolveFilledVia(orderHash, transactionHash, normalizedBuyer, normalizedSeller));
 
   // Multi-criteria dedup check: order_hash, transaction_hash, or fuzzy match (same parties within 60s)
   const dedupQuery = `
@@ -99,7 +100,7 @@ export async function createSale(params: CreateSaleParams) {
     transactionHash,
     normalizedSeller,
     normalizedBuyer,
-    saleDate
+    saleDate,
   ]);
 
   const existingSale = dedupResult.rows[0];
@@ -129,16 +130,19 @@ export async function createSale(params: CreateSaleParams) {
         orderHash,
         orderData ? JSON.stringify(orderData) : null,
         existingSale.id,
-        effectiveFilledVia
+        effectiveFilledVia,
       ]);
 
-      console.log(`[createSale] Upgraded synthetic hash for sale ${existingSale.id}: ${existingSale.transaction_hash} -> ${transactionHash}`);
+      console.log(
+        `[createSale] Upgraded synthetic hash for sale ${existingSale.id}: ${existingSale.transaction_hash} -> ${transactionHash}`
+      );
       const sale = upgradeResult.rows[0];
 
       // Update activity records created by the trigger to reflect corrected source/hash
       if (sale) {
         try {
-          await pool.query(`
+          await pool.query(
+            `
             UPDATE activity_history
             SET platform = $1, transaction_hash = $2, block_number = $3,
                 metadata = CASE
@@ -147,24 +151,35 @@ export async function createSale(params: CreateSaleParams) {
                   ELSE metadata
                 END
             WHERE (metadata->>'sale_id')::integer = $4
-          `, [sale.source, transactionHash, blockNumber, existingSale.id, sale.filled_via ?? null]);
+          `,
+            [sale.source, transactionHash, blockNumber, existingSale.id, sale.filled_via ?? null]
+          );
         } catch (err) {
-          console.error(`[createSale] Failed to update activity records for sale ${existingSale.id}:`, err);
+          console.error(
+            `[createSale] Failed to update activity records for sale ${existingSale.id}:`,
+            err
+          );
         }
       }
 
       // Return with clubs info
       if (sale) {
         try {
-          const clubsResult = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [ensNameId]);
+          const clubsResult = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [
+            ensNameId,
+          ]);
           return { ...sale, clubs: clubsResult.rows[0]?.clubs || [] };
-        } catch { return sale; }
+        } catch {
+          return sale;
+        }
       }
       return sale;
     }
 
     // Existing sale found with real hash already — skip
-    console.log(`[createSale] Duplicate sale detected for ens_name_id ${ensNameId}, existing sale ${existingSale.id} (source: ${existingSale.source}, tx: ${existingSale.transaction_hash}). Skipping.`);
+    console.log(
+      `[createSale] Duplicate sale detected for ens_name_id ${ensNameId}, existing sale ${existingSale.id} (source: ${existingSale.source}, tx: ${existingSale.transaction_hash}). Skipping.`
+    );
     return null;
   }
 
@@ -209,7 +224,7 @@ export async function createSale(params: CreateSaleParams) {
     creatorFeeWei,
     metadata ? JSON.stringify(metadata) : null,
     saleDate,
-    effectiveFilledVia
+    effectiveFilledVia,
   ];
 
   const result = await pool.query(query, values);
@@ -219,10 +234,9 @@ export async function createSale(params: CreateSaleParams) {
   if (sale) {
     try {
       // Get clubs for this ENS name to return with sale
-      const clubsResult = await pool.query(
-        'SELECT clubs FROM ens_names WHERE id = $1',
-        [ensNameId]
-      );
+      const clubsResult = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [
+        ensNameId,
+      ]);
       const clubs = clubsResult.rows[0]?.clubs || [];
 
       // Attach clubs to sale object for caller
@@ -255,12 +269,12 @@ export async function getSalesByName(ensName: string, limit = 20, offset = 0) {
 
   const [dataResult, countResult] = await Promise.all([
     pool.query(dataQuery, [ensName, limit, offset]),
-    pool.query(countQuery, [ensName])
+    pool.query(countQuery, [ensName]),
   ]);
 
   return {
     results: dataResult.rows,
-    total: parseInt(countResult.rows[0].count)
+    total: parseInt(countResult.rows[0].count),
   };
 }
 
@@ -297,12 +311,12 @@ export async function getSalesByAddress(
 
   const [dataResult, countResult] = await Promise.all([
     pool.query(dataQuery, [address.toLowerCase(), limit, offset]),
-    pool.query(countQuery, [address.toLowerCase()])
+    pool.query(countQuery, [address.toLowerCase()]),
   ]);
 
   return {
     results: dataResult.rows,
-    total: parseInt(countResult.rows[0].count)
+    total: parseInt(countResult.rows[0].count),
   };
 }
 
@@ -322,12 +336,12 @@ export async function getRecentSales(limit = 20, offset = 0) {
 
   const [dataResult, countResult] = await Promise.all([
     pool.query(dataQuery, [limit, offset]),
-    pool.query(countQuery)
+    pool.query(countQuery),
   ]);
 
   return {
     results: dataResult.rows,
-    total: parseInt(countResult.rows[0].count)
+    total: parseInt(countResult.rows[0].count),
   };
 }
 

@@ -1,5 +1,10 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, config, fetchKeywordMetrics, cacheGoogleMetrics } from '../../../shared/src';
+import {
+  getPostgresPool,
+  config,
+  fetchKeywordMetrics,
+  cacheGoogleMetrics,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const QUEUE_NAME = 'backfill-google-metrics';
@@ -58,7 +63,7 @@ async function getCategorizedCandidates(limit: number): Promise<string[]> {
        END,
        en.name ASC
      LIMIT $1`,
-    [limit],
+    [limit]
   );
   return result.rows.map((r) => r.label);
 }
@@ -99,7 +104,7 @@ async function getUncategorizedCandidates(limit: number): Promise<string[]> {
        COALESCE(en.view_count, 0) + COALESCE(en.net_score, 0) * 3 DESC,
        en.name ASC
      LIMIT $1`,
-    [limit],
+    [limit]
   );
   return result.rows.map((r) => r.label);
 }
@@ -118,121 +123,136 @@ export async function registerGoogleMetricsBackfillWorker(boss: PgBoss) {
     return;
   }
 
-  await boss.work(
-    QUEUE_NAME,
-    { teamSize: 1, teamConcurrency: 1 },
-    async (job) => {
-      // Fetch both pools in parallel
-      const [categorizedNames, uncategorizedNames] = await Promise.all([
-        getCategorizedCandidates(CATEGORIZED_BATCH),
-        getUncategorizedCandidates(UNCATEGORIZED_BATCH),
-      ]);
+  await boss.work(QUEUE_NAME, { teamSize: 1, teamConcurrency: 1 }, async (job) => {
+    // Fetch both pools in parallel
+    const [categorizedNames, uncategorizedNames] = await Promise.all([
+      getCategorizedCandidates(CATEGORIZED_BATCH),
+      getUncategorizedCandidates(UNCATEGORIZED_BATCH),
+    ]);
 
-      // Overflow: if one pool is short, give remaining slots to the other
-      let extraCategorized: string[] = [];
-      let extraUncategorized: string[] = [];
-      const categorizedShortfall = CATEGORIZED_BATCH - categorizedNames.length;
-      const uncategorizedShortfall = UNCATEGORIZED_BATCH - uncategorizedNames.length;
+    // Overflow: if one pool is short, give remaining slots to the other
+    let extraCategorized: string[] = [];
+    let extraUncategorized: string[] = [];
+    const categorizedShortfall = CATEGORIZED_BATCH - categorizedNames.length;
+    const uncategorizedShortfall = UNCATEGORIZED_BATCH - uncategorizedNames.length;
 
-      if (uncategorizedShortfall > 0 && CATEGORIZED_BATCH > 0 && categorizedNames.length === CATEGORIZED_BATCH) {
-        extraCategorized = await getCategorizedCandidates(uncategorizedShortfall);
-      } else if (categorizedShortfall > 0 && uncategorizedNames.length === UNCATEGORIZED_BATCH) {
-        extraUncategorized = await getUncategorizedCandidates(categorizedShortfall);
+    if (
+      uncategorizedShortfall > 0 &&
+      CATEGORIZED_BATCH > 0 &&
+      categorizedNames.length === CATEGORIZED_BATCH
+    ) {
+      extraCategorized = await getCategorizedCandidates(uncategorizedShortfall);
+    } else if (categorizedShortfall > 0 && uncategorizedNames.length === UNCATEGORIZED_BATCH) {
+      extraUncategorized = await getUncategorizedCandidates(categorizedShortfall);
+    }
+
+    // Process categorized first (keep club data fresh if batch aborts early)
+    const names = [
+      ...categorizedNames,
+      ...extraCategorized,
+      ...uncategorizedNames,
+      ...extraUncategorized,
+    ];
+
+    const categorizedCount = categorizedNames.length + extraCategorized.length;
+    const uncategorizedCount = uncategorizedNames.length + extraUncategorized.length;
+
+    if (names.length === 0) {
+      logger.info({ jobId: job.id }, 'No candidate names for backfill — all caught up');
+      return { success: true, processed: 0, noData: 0, errors: 0 };
+    }
+
+    logger.info(
+      {
+        jobId: job.id,
+        batchSize: names.length,
+        categorizedCount,
+        uncategorizedCount,
+        delayMs: DELAY_MS,
+      },
+      'Starting Google metrics backfill batch'
+    );
+
+    let processed = 0;
+    let noData = 0;
+    let preserved = 0;
+    let errors = 0;
+    let consecutiveErrors = 0;
+
+    for (const name of names) {
+      // Delay between calls (skip delay before the first call)
+      if (processed > 0 || noData > 0 || preserved > 0 || errors > 0) {
+        await sleep(DELAY_MS);
       }
 
-      // Process categorized first (keep club data fresh if batch aborts early)
-      const names = [
-        ...categorizedNames,
-        ...extraCategorized,
-        ...uncategorizedNames,
-        ...extraUncategorized,
-      ];
+      try {
+        const metrics = await fetchKeywordMetrics(name);
 
-      const categorizedCount = categorizedNames.length + extraCategorized.length;
-      const uncategorizedCount = uncategorizedNames.length + extraUncategorized.length;
-
-      if (names.length === 0) {
-        logger.info({ jobId: job.id }, 'No candidate names for backfill — all caught up');
-        return { success: true, processed: 0, noData: 0, errors: 0 };
-      }
-
-      logger.info(
-        { jobId: job.id, batchSize: names.length, categorizedCount, uncategorizedCount, delayMs: DELAY_MS },
-        'Starting Google metrics backfill batch',
-      );
-
-      let processed = 0;
-      let noData = 0;
-      let preserved = 0;
-      let errors = 0;
-      let consecutiveErrors = 0;
-
-      for (const name of names) {
-        // Delay between calls (skip delay before the first call)
-        if (processed > 0 || noData > 0 || preserved > 0 || errors > 0) {
-          await sleep(DELAY_MS);
-        }
-
-        try {
-          const metrics = await fetchKeywordMetrics(name);
-
-          if (metrics === null) {
-            // Transient error (network, creds, quota)
-            errors++;
-            consecutiveErrors++;
-            logger.warn({ name, consecutiveErrors }, 'Google metrics fetch returned null');
-
-            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-              logger.error(
-                { jobId: job.id, consecutiveErrors, processed, noData, preserved, errors },
-                'Aborting batch — too many consecutive errors (likely quota or auth issue)',
-              );
-              break;
-            }
-            continue;
-          }
-
-          // Reset consecutive error counter on any successful API call
-          consecutiveErrors = 0;
-
-          const result = await cacheGoogleMetrics(name, metrics, ONE_YEAR_MS);
-          if (result.status === 'success') {
-            processed++;
-          } else if (result.written) {
-            noData++;
-          } else {
-            // Empty Google response, but existing success row protected from overwrite
-            preserved++;
-            logger.info({ name }, 'Skipped overwriting cached metrics with empty Google response');
-          }
-        } catch (error) {
+        if (metrics === null) {
+          // Transient error (network, creds, quota)
           errors++;
           consecutiveErrors++;
-          logger.error({ name, err: error }, 'Unexpected error processing name');
+          logger.warn({ name, consecutiveErrors }, 'Google metrics fetch returned null');
 
           if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
             logger.error(
-              { jobId: job.id, consecutiveErrors },
-              'Aborting batch — too many consecutive errors',
+              { jobId: job.id, consecutiveErrors, processed, noData, preserved, errors },
+              'Aborting batch — too many consecutive errors (likely quota or auth issue)'
             );
             break;
           }
+          continue;
+        }
+
+        // Reset consecutive error counter on any successful API call
+        consecutiveErrors = 0;
+
+        const result = await cacheGoogleMetrics(name, metrics, ONE_YEAR_MS);
+        if (result.status === 'success') {
+          processed++;
+        } else if (result.written) {
+          noData++;
+        } else {
+          // Empty Google response, but existing success row protected from overwrite
+          preserved++;
+          logger.info({ name }, 'Skipped overwriting cached metrics with empty Google response');
+        }
+      } catch (error) {
+        errors++;
+        consecutiveErrors++;
+        logger.error({ name, err: error }, 'Unexpected error processing name');
+
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          logger.error(
+            { jobId: job.id, consecutiveErrors },
+            'Aborting batch — too many consecutive errors'
+          );
+          break;
         }
       }
+    }
 
-      logger.info(
-        { jobId: job.id, processed, noData, preserved, errors, total: names.length, categorizedCount, uncategorizedCount },
-        'Google metrics backfill batch completed',
-      );
+    logger.info(
+      {
+        jobId: job.id,
+        processed,
+        noData,
+        preserved,
+        errors,
+        total: names.length,
+        categorizedCount,
+        uncategorizedCount,
+      },
+      'Google metrics backfill batch completed'
+    );
 
-      return { success: true, processed, noData, preserved, errors };
-    },
-  );
+    return { success: true, processed, noData, preserved, errors };
+  });
 
   await boss.schedule(QUEUE_NAME, CRON_SCHEDULE, {}, { tz: 'UTC' });
 
   logger.info(
     { queue: QUEUE_NAME, schedule: CRON_SCHEDULE, batchSize: BATCH_SIZE, delayMs: DELAY_MS },
-    'Google metrics backfill worker registered',
+    'Google metrics backfill worker registered'
   );
 }

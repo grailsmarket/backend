@@ -45,7 +45,8 @@ async function fixMintActivityActors() {
     // Find all mint activities with controller as actor
     console.log('Finding mint activities with controller as actor...');
 
-    const result = await pool.query<MintActivity>(`
+    const result = await pool.query<MintActivity>(
+      `
       SELECT
         ah.id,
         ah.ens_name_id,
@@ -58,7 +59,9 @@ async function fixMintActivityActors() {
         AND ah.transaction_hash IS NOT NULL
         AND LOWER(ah.actor_address) = ANY($1)
       ORDER BY ah.id DESC
-    `, [CONTROLLER_ADDRESSES]);
+    `,
+      [CONTROLLER_ADDRESSES]
+    );
 
     const activities = result.rows;
     console.log(`Found ${activities.length} mint activities with controller as actor\n`);
@@ -97,10 +100,10 @@ async function fixMintActivityActors() {
               });
 
               if (FIX_MODE) {
-                await pool.query(
-                  'UPDATE activity_history SET actor_address = $1 WHERE id = $2',
-                  [actualMinter, activity.id]
-                );
+                await pool.query('UPDATE activity_history SET actor_address = $1 WHERE id = $2', [
+                  actualMinter,
+                  activity.id,
+                ]);
                 fixed++;
               }
             }
@@ -117,7 +120,7 @@ async function fixMintActivityActors() {
 
       // Small delay between batches to avoid rate limiting
       if (i + BATCH_SIZE < activities.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
@@ -153,7 +156,6 @@ async function fixMintActivityActors() {
       console.log('\n=== To fix these records, run with --fix flag ===');
       console.log('npx tsx src/scripts/fix-mint-activity-actors.ts --fix\n');
     }
-
   } catch (error) {
     console.error('Error during processing:', error);
   } finally {

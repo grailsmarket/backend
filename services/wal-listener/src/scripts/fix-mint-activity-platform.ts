@@ -69,7 +69,9 @@ function parseArgs(): Options {
       options.referrer = `0x${'0'.repeat(24)}${options.referrer.slice(2)}`;
     }
     if (!/^0x[0-9a-f]{64}$/.test(options.referrer)) {
-      console.error('Invalid --referrer value; expected 0x-prefixed 20-byte address or 32-byte referrer code');
+      console.error(
+        'Invalid --referrer value; expected 0x-prefixed 20-byte address or 32-byte referrer code'
+      );
       process.exit(1);
     }
   }
@@ -121,7 +123,9 @@ async function main() {
     `);
 
     const total = parseInt(countResult.rows[0].total, 10);
-    console.log(`Found ${total} mint activity records stamped 'blockchain' with a now-known referrer`);
+    console.log(
+      `Found ${total} mint activity records stamped 'blockchain' with a now-known referrer`
+    );
 
     if (options.dryRun) {
       console.log('Dry run — no records will be updated.');

@@ -81,10 +81,9 @@ describe('Search API Filters', () => {
         throw new Error(`Server returned ${response.status}`);
       }
     } catch (error) {
-      throw new Error(
-        'API server not running. Start with: cd services/api && npm run dev',
-        { cause: error }
-      );
+      throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+        cause: error,
+      });
     }
   });
 
@@ -95,9 +94,7 @@ describe('Search API Filters', () => {
 
       const failures: string[] = [];
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(
-          (l) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         if (!hasActiveListing) {
           failures.push(`${result.name} (listings: ${result.listings?.length ?? 0})`);
         }
@@ -111,9 +108,7 @@ describe('Search API Filters', () => {
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(
-          (l) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing).toBeFalsy();
       }
     });
@@ -433,9 +428,7 @@ describe('Search API Filters', () => {
 
       it('count filters combined with listing filter', async () => {
         // Listed names with at least 1 view
-        const { data } = await search(
-          'filters[listed]=true&filters[minViewCount]=1&limit=50'
-        );
+        const { data } = await search('filters[listed]=true&filters[minViewCount]=1&limit=50');
         // May have no names matching both criteria
         if (data?.results.length === 0) return;
 
@@ -475,14 +468,11 @@ describe('Search API Filters', () => {
     });
 
     it('multiple clubs filters with OR logic', async () => {
-      const { data } = await search(
-        'filters[clubs][]=999&filters[clubs][]=10k&limit=50'
-      );
+      const { data } = await search('filters[clubs][]=999&filters[clubs][]=10k&limit=50');
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const inRequestedClub =
-          result.clubs?.includes('999') || result.clubs?.includes('10k');
+        const inRequestedClub = result.clubs?.includes('999') || result.clubs?.includes('10k');
         expect(inRequestedClub).toBe(true);
       }
     });
@@ -618,9 +608,7 @@ describe('Search API Filters', () => {
 
     it('expiringWithinDays filters to names expiring soon', async () => {
       const days = 30;
-      const { data } = await search(
-        `filters[expiringWithinDays]=${days}&limit=50`
-      );
+      const { data } = await search(`filters[expiringWithinDays]=${days}&limit=50`);
       // May have no names expiring within 30 days
       if (data?.results.length === 0) return;
 
@@ -639,9 +627,7 @@ describe('Search API Filters', () => {
   describe('Creation Date Filters', () => {
     it('minCreationDate filters to names created on or after date', async () => {
       const minDate = '2024-01-01';
-      const { data } = await search(
-        `filters[minCreationDate]=${minDate}&limit=50`
-      );
+      const { data } = await search(`filters[minCreationDate]=${minDate}&limit=50`);
       expect(data?.results.length).toBeGreaterThan(0);
 
       const min = new Date(minDate).getTime();
@@ -661,9 +647,7 @@ describe('Search API Filters', () => {
 
     it('maxCreationDate filters to names created on or before date', async () => {
       const maxDate = '2020-12-31';
-      const { data } = await search(
-        `filters[maxCreationDate]=${maxDate}&limit=50`
-      );
+      const { data } = await search(`filters[maxCreationDate]=${maxDate}&limit=50`);
       expect(data?.results.length).toBeGreaterThan(0);
 
       const max = new Date(maxDate).getTime();
@@ -700,11 +684,15 @@ describe('Search API Filters', () => {
         }
         const created = new Date(result.creation_date).getTime();
         if (created < min || created > max) {
-          failures.push(`${result.name}: creation_date ${result.creation_date} not in range [${minDate}, ${maxDate}]`);
+          failures.push(
+            `${result.name}: creation_date ${result.creation_date} not in range [${minDate}, ${maxDate}]`
+          );
         }
       }
 
-      expect(failures, `Creation date range filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `Creation date range filter failures:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
 
     it('minCreationDate combined with other filters', async () => {
@@ -731,7 +719,10 @@ describe('Search API Filters', () => {
         }
       }
 
-      expect(failures, `Combined creation date filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Combined creation date filter failures:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
   });
 
@@ -794,9 +785,7 @@ describe('Search API Filters', () => {
       }
 
       const ownerAddress = initial.results[0].owner;
-      const { data } = await search(
-        `filters[owner]=${ownerAddress}&limit=50`
-      );
+      const { data } = await search(`filters[owner]=${ownerAddress}&limit=50`);
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
@@ -829,9 +818,7 @@ describe('Search API Filters', () => {
         }
 
         // showListings=true
-        const hasActiveListing = result.listings?.some(
-          (l) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         if (!hasActiveListing) {
           failures.push(`${result.name}: no active listing (ES/DB drift)`);
         }
@@ -929,14 +916,14 @@ describe('Search API Filters', () => {
         }
       }
 
-      expect(failures, `Short letter names filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `Short letter names filter failures:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
 
     it('names starting with "a" without emoji', async () => {
       // Realistic search: starts with prefix, no emoji
-      const { data } = await search(
-        'filters[startsWith]=a&filters[emoji]=exclude&limit=50'
-      );
+      const { data } = await search('filters[startsWith]=a&filters[emoji]=exclude&limit=50');
 
       // May have no matching names
       if (data?.results.length === 0) return;
@@ -956,7 +943,9 @@ describe('Search API Filters', () => {
         }
       }
 
-      expect(failures, `StartsWith + emoji filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(failures, `StartsWith + emoji filter failures:\n${failures.join('\n')}`).toHaveLength(
+        0
+      );
     });
   });
 
@@ -1081,7 +1070,8 @@ describe('Search API Filters', () => {
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const hasOffer = result.highest_offer_wei != null && toBigInt(result.highest_offer_wei!) > 0n;
+        const hasOffer =
+          result.highest_offer_wei != null && toBigInt(result.highest_offer_wei!) > 0n;
         expect(hasOffer).toBe(false);
       }
     });
@@ -1090,9 +1080,7 @@ describe('Search API Filters', () => {
   describe('Offer Amount Filters', () => {
     it('minOffer filters to offers >= minimum offer amount', async () => {
       const minOffer = '100000000000000000'; // 0.1 ETH
-      const { data } = await search(
-        `filters[minOffer]=${minOffer}&limit=50`
-      );
+      const { data } = await search(`filters[minOffer]=${minOffer}&limit=50`);
       // May have no names with offers >= minOffer
       if (data?.results.length === 0) return;
 
@@ -1166,9 +1154,7 @@ describe('Search API Filters', () => {
 
       const failures: string[] = [];
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(
-          (l) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         if (!hasActiveListing) {
           failures.push(`${result.name} (listings: ${result.listings?.length ?? 0})`);
         }
@@ -1182,9 +1168,7 @@ describe('Search API Filters', () => {
       expect(data?.results.length).toBeGreaterThan(0);
 
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(
-          (l) => l.status === 'active'
-        );
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing).toBeFalsy();
       }
     });
@@ -1257,7 +1241,9 @@ describe('Search API Filters', () => {
     });
 
     it('status[]=premium&status[]=available returns names in either status (OR logic)', async () => {
-      const { data } = await search('filters[status][]=premium&filters[status][]=available&limit=50');
+      const { data } = await search(
+        'filters[status][]=premium&filters[status][]=available&limit=50'
+      );
       expect(
         data?.results.length,
         'Multiple status filter returned 0 results - verify premium or available names exist'
@@ -1274,7 +1260,9 @@ describe('Search API Filters', () => {
         // Should be either premium (90-111 days ago) or available (>111 days ago)
         // Combined: expiry <= 90 days ago
         if (expiry > ninetyDaysAgo) {
-          failures.push(`${result.name}: expiry ${result.expiry_date} is not in premium or available status`);
+          failures.push(
+            `${result.name}: expiry ${result.expiry_date} is not in premium or available status`
+          );
         }
       }
 
@@ -1299,7 +1287,9 @@ describe('Search API Filters', () => {
         // Should be either premium (90-111 days ago) or available (>111 days ago)
         // Combined: expiry <= 90 days ago
         if (expiry > ninetyDaysAgo) {
-          failures.push(`${result.name}: expiry ${result.expiry_date} is not in premium or available status`);
+          failures.push(
+            `${result.name}: expiry ${result.expiry_date} is not in premium or available status`
+          );
         }
       }
 
@@ -1557,7 +1547,9 @@ describe('Search API Filters', () => {
         }
         const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer > prevOffer) {
-          failures.push(`${result.name}: offer ${currentOffer} > previous ${prevOffer} (should be descending)`);
+          failures.push(
+            `${result.name}: offer ${currentOffer} > previous ${prevOffer} (should be descending)`
+          );
         }
         prevOffer = currentOffer;
       }
@@ -1580,7 +1572,9 @@ describe('Search API Filters', () => {
         }
         const currentOffer = toBigInt(result.highest_offer_wei!);
         if (prevOffer !== null && currentOffer < prevOffer) {
-          failures.push(`${result.name}: offer ${currentOffer} < previous ${prevOffer} (should be ascending)`);
+          failures.push(
+            `${result.name}: offer ${currentOffer} < previous ${prevOffer} (should be ascending)`
+          );
         }
         prevOffer = currentOffer;
       }
@@ -1595,7 +1589,8 @@ describe('Search API Filters', () => {
       // Find the index where offers stop (first name without offer)
       let firstNoOfferIndex = -1;
       for (let i = 0; i < data!.results.length; i++) {
-        const hasOffer = data!.results[i].highest_offer_wei != null &&
+        const hasOffer =
+          data!.results[i].highest_offer_wei != null &&
           BigInt(data!.results[i].highest_offer_wei!) > 0n;
         if (!hasOffer) {
           firstNoOfferIndex = i;
@@ -1606,7 +1601,8 @@ describe('Search API Filters', () => {
       // If we found names without offers, verify all subsequent names also have no offers
       if (firstNoOfferIndex !== -1) {
         for (let i = firstNoOfferIndex; i < data!.results.length; i++) {
-          const hasOffer = data!.results[i].highest_offer_wei != null &&
+          const hasOffer =
+            data!.results[i].highest_offer_wei != null &&
             BigInt(data!.results[i].highest_offer_wei!) > 0n;
           expect(hasOffer).toBe(false);
         }
@@ -1620,7 +1616,7 @@ describe('Search API Filters', () => {
         const response = await searchRaw('sortBy=ranking');
         expect(response.status).toBe(400);
 
-        const body = await response.json() as any;
+        const body = (await response.json()) as any;
         expect(body.success).toBe(false);
         expect(body.error.code).toBe('VALIDATION_ERROR');
         expect(body.error.message).toContain('requires exactly one club filter');
@@ -1637,7 +1633,9 @@ describe('Search API Filters', () => {
       });
 
       it('sortBy=ranking with multiple clubs returns 400', async () => {
-        const response = await searchRaw('sortBy=ranking&filters[clubs][]=999&filters[clubs][]=10k');
+        const response = await searchRaw(
+          'sortBy=ranking&filters[clubs][]=999&filters[clubs][]=10k'
+        );
         expect(response.status).toBe(400);
       });
     });
@@ -1663,7 +1661,9 @@ describe('Search API Filters', () => {
       });
 
       it('sortBy=ranking&sortOrder=desc returns highest rank first', async () => {
-        const { data } = await search('sortBy=ranking&sortOrder=desc&filters[clubs][]=999&limit=50');
+        const { data } = await search(
+          'sortBy=ranking&sortOrder=desc&filters[clubs][]=999&limit=50'
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const ranks = data!.results.map((r) => {
@@ -1680,7 +1680,9 @@ describe('Search API Filters', () => {
       });
 
       it('sortBy=ranking with showListings=true returns listed names sorted by rank', async () => {
-        const { data } = await search('sortBy=ranking&filters[clubs][]=999&filters[showListings]=true&limit=50');
+        const { data } = await search(
+          'sortBy=ranking&filters[clubs][]=999&filters[showListings]=true&limit=50'
+        );
         // May have no listed names in this club
         if (data?.results.length === 0) return;
 
@@ -1698,7 +1700,9 @@ describe('Search API Filters', () => {
           const entry = result.club_ranks?.find((cr) => cr.club === '999');
           const rank = entry?.rank ?? null;
           if (rank !== null && prevRank !== null && rank < prevRank) {
-            failures.push(`${result.name}: rank ${rank} < previous ${prevRank} (should be ascending)`);
+            failures.push(
+              `${result.name}: rank ${rank} < previous ${prevRank} (should be ascending)`
+            );
           }
           if (rank !== null) prevRank = rank;
         }
@@ -1771,9 +1775,7 @@ describe('Search API Filters', () => {
     it('marketplace filter combined with other filters', async () => {
       // Test marketplace=grails with letters=only (no emoji or numbers)
       // marketplace filter automatically implies listed=true
-      const { data } = await search(
-        'filters[marketplace]=grails&filters[letters]=only&limit=50'
-      );
+      const { data } = await search('filters[marketplace]=grails&filters[letters]=only&limit=50');
       // May have no matching names
       if (data?.results.length === 0) return;
 
@@ -1795,7 +1797,10 @@ describe('Search API Filters', () => {
         }
       }
 
-      expect(failures, `Combined marketplace filter failures:\n${failures.join('\n')}`).toHaveLength(0);
+      expect(
+        failures,
+        `Combined marketplace filter failures:\n${failures.join('\n')}`
+      ).toHaveLength(0);
     });
   });
 });

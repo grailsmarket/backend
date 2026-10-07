@@ -19,7 +19,7 @@ export interface CacheGoogleMetricsResult {
 export async function cacheGoogleMetrics(
   name: string,
   metrics: KeywordMetricsResponse,
-  ttlMs: number,
+  ttlMs: number
 ): Promise<CacheGoogleMetricsResult> {
   const pool = getPostgresPool();
   const expiresAt = new Date(Date.now() + ttlMs);
@@ -35,7 +35,7 @@ export async function cacheGoogleMetrics(
          status = EXCLUDED.status,
          expires_at = EXCLUDED.expires_at,
          updated_at = NOW()`,
-      [name, JSON.stringify(metrics), status, expiresAt],
+      [name, JSON.stringify(metrics), status, expiresAt]
     );
     return { written: true, status };
   }
@@ -50,7 +50,7 @@ export async function cacheGoogleMetrics(
        expires_at = EXCLUDED.expires_at,
        updated_at = NOW()
      WHERE google_metrics.status IS DISTINCT FROM 'success'`,
-    [name, JSON.stringify({}), status, expiresAt],
+    [name, JSON.stringify({}), status, expiresAt]
   );
   return { written: (result.rowCount ?? 0) > 0, status };
 }

@@ -74,9 +74,7 @@ const SOURCE_MAP: Record<string, string> = {
  */
 async function batchLookupNames(names: string[]): Promise<void> {
   // Filter to names not already in cache
-  const uncachedNames = names
-    .map((n) => n.toLowerCase())
-    .filter((n) => !nameIdCache.has(n));
+  const uncachedNames = names.map((n) => n.toLowerCase()).filter((n) => !nameIdCache.has(n));
 
   if (uncachedNames.length === 0) return;
 
@@ -161,11 +159,7 @@ interface PreparedRecord {
 /**
  * Import a batch of sales and create activity history using bulk inserts
  */
-async function importBatch(
-  records: CSVRow[],
-  stats: ImportStats,
-  dryRun: boolean
-): Promise<void> {
+async function importBatch(records: CSVRow[], stats: ImportStats, dryRun: boolean): Promise<void> {
   if (records.length === 0) return;
 
   // Batch lookup all names in this batch (one query instead of N)

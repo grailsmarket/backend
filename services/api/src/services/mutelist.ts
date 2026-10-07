@@ -51,7 +51,7 @@ class MutelistService {
    * Check if any address in an array is muted
    */
   isAnyMuted(...addresses: (string | null | undefined)[]): boolean {
-    return addresses.some(addr => this.isMuted(addr));
+    return addresses.some((addr) => this.isMuted(addr));
   }
 
   /**
@@ -70,10 +70,7 @@ class MutelistService {
         this.mutedAddresses.add(row.address.toLowerCase());
       }
 
-      logger.info(
-        { oldCount, newCount: this.mutedAddresses.size },
-        'MutelistService reloaded'
-      );
+      logger.info({ oldCount, newCount: this.mutedAddresses.size }, 'MutelistService reloaded');
     } catch (error) {
       logger.error({ error }, 'Failed to reload MutelistService');
       throw error;

@@ -40,11 +40,14 @@ export async function getQueueClient(): Promise<PgBoss> {
 
       newBoss.on('error', (error: any) => {
         // Log but don't crash - transient connection errors are recoverable
-        logger.error({
-          errorMessage: error?.message || String(error),
-          errorStack: error?.stack,
-          errorCode: error?.code
-        }, 'pg-boss error in indexer service (non-fatal)');
+        logger.error(
+          {
+            errorMessage: error?.message || String(error),
+            errorStack: error?.stack,
+            errorCode: error?.code,
+          },
+          'pg-boss error in indexer service (non-fatal)'
+        );
       });
 
       // Start pg-boss and wait for it to be ready
@@ -52,7 +55,7 @@ export async function getQueueClient(): Promise<PgBoss> {
 
       // Wait a bit to ensure internal initialization is complete
       // This gives pg-boss time to set up its queue cache
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       logger.info('pg-boss queue client started (publisher only, noSupervisor mode)');
 
@@ -81,12 +84,15 @@ export async function safePublishJob(
     await client.send(queueName, data);
     return true;
   } catch (error: any) {
-    logger.error({
-      queueName,
-      context,
-      errorMessage: error?.message || String(error),
-      errorCode: error?.code,
-    }, 'Failed to publish job to queue (non-fatal)');
+    logger.error(
+      {
+        queueName,
+        context,
+        errorMessage: error?.message || String(error),
+        errorCode: error?.code,
+      },
+      'Failed to publish job to queue (non-fatal)'
+    );
     return false;
   }
 }

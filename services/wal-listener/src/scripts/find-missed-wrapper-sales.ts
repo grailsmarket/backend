@@ -66,7 +66,7 @@ async function getBlockForDaysAgo(days: number): Promise<bigint> {
   const currentBlock = await client.getBlockNumber();
   // Approximate: ~7200 blocks per day (12 second block time)
   const blocksPerDay = 7200n;
-  return currentBlock - (BigInt(days) * blocksPerDay);
+  return currentBlock - BigInt(days) * blocksPerDay;
 }
 
 async function findMissedSales(): Promise<void> {
@@ -119,8 +119,8 @@ async function findMissedSales(): Promise<void> {
         const { orderHash, offerer, recipient, offer, consideration } = log.args as any;
 
         // Check if any offer item is from the Name Wrapper
-        const wrapperItem = offer?.find((item: any) =>
-          item.token?.toLowerCase() === NAME_WRAPPER_ADDRESS
+        const wrapperItem = offer?.find(
+          (item: any) => item.token?.toLowerCase() === NAME_WRAPPER_ADDRESS
         );
 
         if (wrapperItem) {
@@ -129,7 +129,9 @@ async function findMissedSales(): Promise<void> {
 
           // Extract price from consideration (first item is usually the payment)
           const priceWei = consideration?.[0]?.amount?.toString() || '0';
-          const currencyAddress = consideration?.[0]?.token?.toLowerCase() || '0x0000000000000000000000000000000000000000';
+          const currencyAddress =
+            consideration?.[0]?.token?.toLowerCase() ||
+            '0x0000000000000000000000000000000000000000';
 
           // Check if this sale exists in our database
           const result = await pool.query(
@@ -184,7 +186,7 @@ async function findMissedSales(): Promise<void> {
     console.log(`\n  Done fetching timestamps`);
 
     // Prepare JSON output
-    const jsonOutput = missedSales.map(s => ({
+    const jsonOutput = missedSales.map((s) => ({
       transactionHash: s.transactionHash,
       blockNumber: s.blockNumber.toString(),
       orderHash: s.orderHash,

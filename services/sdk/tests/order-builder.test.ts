@@ -65,10 +65,7 @@ describe('SeaportOrderBuilder', () => {
       expect(order.consideration).toHaveLength(3);
 
       // Verify total adds up to price
-      const total = order.consideration.reduce(
-        (sum, item) => sum + BigInt(item.startAmount),
-        0n
-      );
+      const total = order.consideration.reduce((sum, item) => sum + BigInt(item.startAmount), 0n);
       expect(total.toString()).toBe('1000000000000000000');
     });
 

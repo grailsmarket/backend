@@ -104,19 +104,23 @@ export async function personasRoutes(fastify: FastifyInstance) {
         const response: APIResponse = {
           success: true,
           data: {
-            persona: defaultPersona ? {
-              slug: defaultPersona.slug,
-              name: defaultPersona.name,
-              description: defaultPersona.description,
-              icon: defaultPersona.icon,
-            } : null,
-            defaultFilters: defaultPersona ? {
-              allNames: defaultPersona.default_filters_all_names,
-              listings: defaultPersona.default_filters_listings,
-              sales: defaultPersona.default_filters_sales,
-              registrations: defaultPersona.default_filters_registrations,
-              offers: defaultPersona.default_filters_offers,
-            } : {},
+            persona: defaultPersona
+              ? {
+                  slug: defaultPersona.slug,
+                  name: defaultPersona.name,
+                  description: defaultPersona.description,
+                  icon: defaultPersona.icon,
+                }
+              : null,
+            defaultFilters: defaultPersona
+              ? {
+                  allNames: defaultPersona.default_filters_all_names,
+                  listings: defaultPersona.default_filters_listings,
+                  sales: defaultPersona.default_filters_sales,
+                  registrations: defaultPersona.default_filters_registrations,
+                  offers: defaultPersona.default_filters_offers,
+                }
+              : {},
             scores: null,
             classifiedAt: null,
           },

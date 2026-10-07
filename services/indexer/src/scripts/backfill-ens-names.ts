@@ -47,7 +47,7 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
 
   try {
     // Convert all token IDs to labelhashes with proper padding
-    const labelhashes = tokenIds.map(id => {
+    const labelhashes = tokenIds.map((id) => {
       const hexString = BigInt(id).toString(16).padStart(64, '0');
       return '0x' + hexString;
     });
@@ -76,9 +76,9 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
       headers,
       body: JSON.stringify({
         query,
-        variables: { labelhashes }
+        variables: { labelhashes },
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -92,7 +92,7 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
       return results;
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     if (data.errors) {
       console.log(`    ⚠️  Graph query errors: ${JSON.stringify(data.errors)}`);
@@ -128,7 +128,6 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
     }
 
     return results;
-
   } catch (error: any) {
     clearTimeout(timeoutId);
     console.log(`    ⚠️  Failed to resolve batch: ${error.message}`);
@@ -140,7 +139,12 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
   }
 }
 
-async function backfillENSNames(batchSize: number = 100, maxLimit?: number, delayMs: number = 1000, skipMetadata: boolean = false) {
+async function backfillENSNames(
+  batchSize: number = 100,
+  maxLimit?: number,
+  delayMs: number = 1000,
+  skipMetadata: boolean = false
+) {
   const stats: BackfillStats = {
     total: 0,
     processed: 0,
@@ -151,8 +155,6 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
     metadataFailed: 0,
     duplicatesDeleted: 0,
   };
-
-
 
   try {
     // Get total count of placeholder names (both standard token-% and nonstandard #%)
@@ -183,17 +185,20 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
       // Fetch a batch of placeholder names using cursor-based pagination (safer than OFFSET)
       // This prevents pagination issues when records are deleted during processing
-      const currentBatchSize = maxLimit ? Math.min(batchSize, maxLimit - stats.processed) : batchSize;
+      const currentBatchSize = maxLimit
+        ? Math.min(batchSize, maxLimit - stats.processed)
+        : batchSize;
 
-      const batchResult: any = lastProcessedId === null
-        ? await pool.query(`
+      const batchResult: any =
+        lastProcessedId === null
+          ? await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
             WHERE name LIKE 'token-%' OR name LIKE '#%'
             ORDER BY id DESC
             LIMIT ${currentBatchSize}
           `)
-        : await pool.query(`
+          : await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
             WHERE (name LIKE 'token-%' OR name LIKE '#%') AND id < ${lastProcessedId}
@@ -241,10 +246,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
                 if (existingName.rows.length > 0) {
                   // Delete duplicate placeholder
-                  await client.query(
-                    'DELETE FROM ens_names WHERE id = $1',
-                    [row.id]
-                  );
+                  await client.query('DELETE FROM ens_names WHERE id = $1', [row.id]);
                   stats.duplicatesDeleted++;
                 } else {
                   // Update the placeholder name
@@ -274,7 +276,6 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
         // Clear the Maps explicitly
         resolvedNames.clear();
-
       } catch (error: any) {
         console.error(`  ✗ Batch failed: ${error.message}`);
         stats.failed += batch.length;
@@ -282,7 +283,9 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
       }
 
       // Progress update (simplified to reduce memory)
-      console.log(`Batch ${batchNumber}: ${stats.processed}/${limitToProcess} | Resolved: ${stats.resolved} | Skipped: ${stats.skipped} | Dupes: ${stats.duplicatesDeleted}`);
+      console.log(
+        `Batch ${batchNumber}: ${stats.processed}/${limitToProcess} | Resolved: ${stats.resolved} | Skipped: ${stats.skipped} | Dupes: ${stats.duplicatesDeleted}`
+      );
 
       // Clear batch array to help GC
       batch.length = 0;
@@ -294,7 +297,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
       // Delay between batches
       if (stats.processed < limitToProcess) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
@@ -312,10 +315,9 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
     console.log('=========================\n');
 
     if (stats.resolved > 0) {
-      console.log('⚠️  Don\'t forget to resync Elasticsearch:');
+      console.log("⚠️  Don't forget to resync Elasticsearch:");
       console.log('   cd ../wal-listener && npm run resync\n');
     }
-
   } catch (error: any) {
     console.error('Error during backfill:', error);
     throw error;
@@ -325,10 +327,10 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 async function main() {
   const args = process.argv.slice(2);
 
-  let batchSize = 10;  // Very small batches to prevent OOM
+  let batchSize = 10; // Very small batches to prevent OOM
   let maxLimit: number | undefined;
-  let delayMs = 3000;  // Longer delay to allow GC between batches
-  let skipMetadata = true;  // Skip metadata by default due to memory issues
+  let delayMs = 3000; // Longer delay to allow GC between batches
+  let skipMetadata = true; // Skip metadata by default due to memory issues
 
   // Parse command line arguments
   for (let i = 0; i < args.length; i++) {

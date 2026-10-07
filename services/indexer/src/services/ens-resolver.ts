@@ -1,7 +1,14 @@
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { namehash, labelhash } from 'viem/ens';
-import { config, safeNormalize, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import {
+  config,
+  safeNormalize,
+  processAddressRecords,
+  type AddressRecord,
+  needsEnsWorkerFallback,
+  fetchTextRecordsFromEnsWorker,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -200,16 +207,18 @@ export class ENSResolver {
         headers,
         body: JSON.stringify({
           query: namehashQuery,
-          variables: { namehash: tokenIdAsHex }
+          variables: { namehash: tokenIdAsHex },
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+        logger.error(
+          `Graph API error on namehash lookup: ${response.status} ${response.statusText}`
+        );
         return null;
       }
 
-      let data = await response.json() as any;
+      let data = (await response.json()) as any;
 
       if (data.errors) {
         logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
@@ -248,7 +257,7 @@ export class ENSResolver {
           headers,
           body: JSON.stringify({
             query: labelhashQuery,
-            variables: { labelhash: tokenIdAsHex }
+            variables: { labelhash: tokenIdAsHex },
           }),
         });
 
@@ -257,7 +266,7 @@ export class ENSResolver {
           return null;
         }
 
-        data = await response.json() as any;
+        data = (await response.json()) as any;
 
         if (data.errors) {
           logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
@@ -284,7 +293,6 @@ export class ENSResolver {
 
       logger.debug(`No name found for token ID: ${tokenId}`);
       return null;
-
     } catch (error: any) {
       logger.error(`Failed to resolve ENS name for token ${tokenId}:`, error?.message);
       return null;
@@ -365,16 +373,18 @@ export class ENSResolver {
         headers,
         body: JSON.stringify({
           query: namehashQuery,
-          variables: { namehash: tokenIdAsHex }
+          variables: { namehash: tokenIdAsHex },
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error on namehash lookup: ${response.status} ${response.statusText}`);
+        logger.error(
+          `Graph API error on namehash lookup: ${response.status} ${response.statusText}`
+        );
         return null;
       }
 
-      let data = await response.json() as any;
+      let data = (await response.json()) as any;
 
       if (data.errors) {
         logger.error(`Graph namehash query errors: ${JSON.stringify(data.errors, null, 2)}`);
@@ -441,7 +451,7 @@ export class ENSResolver {
           headers,
           body: JSON.stringify({
             query: labelhashQuery,
-            variables: { labelhash: tokenIdAsHex }
+            variables: { labelhash: tokenIdAsHex },
           }),
         });
 
@@ -450,7 +460,7 @@ export class ENSResolver {
           return null;
         }
 
-        data = await response.json() as any;
+        data = (await response.json()) as any;
 
         if (data.errors) {
           logger.error(`Graph query errors: ${JSON.stringify(data.errors, null, 2)}`);
@@ -475,7 +485,9 @@ export class ENSResolver {
           const originalName = isNormalized ? null : rawName;
 
           if (!isNormalized) {
-            logger.warn(`Detected non-normalized ENS registration: "${rawName}" -> "${name}". This may be an attempt to impersonate the legitimate name.`);
+            logger.warn(
+              `Detected non-normalized ENS registration: "${rawName}" -> "${name}". This may be an attempt to impersonate the legitimate name.`
+            );
           }
 
           // Parse expiry date if available
@@ -486,7 +498,9 @@ export class ENSResolver {
               // domain.registration.expiryDate is the true expiry (not including grace period)
               expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
             } catch {
-              logger.warn(`Failed to parse expiry date for ${name}: ${domain.registration.expiryDate}`);
+              logger.warn(
+                `Failed to parse expiry date for ${name}: ${domain.registration.expiryDate}`
+              );
             }
           }
 
@@ -496,7 +510,9 @@ export class ENSResolver {
             try {
               registrationDate = new Date(parseInt(domain.registration.registrationDate) * 1000);
             } catch {
-              logger.warn(`Failed to parse registration date for ${name}: ${domain.registration.registrationDate}`);
+              logger.warn(
+                `Failed to parse registration date for ${name}: ${domain.registration.registrationDate}`
+              );
             }
           }
 
@@ -553,11 +569,19 @@ export class ENSResolver {
           }
 
           // Fallback to ENS worker if resolver doesn't emit values to The Graph
-          if (needsEnsWorkerFallback(domain.resolver?.address, domain.resolver?.texts, domain.resolver?.textChangeds)) {
+          if (
+            needsEnsWorkerFallback(
+              domain.resolver?.address,
+              domain.resolver?.texts,
+              domain.resolver?.textChangeds
+            )
+          ) {
             try {
               const workerRecords = await fetchTextRecordsFromEnsWorker(name);
               Object.assign(textRecords, workerRecords);
-              logger.info(`ENS worker fallback used for ${name}: ${Object.keys(workerRecords).length} text records`);
+              logger.info(
+                `ENS worker fallback used for ${name}: ${Object.keys(workerRecords).length} text records`
+              );
             } catch (error: any) {
               logger.warn(`ENS worker fallback failed for ${name}: ${error?.message}`);
             }
@@ -577,9 +601,10 @@ export class ENSResolver {
           let isExpired = false;
           if (domain.expiryDate) {
             try {
-              const expiryTimestamp = typeof domain.expiryDate === 'string'
-                ? parseInt(domain.expiryDate)
-                : domain.expiryDate;
+              const expiryTimestamp =
+                typeof domain.expiryDate === 'string'
+                  ? parseInt(domain.expiryDate)
+                  : domain.expiryDate;
               isExpired = expiryTimestamp * 1000 < Date.now();
             } catch {
               logger.warn(`Failed to check expiry for ${name}: ${domain.expiryDate}`);
@@ -589,20 +614,37 @@ export class ENSResolver {
           if (isOwnedByWrapper && !isExpired) {
             // For wrapped, non-expired names: use domain.id (the wrapped token ID)
             correctTokenId = hexToDecimal(domain.id);
-            logger.debug(`Name ${name} is wrapped and not expired - using domain.id: ${correctTokenId}`);
+            logger.debug(
+              `Name ${name} is wrapped and not expired - using domain.id: ${correctTokenId}`
+            );
           } else {
             // For unwrapped or expired names: use labelhash (already in tokenId)
-            logger.debug(`Name ${name} is ${isExpired ? 'expired' : 'unwrapped'} - using labelhash: ${correctTokenId}`);
+            logger.debug(
+              `Name ${name} is ${isExpired ? 'expired' : 'unwrapped'} - using labelhash: ${correctTokenId}`
+            );
           }
 
-          logger.info(`Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, address records: ${addressRecords.length}, isNormalized: ${isNormalized}`);
-          return { name, correctTokenId, expiryDate, ownerAddress, registrantAddress, registrationDate, creationDate, textRecords, addressRecords, isNormalized, originalName };
+          logger.info(
+            `Resolved token ${tokenId} to name: ${name}, correctTokenId: ${correctTokenId}, expiry: ${expiryDate?.toISOString() || 'none'}, registration: ${registrationDate?.toISOString() || 'none'}, owner: ${ownerAddress || 'none'}, registrant: ${registrantAddress || 'none'}, wrapped: ${isOwnedByWrapper}, expired: ${isExpired}, text records: ${Object.keys(textRecords).length}, address records: ${addressRecords.length}, isNormalized: ${isNormalized}`
+          );
+          return {
+            name,
+            correctTokenId,
+            expiryDate,
+            ownerAddress,
+            registrantAddress,
+            registrationDate,
+            creationDate,
+            textRecords,
+            addressRecords,
+            isNormalized,
+            originalName,
+          };
         }
       }
 
       logger.debug(`No name found for token ID: ${tokenId}`);
       return null;
-
     } catch (error: any) {
       logger.error(`Failed to resolve ENS name data for token ${tokenId}:`, error?.message);
       return null;
@@ -629,7 +671,7 @@ export class ENSResolver {
 
     try {
       // Convert all token IDs to hex with proper padding
-      const hexIds = uncached.map(id => {
+      const hexIds = uncached.map((id) => {
         const hexString = BigInt(id).toString(16).padStart(64, '0');
         return '0x' + hexString;
       });
@@ -664,12 +706,14 @@ export class ENSResolver {
         headers,
         body: JSON.stringify({
           query: namehashQuery,
-          variables: { namehashes: hexIds }
+          variables: { namehashes: hexIds },
         }),
       });
 
       if (!response.ok) {
-        logger.error(`Graph API error on namehash batch: ${response.status} ${response.statusText}`);
+        logger.error(
+          `Graph API error on namehash batch: ${response.status} ${response.statusText}`
+        );
         // Return nulls for uncached items
         for (const tokenId of uncached) {
           results.set(tokenId, null);
@@ -677,7 +721,7 @@ export class ENSResolver {
         return results;
       }
 
-      let data = await response.json() as any;
+      let data = (await response.json()) as any;
 
       if (data.errors) {
         logger.error(`Graph namehash batch query errors: ${JSON.stringify(data.errors, null, 2)}`);
@@ -726,7 +770,9 @@ export class ENSResolver {
       // Fall back to labelhash lookup for items not found by namehash
       // This handles unwrapped 2LD .eth names from the Base Registrar
       if (notFoundByNamehash.length > 0) {
-        logger.debug(`${notFoundByNamehash.length} items not found by namehash, trying labelhash lookup`);
+        logger.debug(
+          `${notFoundByNamehash.length} items not found by namehash, trying labelhash lookup`
+        );
 
         const labelhashQuery = `
           query GetENSNames($labelhashes: [String!]!) {
@@ -747,12 +793,14 @@ export class ENSResolver {
           headers,
           body: JSON.stringify({
             query: labelhashQuery,
-            variables: { labelhashes: notFoundHexIds }
+            variables: { labelhashes: notFoundHexIds },
           }),
         });
 
         if (!response.ok) {
-          logger.error(`Graph API error on labelhash batch: ${response.status} ${response.statusText}`);
+          logger.error(
+            `Graph API error on labelhash batch: ${response.status} ${response.statusText}`
+          );
           // Return nulls for remaining items
           for (const tokenId of notFoundByNamehash) {
             results.set(tokenId, null);
@@ -760,10 +808,12 @@ export class ENSResolver {
           return results;
         }
 
-        data = await response.json() as any;
+        data = (await response.json()) as any;
 
         if (data.errors) {
-          logger.error(`Graph labelhash batch query errors: ${JSON.stringify(data.errors, null, 2)}`);
+          logger.error(
+            `Graph labelhash batch query errors: ${JSON.stringify(data.errors, null, 2)}`
+          );
           for (const tokenId of notFoundByNamehash) {
             results.set(tokenId, null);
           }
@@ -803,7 +853,6 @@ export class ENSResolver {
       }
 
       return results;
-
     } catch (error: any) {
       logger.error(`Failed to resolve batch ENS names:`, error?.message);
       // Return nulls for uncached items

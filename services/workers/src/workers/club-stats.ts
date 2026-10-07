@@ -189,7 +189,7 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
         row.volume_1mo?.toString() || '0',
         parseInt(row.sales_count_1w) || 0,
         row.volume_1w?.toString() || '0',
-        clubName
+        clubName,
       ]
     );
 
@@ -200,7 +200,7 @@ async function recalculateSalesStats(clubName: string): Promise<void> {
         totalVolume: row.total_volume?.toString(),
         salesCount1y: row.sales_count_1y,
         salesCount1mo: row.sales_count_1mo,
-        salesCount1w: row.sales_count_1w
+        salesCount1w: row.sales_count_1w,
       },
       'Updated club sales statistics'
     );
@@ -268,7 +268,7 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         row.reg_volume_1y?.toString() || '0',
         row.reg_volume_1mo?.toString() || '0',
         row.reg_volume_1w?.toString() || '0',
-        clubName
+        clubName,
       ]
     );
 
@@ -448,10 +448,7 @@ export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
     async (job) => {
       const { clubNames, eventType, listingPrice } = job.data;
 
-      logger.info(
-        { clubNames, eventType, listingPrice },
-        'Processing club floor price update'
-      );
+      logger.info({ clubNames, eventType, listingPrice }, 'Processing club floor price update');
 
       for (const clubName of clubNames) {
         try {
@@ -482,10 +479,7 @@ export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
     async (job) => {
       const { clubNames, salePriceWei } = job.data;
 
-      logger.info(
-        { clubNames, salePriceWei },
-        'Processing club sales stats update'
-      );
+      logger.info({ clubNames, salePriceWei }, 'Processing club sales stats update');
 
       try {
         // Increment all time windows (new sale is within all windows)
@@ -565,10 +559,7 @@ export async function registerClubStatsWorker(boss: PgBoss): Promise<void> {
           await boss.send('recalculate-club-stats', { clubName: club.name });
         }
 
-        logger.info(
-          { clubCount: clubs.length },
-          'Queued all clubs for stats recalculation'
-        );
+        logger.info({ clubCount: clubs.length }, 'Queued all clubs for stats recalculation');
       } catch (error) {
         logger.error({ error }, 'Failed to queue club stats recalculation');
         throw error;

@@ -149,10 +149,9 @@ export class ActivityHistoryService {
 
       // Emit PostgreSQL notification for real-time WebSocket broadcasts
       const activityId = result.rows[0].id;
-      await this.pool.query(
-        `SELECT pg_notify('activity_created', $1)`,
-        [JSON.stringify({ activity_id: activityId })]
-      );
+      await this.pool.query(`SELECT pg_notify('activity_created', $1)`, [
+        JSON.stringify({ activity_id: activityId }),
+      ]);
     } catch (error) {
       logger.error('Failed to create activity history record:', error);
       throw error;
@@ -346,7 +345,11 @@ export class ActivityHistoryService {
   /**
    * Handle listing fulfillment (direct purchase - creates buy/sell records)
    */
-  async handleListingFulfilled(_listing: any, _buyer_address: string, _transaction_hash?: string): Promise<void> {
+  async handleListingFulfilled(
+    _listing: any,
+    _buyer_address: string,
+    _transaction_hash?: string
+  ): Promise<void> {
     // NOTE: 'bought' and 'sold' activity records are created by the
     // create_activity_on_sale() database trigger when the sale is inserted.
     // This method is intentionally a no-op to avoid duplicates.
@@ -456,7 +459,8 @@ export class ActivityHistoryService {
     transaction_hash?: string;
     block_number?: number;
   }): Promise<void> {
-    const { ens_name_id, from_address, to_address, token_id, transaction_hash, block_number } = params;
+    const { ens_name_id, from_address, to_address, token_id, transaction_hash, block_number } =
+      params;
 
     // Fetch block timestamp if block_number is provided
     let event_date: Date | undefined;
@@ -503,6 +507,8 @@ export class ActivityHistoryService {
       event_date,
     });
 
-    logger.info(`Created transfer activity records for ENS name ID ${ens_name_id} from ${from_address} to ${to_address}`);
+    logger.info(
+      `Created transfer activity records for ENS name ID ${ens_name_id} from ${from_address} to ${to_address}`
+    );
   }
 }

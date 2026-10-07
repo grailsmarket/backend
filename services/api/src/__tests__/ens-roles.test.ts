@@ -117,7 +117,7 @@ interface ManageableNamesResponse {
 // Helper to make API requests
 async function fetchAPI<T>(path: string): Promise<{ status: number; data: APIResponse<T> }> {
   const response = await fetch(`${API_BASE}${path}`);
-  const data = await response.json() as APIResponse<T>;
+  const data = (await response.json()) as APIResponse<T>;
   return { status: response.status, data };
 }
 
@@ -131,10 +131,9 @@ describe('ENS Roles API', () => {
       }
     } catch (error: any) {
       if (error.message?.includes('fetch failed') || error.cause?.code === 'ECONNREFUSED') {
-        throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev',
-          { cause: error }
-        );
+        throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+          cause: error,
+        });
       }
     }
   });
@@ -174,7 +173,9 @@ describe('ENS Roles API', () => {
     });
 
     it('returns 404 for non-existent ENS name', async () => {
-      const { status, data } = await fetchAPI<RolesResponse>('/names/thisnamedoesnotexist12345xyz.eth/roles');
+      const { status, data } = await fetchAPI<RolesResponse>(
+        '/names/thisnamedoesnotexist12345xyz.eth/roles'
+      );
 
       expect(status).toBe(404);
       expect(data.success).toBe(false);
@@ -303,7 +304,7 @@ describe('ENS Roles API', () => {
       expect(typeof data.data!.pagination.hasPrev).toBe('boolean');
 
       // vitalik.eth should be in the list with enriched fields
-      const vitalikName = data.data!.names.find(n => n.name === TEST_WRAPPED_NAME);
+      const vitalikName = data.data!.names.find((n) => n.name === TEST_WRAPPED_NAME);
       expect(vitalikName).toBeDefined();
       expect(['owner', 'manager', 'both']).toContain(vitalikName!.role);
 

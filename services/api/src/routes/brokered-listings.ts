@@ -51,7 +51,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         success: false,
         error: {
           code: 'VALIDATION_ERROR',
-          message: parseResult.error.errors.map(e => e.message).join(', '),
+          message: parseResult.error.errors.map((e) => e.message).join(', '),
         },
         meta: { timestamp: new Date().toISOString() },
       });
@@ -141,17 +141,22 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
           : null;
 
       // Cancel any existing active listings with same order_hash and source
-      const cancelledResult = await pool.query(`
+      const cancelledResult = await pool.query(
+        `
         UPDATE listings
         SET status = 'cancelled', updated_at = NOW()
         WHERE order_hash = $1
         AND source = 'grails'
         AND status = 'active'
         RETURNING id
-      `, [body.order_hash]);
+      `,
+        [body.order_hash]
+      );
 
       if (cancelledResult.rows.length > 0) {
-        fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash}`);
+        fastify.log.info(
+          `Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash}`
+        );
       }
 
       // Insert the brokered listing (or update if order_hash/source already exists)
@@ -214,7 +219,6 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
           version: '1.0.0',
         },
       });
-
     } catch (error: any) {
       fastify.log.error('Error creating brokered listing:', error);
       return reply.status(500).send({

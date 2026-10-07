@@ -68,10 +68,11 @@ async function recalculateStaleHighestOffers() {
 
     for (let i = 0; i < namesWithOffer.length; i += BATCH_SIZE) {
       const batch = namesWithOffer.slice(i, i + BATCH_SIZE);
-      const batchIds = batch.map(r => r.id);
+      const batchIds = batch.map((r) => r.id);
 
       // Get the actual highest ETH/WETH offer for each name
-      const actualOffersResult = await pool.query(`
+      const actualOffersResult = await pool.query(
+        `
         SELECT DISTINCT ON (o.ens_name_id)
           o.ens_name_id,
           o.id as offer_id,
@@ -83,14 +84,19 @@ async function recalculateStaleHighestOffers() {
           AND o.currency_address = ANY($2)
           AND (o.expires_at IS NULL OR o.expires_at > NOW())
         ORDER BY o.ens_name_id, o.offer_amount_wei::numeric DESC
-      `, [batchIds, TRACKED_CURRENCIES]);
+      `,
+        [batchIds, TRACKED_CURRENCIES]
+      );
 
       // Create a map of actual highest offers
-      const actualOfferMap = new Map<number, {
-        offerId: number;
-        offerAmountWei: string;
-        currencyAddress: string;
-      }>();
+      const actualOfferMap = new Map<
+        number,
+        {
+          offerId: number;
+          offerAmountWei: string;
+          currencyAddress: string;
+        }
+      >();
 
       for (const row of actualOffersResult.rows) {
         actualOfferMap.set(row.ens_name_id, {
@@ -150,8 +156,8 @@ async function recalculateStaleHighestOffers() {
     }
 
     // Count by reason
-    const shouldBeNull = staleRecords.filter(r => r.actualHighestOfferWei === null).length;
-    const amountMismatch = staleRecords.filter(r => r.actualHighestOfferWei !== null).length;
+    const shouldBeNull = staleRecords.filter((r) => r.actualHighestOfferWei === null).length;
+    const amountMismatch = staleRecords.filter((r) => r.actualHighestOfferWei !== null).length;
 
     console.log('\nBreakdown:');
     console.log(`  Should be NULL (no active ETH/WETH offers): ${shouldBeNull}`);
@@ -163,8 +169,12 @@ async function recalculateStaleHighestOffers() {
     for (const record of staleRecords.slice(0, 30)) {
       console.log(`${record.name}`);
       console.log(`  ID: ${record.id}`);
-      console.log(`  Current: ${record.currentHighestOfferWei} wei (offer ID: ${record.currentHighestOfferId})`);
-      console.log(`  Actual:  ${record.actualHighestOfferWei || 'NULL'} ${record.actualHighestOfferId ? `(offer ID: ${record.actualHighestOfferId})` : ''}`);
+      console.log(
+        `  Current: ${record.currentHighestOfferWei} wei (offer ID: ${record.currentHighestOfferId})`
+      );
+      console.log(
+        `  Actual:  ${record.actualHighestOfferWei || 'NULL'} ${record.actualHighestOfferId ? `(offer ID: ${record.actualHighestOfferId})` : ''}`
+      );
       console.log(`  Reason:  ${record.reason}`);
       console.log('');
     }
@@ -185,29 +195,35 @@ async function recalculateStaleHighestOffers() {
         try {
           if (record.actualHighestOfferWei === null) {
             // Clear the highest offer
-            await pool.query(`
+            await pool.query(
+              `
               UPDATE ens_names
               SET highest_offer_wei = NULL,
                   highest_offer_id = NULL,
                   highest_offer_currency = NULL,
                   last_offer_update = NOW()
               WHERE id = $1
-            `, [record.id]);
+            `,
+              [record.id]
+            );
           } else {
             // Update to correct value
-            await pool.query(`
+            await pool.query(
+              `
               UPDATE ens_names
               SET highest_offer_wei = $1,
                   highest_offer_id = $2,
                   highest_offer_currency = $3,
                   last_offer_update = NOW()
               WHERE id = $4
-            `, [
-              record.actualHighestOfferWei,
-              record.actualHighestOfferId,
-              record.actualCurrency,
-              record.id,
-            ]);
+            `,
+              [
+                record.actualHighestOfferWei,
+                record.actualHighestOfferId,
+                record.actualCurrency,
+                record.id,
+              ]
+            );
           }
 
           // Sync to Elasticsearch
@@ -230,7 +246,6 @@ async function recalculateStaleHighestOffers() {
       console.log('\n=== To fix these records, run with --fix flag ===');
       console.log('npx tsx src/scripts/recalculate-stale-highest-offers.ts --fix\n');
     }
-
   } catch (error) {
     console.error('Error during analysis:', error);
   } finally {

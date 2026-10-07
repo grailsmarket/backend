@@ -33,7 +33,8 @@ import { config } from '../../../shared/src';
 
 const BULK_RENEWAL_EMITTER = '0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a' as const;
 const ETH_REGISTRAR_CONTROLLER_2 = '0x59e16fccd424cc24e280be16e11bcd56fb0ce547' as const;
-const OUR_REFERRAL_CODE = '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
+const OUR_REFERRAL_CODE =
+  '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
 
 const RENEWAL_REFERRED_EVENT = parseAbiItem(
   'event RenewalReferred(string label, bytes32 indexed labelHash, uint256 cost, uint256 duration, bytes32 referrer)'
@@ -120,7 +121,11 @@ async function fetchInBatches<T>(
   return results;
 }
 
-async function fetchBulkRenewalEvents(client: Client, fromBlock: bigint, toBlock: bigint): Promise<ReferralEvent[]> {
+async function fetchBulkRenewalEvents(
+  client: Client,
+  fromBlock: bigint,
+  toBlock: bigint
+): Promise<ReferralEvent[]> {
   console.log(`\nFetching RenewalReferred events from ${BULK_RENEWAL_EMITTER}...`);
   return fetchInBatches(fromBlock, toBlock, 'bulk_renewal', async (start, end) => {
     const logs = await client.getLogs({
@@ -149,7 +154,11 @@ async function fetchBulkRenewalEvents(client: Client, fromBlock: bigint, toBlock
   });
 }
 
-async function fetchRegistrationEvents(client: Client, fromBlock: bigint, toBlock: bigint): Promise<ReferralEvent[]> {
+async function fetchRegistrationEvents(
+  client: Client,
+  fromBlock: bigint,
+  toBlock: bigint
+): Promise<ReferralEvent[]> {
   console.log(`\nFetching NameRegistered events from ${ETH_REGISTRAR_CONTROLLER_2}...`);
   return fetchInBatches(fromBlock, toBlock, 'register', async (start, end) => {
     const logs = await client.getLogs({
@@ -181,7 +190,11 @@ async function fetchRegistrationEvents(client: Client, fromBlock: bigint, toBloc
   });
 }
 
-async function fetchControllerRenewalEvents(client: Client, fromBlock: bigint, toBlock: bigint): Promise<ReferralEvent[]> {
+async function fetchControllerRenewalEvents(
+  client: Client,
+  fromBlock: bigint,
+  toBlock: bigint
+): Promise<ReferralEvent[]> {
   console.log(`\nFetching NameRenewed events from ${ETH_REGISTRAR_CONTROLLER_2}...`);
   return fetchInBatches(fromBlock, toBlock, 'controller_renew', async (start, end) => {
     const logs = await client.getLogs({
@@ -211,7 +224,10 @@ async function fetchControllerRenewalEvents(client: Client, fromBlock: bigint, t
   });
 }
 
-async function getBlockTimestamps(client: Client, events: ReferralEvent[]): Promise<Map<bigint, number>> {
+async function getBlockTimestamps(
+  client: Client,
+  events: ReferralEvent[]
+): Promise<Map<bigint, number>> {
   const blockNumbers = [...new Set(events.map((e) => e.blockNumber))];
   const timestamps = new Map<bigint, number>();
 
@@ -230,7 +246,9 @@ async function getBlockTimestamps(client: Client, events: ReferralEvent[]): Prom
       })
     );
     if ((i + 10) % 100 === 0) {
-      console.log(`  Processed ${Math.min(i + 10, blockNumbers.length)}/${blockNumbers.length} blocks`);
+      console.log(
+        `  Processed ${Math.min(i + 10, blockNumbers.length)}/${blockNumbers.length} blocks`
+      );
     }
   }
 
@@ -457,13 +475,17 @@ async function main() {
     return Number(b.totalDurationSeconds - a.totalDurationSeconds);
   });
 
-  console.log('Rank | Address                                      | Tickets | Duration   | Renewals | Regs');
+  console.log(
+    'Rank | Address                                      | Tickets | Duration   | Renewals | Regs'
+  );
   console.log('-'.repeat(108));
   sorted.slice(0, 10).forEach((tally, index) => {
     console.log(
       `${(index + 1).toString().padStart(4)} | ${tally.address} | ${tally.tickets.toString().padStart(7)} | ${formatDuration(
         tally.totalDurationSeconds
-      ).padStart(10)} | ${tally.renewalCount.toString().padStart(8)} | ${tally.registerCount.toString().padStart(4)}`
+      ).padStart(
+        10
+      )} | ${tally.renewalCount.toString().padStart(8)} | ${tally.registerCount.toString().padStart(4)}`
     );
   });
   if (sorted.length > 10) console.log(`\n... and ${sorted.length - 10} more users`);
@@ -472,7 +494,9 @@ async function main() {
   console.log('PROMOTION SUMMARY');
   console.log('='.repeat(60));
   console.log(`Total Users:    ${tallies.size}`);
-  console.log(`Total Renewals: ${bulkRenewalEvents.length + controllerRenewalEvents.length} (bulk: ${bulkRenewalEvents.length}, controller: ${controllerRenewalEvents.length})`);
+  console.log(
+    `Total Renewals: ${bulkRenewalEvents.length + controllerRenewalEvents.length} (bulk: ${bulkRenewalEvents.length}, controller: ${controllerRenewalEvents.length})`
+  );
   console.log(`Total Regs:     ${registrationEvents.length}`);
   console.log(`Total Tickets:  ${totalTickets}`);
 

@@ -10,10 +10,15 @@ const AddToCartSchema = z.object({
 });
 
 const BulkAddToCartSchema = z.object({
-  items: z.array(z.object({
-    ensNameId: z.number().int().positive(),
-    cartType: z.string().min(1),
-  })).min(1).max(100), // Limit bulk adds to 100 items
+  items: z
+    .array(
+      z.object({
+        ensNameId: z.number().int().positive(),
+        cartType: z.string().min(1),
+      })
+    )
+    .min(1)
+    .max(100), // Limit bulk adds to 100 items
 });
 
 const ClearCartSchema = z.object({
@@ -89,16 +94,16 @@ export async function cartRoutes(fastify: FastifyInstance) {
       }
 
       // Extract ENS names for buildSearchResults
-      const ensNames = cartResult.rows.map(row => row.name);
+      const ensNames = cartResult.rows.map((row) => row.name);
 
       // Use buildSearchResults to get enriched ENS data
       const enrichedNames = await buildSearchResults(ensNames, userId);
 
       // Create a map of name -> enriched data
-      const nameMap = new Map(enrichedNames.map(n => [n.name.toLowerCase(), n]));
+      const nameMap = new Map(enrichedNames.map((n) => [n.name.toLowerCase(), n]));
 
       // Merge cart metadata with enriched ENS data
-      const items = cartResult.rows.map(row => {
+      const items = cartResult.rows.map((row) => {
         const enrichedData = nameMap.get(row.name.toLowerCase());
         return {
           cartItemId: row.id,
@@ -182,10 +187,13 @@ export async function cartRoutes(fastify: FastifyInstance) {
         [userId]
       );
 
-      const summary = summaryResult.rows.reduce((acc, row) => {
-        acc[row.cart_type] = parseInt(row.count);
-        return acc;
-      }, {} as Record<string, number>);
+      const summary = summaryResult.rows.reduce(
+        (acc, row) => {
+          acc[row.cart_type] = parseInt(row.count);
+          return acc;
+        },
+        {} as Record<string, number>
+      );
 
       const response: APIResponse = {
         success: true,
@@ -239,10 +247,9 @@ export async function cartRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user.sub);
 
       // Verify cart type exists
-      const cartTypeResult = await pool.query(
-        'SELECT id FROM cart_types WHERE name = $1',
-        [data.cartType]
-      );
+      const cartTypeResult = await pool.query('SELECT id FROM cart_types WHERE name = $1', [
+        data.cartType,
+      ]);
 
       if (cartTypeResult.rows.length === 0) {
         return reply.status(400).send({
@@ -260,10 +267,9 @@ export async function cartRoutes(fastify: FastifyInstance) {
       const cartTypeId = cartTypeResult.rows[0].id;
 
       // Verify ENS name exists
-      const ensResult = await pool.query(
-        'SELECT id, name FROM ens_names WHERE id = $1',
-        [data.ensNameId]
-      );
+      const ensResult = await pool.query('SELECT id, name FROM ens_names WHERE id = $1', [
+        data.ensNameId,
+      ]);
 
       if (ensResult.rows.length === 0) {
         return reply.status(404).send({
@@ -362,12 +368,12 @@ export async function cartRoutes(fastify: FastifyInstance) {
 
       // Get all cart types
       const cartTypesResult = await pool.query('SELECT id, name FROM cart_types');
-      const cartTypeMap = new Map(cartTypesResult.rows.map(row => [row.name, row.id]));
+      const cartTypeMap = new Map(cartTypesResult.rows.map((row) => [row.name, row.id]));
 
       // Validate all cart types exist
       const invalidTypes = data.items
-        .map(item => item.cartType)
-        .filter(type => !cartTypeMap.has(type));
+        .map((item) => item.cartType)
+        .filter((type) => !cartTypeMap.has(type));
 
       if (invalidTypes.length > 0) {
         return reply.status(400).send({
@@ -383,16 +389,15 @@ export async function cartRoutes(fastify: FastifyInstance) {
       }
 
       // Verify all ENS name IDs exist
-      const ensNameIds = data.items.map(item => item.ensNameId);
-      const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE id = ANY($1::int[])',
-        [ensNameIds]
-      );
+      const ensNameIds = data.items.map((item) => item.ensNameId);
+      const ensResult = await pool.query('SELECT id FROM ens_names WHERE id = ANY($1::int[])', [
+        ensNameIds,
+      ]);
 
-      const foundIds = new Set(ensResult.rows.map(row => row.id));
+      const foundIds = new Set(ensResult.rows.map((row) => row.id));
 
       // Track which IDs were not found
-      const notFoundIds = ensNameIds.filter(id => !foundIds.has(id));
+      const notFoundIds = ensNameIds.filter((id) => !foundIds.has(id));
 
       if (notFoundIds.length > 0) {
         return reply.status(404).send({
@@ -415,7 +420,7 @@ export async function cartRoutes(fastify: FastifyInstance) {
         .join(', ');
 
       const params: any[] = [userId];
-      data.items.forEach(item => {
+      data.items.forEach((item) => {
         params.push(item.ensNameId);
         params.push(cartTypeMap.get(item.cartType));
       });
@@ -496,10 +501,9 @@ export async function cartRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user.sub);
 
       // Verify cart item belongs to user
-      const checkResult = await pool.query(
-        'SELECT user_id FROM cart_items WHERE id = $1',
-        [parseInt(id)]
-      );
+      const checkResult = await pool.query('SELECT user_id FROM cart_items WHERE id = $1', [
+        parseInt(id),
+      ]);
 
       if (checkResult.rows.length === 0) {
         return reply.status(404).send({
@@ -585,10 +589,9 @@ export async function cartRoutes(fastify: FastifyInstance) {
 
       if (cartType) {
         // Verify cart type exists
-        const cartTypeResult = await pool.query(
-          'SELECT id FROM cart_types WHERE name = $1',
-          [cartType]
-        );
+        const cartTypeResult = await pool.query('SELECT id FROM cart_types WHERE name = $1', [
+          cartType,
+        ]);
 
         if (cartTypeResult.rows.length === 0) {
           return reply.status(400).send({

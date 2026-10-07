@@ -43,7 +43,9 @@ async function main() {
   }
 
   if (!isStorageEnabled()) {
-    console.error('Error: Storage is not configured. Set BUCKET, ACCESS_KEY_ID, SECRET_ACCESS_KEY, and ENDPOINT.');
+    console.error(
+      'Error: Storage is not configured. Set BUCKET, ACCESS_KEY_ID, SECRET_ACCESS_KEY, and ENDPOINT.'
+    );
     process.exit(1);
   }
 
@@ -56,7 +58,7 @@ async function main() {
 
   // Read club directories
   const entries = fs.readdirSync(imagesDir, { withFileTypes: true });
-  const clubDirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+  const clubDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
   console.log(`Found ${clubDirs.length} club directories\n`);
 
   let uploaded = 0;
@@ -125,7 +127,7 @@ async function main() {
       params.push(clubName);
       await pool.query(
         `UPDATE clubs SET ${setClauses.join(', ')} WHERE name = $${paramIdx}`,
-        params,
+        params
       );
     }
   }
@@ -135,7 +137,7 @@ async function main() {
   process.exit(errors > 0 ? 1 : 0);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
 });

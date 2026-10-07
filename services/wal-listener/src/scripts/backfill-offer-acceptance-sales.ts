@@ -82,7 +82,7 @@ interface Stats {
 const blockTimestampCache = new Map<bigint, Date>();
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatDuration(ms: number): string {
@@ -157,7 +157,7 @@ async function resolveTokenId(
       });
 
       if (!response.ok) return null;
-      const data = await response.json() as any;
+      const data = (await response.json()) as any;
       if (data.errors) return null;
 
       domain = data.data?.domain;
@@ -184,7 +184,7 @@ async function resolveTokenId(
       });
 
       if (!response.ok) return null;
-      const data = await response.json() as any;
+      const data = (await response.json()) as any;
       if (data.errors) return null;
 
       const domains = data.data?.domains || [];
@@ -254,9 +254,13 @@ async function backfillOfferAcceptanceSales(options: Options) {
   });
 
   try {
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Missed Offer Acceptance Sales');
-    console.log('================================================================================\n');
+    console.log(
+      '================================================================================\n'
+    );
     console.log(`Mode:          ${options.dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
     console.log(`Batch size:    ${options.batchSize} blocks per RPC call`);
     console.log(`Verbose:       ${options.verbose ? 'YES' : 'NO'}`);
@@ -271,14 +275,16 @@ async function backfillOfferAcceptanceSales(options: Options) {
     let endBlock: bigint;
 
     if (options.days !== null) {
-      startBlock = latestBlock - (BigInt(options.days) * BLOCKS_PER_DAY);
+      startBlock = latestBlock - BigInt(options.days) * BLOCKS_PER_DAY;
       console.log(`Start block:   ${formatNumber(startBlock)} (${options.days} days ago)`);
     } else if (options.startBlock !== null) {
       startBlock = options.startBlock;
       console.log(`Start block:   ${formatNumber(startBlock)} (specified)`);
     } else {
-      startBlock = latestBlock - (BigInt(DEFAULT_DAYS_BACK) * BLOCKS_PER_DAY);
-      console.log(`Start block:   ${formatNumber(startBlock)} (default: ${DEFAULT_DAYS_BACK} days ago)`);
+      startBlock = latestBlock - BigInt(DEFAULT_DAYS_BACK) * BLOCKS_PER_DAY;
+      console.log(
+        `Start block:   ${formatNumber(startBlock)} (default: ${DEFAULT_DAYS_BACK} days ago)`
+      );
     }
 
     if (options.endBlock === 'latest') {
@@ -307,7 +313,9 @@ async function backfillOfferAcceptanceSales(options: Options) {
       const actualEndBlock = batchEndBlock > endBlock ? endBlock : batchEndBlock;
 
       if (options.verbose) {
-        console.log(`\nFetching Seaport logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}...`);
+        console.log(
+          `\nFetching Seaport logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}...`
+        );
       }
 
       try {
@@ -330,7 +338,9 @@ async function backfillOfferAcceptanceSales(options: Options) {
           } catch (logError: any) {
             stats.errors++;
             if (options.verbose) {
-              console.error(`  Error processing log at block ${log.blockNumber}: ${logError.message}`);
+              console.error(
+                `  Error processing log at block ${log.blockNumber}: ${logError.message}`
+              );
             }
           }
         }
@@ -340,26 +350,27 @@ async function backfillOfferAcceptanceSales(options: Options) {
         // Progress update every 10 seconds
         const now = Date.now();
         if (now - lastProgressUpdate > 10000) {
-          const progress = Number(stats.blocksProcessed) / Number(totalBlocks) * 100;
+          const progress = (Number(stats.blocksProcessed) / Number(totalBlocks)) * 100;
           const elapsed = now - startTime;
           const rate = Number(stats.blocksProcessed) / (elapsed / 1000);
           const remainingBlocks = Number(totalBlocks) - Number(stats.blocksProcessed);
-          const eta = rate > 0 ? remainingBlocks / rate * 1000 : 0;
+          const eta = rate > 0 ? (remainingBlocks / rate) * 1000 : 0;
 
           console.log(
             `Progress: ${progress.toFixed(1)}% | ` +
-            `Blocks: ${formatNumber(stats.blocksProcessed)}/${formatNumber(totalBlocks)} | ` +
-            `Scanned: ${formatNumber(stats.eventsScanned)} | ` +
-            `Offer acceptances: ${formatNumber(stats.offerAcceptancesFound)} | ` +
-            `Inserted: ${formatNumber(stats.inserted)} | ` +
-            `Rate: ${rate.toFixed(1)} blocks/sec | ` +
-            `ETA: ${formatDuration(eta)}`
+              `Blocks: ${formatNumber(stats.blocksProcessed)}/${formatNumber(totalBlocks)} | ` +
+              `Scanned: ${formatNumber(stats.eventsScanned)} | ` +
+              `Offer acceptances: ${formatNumber(stats.offerAcceptancesFound)} | ` +
+              `Inserted: ${formatNumber(stats.inserted)} | ` +
+              `Rate: ${rate.toFixed(1)} blocks/sec | ` +
+              `ETA: ${formatDuration(eta)}`
           );
           lastProgressUpdate = now;
         }
-
       } catch (batchError: any) {
-        console.error(`\nError fetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}: ${batchError.message}`);
+        console.error(
+          `\nError fetching logs for blocks ${formatNumber(currentBlock)} - ${formatNumber(actualEndBlock)}: ${batchError.message}`
+        );
 
         // Rate limit handling
         if (batchError.message?.includes('429') || batchError.message?.includes('rate limit')) {
@@ -380,7 +391,9 @@ async function backfillOfferAcceptanceSales(options: Options) {
     // Print summary
     const duration = Date.now() - startTime;
 
-    console.log('\n================================================================================');
+    console.log(
+      '\n================================================================================'
+    );
     console.log('Backfill Summary');
     console.log('================================================================================');
     console.log(`Block range:           ${formatNumber(startBlock)} - ${formatNumber(endBlock)}`);
@@ -392,15 +405,18 @@ async function backfillOfferAcceptanceSales(options: Options) {
     console.log(`Name not found:        ${formatNumber(stats.nameNotFound)}`);
     console.log(`Errors:                ${formatNumber(stats.errors)}`);
     console.log(`Duration:              ${formatDuration(duration)}`);
-    console.log(`Rate:                  ${(Number(stats.blocksProcessed) / (duration / 1000)).toFixed(1)} blocks/sec`);
+    console.log(
+      `Rate:                  ${(Number(stats.blocksProcessed) / (duration / 1000)).toFixed(1)} blocks/sec`
+    );
     console.log('');
 
     if (options.dryRun) {
       console.log('DRY RUN - No changes made');
     }
 
-    console.log('================================================================================\n');
-
+    console.log(
+      '================================================================================\n'
+    );
   } catch (error: any) {
     console.error('\nFatal error:', error.message);
     console.error(error.stack);
@@ -423,13 +439,10 @@ async function processOrderFulfilled(
   // We're specifically looking for offer acceptances:
   // ENS token is in `consideration` (buyer offered WETH, seller accepted by sending ENS)
   // and NOT in `offer` (that would be a standard listing fulfillment, already handled)
-  const ensInOffer = offer?.some((item: any) =>
-    item.token && isENSToken(item.token)
-  );
+  const ensInOffer = offer?.some((item: any) => item.token && isENSToken(item.token));
 
-  const ensConsiderationItems = consideration?.filter((item: any) =>
-    item.token && isENSToken(item.token)
-  ) || [];
+  const ensConsiderationItems =
+    consideration?.filter((item: any) => item.token && isENSToken(item.token)) || [];
 
   if (ensConsiderationItems.length === 0 || ensInOffer) {
     // Not an offer acceptance ENS sale - skip
@@ -468,7 +481,9 @@ async function processOrderFulfilled(
 
     if (options.verbose) {
       const priceEth = (Number(totalPrice) / 1e18).toFixed(4);
-      console.log(`  Offer acceptance: token=${tokenId} (${isWrapped ? 'wrapped' : 'unwrapped'}) price=${priceEth} ETH/WETH tx=${log.transactionHash}`);
+      console.log(
+        `  Offer acceptance: token=${tokenId} (${isWrapped ? 'wrapped' : 'unwrapped'}) price=${priceEth} ETH/WETH tx=${log.transactionHash}`
+      );
     }
 
     // Check if sale already exists
@@ -564,7 +579,9 @@ async function processOrderFulfilled(
 
     if (options.verbose) {
       const priceEth = (Number(totalPrice) / 1e18).toFixed(4);
-      console.log(`    Creating sale: ${ensName} for ${priceEth} ETH/WETH source=${saleSource} (${saleDate.toISOString()})`);
+      console.log(
+        `    Creating sale: ${ensName} for ${priceEth} ETH/WETH source=${saleSource} (${saleDate.toISOString()})`
+      );
     }
 
     if (options.dryRun) {
@@ -615,14 +632,17 @@ async function processOrderFulfilled(
     // Update last_sale_price and last_sale_date if this sale is newer
     if (!currentLastSaleDate || saleDate > currentLastSaleDate) {
       try {
-        const updateResult = await pool.query(`
+        const updateResult = await pool.query(
+          `
           UPDATE ens_names
           SET last_sale_price = $1,
               last_sale_date = $2,
               updated_at = NOW()
           WHERE id = $3
             AND (last_sale_date IS NULL OR last_sale_date < $2)
-        `, [priceWei, saleDate, ensNameId]);
+        `,
+          [priceWei, saleDate, ensNameId]
+        );
 
         if (updateResult.rowCount && updateResult.rowCount > 0) {
           stats.lastSaleUpdated++;
@@ -643,7 +663,7 @@ function serializeBigInts(obj: any): any {
   if (typeof obj === 'bigint') {
     return obj.toString();
   } else if (Array.isArray(obj)) {
-    return obj.map(item => serializeBigInts(item));
+    return obj.map((item) => serializeBigInts(item));
   } else if (obj !== null && typeof obj === 'object') {
     const result: any = {};
     for (const [key, value] of Object.entries(obj)) {

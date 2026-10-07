@@ -146,8 +146,16 @@ type OpenRouterProviderRouting = {
 
 // Pin the upstream OpenRouter provider per model (pricing varies a lot by provider).
 const OPENROUTER_PROVIDER_ROUTING: Record<string, OpenRouterProviderRouting> = {
-  [OPENROUTER_MODELS.deepseekV4Pro]: { order: ['deepseek'], allowFallbacks: false, structuredOutputs: false },
-  [OPENROUTER_MODELS.deepseekV4Flash]: { order: ['deepseek'], allowFallbacks: false, structuredOutputs: false },
+  [OPENROUTER_MODELS.deepseekV4Pro]: {
+    order: ['deepseek'],
+    allowFallbacks: false,
+    structuredOutputs: false,
+  },
+  [OPENROUTER_MODELS.deepseekV4Flash]: {
+    order: ['deepseek'],
+    allowFallbacks: false,
+    structuredOutputs: false,
+  },
   [OPENROUTER_MODELS.grokV43]: { structuredOutputs: false },
 };
 
@@ -306,19 +314,27 @@ function getOpenAIPricing(model: string): OpenAIModelPricing | null {
   const exactPricing = OPENAI_MODEL_PRICING[normalizedModel];
   if (exactPricing) return exactPricing;
 
-  const matchedModel = Object.keys(OPENAI_MODEL_PRICING).find((modelKey) => normalizedModel.startsWith(`${modelKey}-`));
+  const matchedModel = Object.keys(OPENAI_MODEL_PRICING).find((modelKey) =>
+    normalizedModel.startsWith(`${modelKey}-`)
+  );
   return matchedModel ? OPENAI_MODEL_PRICING[matchedModel] : null;
 }
 
 // Per-call cost. Token counts feed the estimate; the caller may override costUsd
 // with a provider-reported figure (e.g. OpenRouter's, which includes plugin fees).
-function calculateOpenAICost(model: string, usage: OpenAIResponseUsage | undefined): OpenAICallCost | null {
+function calculateOpenAICost(
+  model: string,
+  usage: OpenAIResponseUsage | undefined
+): OpenAICallCost | null {
   const pricing = getOpenAIPricing(model);
   if (!pricing || !usage) return null;
 
   const inputTokens = readTokenCount(usage.input_tokens);
   const outputTokens = readTokenCount(usage.output_tokens);
-  const cachedInputTokens = Math.min(readTokenCount(usage.input_tokens_details?.cached_tokens), inputTokens);
+  const cachedInputTokens = Math.min(
+    readTokenCount(usage.input_tokens_details?.cached_tokens),
+    inputTokens
+  );
   const uncachedInputTokens = Math.max(inputTokens - cachedInputTokens, 0);
   const reasoningTokens = readTokenCount(usage.output_tokens_details?.reasoning_tokens);
   const costUsd =
@@ -384,7 +400,9 @@ async function sleep(ms: number) {
 
 function extractOutputText(data: any): string {
   const messageItem = data.output?.find((item: { type: string }) => item.type === 'message');
-  const text = messageItem?.content?.find((content: { type: string }) => content.type === 'output_text')?.text;
+  const text = messageItem?.content?.find(
+    (content: { type: string }) => content.type === 'output_text'
+  )?.text;
 
   if (typeof text !== 'string' || text.length === 0) {
     throw new Error('No output text in OpenAI response');
@@ -425,7 +443,8 @@ function buildOpenRouterBody(responsesBody: string, routing?: OpenRouterProvider
   if (systemParts.length > 0) {
     messages.push({ role: 'system', content: systemParts.join('\n\n') });
   }
-  const userContent = typeof parsed.input === 'string' ? parsed.input : JSON.stringify(parsed.input ?? '');
+  const userContent =
+    typeof parsed.input === 'string' ? parsed.input : JSON.stringify(parsed.input ?? '');
   messages.push({ role: 'user', content: userContent });
 
   const out: Record<string, unknown> = {
@@ -482,7 +501,8 @@ function buildOpenRouterBody(responsesBody: string, routing?: OpenRouterProvider
     out.provider = providerOptions;
   }
 
-  const hasWebSearch = Array.isArray(parsed.tools) && parsed.tools.some((tool) => tool?.type === 'web_search');
+  const hasWebSearch =
+    Array.isArray(parsed.tools) && parsed.tools.some((tool) => tool?.type === 'web_search');
   if (hasWebSearch) {
     out.plugins = [{ id: 'web', max_results: 5 }];
   }
@@ -509,9 +529,13 @@ function normalizeOpenRouterUsage(usage: OpenRouterUsage | undefined): {
   return {
     normalized: {
       input_tokens: promptTokens,
-      input_tokens_details: { cached_tokens: readTokenCount(usage?.prompt_tokens_details?.cached_tokens) },
+      input_tokens_details: {
+        cached_tokens: readTokenCount(usage?.prompt_tokens_details?.cached_tokens),
+      },
       output_tokens: completionTokens,
-      output_tokens_details: { reasoning_tokens: readTokenCount(usage?.completion_tokens_details?.reasoning_tokens) },
+      output_tokens_details: {
+        reasoning_tokens: readTokenCount(usage?.completion_tokens_details?.reasoning_tokens),
+      },
       total_tokens: readTokenCount(usage?.total_tokens) || promptTokens + completionTokens,
     },
     reportedCostUsd: typeof usage?.cost === 'number' ? usage.cost : null,
@@ -532,7 +556,11 @@ function extractOpenRouterText(data: any): string {
   return content;
 }
 
-async function callOpenRouterChat(responsesBody: string, label: string, logPrefix: string): Promise<string> {
+async function callOpenRouterChat(
+  responsesBody: string,
+  label: string,
+  logPrefix: string
+): Promise<string> {
   const apiKey = config.valuation.openrouterApiKey;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not configured');
@@ -587,7 +615,10 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
 
     if (response.status === 429 && attempt < MAX_RETRIES) {
       const backoffMs = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-      valuationLogWarn(logPrefix, 'OpenRouter rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
+      valuationLogWarn(logPrefix, 'OpenRouter rate limited, retrying', {
+        label,
+        backoffMs: Math.round(backoffMs),
+      });
       await sleep(backoffMs);
       continue;
     }
@@ -613,7 +644,9 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
     const data: any = await response.json();
     const totalMs = Math.round(performance.now() - startedAt);
     const model = typeof data.model === 'string' ? data.model : requestedModel;
-    const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(data.usage as OpenRouterUsage | undefined);
+    const { normalized, reportedCostUsd } = normalizeOpenRouterUsage(
+      data.usage as OpenRouterUsage | undefined
+    );
     // Prefer OpenRouter's reported cost (includes web-search/plugin fees + the
     // real provider rate). Record it even when the model is absent from the
     // static pricing table — token counts still come from usage.
@@ -645,7 +678,11 @@ async function callOpenRouterChat(responsesBody: string, label: string, logPrefi
   throw lastError ?? new Error('OpenRouter request failed');
 }
 
-async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuation/openai]'): Promise<string> {
+async function callOpenAIRaw(
+  body: string,
+  label: string,
+  logPrefix = '[valuation/openai]'
+): Promise<string> {
   if (getChannelModel(getOpenAICostStep(label)).provider === 'openrouter') {
     return callOpenRouterChat(body, label, logPrefix);
   }
@@ -702,7 +739,10 @@ async function callOpenAIRaw(body: string, label: string, logPrefix = '[valuatio
     if (response.status === 429 && attempt < MAX_RETRIES) {
       const resetMs = parseResetHeader(response.headers.get('x-ratelimit-reset-requests'));
       const backoffMs = resetMs ?? 1000 * Math.pow(2, attempt) + Math.random() * 1000;
-      valuationLogWarn(logPrefix, 'OpenAI rate limited, retrying', { label, backoffMs: Math.round(backoffMs) });
+      valuationLogWarn(logPrefix, 'OpenAI rate limited, retrying', {
+        label,
+        backoffMs: Math.round(backoffMs),
+      });
       await sleep(backoffMs);
       continue;
     }
@@ -762,7 +802,10 @@ function parseNumberVariants(text: string): string[] {
   return parsed.t.filter((name): name is string => typeof name === 'string');
 }
 
-function createNameResearchErrorEvidence(label: string, error: unknown): ValuationNameResearchEvidence {
+function createNameResearchErrorEvidence(
+  label: string,
+  error: unknown
+): ValuationNameResearchEvidence {
   return {
     source: 'openai_web_search',
     model: getChannelModel('name_research').model,
@@ -807,7 +850,11 @@ function parseNameResearch(
     throw new Error('OpenAI name research response JSON must be an object');
   }
 
-  if (typeof parsed.label !== 'string' || !Array.isArray(parsed.categories) || !Array.isArray(parsed.senses)) {
+  if (
+    typeof parsed.label !== 'string' ||
+    !Array.isArray(parsed.categories) ||
+    !Array.isArray(parsed.senses)
+  ) {
     throw new Error('OpenAI name research response JSON missing required fields');
   }
 
@@ -827,7 +874,9 @@ function parseNameResearch(
 
   return {
     label: parsed.label,
-    categories: parsed.categories.filter((category): category is string => typeof category === 'string'),
+    categories: parsed.categories.filter(
+      (category): category is string => typeof category === 'string'
+    ),
     senses,
     meanings: senses.map((entry) => entry.sense),
   };
@@ -893,7 +942,9 @@ function compactActivityRow(
   const senses = termSenses?.[activity.name.replace(/\.eth$/i, '').toLowerCase()];
   return {
     name: activity.name,
-    priceEth: weiToEthString((activity.metadata?.total_cost_wei as string | undefined) ?? activity.price_wei),
+    priceEth: weiToEthString(
+      (activity.metadata?.total_cost_wei as string | undefined) ?? activity.price_wei
+    ),
     premiumEth: weiToEthString(activity.metadata?.premium_wei as string | undefined),
     date: activity.created_at,
     clubs: activity.clubs ?? [],
@@ -926,7 +977,9 @@ function compactMarketActivity(
     topSales: evidence.sales
       .slice(0, MAX_APPRAISAL_TOP_SALES)
       .map((sale) => compactActivityRow(sale, termSenses)),
-    topMintEvents: evidence.mintEvents.slice(0, 10).map((mint) => compactActivityRow(mint, termSenses)),
+    topMintEvents: evidence.mintEvents
+      .slice(0, 10)
+      .map((mint) => compactActivityRow(mint, termSenses)),
     topPremiumRegistrations: evidence.premiumRegistrations
       .slice(0, 10)
       .map((registration) => compactActivityRow(registration, termSenses)),
@@ -996,7 +1049,10 @@ function compactCategoryMarketActivity(evidence: ValuationEvidence['categoryMark
 
 function buildAppraisalEvidenceInput(evidence: Omit<ValuationEvidence, 'appraisal'>) {
   return {
-    marketActivity: compactMarketActivity(evidence.marketActivity, evidence.relatedTerms.termSenses),
+    marketActivity: compactMarketActivity(
+      evidence.marketActivity,
+      evidence.relatedTerms.termSenses
+    ),
     web2: compactWeb2Evidence(evidence.web2),
     searchDemand: compactSearchDemand(evidence.searchDemand),
     nameResearch: compactNameResearch(evidence.nameResearch),
@@ -1006,7 +1062,10 @@ function buildAppraisalEvidenceInput(evidence: Omit<ValuationEvidence, 'appraisa
   };
 }
 
-async function generateNumberVariants(terms: string[], options: { logPrefix?: string }): Promise<string[]> {
+async function generateNumberVariants(
+  terms: string[],
+  options: { logPrefix?: string }
+): Promise<string[]> {
   const logPrefix = options.logPrefix || '[valuation]';
   const channel = getChannelModel('number_variants');
   const channelModel = channel.model;
@@ -1039,7 +1098,9 @@ async function generateNumberVariants(terms: string[], options: { logPrefix?: st
   });
 
   const text = await callOpenAIRaw(body, 'number_variants', logPrefix);
-  valuationLogInfo(logPrefix, 'OpenAI number variant output text received', { textLength: text.length });
+  valuationLogInfo(logPrefix, 'OpenAI number variant output text received', {
+    textLength: text.length,
+  });
   const generated = parseNumberVariants(text);
   valuationLogInfo(logPrefix, 'OpenAI number variants parsed', {
     rawCount: generated.length,
@@ -1146,7 +1207,9 @@ export async function generateAppraisal(
   });
 
   try {
-    const instructions = await renderValuationPrompt('appraisal', { name: JSON.stringify(`${name}.eth`) });
+    const instructions = await renderValuationPrompt('appraisal', {
+      name: JSON.stringify(`${name}.eth`),
+    });
     const body = JSON.stringify({
       model: channelModel,
       instructions,
@@ -1257,12 +1320,16 @@ async function generateScopedSenseTerms(
       terms,
     };
   } catch (error) {
-    valuationLogWarn(options.logPrefix, 'scoped sense terms generation failed; sense contributes no terms', {
-      name,
-      senseIdx,
-      sense: sense.sense,
-      error: error instanceof Error ? error.message : error,
-    });
+    valuationLogWarn(
+      options.logPrefix,
+      'scoped sense terms generation failed; sense contributes no terms',
+      {
+        name,
+        senseIdx,
+        sense: sense.sense,
+        error: error instanceof Error ? error.message : error,
+      }
+    );
     return {
       senseIdx,
       sense: sense.sense,
@@ -1294,14 +1361,20 @@ export async function generateRelatedTerms(
   const cappedSenses = senses.slice(0, options.maxResearchSenses);
 
   if (cappedSenses.length === 0) {
-    valuationLogWarn(logPrefix, 'no research senses available; related terms limited to the name itself', { name });
+    valuationLogWarn(
+      logPrefix,
+      'no research senses available; related terms limited to the name itself',
+      { name }
+    );
   }
 
   valuationLogInfo(logPrefix, 'scoped related-terms generation prepared', {
     name,
     model: channel.model,
     senseCount: cappedSenses.length,
-    requestedPerSense: cappedSenses.map((sense) => scopedTermCountForScore(sense.demandScore, options.termCountsByScore)),
+    requestedPerSense: cappedSenses.map((sense) =>
+      scopedTermCountForScore(sense.demandScore, options.termCountsByScore)
+    ),
   });
 
   // One scoped generation per sense, in parallel. A failed sense must not fail
@@ -1346,9 +1419,13 @@ export async function generateRelatedTerms(
   try {
     numberVariants = await generateNumberVariants(baseTerms, { logPrefix });
   } catch (error) {
-    valuationLogWarn(logPrefix, 'number variants generation failed; continuing with base terms only', {
-      error: error instanceof Error ? error.message : error,
-    });
+    valuationLogWarn(
+      logPrefix,
+      'number variants generation failed; continuing with base terms only',
+      {
+        error: error instanceof Error ? error.message : error,
+      }
+    );
   }
   const terms = dedupeNormalizedLabels([...baseTerms, ...numberVariants]);
   valuationLogInfo(logPrefix, 'related terms expanded with number variants', {
