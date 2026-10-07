@@ -13,7 +13,7 @@ The system is built with a microservices architecture consisting of:
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+ with TypeScript
+- **Runtime**: Node.js 20.19+ or 22.13+ with TypeScript
 - **API Framework**: Fastify
 - **Blockchain**: Viem 2.x
 - **Database**: PostgreSQL 15+
@@ -23,7 +23,7 @@ The system is built with a microservices architecture consisting of:
 
 ## Prerequisites
 
-- Node.js 20+ and npm 10+
+- Node.js 20.19+ or 22.13+ and npm 10+
 - PostgreSQL 15+ (with logical replication enabled)
 - Redis 7+
 - Elasticsearch 8.x

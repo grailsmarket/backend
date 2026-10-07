@@ -129,7 +129,7 @@ ai_recommendations (
 ## Quick Start
 
 ### Prerequisites
-- Node.js 20+
+- Node.js 20.19+ or 22.13+
 - PostgreSQL 14+ with LISTEN/NOTIFY support
 - Elasticsearch 8.x
 - Ethereum RPC endpoint (Alchemy/Infura)
