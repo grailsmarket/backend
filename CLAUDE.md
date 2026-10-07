@@ -307,6 +307,13 @@ npm test
 cd services/api && npm run test
 ```
 
+### Linting & Formatting
+```bash
+npm run lint          # ESLint (root eslint.config.mjs, flat config)
+npm run format        # Prettier (root .prettierrc.json)
+npm run format:check
+```
+
 ### Deployment
 ```bash
 # Build all services

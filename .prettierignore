@@ -1,0 +1,18 @@
+package-lock.json
+**/dist
+
+# Astro docs site has its own toolchain
+services/docs
+
+# Stale tsc output committed alongside the shared sources
+services/shared/src/**/*.js
+services/shared/src/**/*.d.ts
+services/shared/src/**/*.map
+
+# Data files and script progress state
+services/wal-listener/data
+services/wal-listener/.import-progress.json
+services/wal-listener/src/scripts/backfill-mint-progress.json
+
+# Prose docs and PRDs are left as written
+*.md

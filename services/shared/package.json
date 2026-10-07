@@ -8,6 +8,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "migrate": "npx tsx src/db/migrate.ts",
     "seed": "npx tsx src/db/seed.ts"
   },

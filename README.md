@@ -156,9 +156,14 @@ See `.env.example` for all configuration options .
 npm test
 ```
 
-### Linting
+### Linting & Formatting
+ESLint (`eslint.config.mjs`) and Prettier (`.prettierrc.json`) are configured at the repo root and cover all services except `services/docs`.
+
 ```bash
-npm run lint
+npm run lint          # ESLint across the repo
+npm run lint:fix      # ESLint with auto-fix
+npm run format        # Prettier write
+npm run format:check  # Prettier check (CI-friendly)
 ```
 
 ### Type Checking
