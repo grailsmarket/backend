@@ -57,7 +57,6 @@ async function main() {
       continue;
     }
 
-    const pgName = pgResult.rows[0].name;
     const pgPrice = pgResult.rows[0].listing_price;
     const pgListingStatus = pgResult.rows[0].listing_status;
 

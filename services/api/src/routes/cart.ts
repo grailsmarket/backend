@@ -410,7 +410,6 @@ export async function cartRoutes(fastify: FastifyInstance) {
       // Bulk insert cart items
       const values = data.items
         .map((item, i) => {
-          const cartTypeId = cartTypeMap.get(item.cartType);
           return `($1, $${i * 2 + 2}, $${i * 2 + 3})`;
         })
         .join(', ');

@@ -22,7 +22,6 @@ interface RefreshAnalyticsJob {
 }
 
 export async function refreshAnalytics(job: Job<RefreshAnalyticsJob>): Promise<void> {
-  const pool = getPostgresPool();
   const { view } = job.data;
 
   try {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient } from '../../../shared/src';
 
 export async function healthRoutes(fastify: FastifyInstance) {
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', async (_request, _reply) => {
     return {
       status: 'healthy',
       timestamp: new Date().toISOString(),

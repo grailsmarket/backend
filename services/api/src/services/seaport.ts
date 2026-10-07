@@ -1,20 +1,9 @@
 import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  getContract,
-  parseUnits,
   keccak256,
   encodeAbiParameters,
   parseAbiParameters
 } from 'viem';
-import { mainnet } from 'viem/chains';
 import { config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
-
-const publicClient = createPublicClient({
-  chain: mainnet,
-  transport: http(config.blockchain.rpcUrl),
-});
 
 interface CreateOrderParams {
   tokenId: string;

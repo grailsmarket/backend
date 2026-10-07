@@ -95,7 +95,7 @@ async function start() {
     process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason: any, promise) => {
+  process.on('unhandledRejection', (reason: any, _promise) => {
     const errorCode = reason?.code;
     const errorMessage = reason?.message || String(reason);
 

@@ -185,7 +185,7 @@ async function fixHashPlaceholderNames() {
     let resolved = 0;
     let merged = 0;
     let converted = 0;
-    let errors = 0;
+    const errors = 0;
 
     for (const row of result.rows) {
       // The token ID is the part after 'token-'
@@ -261,7 +261,6 @@ async function fixHashPlaceholderNames() {
 
         // Current is placeholder (#...), duplicate might be real name or token- placeholder
         // Keep the one with the real name, or keep the duplicate if both are placeholders
-        const currentIsPlaceholder = true; // We know current starts with #
         const dupIsPlaceholder = dup.name.startsWith('token-') || dup.name.startsWith('#');
 
         const keepId = dupIsPlaceholder ? row.id : dup.id;

@@ -24,7 +24,7 @@ export function normalizeAddress(address: string): string {
  */
 export function isValidENSName(name: string): boolean {
   // Basic validation: must end with .eth and have at least one character before
-  return /^[a-z0-9\-]+\.eth$/i.test(name) || /^.+\.eth$/i.test(name);
+  return /^[a-z0-9-]+\.eth$/i.test(name) || /^.+\.eth$/i.test(name);
 }
 
 /**

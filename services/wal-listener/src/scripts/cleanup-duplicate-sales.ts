@@ -27,6 +27,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 interface SaleRecord {
   id: number;
@@ -374,7 +375,6 @@ async function main() {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `duplicate-sales-${dryRun ? 'report' : 'cleanup'}-${timestamp}.json`;
 

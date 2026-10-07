@@ -219,7 +219,7 @@ async function checkUnclaimedDeposits(options: {
       );
 
       // Map of address -> deed addresses to verify
-      let addressDeedMap = new Map<string, string[]>();
+      const addressDeedMap = new Map<string, string[]>();
 
       if (!useEtherscanFallback) {
         // Try subgraph first
@@ -267,7 +267,7 @@ async function checkUnclaimedDeposits(options: {
               }
             }
             await sleep(200); // Rate limit Etherscan
-          } catch (error: any) {
+          } catch {
             // Retry up to 3 times with exponential backoff
             let retried = false;
             for (let attempt = 1; attempt <= 3; attempt++) {

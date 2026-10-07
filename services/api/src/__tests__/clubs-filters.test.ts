@@ -70,38 +70,6 @@ async function getClubs(params: string = ''): Promise<ClubsResponse> {
   return response.json() as Promise<ClubsResponse>;
 }
 
-// Valid classifications for reference
-const VALID_CLASSIFICATIONS = [
-  'ethmojis',
-  'digits',
-  'palindromes',
-  'prepunk',
-  'geo',
-  'letters',
-  'fantasy',
-  'crypto',
-  'ai',
-] as const;
-
-// Valid sort fields
-const VALID_SORT_FIELDS = [
-  'total_sales_volume_wei',
-  'sales_volume_wei_1y',
-  'sales_volume_wei_1mo',
-  'sales_volume_wei_1w',
-  'total_sales_count',
-  'sales_count_1y',
-  'sales_count_1mo',
-  'sales_count_1w',
-  'total_reg_count',
-  'reg_count_1y',
-  'reg_count_1mo',
-  'reg_count_1w',
-  'member_count',
-  'floor_price_wei',
-  'name',
-] as const;
-
 describe('Clubs API Filters, Sorting, and Search', () => {
   // Verify server is running and has data before tests
   beforeAll(async () => {
@@ -116,7 +84,8 @@ describe('Clubs API Filters, Sorting, and Search', () => {
       }
     } catch (error) {
       throw new Error(
-        'API server not running or no clubs data. Start with: cd services/api && npm run dev'
+        'API server not running or no clubs data. Start with: cd services/api && npm run dev',
+        { cause: error }
       );
     }
   });
@@ -284,7 +253,6 @@ describe('Clubs API Filters, Sorting, and Search', () => {
     it('classification filter excludes clubs without that classification', async () => {
       // Get all clubs first
       const { data: allData } = await getClubs();
-      const allClubNames = new Set(allData!.clubs.map((c) => c.name));
 
       // Get ethmoji clubs
       const { data: ethmojiData } = await getClubs('class[]=ethmojis');

@@ -270,7 +270,7 @@ export async function getSalesByAddress(
   limit = 20,
   offset = 0
 ) {
-  let whereClause = '';
+  let whereClause: string;
   if (type === 'buyer') {
     whereClause = 's.buyer_address = $1';
   } else if (type === 'seller') {

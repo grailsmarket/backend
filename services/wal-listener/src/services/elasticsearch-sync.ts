@@ -381,7 +381,7 @@ export class ElasticsearchSync {
         this.ethPriceCacheTime = now;
         return this.cachedEthPrice;
       }
-    } catch (error) {
+    } catch {
       logger.warn('Failed to fetch ETH price from database, using fallback');
     }
 

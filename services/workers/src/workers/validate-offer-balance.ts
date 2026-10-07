@@ -230,28 +230,3 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
     throw error; // Let pg-boss retry
   }
 }
-
-/**
- * Validate balance result helper
- */
-function validateBalanceResult(balance: bigint, priceWei: string, currency: Currency): ValidationResult {
-  const required = BigInt(priceWei);
-
-  if (balance < required) {
-    return {
-      isValid: false,
-      reason: `insufficient_${currency.toLowerCase()}`,
-      checkedAt: new Date(),
-      details: {
-        currentBalance: balance.toString(),
-        requiredBalance: required.toString(),
-        currency
-      }
-    };
-  }
-
-  return {
-    isValid: true,
-    checkedAt: new Date()
-  };
-}

@@ -48,8 +48,8 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     fastify.log.info(`GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`);
     const offset = (query.page - 1) * query.limit;
 
-    let whereConditions: string[] = [];
-    let params: any[] = [];
+    const whereConditions: string[] = [];
+    const params: any[] = [];
     let paramCount = 1;
 
     // Exclude names past grace period (90 days after expiry)

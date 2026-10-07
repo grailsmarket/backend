@@ -22,11 +22,6 @@
 
 import { getPostgresPool } from '../../../shared/src';
 
-interface ClubMembership {
-  club_name: string;
-  ens_name: string;
-}
-
 interface EnsNameClubs {
   id: number;
   name: string;

@@ -83,7 +83,7 @@ async function resolveTokenIds(tokenIds: string[]): Promise<Map<string, string |
     }
 
     return results;
-  } catch (error) {
+  } catch {
     clearTimeout(timeoutId);
     for (const id of tokenIds) results.set(id, null);
     return results;
@@ -145,7 +145,7 @@ async function backfill(batchSize: number, limit?: number) {
       }
 
       await client.query('COMMIT');
-    } catch (error) {
+    } catch {
       await client.query('ROLLBACK');
       stats.failed += batch.length;
     } finally {
@@ -206,7 +206,7 @@ async function main() {
     console.error('Fatal error:', error);
     try {
       await pool.end();
-    } catch (e) {
+    } catch {
       // ignore
     }
     process.exit(1);

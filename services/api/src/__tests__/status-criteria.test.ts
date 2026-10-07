@@ -110,19 +110,6 @@ function analyzeStatuses(results: SearchResult[]): Record<NameStatus, number> {
 }
 
 /**
- * Check if results contain only the expected statuses
- */
-function hasOnlyStatuses(results: SearchResult[], allowedStatuses: NameStatus[]): boolean {
-  for (const result of results) {
-    const status = getNameStatus(result.expiry_date);
-    if (!allowedStatuses.includes(status)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
  * Check which expected statuses are missing from results
  * Used to verify that all expected statuses are actually returned
  */

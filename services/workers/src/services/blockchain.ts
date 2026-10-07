@@ -15,21 +15,9 @@ export function getBlockchainProvider(): ethers.JsonRpcProvider {
   return provider;
 }
 
-// ENS Registry ABI (minimal - just what we need)
-const ENS_REGISTRY_ABI = [
-  'function resolver(bytes32 node) view returns (address)',
-];
-
 // Name Wrapper ABI (minimal - just ownerOf)
 const NAME_WRAPPER_ABI = [
   'function ownerOf(uint256 id) view returns (address)',
-];
-
-// ENS Resolver ABI (minimal - text record methods)
-const ENS_RESOLVER_ABI = [
-  'function text(bytes32 node, string key) view returns (string)',
-  'function contenthash(bytes32 node) view returns (bytes)',
-  'function addr(bytes32 node) view returns (address)',
 ];
 
 export interface ENSMetadata {

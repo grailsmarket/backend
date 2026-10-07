@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SeaportOrderBuilder } from '../src/seaport/order-builder.js';
 import { OrderType, ItemType } from '../src/seaport/types.js';
-import { ENS_REGISTRAR_ADDRESS, ZERO_ADDRESS } from '../src/seaport/constants.js';
+import { ENS_REGISTRAR_ADDRESS } from '../src/seaport/constants.js';
 
 describe('SeaportOrderBuilder', () => {
   const builder = new SeaportOrderBuilder();

@@ -40,6 +40,7 @@
 import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
 import { createPublicClient, http, parseAbi, decodeEventLog, type Log } from 'viem';
 import { mainnet } from 'viem/chains';
+import * as fs from 'fs';
 
 // ENS Controller contracts - each has a different event signature
 const ENS_CONTROLLERS = [
@@ -302,7 +303,6 @@ async function backfillRegistrations(options: Options) {
 
     // Export missing names if any
     if (missingNamesList.length > 0) {
-      const fs = require('fs');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const outputFile = `backfill-registrations-missing-${timestamp}.json`;
 

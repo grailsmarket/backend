@@ -80,7 +80,7 @@ function generateNamesFromPattern(pattern: string): string[] {
   switch (pattern) {
     case '3-digits':
     case '3-digit':
-    case '1k':
+    case '1k': {
       // Generate 000.eth through 999.eth
       const threeDigitNames: string[] = [];
       for (let i = 0; i <= 999; i++) {
@@ -88,10 +88,11 @@ function generateNamesFromPattern(pattern: string): string[] {
         threeDigitNames.push(`${paddedNumber}.eth`);
       }
       return threeDigitNames;
+    }
 
     case '4-digits':
     case '4-digit':
-    case '10k':
+    case '10k': {
       // Generate 0000.eth through 9999.eth
       const fourDigitNames: string[] = [];
       for (let i = 0; i <= 9999; i++) {
@@ -99,6 +100,7 @@ function generateNamesFromPattern(pattern: string): string[] {
         fourDigitNames.push(`${paddedNumber}.eth`);
       }
       return fourDigitNames;
+    }
 
     default:
       throw new Error(`Unknown pattern: ${pattern}. Supported patterns: 3-digits, 4-digits`);
@@ -317,7 +319,7 @@ async function deleteClub(clubName: string) {
   }
 
   // Delete will cascade to club_memberships due to foreign key
-  const result = await pool.query(
+  await pool.query(
     'DELETE FROM clubs WHERE name = $1 RETURNING name',
     [clubName]
   );

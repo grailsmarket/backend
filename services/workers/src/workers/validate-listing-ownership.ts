@@ -113,7 +113,7 @@ async function getENSOwnerFromRPC(tokenId: string): Promise<string | null> {
       if (wrappedOwner && wrappedOwner !== ethers.ZeroAddress) {
         return wrappedOwner;
       }
-    } catch (wrapperError: any) {
+    } catch {
       // Both failed - log and return null
       console.error(`Error fetching on-chain owner for token ${tokenId}:`, registrarError.message);
     }

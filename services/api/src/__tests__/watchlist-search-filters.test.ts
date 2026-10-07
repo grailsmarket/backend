@@ -118,7 +118,8 @@ describe('Watchlist Search API Filters', () => {
       }
     } catch (error) {
       throw new Error(
-        'API server not running. Start with: cd services/api && RATE_LIMIT_MAX=1000 npm run dev'
+        'API server not running. Start with: cd services/api && RATE_LIMIT_MAX=1000 npm run dev',
+        { cause: error }
       );
     }
 

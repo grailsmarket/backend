@@ -82,7 +82,8 @@ describe('Search API Filters', () => {
       }
     } catch (error) {
       throw new Error(
-        'API server not running. Start with: cd services/api && npm run dev'
+        'API server not running. Start with: cd services/api && npm run dev',
+        { cause: error }
       );
     }
   });
@@ -1533,7 +1534,7 @@ describe('Search API Filters', () => {
       }
 
       // For each group with more than one name, verify alphabetical order (ASCII byte order)
-      for (const [count, names] of byClubsCount) {
+      for (const [, names] of byClubsCount) {
         if (names.length > 1) {
           const sorted = [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
           expect(names).toEqual(sorted);

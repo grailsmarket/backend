@@ -10,7 +10,6 @@ import { logger } from '../utils/logger';
 import { config } from '../../../shared/src/config';
 import {
   validateListingOwnership,
-  batchValidateListings,
   initializeProvider as initListingProvider
 } from './validate-listing-ownership';
 import {

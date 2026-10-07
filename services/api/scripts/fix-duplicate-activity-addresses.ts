@@ -221,7 +221,7 @@ async function cleanupDuplicateAddresses(dryRun: boolean, deleteUnfixable: boole
     console.log(`  Current address: ${record.actor_address}`);
     console.log(`  Metadata: ${JSON.stringify(record.metadata)}`);
 
-    let addresses: { buyer: string; seller: string } | null = null;
+    let addresses: { buyer: string; seller: string } | null;
 
     // Try to fix from offer_id first
     if (record.metadata?.offer_id) {

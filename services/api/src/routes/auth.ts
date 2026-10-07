@@ -206,7 +206,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         const verifyResult = await siweMessage.verify(
           { signature },
           {
-            verificationFallback: async (params, opts, message, EIP1271Promise) => {
+            verificationFallback: async (params, opts, message, _EIP1271Promise) => {
               const isValid = await publicClient.verifyMessage({
                 address: message.address as `0x${string}`,
                 message: message.prepareMessage(),

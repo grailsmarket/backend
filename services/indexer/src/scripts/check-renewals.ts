@@ -2,7 +2,7 @@
  * Diagnostic script to check renewal processing
  */
 
-import { config, getPostgresPool } from '../../../shared/src';
+import { getPostgresPool } from '../../../shared/src';
 
 async function main() {
   const pool = getPostgresPool();

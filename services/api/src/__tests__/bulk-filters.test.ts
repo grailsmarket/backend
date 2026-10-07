@@ -90,7 +90,8 @@ describe('Bulk Filters Search API', () => {
     } catch (error: any) {
       if (error.message?.includes('fetch failed')) {
         throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev'
+          'API server not running. Start with: cd services/api && npm run dev',
+          { cause: error }
         );
       }
       throw error;

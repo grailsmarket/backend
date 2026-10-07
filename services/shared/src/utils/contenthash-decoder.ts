@@ -38,7 +38,7 @@ export function decodeContenthash(rawBytes: string | null | undefined): Contenth
       value: decoded,
       raw: rawBytes,
     };
-  } catch (error) {
+  } catch {
     // Silently fail for decode errors - this is expected for unsupported formats
     return null;
   }

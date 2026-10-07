@@ -38,7 +38,7 @@ async function setupCDC() {
       // Drop existing trigger if it exists
       try {
         await client.query(`DROP TRIGGER IF EXISTS ${triggerName} ON ${table}`);
-      } catch (error) {
+      } catch {
         console.log(`Note: Trigger ${triggerName} might not exist, continuing...`);
       }
 
@@ -57,7 +57,7 @@ async function setupCDC() {
 
     // Test the setup
     console.log('\nTesting notification...');
-    const testResult = await client.query(`
+    await client.query(`
       SELECT pg_notify('table_changes', '{"test": "message"}')
     `);
     console.log('✓ Test notification sent');

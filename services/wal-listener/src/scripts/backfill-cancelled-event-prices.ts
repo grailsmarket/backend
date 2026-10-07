@@ -1,5 +1,4 @@
 import { getPostgresPool } from '../../../shared/src';
-import { logger } from '../utils/logger';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 

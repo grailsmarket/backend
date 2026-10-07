@@ -18,6 +18,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -72,7 +73,7 @@ function processDomain(domain: any): DomainData {
   const ownerAddr = domain.owner?.id?.toLowerCase();
   const isWrapped = ownerAddr === NAME_WRAPPER_ADDRESS;
 
-  let owner: string | null = null;
+  let owner: string | null;
   if (domain.registrant?.id) {
     const registrant = domain.registrant.id.toLowerCase();
     if (registrant === NAME_WRAPPER_ADDRESS) {
@@ -498,7 +499,6 @@ async function fixBracketPlaceholderNames(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `bracket-placeholder-recovery-${timestamp}.json`;
 

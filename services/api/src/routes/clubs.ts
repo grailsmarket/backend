@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getPostgresPool, type APIResponse, getFile, isStorageEnabled } from '../../../shared/src';
-import { searchNames } from '../services/search';
 import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
 
@@ -503,7 +502,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         .filter((row: any) => !row.is_registered)
         .map((row: any) => row.name);
 
-      let unregisteredClubsMap = new Map<string, string[]>();
+      const unregisteredClubsMap = new Map<string, string[]>();
       if (unregisteredNames.length > 0) {
         const clubsResult = await pool.query(
           `SELECT ens_name, array_agg(club_name) as clubs

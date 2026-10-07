@@ -129,7 +129,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
             });
 
             if (response.ok) {
-              const data = await response.json();
+              await response.json();
               // Try to parse the name from metadata
               // For now, we'll try a simpler approach: fetch from ENS subgraph
               const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {

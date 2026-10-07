@@ -128,35 +128,6 @@ async function getKeywordHistoricalMetrics(
   };
 }
 
-async function getRelatedKeywordCount(keyword: string, accessToken: string): Promise<number> {
-  const { customerId, developerToken } = config.googleAds;
-
-  const response = await fetch(
-    `https://googleads.googleapis.com/v22/customers/${customerId}:generateKeywordIdeas`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'developer-token': developerToken!,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        keywordSeed: { keywords: [keyword] },
-        keywordPlanNetwork: 'GOOGLE_SEARCH',
-      }),
-    },
-  );
-
-  const data: any = await response.json();
-
-  if (data.error) {
-    console.error('[google-ads] API error (ideas):', data.error?.message ?? data.error);
-    return 0;
-  }
-
-  return data.results?.length || 0;
-}
-
 /**
  * Fetch keyword metrics from Google Ads API.
  *

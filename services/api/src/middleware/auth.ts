@@ -53,7 +53,7 @@ export function verifyToken(token: string): JWTPayload {
     const decoded = jwt.verify(token, secret) as JWTPayload;
     return decoded;
   } catch (error) {
-    throw new Error('Invalid token');
+    throw new Error('Invalid token', { cause: error });
   }
 }
 
@@ -155,7 +155,7 @@ export async function requireAdmin(
  */
 export async function optionalAuth(
   request: FastifyRequest,
-  reply: FastifyReply
+  _reply: FastifyReply
 ) {
   try {
     const authHeader = request.headers.authorization;

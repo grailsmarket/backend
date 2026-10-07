@@ -1,7 +1,7 @@
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { namehash, labelhash } from 'viem/ens';
-import { config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import { config, safeNormalize, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -19,20 +19,6 @@ const NAME_WRAPPER_ABI = [
 // - domain.expiryDate: includes 90-day grace period (END of grace period)
 // - domain.registration.expiryDate: true expiry date (when name actually expires)
 // We use domain.registration.expiryDate which gives us the correct expiry date.
-
-interface ENSNameData {
-  id: string;
-  name: string | null;
-  labelName: string | null;
-  labelhash: string;
-  owner?: {
-    id: string;
-  };
-  expiryDate?: string;
-  registration?: {
-    expiryDate: string;
-  };
-}
 
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
@@ -499,7 +485,7 @@ export class ENSResolver {
               // The Graph returns timestamps as strings (Unix timestamp in seconds)
               // domain.registration.expiryDate is the true expiry (not including grace period)
               expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
-            } catch (e) {
+            } catch {
               logger.warn(`Failed to parse expiry date for ${name}: ${domain.registration.expiryDate}`);
             }
           }
@@ -509,7 +495,7 @@ export class ENSResolver {
           if (domain.registration?.registrationDate) {
             try {
               registrationDate = new Date(parseInt(domain.registration.registrationDate) * 1000);
-            } catch (e) {
+            } catch {
               logger.warn(`Failed to parse registration date for ${name}: ${domain.registration.registrationDate}`);
             }
           }
@@ -519,7 +505,7 @@ export class ENSResolver {
           if (domain.createdAt) {
             try {
               creationDate = new Date(parseInt(domain.createdAt) * 1000);
-            } catch (e) {
+            } catch {
               logger.warn(`Failed to parse creation date for ${name}: ${domain.createdAt}`);
             }
           }
@@ -595,7 +581,7 @@ export class ENSResolver {
                 ? parseInt(domain.expiryDate)
                 : domain.expiryDate;
               isExpired = expiryTimestamp * 1000 < Date.now();
-            } catch (e) {
+            } catch {
               logger.warn(`Failed to check expiry for ${name}: ${domain.expiryDate}`);
             }
           }

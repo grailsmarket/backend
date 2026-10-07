@@ -19,6 +19,7 @@
 
 import { getPostgresPool } from '../../../shared/src';
 import { normalizeEnsName } from '../../../shared/src/utils/ens-normalize';
+import * as fs from 'fs';
 
 // The paid Graph gateway has label preimages that the ensnode endpoint lacks
 const GRAPH_ENS_SUBGRAPH_URL = 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH';
@@ -67,7 +68,7 @@ function processDomain(domain: any): DomainData {
   const ownerAddr = domain.owner?.id?.toLowerCase();
   const isWrapped = ownerAddr === NAME_WRAPPER_ADDRESS;
 
-  let owner: string | null = null;
+  let owner: string | null;
   if (domain.registrant?.id) {
     const registrant = domain.registrant.id.toLowerCase();
     if (registrant === NAME_WRAPPER_ADDRESS) {
@@ -505,7 +506,6 @@ async function fixBracketPlaceholderNames(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `bracket-placeholder-recovery-${timestamp}.json`;
 

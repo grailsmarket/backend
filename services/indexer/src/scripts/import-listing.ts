@@ -218,7 +218,7 @@ async function importListing(pool: Pool, name: string) {
     [name]
   );
 
-  let dbTokenId: string | null = null;
+  let dbTokenId: string | null;
   if (ensResult.rows.length > 0) {
     const row = ensResult.rows[0];
     dbTokenId = row.token_id;

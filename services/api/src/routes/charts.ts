@@ -7,8 +7,6 @@ const ChartQuerySchema = z.object({
   club: z.string().optional(),
 });
 
-type ChartQuery = z.infer<typeof ChartQuerySchema>;
-
 interface TimeConfig {
   interval: string;
   truncUnit: 'hour' | 'day' | 'week' | 'month';

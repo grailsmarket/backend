@@ -17,7 +17,7 @@
  *   npx tsx src/scripts/import-missing-club-names.ts --all
  */
 
-import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections } from '../../../shared/src';
 import { keccak256, toHex, namehash } from 'viem';
 
 const pool = getPostgresPool();
@@ -30,7 +30,7 @@ function generateNamesFromPattern(pattern: string): string[] {
   switch (pattern) {
     case '3-digits':
     case '3-digit':
-    case '1k':
+    case '1k': {
       // Generate 000.eth through 999.eth
       const threeDigitNames: string[] = [];
       for (let i = 0; i <= 999; i++) {
@@ -38,10 +38,11 @@ function generateNamesFromPattern(pattern: string): string[] {
         threeDigitNames.push(`${paddedNumber}.eth`);
       }
       return threeDigitNames;
+    }
 
     case '4-digits':
     case '4-digit':
-    case '10k':
+    case '10k': {
       // Generate 0000.eth through 9999.eth
       const fourDigitNames: string[] = [];
       for (let i = 0; i <= 9999; i++) {
@@ -49,6 +50,7 @@ function generateNamesFromPattern(pattern: string): string[] {
         fourDigitNames.push(`${paddedNumber}.eth`);
       }
       return fourDigitNames;
+    }
 
     default:
       throw new Error(`Unknown pattern: ${pattern}. Supported patterns: 3-digits, 4-digits`);
@@ -158,7 +160,7 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
   }
 }
 
-async function importMissingNames(names: string[], clubName?: string) {
+async function importMissingNames(names: string[], _clubName?: string) {
   console.log(`\nImporting ${names.length} missing ENS names...`);
   console.log('Fetching ownership data from The Graph ENS subgraph...\n');
 

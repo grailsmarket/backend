@@ -10,7 +10,6 @@
  */
 
 import { getElasticsearchClient, getPostgresPool, closeAllConnections, config } from '../../../shared/src';
-import { logger } from '../utils/logger';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -151,7 +150,7 @@ async function syncFromElasticsearch() {
     if (scrollId) {
       try {
         await esClient.clearScroll({ scroll_id: scrollId });
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors
       }
     }

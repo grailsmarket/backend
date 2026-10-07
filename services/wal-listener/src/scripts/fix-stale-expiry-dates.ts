@@ -14,6 +14,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 
@@ -259,7 +260,6 @@ async function fixStaleExpiryDates(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `fix-stale-expiry-${timestamp}.json`;
 

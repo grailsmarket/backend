@@ -541,8 +541,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       const hasMarketplaceFilter = marketplace && marketplace !== 'all';
       const listingsOnly = listed === 'true' || listed === true || showListings === true || showListings === 'true' || hasMarketplaceFilter;
       const unlistedOnly = listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true';
-      let whereConditions: string[] = [];
-      let params: any[] = [];
+      const whereConditions: string[] = [];
+      const params: any[] = [];
       let paramCount = 1;
 
       // Determine when to apply the "exclude premium/available" filter (PostgreSQL path)
@@ -930,7 +930,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
 
       // Build ORDER BY clause based on sortBy parameter
-      let orderByClause = '';
+      let orderByClause: string;
       const order = sortOrder || (sortBy === 'ranking' ? 'asc' : 'desc');
       const sqlOrder = order.toUpperCase();
 
@@ -1182,7 +1182,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
             .filter((row: any) => !row.is_registered)
             .map((row: any) => row.name);
 
-          let unregisteredClubsMap = new Map<string, string[]>();
+          const unregisteredClubsMap = new Map<string, string[]>();
           if (unregisteredNames.length > 0) {
             const clubsResult = await pool.query(
               `SELECT ens_name, array_agg(club_name) as clubs

@@ -23,7 +23,7 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 1,
     },
     async (job) => {
-      const { ensNameId, nameHash, name, priority } = job.data;
+      const { ensNameId, name, priority } = job.data;
 
       logger.info({ ensNameId, name, priority }, 'Syncing ENS metadata');
 

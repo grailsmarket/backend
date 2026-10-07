@@ -137,7 +137,7 @@ async function loadProgress(): Promise<Progress | null> {
   try {
     const data = await fs.readFile(PROGRESS_FILE, 'utf-8');
     return JSON.parse(data);
-  } catch (error) {
+  } catch {
     return null;
   }
 }

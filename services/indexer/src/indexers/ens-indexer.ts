@@ -253,16 +253,6 @@ export class ENSIndexer {
 
       logger.debug(`Processing ${eventName} event at block ${log.blockNumber}`);
 
-      const blockchainEvent: Partial<BlockchainEvent> = {
-        blockNumber: log.blockNumber || 0n,
-        transactionHash: log.transactionHash || '',
-        logIndex: log.logIndex || 0,
-        contractAddress: log.address,
-        eventName,
-        eventData: decodedLog.args as any,
-        processed: false,
-      };
-
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
       // Only log actual errors, not decode failures
@@ -337,7 +327,7 @@ export class ENSIndexer {
     logger.info(`Name Wrapper transfer: token ${tokenIdStr} from ${from} to ${to}`);
 
     let ensNameId: number | null = null;
-    let resolvedOwner: string | null = null;
+    let resolvedOwner: string | null;
 
     try {
       // Resolve the namehash token ID to get the name
@@ -1191,7 +1181,7 @@ export class ENSIndexer {
     const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
     let ensNameId: number | null = null;
-    let resolvedOwner: string | null = null;
+    let resolvedOwner: string | null;
 
     try {
       // Check if this involves the Name Wrapper contract
@@ -1468,9 +1458,9 @@ export class ENSIndexer {
 
     // Set defaults outside try block so they're available for transaction logging
     let correctTokenId = tokenIdStr;
-    let registrationDate: Date | null = null;
-    let creationDate: Date | null = null;
-    let registrantAddress = owner.toLowerCase();
+    let registrationDate: Date | null;
+    let creationDate: Date | null;
+    let registrantAddress: string;
 
     try {
       // Check if owner is Name Wrapper (edge case)

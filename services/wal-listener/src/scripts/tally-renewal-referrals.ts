@@ -180,7 +180,7 @@ async function getBlockTimestamps(
         try {
           const block = await client.getBlock({ blockNumber });
           timestamps.set(blockNumber, Number(block.timestamp));
-        } catch (error) {
+        } catch {
           console.error(`  Failed to get timestamp for block ${blockNumber}`);
         }
       })

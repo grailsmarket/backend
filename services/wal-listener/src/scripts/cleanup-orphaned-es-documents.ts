@@ -125,7 +125,7 @@ async function cleanup() {
 
     // Scroll through all ES documents
     while (true) {
-      const { ids, scrollId: newScrollId, total } = await getESDocumentIds(scrollId || undefined);
+      const { ids, scrollId: newScrollId } = await getESDocumentIds(scrollId || undefined);
 
       if (ids.length === 0) {
         break;

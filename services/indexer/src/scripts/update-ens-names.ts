@@ -93,14 +93,18 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
         if (domain.registration?.expiryDate) {
           try {
             expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
-          } catch (e) {}
+          } catch {
+            // Malformed expiry timestamp from The Graph: leave expiryDate as null
+          }
         }
 
         let registrationDate: Date | null = null;
         if (domain.registration?.registrationDate) {
           try {
             registrationDate = new Date(parseInt(domain.registration.registrationDate) * 1000);
-          } catch (e) {}
+          } catch {
+            // Malformed registration timestamp from The Graph: leave registrationDate as null
+          }
         }
 
         // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
@@ -128,7 +132,7 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
     }
 
     return null;
-  } catch (error: any) {
+  } catch {
     return null;
   }
 }
@@ -170,7 +174,7 @@ async function updateENSName(id: number, data: GraphNameData): Promise<boolean> 
       values
     );
     return true;
-  } catch (error: any) {
+  } catch {
     return false;
   }
 }
@@ -234,7 +238,7 @@ async function main() {
         //   if ((processed + i + 1) % 5 === 0) {
         //     await new Promise(resolve => setTimeout(resolve, 200));
         //   }
-        } catch (error: any) {
+        } catch {
           failed++;
         }
       }

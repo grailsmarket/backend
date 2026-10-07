@@ -1,4 +1,4 @@
-import { config, getPostgresPool, getElasticsearchClient, closeAllConnections } from '../../shared/src';
+import { getPostgresPool, getElasticsearchClient, closeAllConnections } from '../../shared/src';
 import { ElasticsearchSync } from './services/elasticsearch-sync';
 import { WALListener } from './services/wal-listener';
 import { logger } from './utils/logger';

@@ -247,7 +247,7 @@ async function main() {
 
   for (const row of candidates.rows) {
     stats.scanned++;
-    const { id, name, token_id, owner_address, registrant } = row;
+    const { id, name, token_id, owner_address } = row;
 
     if (isPlaceholderName(name)) {
       stats.ok++;

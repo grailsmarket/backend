@@ -257,7 +257,7 @@ async function recoverStaleListings() {
   let salesCreated = 0;
   let linkedToExisting = 0;
   let markedUnfunded = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
   const startTime = Date.now();
 

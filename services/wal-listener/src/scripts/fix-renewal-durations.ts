@@ -20,7 +20,6 @@ import {
   decodeEventLog,
   decodeFunctionData,
   parseAbi,
-  type Log,
 } from 'viem';
 import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';

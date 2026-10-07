@@ -31,7 +31,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 2,
     },
     async (job) => {
-      const { type, userId, email, recipientAddress, ensNameId, metadata, transactionHash } = job.data;
+      const { type, userId, email, recipientAddress, ensNameId, metadata } = job.data;
 
       logger.info({ type, userId, ensNameId }, 'Processing notification');
 

@@ -8,11 +8,6 @@ const TimeRangeSchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d', 'all']).default('7d'),
 });
 
-const ClubAnalyticsQuerySchema = z.object({
-  club: z.string().min(1),
-  period: z.enum(['24h', '7d', '30d', '90d']).default('7d'),
-});
-
 const SalesQuerySchema = z.object({
   period: z.enum(['24h', '7d', '30d', '1y', 'all']).default('7d'),
   source: z.enum(['opensea', 'grails']).optional(),
@@ -502,7 +497,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Build filter conditions for summary/by_length queries (no limit/offset params)
     const summaryConditions: string[] = [];
     const summaryParams: any[] = [];
-    let summaryParamNum = 1;
+    const summaryParamNum = 1;
 
     // Build filter conditions for data query (has limit/offset as $1 and $2)
     const dataConditions: string[] = [];
@@ -512,7 +507,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Build filter conditions for count query (no limit/offset params)
     const countConditions: string[] = [];
     const countParams: any[] = [];
-    let countParamNum = 1;
+    const countParamNum = 1;
 
     if (clubs.length > 0) {
       if (clubs.includes('none')) {
@@ -529,11 +524,11 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(anyClubCondition);
       } else {
         // Specific clubs - array overlap
-        summaryConditions.push(`en.clubs && $${summaryParamNum++}::text[]`);
+        summaryConditions.push(`en.clubs && $${summaryParamNum}::text[]`);
         summaryParams.push(clubs);
         dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
@@ -541,7 +536,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Hide blocklisted names from the displayed results (results-only scope;
     // aggregate stats/counts are intentionally left untouched).
     if (REGISTRATION_NAME_BLOCKLIST.length > 0) {
-      dataConditions.push(`LOWER(en.name) <> ALL($${dataParamNum++}::text[])`);
+      dataConditions.push(`LOWER(en.name) <> ALL($${dataParamNum}::text[])`);
       dataParams.push(REGISTRATION_NAME_BLOCKLIST.map(n => n.toLowerCase()));
     }
 
@@ -842,9 +837,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
@@ -964,9 +959,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
@@ -1086,9 +1081,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }

@@ -57,16 +57,16 @@ export async function sendEmail(to: string, template: EmailTemplate): Promise<vo
 
     if (errorMessage.includes('Invalid credentials') || errorMessage.includes('535')) {
       logger.error({ error, to }, 'Email authentication failed - check SMTP credentials');
-      throw new Error(`Email authentication failed: ${errorMessage}`);
+      throw new Error(`Email authentication failed: ${errorMessage}`, { cause: error });
     }
 
     if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
       logger.error({ error, to }, 'Email server connection failed - check SMTP server and port');
-      throw new Error(`Email server connection failed: ${errorMessage}`);
+      throw new Error(`Email server connection failed: ${errorMessage}`, { cause: error });
     }
 
     logger.error({ error, to, subject: template.subject }, 'Failed to send email');
-    throw new Error(`Failed to send email: ${errorMessage}`);
+    throw new Error(`Failed to send email: ${errorMessage}`, { cause: error });
   }
 }
 

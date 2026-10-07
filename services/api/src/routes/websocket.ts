@@ -52,7 +52,7 @@ const typingThrottle = new Map<string, number>();
 const TYPING_MIN_INTERVAL_MS = 200;
 
 // Track broadcast stats for debugging
-let broadcastStats = {
+const broadcastStats = {
   totalBroadcasts: 0,
   lastBroadcastTime: null as Date | null,
   lastEventType: null as string | null,
@@ -119,7 +119,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       try {
         const data = JSON.parse(message.toString());
         handleMessage(client, data);
-      } catch (error) {
+      } catch {
         connection.socket.send(JSON.stringify({
           type: 'error',
           message: 'Invalid message format',
@@ -158,7 +158,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
             timestamp: new Date().toISOString(),
           }));
         }
-      } catch (error) {
+      } catch {
         connection.socket.send(JSON.stringify({
           type: 'error',
           message: 'Invalid message format',
@@ -286,7 +286,7 @@ export async function websocketRoutes(fastify: FastifyInstance) {
         void handleActivityMessage(client, data).catch((error) => {
           req.log.error({ error }, 'Error handling activity WS message');
         });
-      } catch (error) {
+      } catch {
         connection.socket.send(JSON.stringify({
           type: 'error',
           message: 'Invalid message format',
@@ -716,7 +716,7 @@ export function broadcastActivityEvent(activityData: any) {
       } else if (!(currency_address == null || isEthOrWeth(currency_address))) {
         shouldSend = false;
       } else {
-        let priceWei: bigint | null = null;
+        let priceWei: bigint | null;
         try {
           priceWei = BigInt(price_wei);
         } catch {

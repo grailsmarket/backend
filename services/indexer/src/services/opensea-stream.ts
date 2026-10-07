@@ -16,13 +16,6 @@ interface PhoenixMessage {
   ref: number;
 }
 
-interface OpenSeaEvent {
-  event_type: string;
-  payload: any;
-  sent_at: string;
-  event_timestamp: number;
-}
-
 export class OpenSeaStreamListener {
   private ws: WebSocket | null = null;
   private pool = getPostgresPool();
@@ -393,7 +386,7 @@ export class OpenSeaStreamListener {
         maker: eventData.maker?.address
       });
 
-      const { item, base_price, payment_token, maker, listing_date, expiration_date, order_hash } = eventData;
+      const { item, base_price, payment_token, maker, expiration_date, order_hash } = eventData;
 
       if (!item?.nft_id || !maker?.address) {
         logger.error('Missing required fields in item_listed payload:', {
@@ -438,12 +431,10 @@ export class OpenSeaStreamListener {
         nameToStore = null;
       }
       let expiryDate: Date | null = null;
-      let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
       let creationDate: Date | null = null;
       let textRecords: Record<string, string> = {};
       let correctTokenId = tokenId; // Default to OpenSea's token_id
-      let isNormalizedRegistration = true; // Assume normalized unless proven otherwise
 
       // Always resolve via The Graph to verify the registration
       const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
@@ -458,11 +449,9 @@ export class OpenSeaStreamListener {
         nameToStore = resolvedData.name;
         correctTokenId = resolvedData.correctTokenId;
         expiryDate = resolvedData.expiryDate;
-        resolvedOwner = resolvedData.ownerAddress;
         registrationDate = resolvedData.registrationDate;
         creationDate = resolvedData.creationDate;
         textRecords = resolvedData.textRecords;
-        isNormalizedRegistration = resolvedData.isNormalized;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
       } else if (!nameToStore || !nameToStore.endsWith('.eth')) {
         // Couldn't resolve and no valid name from metadata - use placeholder
@@ -534,7 +523,7 @@ export class OpenSeaStreamListener {
             logger.warn(`Invalid expiration date: ${expiration_date}`);
             expiresAt = null;
           }
-        } catch (err) {
+        } catch {
           logger.warn(`Failed to parse expiration date: ${expiration_date}`);
           expiresAt = null;
         }
@@ -956,7 +945,7 @@ export class OpenSeaStreamListener {
       // The payload might be nested
       const eventData = payload.payload || payload;
 
-      const { item, from_account, to_account, transaction } = eventData;
+      const { item, from_account, to_account } = eventData;
       // Check if required fields exist
       if (!item?.nft_id) {
         logger.warn('Missing item.nft_id in transfer event, skipping');
@@ -1058,7 +1047,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // According to OpenSea docs: item_cancelled has order_hash, not item.nft_id
-      const { order_hash, maker, base_price, payment_token, collection } = eventData;
+      const { order_hash, maker } = eventData;
 
       if (!order_hash) {
         logger.warn('Missing order_hash in cancelled event, skipping');
@@ -1194,7 +1183,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // According to OpenSea docs: item_received_bid uses base_price for the bid amount
-      const { item, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+      const { item, base_price, maker, expiration_date, order_hash, payment_token } = eventData;
 
       // Check required fields - use base_price instead of bid_amount
       if (!item) {
@@ -1399,7 +1388,7 @@ export class OpenSeaStreamListener {
             logger.warn(`Invalid expiration date in bid: ${expiration_date}`);
             expiresAt = null;
           }
-        } catch (err) {
+        } catch {
           logger.warn(`Failed to parse bid expiration date: ${expiration_date}`);
           expiresAt = null;
         }
@@ -1445,7 +1434,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // Collection offers apply to the entire collection, not specific items
-      const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+      const { collection, base_price, maker } = eventData;
 
       if (!collection?.slug || collection.slug !== 'ens') {
         logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);

@@ -112,9 +112,8 @@ export interface SendAdminBroadcastJob {
   imageUrl?: string;
 }
 
-export interface BackfillGoogleMetricsJob {
-  // Scheduled job — no payload needed
-}
+// Scheduled job — no payload needed
+export type BackfillGoogleMetricsJob = Record<string, never>;
 
 // Queue names as constants
 export const QUEUE_NAMES = {

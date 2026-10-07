@@ -278,6 +278,7 @@ type NameDetailsForEligibility = {
 // Strips emoji pictographs + modifiers so a purely-emoji label reduces to empty.
 // Digits carry the Unicode Emoji property but are NOT Extended_Pictographic, so
 // "123" is left intact here and handled by the digit-only check instead.
+// eslint-disable-next-line no-misleading-character-class -- ZWJ/VS16/keycap are listed individually on purpose so each is stripped on its own
 const EMOJI_STRIP_PATTERN = /[\p{Extended_Pictographic}\u200D\uFE0F\u20E3]/gu;
 
 export class ValuationTargetError extends Error {

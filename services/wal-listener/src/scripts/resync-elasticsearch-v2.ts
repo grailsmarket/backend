@@ -251,12 +251,14 @@ function loadCheckpoint(): Checkpoint | null {
     if (fs.existsSync(CHECKPOINT_FILE)) {
       return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf-8'));
     }
-  } catch {}
+  } catch {
+    // Unreadable or corrupt checkpoint: treat as no checkpoint
+  }
   return null;
 }
 
 function clearCheckpoint() {
-  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch {}
+  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch { /* best-effort: a leftover checkpoint file is harmless */ }
 }
 
 // --- Enrichment ---
@@ -398,7 +400,9 @@ async function main() {
         body: { index: { refresh_interval: '1s', number_of_replicas: 1 } },
       });
       await esClient.indices.refresh({ index: config.elasticsearch.index });
-    } catch {}
+    } catch {
+      // Best-effort restore during shutdown; still close connections and exit
+    }
 
     await closeAllConnections();
     process.exit(0);

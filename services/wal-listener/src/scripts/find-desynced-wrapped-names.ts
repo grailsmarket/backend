@@ -195,7 +195,7 @@ async function processBatchWithMulticall(
       }
 
       const registrarExpiry = registrarResult.result as bigint;
-      const [wrapperOwner, fuses, wrapperExpiry] = wrapperResult.result as [string, number, bigint];
+      const [, , wrapperExpiry] = wrapperResult.result as [string, number, bigint];
 
       // Expected wrapper expiry = registrar expiry + grace period
       const expectedWrapperExpiry = registrarExpiry + GRACE_PERIOD;

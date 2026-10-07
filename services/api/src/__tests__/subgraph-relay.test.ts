@@ -61,7 +61,8 @@ describe('Subgraph Relay API', () => {
     } catch (error: any) {
       if (error.message?.includes('fetch failed') || error.cause?.code === 'ECONNREFUSED') {
         throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev'
+          'API server not running. Start with: cd services/api && npm run dev',
+          { cause: error }
         );
       }
       // Other errors are OK - the endpoint exists

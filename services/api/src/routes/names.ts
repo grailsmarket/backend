@@ -90,8 +90,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const query = ListNamesQuerySchema.parse(request.query);
     const offset = (query.page - 1) * query.limit;
 
-    let whereConditions = [];
-    let params: any[] = [];
+    const whereConditions = [];
+    const params: any[] = [];
     let paramCount = 1;
 
     // Exclude names past grace period (90 days after expiry)
@@ -654,7 +654,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
         const expiryDate = domain.registration?.expiryDate ? new Date(parseInt(domain.registration.expiryDate) * 1000) : null;
         const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : (domain.createdAt ? new Date(parseInt(domain.createdAt) * 1000) : null);
 
-        const upsertResult = await pool.query(upsertQuery, [
+        await pool.query(upsertQuery, [
           tokenId,
           domain.name,
           ownerAddress,

@@ -354,12 +354,14 @@ function loadCheckpoint(): Checkpoint | null {
     if (fs.existsSync(CHECKPOINT_FILE)) {
       return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf-8'));
     }
-  } catch {}
+  } catch {
+    // Unreadable or corrupt checkpoint: treat as no checkpoint
+  }
   return null;
 }
 
 function clearCheckpoint() {
-  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch {}
+  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch { /* best-effort: a leftover checkpoint file is harmless */ }
 }
 
 // --- Results file ---
@@ -438,7 +440,7 @@ async function main() {
 
   // Clear results file on fresh start
   if (!shouldResume) {
-    try { if (fs.existsSync(RESULTS_FILE)) fs.unlinkSync(RESULTS_FILE); } catch {}
+    try { if (fs.existsSync(RESULTS_FILE)) fs.unlinkSync(RESULTS_FILE); } catch { /* best-effort: if removal fails, new results are appended to the old file */ }
   }
 
   // Graceful shutdown

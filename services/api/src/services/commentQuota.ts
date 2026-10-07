@@ -88,7 +88,7 @@ async function computeQuotaCap(
   // Sum ETH + WETH wei → ETH float for the formula. Failures here (RPC down,
   // unknown address) fall back to 0, which means the user still gets the
   // quota_floor — never a hard 0 just because RPC blipped.
-  let ethEquivalent = 0;
+  let ethEquivalent: number;
   try {
     const balances = await fetchBalances(address);
     const ethWei = BigInt(balances.eth.wei);

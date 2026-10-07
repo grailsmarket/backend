@@ -72,7 +72,7 @@ export function decodeAddressRecord(coinType: string | number, rawAddr: string):
       chainName,
       address,
     };
-  } catch (error) {
+  } catch {
     // Silently fail for decode errors - this is expected for unsupported coin types
     return null;
   }

@@ -9,10 +9,9 @@
  *   npx tsx src/scripts/fix-price-format.ts
  */
 
-import { getPostgresPool, getElasticsearchClient, closeAllConnections } from '../../../shared/src';
+import { getElasticsearchClient, closeAllConnections } from '../../../shared/src';
 import { ElasticsearchSync } from '../services/elasticsearch-sync';
 
-const pool = getPostgresPool();
 const es = getElasticsearchClient();
 
 async function main() {

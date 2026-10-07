@@ -139,7 +139,8 @@ describe('Bulk Orders Endpoint', () => {
       }
     } catch (error) {
       throw new Error(
-        'API server not running. Start with: cd services/api && npm run dev'
+        'API server not running. Start with: cd services/api && npm run dev',
+        { cause: error }
       );
     }
   });

@@ -206,8 +206,8 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
     (domainOwner === NAME_WRAPPER_ADDRESS && hasWrappedOwner);
 
   // Determine owner and manager based on wrapped state
-  let owner: string | null = null;
-  let manager: string | null = null;
+  let owner: string | null;
+  let manager: string | null;
 
   if (isWrapped) {
     // For wrapped names: owner = wrappedOwner, manager = owner (same as wrappedOwner)

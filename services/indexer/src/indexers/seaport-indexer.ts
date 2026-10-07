@@ -122,7 +122,7 @@ export class SeaportIndexer {
     await this.queue.onIdle();
   }
 
-  private isENSRelated(log: Log): boolean {
+  private isENSRelated(_log: Log): boolean {
     // We can't easily filter at this stage without decoding,
     // but we're already filtering in handleOrderFulfilled
     // For now, return true and let the event handlers filter
@@ -154,14 +154,6 @@ export class SeaportIndexer {
 
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
-      const errorDetails = {
-        message: error.message || 'No error message',
-        transactionHash: log.transactionHash,
-        logIndex: log.logIndex,
-        eventName: eventName || 'unknown',
-        topics: log.topics?.slice(0, 2) // Log first 2 topics for debugging
-      };
-
       logger.error(
         `Error processing Seaport log at block ${log.blockNumber}: ${error.message || 'Unknown error'}`
       );
@@ -545,7 +537,7 @@ export class SeaportIndexer {
     }
   }
 
-  private async handleOrderCancelled(args: any, log: Log) {
+  private async handleOrderCancelled(args: any, _log: Log) {
     const { orderHash } = args;
 
     const updateQuery = `

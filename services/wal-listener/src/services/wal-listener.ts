@@ -71,7 +71,7 @@ export class WALListener {
     // Try trigger-based CDC first, fall back to polling if it fails
     try {
       await this.setupTriggerBasedCDC();
-    } catch (error) {
+    } catch {
       logger.error('Trigger-based CDC failed, using polling instead');
       await this.startPolling();
     }

@@ -44,7 +44,7 @@ async function main() {
     console.log(`  Expiry: ${nameDetails.expiry_date}`);
     console.log(`  Watchers: ${nameDetails.watchers_count}`);
     console.log(`  Clubs: ${nameDetails.clubs.join(', ') || 'None'}`);
-  } catch (error) {
+  } catch {
     console.log('  Name not found or error occurred');
   }
 

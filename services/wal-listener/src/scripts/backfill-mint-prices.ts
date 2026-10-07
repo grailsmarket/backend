@@ -214,7 +214,6 @@ async function backfillMintPrices(): Promise<void> {
     );
 
     if (mintEventsResult.rows.length === 0) {
-      hasMore = false;
       break;
     }
 
@@ -285,8 +284,6 @@ async function backfillMintPrices(): Promise<void> {
     await saveProgress(progress);
 
     // Show batch summary
-    const processed = progress.updated + progress.noMatch + progress.skipped;
-    const remaining = totalRemaining - processed + (progress.lastProcessedId > 0 ? 0 : 0);
     console.log(`  Batch complete. Updated: ${progress.updated}, No match: ${progress.noMatch}, Errors: ${progress.errors.length}`);
 
     // Delay between batches

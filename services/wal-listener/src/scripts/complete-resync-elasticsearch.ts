@@ -175,7 +175,7 @@ async function getEthPriceUsd(): Promise<number> {
       ethPriceCacheTime = now;
       return cachedEthPrice;
     }
-  } catch (error) {
+  } catch {
     console.warn('Failed to fetch ETH price from database, using fallback');
   }
 

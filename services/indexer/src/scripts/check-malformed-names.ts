@@ -10,7 +10,7 @@
  * Usage: npx tsx src/scripts/fix-attacker-names.ts [--dry-run]
  */
 
-import { labelhash, namehash, normalize } from 'viem/ens';
+import { labelhash, normalize } from 'viem/ens';
 import { config, getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
 

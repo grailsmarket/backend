@@ -47,7 +47,7 @@ async function exploreCSV(filePath: string) {
 
   let headers: string[] = [];
   let rowCount = 0;
-  let sampleRows: string[][] = [];
+  const sampleRows: string[][] = [];
   const MAX_SAMPLES = 100;
   const columnStats: Map<string, ColumnStats> = new Map();
 

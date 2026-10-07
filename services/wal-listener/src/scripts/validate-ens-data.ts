@@ -28,6 +28,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -496,7 +497,6 @@ async function validateEnsData(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `validate-ens-data-${timestamp}.json`;
 
