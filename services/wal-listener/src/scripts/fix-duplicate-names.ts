@@ -1,51 +1,49 @@
-import { getPostgresPool } from '../../../shared/src'
-import axios from 'axios'
+import { getPostgresPool } from '../../../shared/src';
+import axios from 'axios';
 
 // Configuration
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph'
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'
-const BATCH_SIZE = 20 // Query Graph 20 names at a time
-const DRY_RUN = process.argv.includes('--dry-run')
+const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
+const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const BATCH_SIZE = 20; // Query Graph 20 names at a time
+const DRY_RUN = process.argv.includes('--dry-run');
 const NAME_FILTER = (() => {
-	const idx = process.argv.indexOf('--name')
-	return idx !== -1 && process.argv[idx + 1] ? process.argv[idx + 1] : null
-})()
+  const idx = process.argv.indexOf('--name');
+  return idx !== -1 && process.argv[idx + 1] ? process.argv[idx + 1] : null;
+})();
 
 interface GraphDomain {
-	id: string
-	name: string
-	labelhash: string
-	expiryDate: string | number
-	owner: {
-		id: string
-	}
-	wrappedOwner?: {
-		id: string
-	}
-	registrant?: {
-		id: string
-	} | null
-	registration?: {
-		expiryDate: string
-		registrationDate: string
-	} | null
+  id: string;
+  name: string;
+  labelhash: string;
+  expiryDate: string | number;
+  owner: {
+    id: string;
+  };
+  wrappedOwner?: {
+    id: string;
+  };
+  registrant?: {
+    id: string;
+  } | null;
+  registration?: {
+    expiryDate: string;
+    registrationDate: string;
+  } | null;
 }
 
 /**
  * Convert 256-bit hex to decimal string
  */
 function hexToDecimal(hex: string): string {
-	const hexStr = hex.startsWith('0x') ? hex.slice(2) : hex
-	return BigInt('0x' + hexStr).toString()
+  const hexStr = hex.startsWith('0x') ? hex.slice(2) : hex;
+  return BigInt('0x' + hexStr).toString();
 }
 
 /**
  * Query The Graph for domains by name
  */
-async function queryGraphByName(
-	names: string[],
-): Promise<Map<string, GraphDomain>> {
-	const query = `
+async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomain>> {
+  const query = `
     query GetDomains($names: [String!]!) {
       domains(where: { name_in: $names }, first: 1000) {
         id
@@ -67,46 +65,46 @@ async function queryGraphByName(
         }
       }
     }
-  `
+  `;
 
-	try {
-		const response = await axios.post(
-			GRAPH_ENS_SUBGRAPH_URL,
-			{
-				query,
-				variables: { names },
-			},
-			{
-				headers: { 'Content-Type': 'application/json' },
-				timeout: 30000,
-			},
-		)
+  try {
+    const response = await axios.post(
+      GRAPH_ENS_SUBGRAPH_URL,
+      {
+        query,
+        variables: { names }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+      }
+    );
 
-		if (response.data.errors) {
-			console.error(`GraphQL errors:`, response.data.errors)
-			return new Map()
-		}
+    if (response.data.errors) {
+      console.error(`GraphQL errors:`, response.data.errors);
+      return new Map();
+    }
 
-		const domains = response.data.data?.domains || []
-		const domainMap = new Map<string, GraphDomain>()
-		for (const domain of domains) {
-			domainMap.set(domain.name, domain)
-		}
+    const domains = response.data.data?.domains || [];
+    const domainMap = new Map<string, GraphDomain>();
+    for (const domain of domains) {
+      domainMap.set(domain.name, domain);
+    }
 
-		return domainMap
-	} catch (error: any) {
-		console.error(`Error querying subgraph:`, error.message)
-		return new Map()
-	}
+    return domainMap;
+  } catch (error: any) {
+    console.error(`Error querying subgraph:`, error.message);
+    return new Map();
+  }
 }
 
 /**
  * Check if a name is a subname (has more than one dot before .eth)
  */
 function isSubname(name: string): boolean {
-	// Count dots - subnames have 2+ dots (e.g., "sub.name.eth" has 2 dots)
-	const dotCount = (name.match(/\./g) || []).length
-	return dotCount > 1
+  // Count dots - subnames have 2+ dots (e.g., "sub.name.eth" has 2 dots)
+  const dotCount = (name.match(/\./g) || []).length;
+  return dotCount > 1;
 }
 
 /**
@@ -115,28 +113,26 @@ function isSubname(name: string): boolean {
  * For subnames: always use namehash (domain.id)
  */
 function getCorrectTokenId(domain: GraphDomain): string {
-	// Subnames always use namehash (domain.id)
-	if (isSubname(domain.name)) {
-		return hexToDecimal(domain.id)
-	}
+  // Subnames always use namehash (domain.id)
+  if (isSubname(domain.name)) {
+    return hexToDecimal(domain.id);
+  }
 
-	// For 2LD names, check registrant to determine wrapped status
-	const registrantAddress = domain.registrant?.id?.toLowerCase()
-	const isOwnedByWrapper =
-		registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase()
+  // For 2LD names, check registrant to determine wrapped status
+  const registrantAddress = domain.registrant?.id?.toLowerCase();
+  const isOwnedByWrapper = registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
-	// Check if expired
-	const expiryTimestamp =
-		typeof domain.expiryDate === 'string'
-			? parseInt(domain.expiryDate)
-			: domain.expiryDate
-	const isExpired = expiryTimestamp * 1000 < Date.now()
+  // Check if expired
+  const expiryTimestamp = typeof domain.expiryDate === 'string'
+    ? parseInt(domain.expiryDate)
+    : domain.expiryDate;
+  const isExpired = expiryTimestamp * 1000 < Date.now();
 
-	if (isOwnedByWrapper && !isExpired) {
-		return hexToDecimal(domain.id)
-	}
+  if (isOwnedByWrapper && !isExpired) {
+    return hexToDecimal(domain.id);
+  }
 
-	return hexToDecimal(domain.labelhash)
+  return hexToDecimal(domain.labelhash);
 }
 
 /**
@@ -145,44 +141,38 @@ function getCorrectTokenId(domain: GraphDomain): string {
  * For subnames: use wrappedOwner if available, otherwise owner
  */
 function getCorrectOwner(domain: GraphDomain): string {
-	// For subnames, use wrappedOwner (they're typically wrapped) or fall back to owner
-	if (isSubname(domain.name)) {
-		return (domain.wrappedOwner?.id || domain.owner.id).toLowerCase()
-	}
+  // For subnames, use wrappedOwner (they're typically wrapped) or fall back to owner
+  if (isSubname(domain.name)) {
+    return (domain.wrappedOwner?.id || domain.owner.id).toLowerCase();
+  }
 
-	// For 2LD names, check if wrapped via registrant
-	const registrantAddress = domain.registrant?.id?.toLowerCase()
-	if (registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
-		return (
-			domain.wrappedOwner?.id ||
-			domain.registrant?.id ||
-			domain.owner.id
-		).toLowerCase()
-	}
+  // For 2LD names, check if wrapped via registrant
+  const registrantAddress = domain.registrant?.id?.toLowerCase();
+  if (registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
+    return (domain.wrappedOwner?.id || domain.registrant?.id || domain.owner.id).toLowerCase();
+  }
 
-	// Unwrapped 2LD - use registrant or owner
-	return (domain.registrant?.id || domain.owner.id).toLowerCase()
+  // Unwrapped 2LD - use registrant or owner
+  return (domain.registrant?.id || domain.owner.id).toLowerCase();
 }
 
 /**
  * Main function to fix duplicate names
  */
 async function fixDuplicateNames() {
-	const pool = getPostgresPool()
+  const pool = getPostgresPool();
 
-	console.log('=== Duplicate Names Fix Script ===')
-	console.log(
-		`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`,
-	)
-	if (NAME_FILTER) {
-		console.log(`Filter: --name "${NAME_FILTER}"`)
-	}
-	console.log('')
+  console.log('=== Duplicate Names Fix Script ===');
+  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`);
+  if (NAME_FILTER) {
+    console.log(`Filter: --name "${NAME_FILTER}"`);
+  }
+  console.log('');
 
-	// Find all duplicate names
-	const duplicatesQuery = NAME_FILTER
-		? {
-				text: `
+  // Find all duplicate names
+  const duplicatesQuery = NAME_FILTER
+    ? {
+        text: `
           SELECT name, array_agg(id ORDER BY id) as ids, array_agg(token_id ORDER BY id) as token_ids
           FROM ens_names
           WHERE name = $1
@@ -190,117 +180,100 @@ async function fixDuplicateNames() {
           HAVING COUNT(*) > 1
           ORDER BY name
         `,
-				values: [NAME_FILTER],
-			}
-		: {
-				text: `
+        values: [NAME_FILTER]
+      }
+    : {
+        text: `
           SELECT name, array_agg(id ORDER BY id) as ids, array_agg(token_id ORDER BY id) as token_ids
           FROM ens_names
           GROUP BY name
           HAVING COUNT(*) > 1
           ORDER BY name
         `,
-				values: [],
-			}
-	const duplicatesResult = await pool.query(duplicatesQuery)
+        values: []
+      };
+  const duplicatesResult = await pool.query(duplicatesQuery);
 
-	const totalDuplicates = duplicatesResult.rows.length
-	console.log(`Found ${totalDuplicates} duplicate names\n`)
+  const totalDuplicates = duplicatesResult.rows.length;
+  console.log(`Found ${totalDuplicates} duplicate names\n`);
 
-	if (totalDuplicates === 0) {
-		console.log('No duplicates found!')
-		await pool.end()
-		return
-	}
+  if (totalDuplicates === 0) {
+    console.log('No duplicates found!');
+    await pool.end();
+    return;
+  }
 
-	let processed = 0
-	let merged = 0
-	let errors = 0
-	let notFound = 0
+  let processed = 0;
+  let merged = 0;
+  let errors = 0;
+  let notFound = 0;
 
-	// Process in batches
-	for (let i = 0; i < duplicatesResult.rows.length; i += BATCH_SIZE) {
-		const batch = duplicatesResult.rows.slice(i, i + BATCH_SIZE)
-		const names = batch.map(row => row.name)
+  // Process in batches
+  for (let i = 0; i < duplicatesResult.rows.length; i += BATCH_SIZE) {
+    const batch = duplicatesResult.rows.slice(i, i + BATCH_SIZE);
+    const names = batch.map(row => row.name);
 
-		console.log(
-			`\nQuerying Graph for batch ${Math.floor(i / BATCH_SIZE) + 1} (${names.length} names)...`,
-		)
+    console.log(`\nQuerying Graph for batch ${Math.floor(i / BATCH_SIZE) + 1} (${names.length} names)...`);
 
-		const domainMap = await queryGraphByName(names)
+    const domainMap = await queryGraphByName(names);
 
-		for (const row of batch) {
-			const { name, ids, token_ids } = row
+    for (const row of batch) {
+      const { name, ids, token_ids } = row;
 
-			try {
-				const domain = domainMap.get(name)
+      try {
+        const domain = domainMap.get(name);
 
-				if (!domain) {
-					notFound++
-					console.log(`[SKIP] ${name} - not found in subgraph`)
-					processed++
-					continue
-				}
+        if (!domain) {
+          notFound++;
+          console.log(`[SKIP] ${name} - not found in subgraph`);
+          processed++;
+          continue;
+        }
 
-				const correctTokenId = getCorrectTokenId(domain)
-				const correctOwner = getCorrectOwner(domain)
+        const correctTokenId = getCorrectTokenId(domain);
+        const correctOwner = getCorrectOwner(domain);
 
-				// Get expiry and registration dates from The Graph
-				// Use registration.expiryDate (true expiry) not domain.expiryDate (includes grace period)
-				// Note: subnames don't have registration data, so these may be null
-				const expiryDate = domain.registration?.expiryDate
-					? new Date(parseInt(domain.registration.expiryDate) * 1000)
-					: null
-				const registrationDate = domain.registration?.registrationDate
-					? new Date(
-							parseInt(domain.registration.registrationDate) *
-								1000,
-						)
-					: null
+        // Get expiry and registration dates from The Graph
+        // Use registration.expiryDate (true expiry) not domain.expiryDate (includes grace period)
+        // Note: subnames don't have registration data, so these may be null
+        const expiryDate = domain.registration?.expiryDate
+          ? new Date(parseInt(domain.registration.expiryDate) * 1000)
+          : null;
+        const registrationDate = domain.registration?.registrationDate
+          ? new Date(parseInt(domain.registration.registrationDate) * 1000)
+          : null;
 
-				// Get registrant address (only for 2LD names, not subnames)
-				const registrantAddress =
-					domain.registrant?.id?.toLowerCase() || null
+        // Get registrant address (only for 2LD names, not subnames)
+        const registrantAddress = domain.registrant?.id?.toLowerCase() || null;
 
-				const nameType = isSubname(name) ? 'subname' : '2LD'
-				console.log(`\n[PROCESS] ${name} (${nameType})`)
-				console.log(`  Correct token_id: ${correctTokenId}`)
-				console.log(`  Correct owner: ${correctOwner}`)
-				console.log(
-					`  Correct expiry: ${expiryDate?.toISOString() || 'unknown'}`,
-				)
-				console.log(
-					`  Correct registration: ${registrationDate?.toISOString() || 'unknown'}`,
-				)
-				console.log(`  Registrant: ${registrantAddress || 'unknown'}`)
-				console.log(
-					`  Found ${ids.length} records with ids: ${ids.join(', ')}`,
-				)
+        const nameType = isSubname(name) ? 'subname' : '2LD';
+        console.log(`\n[PROCESS] ${name} (${nameType})`);
+        console.log(`  Correct token_id: ${correctTokenId}`);
+        console.log(`  Correct owner: ${correctOwner}`);
+        console.log(`  Correct expiry: ${expiryDate?.toISOString() || 'unknown'}`);
+        console.log(`  Correct registration: ${registrationDate?.toISOString() || 'unknown'}`);
+        console.log(`  Registrant: ${registrantAddress || 'unknown'}`);
+        console.log(`  Found ${ids.length} records with ids: ${ids.join(', ')}`);
 
-				// Find which record has the correct token_id
-				let correctRecordId: number | null = null
-				let incorrectRecordIds: number[] = []
+        // Find which record has the correct token_id
+        let correctRecordId: number | null = null;
+        let incorrectRecordIds: number[] = [];
 
-				for (let j = 0; j < ids.length; j++) {
-					if (token_ids[j] === correctTokenId) {
-						correctRecordId = ids[j]
-						console.log(`  ✓ Record ${ids[j]} has correct token_id`)
-					} else {
-						incorrectRecordIds.push(ids[j])
-						console.log(
-							`  ✗ Record ${ids[j]} has incorrect token_id: ${token_ids[j]}`,
-						)
-					}
-				}
+        for (let j = 0; j < ids.length; j++) {
+          if (token_ids[j] === correctTokenId) {
+            correctRecordId = ids[j];
+            console.log(`  ✓ Record ${ids[j]} has correct token_id`);
+          } else {
+            incorrectRecordIds.push(ids[j]);
+            console.log(`  ✗ Record ${ids[j]} has incorrect token_id: ${token_ids[j]}`);
+          }
+        }
 
-				// If no record has correct token_id, use the one with most activity or newest
-				if (!correctRecordId) {
-					console.log(
-						`  No record has correct token_id, checking activity...`,
-					)
+        // If no record has correct token_id, use the one with most activity or newest
+        if (!correctRecordId) {
+          console.log(`  No record has correct token_id, checking activity...`);
 
-					const activityCheck = await pool.query(
-						`
+          const activityCheck = await pool.query(`
             SELECT e.id,
                    (SELECT COUNT(*) FROM listings WHERE ens_name_id = e.id) as listing_count,
                    (SELECT COUNT(*) FROM offers WHERE ens_name_id = e.id) as offer_count,
@@ -314,149 +287,88 @@ async function fixDuplicateNames() {
               (SELECT COUNT(*) FROM sales WHERE ens_name_id = e.id) DESC,
               e.created_at DESC
             LIMIT 1
-          `,
-						[ids],
-					)
+          `, [ids]);
 
-					correctRecordId = activityCheck.rows[0].id
-					incorrectRecordIds = ids.filter(
-						(id: number) => id !== correctRecordId,
-					)
-					console.log(
-						`  Selected record ${correctRecordId} (most activity or newest)`,
-					)
-				}
+          correctRecordId = activityCheck.rows[0].id;
+          incorrectRecordIds = ids.filter((id: number) => id !== correctRecordId);
+          console.log(`  Selected record ${correctRecordId} (most activity or newest)`);
+        }
 
-				if (incorrectRecordIds.length === 0) {
-					console.log(`  No duplicates to merge`)
-					processed++
-					continue
-				}
+        if (incorrectRecordIds.length === 0) {
+          console.log(`  No duplicates to merge`);
+          processed++;
+          continue;
+        }
 
-				// Merge duplicates
-				if (!DRY_RUN) {
-					await pool.query('BEGIN')
+        // Merge duplicates
+        if (!DRY_RUN) {
+          await pool.query('BEGIN');
 
-					try {
-						// Disable triggers
-						await pool.query(
-							'SET LOCAL session_replication_role = replica',
-						)
+          try {
+            // Disable triggers
+            await pool.query('SET LOCAL session_replication_role = replica');
 
-						// Update foreign keys to point to correct record
-						for (const incorrectId of incorrectRecordIds) {
-							// Tables without ens_name_id unique constraints — direct UPDATE
-							await pool.query(
-								'UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
-							await pool.query(
-								'UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
-							await pool.query(
-								'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
-							await pool.query(
-								'UPDATE notifications SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+            // Update foreign keys to point to correct record
+            for (const incorrectId of incorrectRecordIds) {
+              // Tables without ens_name_id unique constraints — direct UPDATE
+              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              await pool.query('UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              await pool.query('UPDATE notifications SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// Tables WITH ens_name_id in a unique constraint — delete conflicts first, then UPDATE rest
-							// watchlist: UNIQUE(user_id, ens_name_id)
-							await pool.query(
-								`
+              // Tables WITH ens_name_id in a unique constraint — delete conflicts first, then UPDATE rest
+              // watchlist: UNIQUE(user_id, ens_name_id)
+              await pool.query(`
                 DELETE FROM watchlist WHERE ens_name_id = $1
                 AND user_id IN (SELECT user_id FROM watchlist WHERE ens_name_id = $2)
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// sales: UNIQUE(transaction_hash, ens_name_id)
-							await pool.query(
-								`
+              // sales: UNIQUE(transaction_hash, ens_name_id)
+              await pool.query(`
                 DELETE FROM sales WHERE ens_name_id = $1
                 AND transaction_hash IN (SELECT transaction_hash FROM sales WHERE ens_name_id = $2)
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// name_views: UNIQUE(ens_name_id, viewer_identifier)
-							await pool.query(
-								`
+              // name_views: UNIQUE(ens_name_id, viewer_identifier)
+              await pool.query(`
                 DELETE FROM name_views WHERE ens_name_id = $1
                 AND viewer_identifier IN (SELECT viewer_identifier FROM name_views WHERE ens_name_id = $2)
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE name_views SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE name_views SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// name_votes: UNIQUE(ens_name_id, user_id)
-							await pool.query(
-								`
+              // name_votes: UNIQUE(ens_name_id, user_id)
+              await pool.query(`
                 DELETE FROM name_votes WHERE ens_name_id = $1
                 AND user_id IN (SELECT user_id FROM name_votes WHERE ens_name_id = $2)
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE name_votes SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE name_votes SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// cart_items: UNIQUE(user_id, ens_name_id, cart_type_id)
-							await pool.query(
-								`
+              // cart_items: UNIQUE(user_id, ens_name_id, cart_type_id)
+              await pool.query(`
                 DELETE FROM cart_items WHERE ens_name_id = $1
                 AND (user_id, cart_type_id) IN (
                   SELECT user_id, cart_type_id FROM cart_items WHERE ens_name_id = $2
                 )
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE cart_items SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE cart_items SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
 
-							// registrations: UNIQUE(transaction_hash, ens_name_id)
-							await pool.query(
-								`
+              // registrations: UNIQUE(transaction_hash, ens_name_id)
+              await pool.query(`
                 DELETE FROM registrations WHERE ens_name_id = $1
                 AND transaction_hash IN (SELECT transaction_hash FROM registrations WHERE ens_name_id = $2)
-              `,
-								[incorrectId, correctRecordId],
-							)
-							await pool.query(
-								'UPDATE registrations SET ens_name_id = $1 WHERE ens_name_id = $2',
-								[correctRecordId, incorrectId],
-							)
-						}
+              `, [incorrectId, correctRecordId]);
+              await pool.query('UPDATE registrations SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+            }
 
-						// Delete incorrect records
-						await pool.query(
-							'DELETE FROM ens_names WHERE id = ANY($1)',
-							[incorrectRecordIds],
-						)
-						console.log(
-							`  Deleted ${incorrectRecordIds.length} duplicate record(s): ${incorrectRecordIds.join(', ')}`,
-						)
+            // Delete incorrect records
+            await pool.query('DELETE FROM ens_names WHERE id = ANY($1)', [incorrectRecordIds]);
+            console.log(`  Deleted ${incorrectRecordIds.length} duplicate record(s): ${incorrectRecordIds.join(', ')}`);
 
-						// Update correct record with all correct data from The Graph
-						await pool.query(
-							`UPDATE ens_names SET
+            // Update correct record with all correct data from The Graph
+            await pool.query(
+              `UPDATE ens_names SET
                 token_id = $1,
                 owner_address = $2,
                 expiry_date = COALESCE($3, expiry_date),
@@ -464,121 +376,80 @@ async function fixDuplicateNames() {
                 registrant = COALESCE($5, registrant),
                 updated_at = NOW()
               WHERE id = $6`,
-							[
-								correctTokenId,
-								correctOwner.toLowerCase(),
-								expiryDate,
-								registrationDate,
-								registrantAddress,
-								correctRecordId,
-							],
-						)
+              [correctTokenId, correctOwner.toLowerCase(), expiryDate, registrationDate, registrantAddress, correctRecordId]
+            );
 
-						// Recalculate denormalized counts (triggers are disabled via session_replication_role = replica)
-						await pool.query(
-							`
+            // Recalculate denormalized counts (triggers are disabled via session_replication_role = replica)
+            await pool.query(`
               UPDATE ens_names SET
                 view_count = (SELECT COUNT(*) FROM name_views WHERE ens_name_id = $1),
                 upvotes = (SELECT COUNT(*) FROM name_votes WHERE ens_name_id = $1 AND vote = 1),
                 downvotes = (SELECT COUNT(*) FROM name_votes WHERE ens_name_id = $1 AND vote = -1),
                 net_score = (SELECT COALESCE(SUM(vote), 0) FROM name_votes WHERE ens_name_id = $1)
               WHERE id = $1
-            `,
-							[correctRecordId],
-						)
+            `, [correctRecordId]);
 
-						await pool.query('COMMIT')
-						console.log(
-							`  ✓ Merged into record ${correctRecordId} with correct data (token_id, owner, expiry, registration)`,
-						)
-						merged++
-					} catch (txError) {
-						await pool.query('ROLLBACK')
-						throw txError
-					}
-				} else {
-					console.log(
-						`  [DRY RUN] Would merge FK references from records ${incorrectRecordIds.join(', ')} → ${correctRecordId}:`,
-					)
-					console.log(
-						`    - listings, offers, activity_history, notifications (direct UPDATE)`,
-					)
-					console.log(
-						`    - watchlist (delete conflicts on user_id, then UPDATE)`,
-					)
-					console.log(
-						`    - sales (delete conflicts on transaction_hash, then UPDATE)`,
-					)
-					console.log(
-						`    - name_views (delete conflicts on viewer_identifier, then UPDATE)`,
-					)
-					console.log(
-						`    - name_votes (delete conflicts on user_id, then UPDATE)`,
-					)
-					console.log(
-						`    - cart_items (delete conflicts on user_id+cart_type_id, then UPDATE)`,
-					)
-					console.log(
-						`    - registrations (delete conflicts on transaction_hash, then UPDATE)`,
-					)
-					console.log(
-						`  [DRY RUN] Would delete duplicate ens_names records: ${incorrectRecordIds.join(', ')}`,
-					)
-					console.log(
-						`  [DRY RUN] Would update record ${correctRecordId} with:`,
-					)
-					console.log(`    - token_id: ${correctTokenId}`)
-					console.log(`    - owner_address: ${correctOwner}`)
-					console.log(
-						`    - expiry_date: ${expiryDate?.toISOString() || '(keep existing)'}`,
-					)
-					console.log(
-						`    - registration_date: ${registrationDate?.toISOString() || '(keep existing)'}`,
-					)
-					console.log(
-						`    - registrant: ${registrantAddress || '(keep existing)'}`,
-					)
-					console.log(
-						`  [DRY RUN] Would recalculate view_count, upvotes, downvotes, net_score`,
-					)
-					merged++
-				}
+            await pool.query('COMMIT');
+            console.log(`  ✓ Merged into record ${correctRecordId} with correct data (token_id, owner, expiry, registration)`);
+            merged++;
+          } catch (txError) {
+            await pool.query('ROLLBACK');
+            throw txError;
+          }
+        } else {
+          console.log(`  [DRY RUN] Would merge FK references from records ${incorrectRecordIds.join(', ')} → ${correctRecordId}:`);
+          console.log(`    - listings, offers, activity_history, notifications (direct UPDATE)`);
+          console.log(`    - watchlist (delete conflicts on user_id, then UPDATE)`);
+          console.log(`    - sales (delete conflicts on transaction_hash, then UPDATE)`);
+          console.log(`    - name_views (delete conflicts on viewer_identifier, then UPDATE)`);
+          console.log(`    - name_votes (delete conflicts on user_id, then UPDATE)`);
+          console.log(`    - cart_items (delete conflicts on user_id+cart_type_id, then UPDATE)`);
+          console.log(`    - registrations (delete conflicts on transaction_hash, then UPDATE)`);
+          console.log(`  [DRY RUN] Would delete duplicate ens_names records: ${incorrectRecordIds.join(', ')}`);
+          console.log(`  [DRY RUN] Would update record ${correctRecordId} with:`);
+          console.log(`    - token_id: ${correctTokenId}`);
+          console.log(`    - owner_address: ${correctOwner}`);
+          console.log(`    - expiry_date: ${expiryDate?.toISOString() || '(keep existing)'}`);
+          console.log(`    - registration_date: ${registrationDate?.toISOString() || '(keep existing)'}`);
+          console.log(`    - registrant: ${registrantAddress || '(keep existing)'}`);
+          console.log(`  [DRY RUN] Would recalculate view_count, upvotes, downvotes, net_score`);
+          merged++;
+        }
 
-				processed++
-			} catch (error: any) {
-				errors++
-				console.error(`[ERROR] ${name} - ${error.message}`)
-				processed++
-			}
-		}
+        processed++;
 
-		// Rate limit
-		await new Promise(resolve => setTimeout(resolve, 500))
-	}
+      } catch (error: any) {
+        errors++;
+        console.error(`[ERROR] ${name} - ${error.message}`);
+        processed++;
+      }
+    }
 
-	console.log('\n=== Duplicate Names Fix Complete ===')
-	console.log(`Total processed: ${processed}`)
-	console.log(`Total merged: ${merged}`)
-	console.log(`Total errors: ${errors}`)
-	console.log(`Not found in subgraph: ${notFound}`)
+    // Rate limit
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 
-	if (merged > 0 && !DRY_RUN) {
-		console.log(
-			'\n⚠ Elasticsearch resync recommended to reflect merged records:',
-		)
-		console.log('  cd services/wal-listener && npm run resync:v2')
-	}
+  console.log('\n=== Duplicate Names Fix Complete ===');
+  console.log(`Total processed: ${processed}`);
+  console.log(`Total merged: ${merged}`);
+  console.log(`Total errors: ${errors}`);
+  console.log(`Not found in subgraph: ${notFound}`);
 
-	await pool.end()
+  if (merged > 0 && !DRY_RUN) {
+    console.log('\n⚠ Elasticsearch resync recommended to reflect merged records:');
+    console.log('  cd services/wal-listener && npm run resync:v2');
+  }
+
+  await pool.end();
 }
 
 // Run the script
 fixDuplicateNames()
-	.then(() => {
-		console.log('\nScript completed successfully')
-		process.exit(0)
-	})
-	.catch(error => {
-		console.error('\nScript failed:', error)
-		process.exit(1)
-	})
+  .then(() => {
+    console.log('\nScript completed successfully');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('\nScript failed:', error);
+    process.exit(1);
+  });
