@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES } from '../../../shared/src';
+import { buildClubsCondition, parseClubsFilter } from '../utils/club-filter';
 
 const ChartQuerySchema = z.object({
   period: z.enum(['1d', '7d', '30d', '1y', 'all']).default('7d'),
-  club: z.string().optional(),
+  'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 type ChartQuery = z.infer<typeof ChartQuerySchema>;
@@ -32,53 +33,6 @@ function getTimeConfig(period: string): TimeConfig {
   return { interval: '8 years', truncUnit: 'month', seriesInterval: '1 month' };
 }
 
-/**
- * Parse club filter string into array, handling comma-separated values
- * Examples:
- *   "999" -> ["999"]
- *   "999,10k,prepunk" -> ["999", "10k", "prepunk"]
- *   undefined -> []
- */
-function parseClubFilter(club: string | undefined): string[] {
-  if (!club) return [];
-  return club.split(',').map(c => c.trim()).filter(c => c);
-}
-
-function buildClubCondition(clubs: string[], paramNum: number): { condition: string; params: any[] } {
-  if (clubs.length === 0) {
-    return { condition: '', params: [] };
-  }
-
-  // Special values take precedence if included
-  if (clubs.includes('any')) {
-    return {
-      condition: 'AND array_length(en.clubs, 1) > 0',
-      params: [],
-    };
-  }
-
-  if (clubs.includes('none')) {
-    return {
-      condition: 'AND (en.clubs IS NULL OR array_length(en.clubs, 1) = 0)',
-      params: [],
-    };
-  }
-
-  // Single club: use = ANY for exact match
-  if (clubs.length === 1) {
-    return {
-      condition: `AND $${paramNum} = ANY(en.clubs)`,
-      params: [clubs[0]],
-    };
-  }
-
-  // Multiple clubs: use && for array overlap (matches any of the specified clubs)
-  return {
-    condition: `AND en.clubs && $${paramNum}::text[]`,
-    params: [clubs],
-  };
-}
-
 export async function chartsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
@@ -89,9 +43,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/sales', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubFilter(query.club);
+    const clubs = parseClubsFilter(query['clubs[]']);
     const hasClubFilter = clubs.length > 0;
-    const clubCondition = buildClubCondition(clubs, 1);
+    const params: unknown[] = [];
+    const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
 
     const fromClause = hasClubFilter
       ? `FROM sales s
@@ -115,7 +70,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) FILTER (WHERE s.source = 'opensea') as opensea
           ${fromClause}
           WHERE s.sale_date > NOW() - INTERVAL '${timeConfig.interval}'
-          ${hasClubFilter ? clubCondition.condition : ''}
+          ${clubCondition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', s.sale_date)
         )
         SELECT
@@ -126,14 +81,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         FROM time_series ts
         LEFT JOIN sales_data sd ON ts.date = sd.date
         ORDER BY ts.date ASC`,
-        clubCondition.params
+        params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
-          club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
@@ -171,9 +125,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/volume', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubFilter(query.club);
+    const clubs = parseClubsFilter(query['clubs[]']);
     const hasClubFilter = clubs.length > 0;
-    const clubCondition = buildClubCondition(clubs, 3);
+    const params: unknown[] = [CURRENCY_ADDRESSES.ETH, CURRENCY_ADDRESSES.WETH];
+    const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
 
     const fromClause = hasClubFilter
       ? `FROM sales s
@@ -198,7 +153,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           ${fromClause}
           WHERE s.sale_date > NOW() - INTERVAL '${timeConfig.interval}'
             AND (s.currency_address = $1 OR s.currency_address = $2)
-          ${hasClubFilter ? clubCondition.condition : ''}
+          ${clubCondition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', s.sale_date)
         )
         SELECT
@@ -209,14 +164,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         FROM time_series ts
         LEFT JOIN volume_data vd ON ts.date = vd.date
         ORDER BY ts.date ASC`,
-        [CURRENCY_ADDRESSES.ETH, CURRENCY_ADDRESSES.WETH, ...clubCondition.params]
+        params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
-          club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
@@ -254,9 +208,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/listings', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubFilter(query.club);
+    const clubs = parseClubsFilter(query['clubs[]']);
     const hasClubFilter = clubs.length > 0;
-    const clubCondition = buildClubCondition(clubs, 1);
+    const params: unknown[] = [];
+    const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
 
     const fromClause = hasClubFilter
       ? `FROM listings l
@@ -280,7 +235,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) FILTER (WHERE l.source = 'opensea') as opensea
           ${fromClause}
           WHERE l.created_at > NOW() - INTERVAL '${timeConfig.interval}'
-          ${hasClubFilter ? clubCondition.condition : ''}
+          ${clubCondition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', l.created_at)
         )
         SELECT
@@ -291,14 +246,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         FROM time_series ts
         LEFT JOIN listings_data ld ON ts.date = ld.date
         ORDER BY ts.date ASC`,
-        clubCondition.params
+        params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
-          club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
@@ -336,9 +290,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/registrations', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubFilter(query.club);
+    const clubs = parseClubsFilter(query['clubs[]']);
     const hasClubFilter = clubs.length > 0;
-    const clubCondition = buildClubCondition(clubs, 1);
+    const params: unknown[] = [];
+    const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
 
     const fromClause = hasClubFilter
       ? `FROM registrations r
@@ -365,7 +320,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count
           ${fromClause}
           WHERE r.registration_date > NOW() - INTERVAL '${timeConfig.interval}'
-          ${hasClubFilter ? clubCondition.condition : ''}
+          ${clubCondition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date)
         )
         SELECT
@@ -379,14 +334,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         FROM time_series ts
         LEFT JOIN registration_data rd ON ts.date = rd.date
         ORDER BY ts.date ASC`,
-        clubCondition.params
+        params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
-          club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
@@ -427,9 +381,10 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/offers', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubFilter(query.club);
+    const clubs = parseClubsFilter(query['clubs[]']);
     const hasClubFilter = clubs.length > 0;
-    const clubCondition = buildClubCondition(clubs, 1);
+    const params: unknown[] = [];
+    const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
 
     const fromClause = hasClubFilter
       ? `FROM offers o
@@ -453,7 +408,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             COUNT(*) FILTER (WHERE o.source = 'opensea') as opensea
           ${fromClause}
           WHERE o.created_at > NOW() - INTERVAL '${timeConfig.interval}'
-          ${hasClubFilter ? clubCondition.condition : ''}
+          ${clubCondition}
           GROUP BY DATE_TRUNC('${timeConfig.truncUnit}', o.created_at)
         )
         SELECT
@@ -464,14 +419,13 @@ export async function chartsRoutes(fastify: FastifyInstance) {
         FROM time_series ts
         LEFT JOIN offers_data od ON ts.date = od.date
         ORDER BY ts.date ASC`,
-        clubCondition.params
+        params
       );
 
       const response: APIResponse = {
         success: true,
         data: {
           period: query.period,
-          club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
           points: result.rows.map(row => ({
             date: row.date.toISOString(),
