@@ -53,6 +53,8 @@
     "find-desynced-wrapped:verbose": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names.js --verbose",
     "find-desynced-graph": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names-graph.js",
     "find-desynced-graph:save": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/find-desynced-wrapped-names-graph.js --save",
+    "compare-ensnode": "npm run build && node dist/wal-listener/src/scripts/compare-ensnode-instances.js",
+    "compare-ensnode:full": "npm run build && node dist/wal-listener/src/scripts/compare-ensnode-instances.js --full-scan",
     "reconcile-opensea-listings": "npx tsx src/scripts/reconcile-opensea-listings.ts",
     "reconcile-opensea-listings:fix": "npx tsx src/scripts/reconcile-opensea-listings.ts --fix",
     "import-opensea-listing": "npm run build && node dist/wal-listener/src/scripts/import-opensea-listing.js",
