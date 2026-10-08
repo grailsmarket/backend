@@ -12,9 +12,8 @@ import {
   OrderType,
   ItemType,
 } from './types.js';
+import { type ContractAddresses, getContracts } from '../config.js';
 import {
-  ENS_REGISTRAR_ADDRESS,
-  WETH_ADDRESS,
   ZERO_ADDRESS,
   DEFAULT_CONDUIT_KEY,
   DEFAULT_ZONE,
@@ -48,6 +47,15 @@ function generateSalt(offerer: string, tokenId: string): string {
  * Builds Seaport orders for ENS name listings and offers
  */
 export class SeaportOrderBuilder {
+  private readonly contracts: ContractAddresses;
+
+  /**
+   * @param chainId - Chain to build orders for (default: 1, mainnet)
+   */
+  constructor(chainId: number = 1) {
+    this.contracts = getContracts(chainId);
+  }
+
   /**
    * Build a listing order (seller offers ENS name, wants payment)
    *
@@ -91,7 +99,7 @@ export class SeaportOrderBuilder {
     const offer: SeaportOfferItem[] = [
       {
         itemType: ItemType.ERC721,
-        token: ENS_REGISTRAR_ADDRESS,
+        token: this.contracts.ensRegistrar,
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',
@@ -210,7 +218,7 @@ export class SeaportOrderBuilder {
     const offer: SeaportOfferItem[] = [
       {
         itemType: ItemType.ERC20,
-        token: WETH_ADDRESS,
+        token: this.contracts.weth,
         identifierOrCriteria: '0',
         startAmount: offerAmountWei,
         endAmount: offerAmountWei,
@@ -222,7 +230,7 @@ export class SeaportOrderBuilder {
     const consideration: SeaportConsiderationItem[] = [
       {
         itemType: ItemType.ERC721,
-        token: ENS_REGISTRAR_ADDRESS,
+        token: this.contracts.ensRegistrar,
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',

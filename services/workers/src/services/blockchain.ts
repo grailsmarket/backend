@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 let provider: ethers.JsonRpcProvider | null = null;
 
 // Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress;
 
 export function getBlockchainProvider(): ethers.JsonRpcProvider {
   if (!provider) {

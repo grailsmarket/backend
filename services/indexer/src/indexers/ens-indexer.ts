@@ -7,9 +7,8 @@ import {
   type PublicClient,
   parseAbi,
 } from 'viem';
-import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
+import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
@@ -93,7 +92,7 @@ export class ENSIndexer {
 
   constructor() {
     this.client = createPublicClient({
-      chain: mainnet,
+      chain: viemChain,
       transport: http(config.blockchain.rpcUrl),
     });
     this.queue = new PQueue({ concurrency: 5 });
@@ -177,11 +176,13 @@ export class ENSIndexer {
       toBlock,
     });
 
-    const eventEmitterLogs = await this.client.getLogs({
-      address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
-      fromBlock,
-      toBlock,
-    });
+    const eventEmitterLogs = config.blockchain.ensBulkRenewalEventEmitter
+      ? await this.client.getLogs({
+          address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
+          fromBlock,
+          toBlock,
+        })
+      : [];
 
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
     // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
@@ -871,7 +872,7 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, ${config.blockchain.chainId}, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
           WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
@@ -1037,7 +1038,7 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, ${config.blockchain.chainId}, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
           WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
@@ -1188,7 +1189,7 @@ export class ENSIndexer {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
     const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+    const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
     let ensNameId: number | null = null;
     let resolvedOwner: string | null = null;
@@ -1464,7 +1465,7 @@ export class ENSIndexer {
   private async handleNameRegistered(args: any, log: Log) {
     const { id: tokenId, owner, expires } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
-    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+    const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
     // Set defaults outside try block so they're available for transaction logging
     let correctTokenId = tokenIdStr;
@@ -1739,7 +1740,7 @@ export class ENSIndexer {
               'mint',
               actualMinter,
               mintPlatform,
-              1,
+              config.blockchain.chainId,
               log.transactionHash || null,
               log.blockNumber?.toString() || null,
               mintPriceWei,

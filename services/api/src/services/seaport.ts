@@ -8,11 +8,10 @@ import {
   encodeAbiParameters,
   parseAbiParameters
 } from 'viem';
-import { mainnet } from 'viem/chains';
-import { config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
+import { viemChain, config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
 
 const publicClient = createPublicClient({
-  chain: mainnet,
+  chain: viemChain,
   transport: http(config.blockchain.rpcUrl),
 });
 

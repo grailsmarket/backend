@@ -50,6 +50,9 @@ const CONTROLLER_FUNCTION_ABI = parseAbi([
   'function renewAll(string[] names, uint256 duration)',
 ]);
 
+if (!config.blockchain.ensBulkRenewalEventEmitter) {
+  throw new Error('ENS_BULK_RENEWAL_EVENT_EMITTER is not configured for this network');
+}
 const EVENT_EMITTER_ADDRESS = config.blockchain.ensBulkRenewalEventEmitter.toLowerCase();
 const CONTROLLER_ADDRESSES = config.blockchain.ensControllerAddresses.map((a: string) => a.toLowerCase());
 

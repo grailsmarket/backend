@@ -6,9 +6,8 @@ import {
   type PublicClient,
   parseAbi,
 } from 'viem';
-import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, createSale } from '../../../shared/src';
+import { viemChain, config, getPostgresPool, createSale } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
@@ -40,7 +39,7 @@ export class SeaportIndexer {
 
   constructor() {
     this.client = createPublicClient({
-      chain: mainnet,
+      chain: viemChain,
       transport: http(config.blockchain.rpcUrl),
     });
     this.queue = new PQueue({ concurrency: 5 });
@@ -54,7 +53,7 @@ export class SeaportIndexer {
     const lastBlock = await this.getLastProcessedBlock();
     const startBlock = lastBlock > 0
       ? BigInt(lastBlock) + 1n
-      : BigInt(config.blockchain.startBlock || 19000000); // Seaport deployed later
+      : BigInt(config.blockchain.startBlock || config.blockchain.seaportStartBlock);
 
     this.currentBlock = startBlock;
     logger.info(`Starting Seaport indexer from block ${this.currentBlock}`);

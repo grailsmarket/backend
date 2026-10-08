@@ -5,7 +5,7 @@
  * Uses database as primary source, with 10% on-chain verification for accuracy.
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 import { ethers } from 'ethers';
 import {
   type ValidationResult,
@@ -16,7 +16,7 @@ import {
 const pool = getPostgresPool();
 
 // Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress;
 
 // Initialize provider (will be set by environment)
 let provider: ethers.Provider | null = null;

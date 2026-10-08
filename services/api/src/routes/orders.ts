@@ -1,8 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder, config } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 import { requireAuth } from '../middleware/auth';
+
+function subgraphHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.theGraph.apiKey) {
+    headers['Authorization'] = `Bearer ${config.theGraph.apiKey}`;
+  }
+  return headers;
+}
 
 const CreateOrderSchema = z.object({
   tokenId: z.string(),
@@ -110,8 +118,8 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           let ensName = `token-${body.token_id}.eth`;
 
           try {
-            // Use public Ethereum RPC to fetch the ENS name
-            const response = await fetch('https://eth.llamarpc.com', {
+            // Use the configured RPC to fetch the ENS name
+            const response = await fetch(config.blockchain.rpcUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -119,7 +127,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
                 method: 'eth_call',
                 params: [
                   {
-                    to: '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85', // ENS Base Registrar
+                    to: config.blockchain.ensRegistrarAddress, // ENS Base Registrar
                     data: '0xc87b56dd' + body.token_id.toString().padStart(64, '0'), // tokenURI(uint256)
                   },
                   'latest'
@@ -132,9 +140,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
               const data = await response.json();
               // Try to parse the name from metadata
               // For now, we'll try a simpler approach: fetch from ENS subgraph
-              const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
+              const subgraphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: subgraphHeaders(),
                 body: JSON.stringify({
                   query: `
                     query GetDomain($tokenId: String!) {
@@ -562,9 +570,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
           const graphIds = chunk.map(id => '0x' + BigInt(id).toString(16).padStart(64, '0'));
 
           try {
-            const subgraphResponse = await fetch('https://api.thegraph.com/subgraphs/name/ensdomains/ens', {
+            const subgraphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: subgraphHeaders(),
               body: JSON.stringify({
                 query: `
                   query GetDomains($ids: [String!]!) {

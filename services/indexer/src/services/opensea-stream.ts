@@ -5,7 +5,7 @@ import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
 // Name Wrapper contract address - never store this as owner
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 interface PhoenixMessage {
   // OpenSea occasionally sends messages without a topic (e.g. control/keepalive
@@ -281,7 +281,7 @@ export class OpenSeaStreamListener {
 
     // Subscribe to ENS collection events using Phoenix protocol
     const subscriptionMessage = {
-      topic: 'collection:ens',
+      topic: `collection:${config.opensea.collectionSlug}`,
       event: 'phx_join',
       payload: {},
       ref: this.ref++,
@@ -1447,7 +1447,7 @@ export class OpenSeaStreamListener {
       // Collection offers apply to the entire collection, not specific items
       const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
 
-      if (!collection?.slug || collection.slug !== 'ens') {
+      if (!collection?.slug || collection.slug !== config.opensea.collectionSlug) {
         logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);
         return;
       }
@@ -1504,7 +1504,7 @@ export class OpenSeaStreamListener {
     try {
       // Query OpenSea API for recent ENS listings
       const response = await fetch(
-        'https://api.opensea.io/api/v2/listings/collection/ens/all?limit=50',
+        `${config.opensea.apiBaseUrl}/listings/collection/${config.opensea.collectionSlug}/all?limit=50`,
         {
           headers: {
             'Accept': 'application/json',
@@ -1569,7 +1569,7 @@ export class OpenSeaStreamListener {
       // Build the event payload in the same format as stream events
       return {
         item: {
-          nft_id: `ethereum/0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85/${tokenId}`,
+          nft_id: `${config.opensea.chainSlug}/${config.blockchain.ensRegistrarAddress.toLowerCase()}/${tokenId}`,
           metadata: {
             name: listing.protocol_data?.parameters?.offer?.[0]?.token || null,
           },
