@@ -12,7 +12,10 @@ export {
   type GrailsClientOptions,
   type TokenStorage,
   MemoryTokenStorage,
+  type ContractAddresses,
   CONTRACTS,
+  CONTRACTS_BY_CHAIN,
+  getContracts,
   DEFAULT_CONFIG,
 } from './config.js';
 

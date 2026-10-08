@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import path from 'path';
+import { getNetworkPreset } from './network';
 
 // Load .env from project root
 // Try multiple possible locations to handle different execution contexts
@@ -22,28 +23,41 @@ const ConfigSchema = z.object({
     url: z.string().default('http://localhost:9200'),
     index: z.string().default('ens_names'),
   }),
+  // Chain-specific defaults come from the network preset (see ./network.ts)
   blockchain: z.object({
     rpcUrl: z.string(),
-    chainId: z.number().default(1),
-    ensRegistrarAddress: z.string().default('0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85'),
-    ensControllerAddresses: z.array(z.string()).default([
-      '0x253553366Da8546fC250F225fe3d25d0C782303b', // Original controller (deployed May 2022)
-      '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
-    ]),
-    ensNameWrapperAddress: z.string().default('0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401'),
-    ensBulkRenewalEventEmitter: z.string().default('0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a'),
-    seaportAddress: z.string().default('0x0000000000000068F116a894984e2DB1123eB395'),
+    chainId: z.number(),
+    ensRegistrarAddress: z.string(),
+    ensControllerAddresses: z.array(z.string()),
+    ensNameWrapperAddress: z.string(),
+    ensBulkRenewalEventEmitter: z.string().nullable(),
+    seaportAddress: z.string(),
+    seaportStartBlock: z.number(),
+    wethAddress: z.string(),
+    usdcAddress: z.string(),
+    ensTokenAddress: z.string().nullable(),
+    multicall3Address: z.string(),
+    openseaConduitAddress: z.string(),
+    marketplaceConduitAddress: z.string().nullable(),
+    legacyPublicResolverAddress: z.string().nullable(),
     startBlock: z.number().optional(),
     confirmations: z.number().default(12),
   }),
   opensea: z.object({
+    enabled: z.boolean(),
     apiKey: z.string().optional(),
+    apiBaseUrl: z.string(),
+    chainSlug: z.string(),
+    collectionSlug: z.string(),
     streamUrl: z.string().default('wss://stream.openseabeta.com/socket/websocket'),
   }),
+  features: z.object({
+    unclaimedDeposits: z.boolean(),
+  }),
   theGraph: z.object({
-    ensSubgraphUrl: z.string().default('https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'),
+    ensSubgraphUrl: z.string(),
     apiKey: z.string().optional(),
-    ensWorkerUrl: z.string().default('https://ens.ethfollow.xyz'),
+    ensWorkerUrl: z.string().nullable(),
   }),
   api: z.object({
     port: z.number().default(3000),
@@ -125,6 +139,15 @@ const ConfigSchema = z.object({
   }),
 });
 
+const chainId = parseInt(process.env.CHAIN_ID || '1');
+const network = getNetworkPreset(chainId);
+
+// Env override for a nullable preset address: unset → preset, empty string → null
+function envNullable(value: string | undefined, fallback: string | null): string | null {
+  if (value === undefined) return fallback;
+  return value === '' ? null : value;
+}
+
 const rawConfig = {
   database: {
     url: process.env.DATABASE_URL,
@@ -137,23 +160,42 @@ const rawConfig = {
   },
   blockchain: {
     rpcUrl: process.env.RPC_URL || '',
-    chainId: parseInt(process.env.CHAIN_ID || '1'),
-    ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
-    ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(','),
-    ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS,
-    ensBulkRenewalEventEmitter: process.env.ENS_BULK_RENEWAL_EVENT_EMITTER,
-    seaportAddress: process.env.SEAPORT_ADDRESS,
+    chainId,
+    ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS || network.ensRegistrarAddress,
+    ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(',') || network.ensControllerAddresses,
+    ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS || network.ensNameWrapperAddress,
+    ensBulkRenewalEventEmitter: envNullable(process.env.ENS_BULK_RENEWAL_EVENT_EMITTER, network.ensBulkRenewalEventEmitter),
+    seaportAddress: process.env.SEAPORT_ADDRESS || network.seaportAddress,
+    seaportStartBlock: process.env.SEAPORT_START_BLOCK ? parseInt(process.env.SEAPORT_START_BLOCK) : network.seaportStartBlock,
+    wethAddress: process.env.WETH_ADDRESS || network.wethAddress,
+    usdcAddress: process.env.USDC_ADDRESS || network.usdcAddress,
+    ensTokenAddress: envNullable(process.env.ENS_TOKEN_ADDRESS, network.ensTokenAddress),
+    multicall3Address: process.env.MULTICALL3_ADDRESS || network.multicall3Address,
+    openseaConduitAddress: process.env.OPENSEA_CONDUIT_ADDRESS || network.openseaConduitAddress,
+    marketplaceConduitAddress: envNullable(process.env.MARKETPLACE_CONDUIT_ADDRESS, network.marketplaceConduitAddress),
+    legacyPublicResolverAddress: network.legacyPublicResolverAddress,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
     confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
   },
   opensea: {
+    enabled: process.env.OPENSEA_ENABLED !== undefined
+      ? process.env.OPENSEA_ENABLED === 'true'
+      : network.opensea.enabled,
     apiKey: process.env.OPENSEA_API_KEY,
+    apiBaseUrl: process.env.OPENSEA_API_BASE_URL || network.opensea.apiBaseUrl,
+    chainSlug: process.env.OPENSEA_CHAIN || network.opensea.chainSlug,
+    collectionSlug: process.env.OPENSEA_COLLECTION_SLUG || network.opensea.collectionSlug,
     streamUrl: process.env.OPENSEA_STREAM_URL,
   },
+  features: {
+    unclaimedDeposits: process.env.UNCLAIMED_DEPOSITS_ENABLED !== undefined
+      ? process.env.UNCLAIMED_DEPOSITS_ENABLED === 'true'
+      : network.features.unclaimedDeposits,
+  },
   theGraph: {
-    ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL,
+    ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL || network.ensSubgraphUrl,
     apiKey: process.env.THE_GRAPH_API_KEY,
-    ensWorkerUrl: process.env.ENS_WORKER_URL,
+    ensWorkerUrl: envNullable(process.env.ENS_WORKER_URL, network.ensWorkerUrl),
   },
   api: {
     port: parseInt(process.env.API_PORT || '3000'),
@@ -241,16 +283,13 @@ const rawConfig = {
 
 export const config = ConfigSchema.parse(rawConfig);
 
+// viem chain definition for the configured network
+export const viemChain = network.chain;
+
 // Currency constants
 export const CURRENCY_ADDRESSES = {
   ETH: '0x0000000000000000000000000000000000000000',
-  WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-} as const;
-
-// ENS Controller addresses (for NameRegistered events with cost data)
-export const ENS_CONTROLLER_ADDRESSES = {
-  ORIGINAL: '0x253553366Da8546fC250F225fe3d25d0C782303b',      // Deployed May 2022
-  CONTROLLER_V2: '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2
+  WETH: config.blockchain.wethAddress.toLowerCase(),
 } as const;
 
 // Helper to get all ENS controller addresses as array

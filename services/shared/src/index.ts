@@ -11,5 +11,6 @@ export * from './utils/address-decoder';
 export * from './utils/contenthash-decoder';
 export * from './services/storage';
 export * from './utils/ens-worker';
+export * from './utils/resolver-events';
 export * from './services/google-ads';
 export * from './services/google-metrics-cache';

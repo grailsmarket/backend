@@ -1,7 +1,6 @@
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
 import { namehash, labelhash } from 'viem/ens';
-import { config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import { viemChain, config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -34,7 +33,7 @@ interface ENSNameData {
   };
 }
 
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 function hexToDecimal(hex: string): string {
   // Remove 0x prefix if present
@@ -65,7 +64,7 @@ interface ResolvedNameData {
 export class ENSResolver {
   private cache = new Map<string, string>();
   private client = createPublicClient({
-    chain: mainnet,
+    chain: viemChain,
     transport: http(config.blockchain.rpcUrl),
   });
 
@@ -357,18 +356,11 @@ export class ENSResolver {
             resolver {
               address
               texts
-              textChangeds {
-                value
-                key
-              }
+              ${RESOLVER_EVENTS_FIELDS}
               addr {
                 id
               }
               coinTypes
-              multicoinAddrChangeds {
-                coinType
-                addr
-              }
             }
           }
         }
@@ -433,18 +425,11 @@ export class ENSResolver {
               resolver {
                 address
                 texts
-                textChangeds {
-                  value
-                  key
-                }
+                ${RESOLVER_EVENTS_FIELDS}
                 addr {
                   id
                 }
                 coinTypes
-                multicoinAddrChangeds {
-                  coinType
-                  addr
-                }
               }
             }
           }
@@ -476,6 +461,7 @@ export class ENSResolver {
 
       if (domains.length > 0) {
         const domain = domains[0];
+        normalizeResolverEvents(domain.resolver);
         const rawName = domain.name || domain.labelName;
 
         if (rawName) {

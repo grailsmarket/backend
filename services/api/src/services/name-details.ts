@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { buildNameResult, type SearchResult } from '../utils/response-builder';
 import { ensureMetadataFresh, type EnsMetadata } from './ens-metadata';
@@ -6,7 +6,7 @@ import { ensureMetadataFresh, type EnsMetadata } from './ens-metadata';
 const pool = getPostgresPool();
 
 // ENS Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 /**
  * Resolve full ENS name details for the marketplace.
@@ -59,18 +59,11 @@ export async function resolveNameDetails(
                     id
                   }
                   resolver {
-                    textChangeds {
-                      key
-                      value
-                    }
+                    ${RESOLVER_EVENTS_FIELDS}
                     addr {
                       id
                     }
                     coinTypes
-                    multicoinAddrChangeds {
-                      coinType
-                      addr
-                    }
                   }
                   registration {
                     expiryDate
@@ -87,6 +80,7 @@ export async function resolveNameDetails(
 
       const graphData: any = await graphResponse.json();
       const domain = graphData?.data?.domains?.[0];
+      normalizeResolverEvents(domain?.resolver);
 
       if (domain) {
         // Convert labelhash to token ID

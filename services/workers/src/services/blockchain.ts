@@ -1,11 +1,11 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
 
 // Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress;
 
 export function getBlockchainProvider(): ethers.JsonRpcProvider {
   if (!provider) {
@@ -50,10 +50,7 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
           resolver {
             address
             texts
-            textChangeds {
-              key
-              value
-            }
+            ${RESOLVER_EVENTS_FIELDS}
           }
         }
       }
@@ -88,6 +85,7 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
     }
 
     const domain = json.data?.domains?.[0];
+    normalizeResolverEvents(domain?.resolver);
 
     if (!domain?.resolver) {
       logger.debug({ name }, 'No resolver found in Graph for ENS name');

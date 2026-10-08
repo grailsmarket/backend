@@ -55,7 +55,7 @@ async function start() {
     await seaportIndexer.start();
     logger.info('Seaport indexer started successfully');
 
-    if (config.opensea.apiKey) {
+    if (config.opensea.enabled && config.opensea.apiKey) {
       logger.info('Starting OpenSea stream...');
       await openSeaStream.start();
       logger.info('OpenSea stream started successfully');
