@@ -1,6 +1,6 @@
 import { createPublicClient, http } from 'viem';
 import { namehash, labelhash } from 'viem/ens';
-import { viemChain, config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import { viemChain, config, safeNormalize, isPlaceholderName, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Name Wrapper ABI - just the ownerOf function we need
@@ -356,18 +356,11 @@ export class ENSResolver {
             resolver {
               address
               texts
-              textChangeds {
-                value
-                key
-              }
+              ${RESOLVER_EVENTS_FIELDS}
               addr {
                 id
               }
               coinTypes
-              multicoinAddrChangeds {
-                coinType
-                addr
-              }
             }
           }
         }
@@ -432,18 +425,11 @@ export class ENSResolver {
               resolver {
                 address
                 texts
-                textChangeds {
-                  value
-                  key
-                }
+                ${RESOLVER_EVENTS_FIELDS}
                 addr {
                   id
                 }
                 coinTypes
-                multicoinAddrChangeds {
-                  coinType
-                  addr
-                }
               }
             }
           }
@@ -475,6 +461,7 @@ export class ENSResolver {
 
       if (domains.length > 0) {
         const domain = domains[0];
+        normalizeResolverEvents(domain.resolver);
         const rawName = domain.name || domain.labelName;
 
         if (rawName) {

@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
@@ -157,22 +157,12 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
         resolver {
           address
           texts
-          textChangeds {
-            key
-            value
-          }
+          ${RESOLVER_EVENTS_FIELDS}
           addr {
             id
           }
           coinTypes
-          multicoinAddrChangeds {
-            coinType
-            addr
-          }
           contentHash
-          contenthashChangeds {
-            hash
-          }
         }
       }
     }
@@ -207,6 +197,7 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
   }
 
   const domain = json.data?.domains?.[0];
+  normalizeResolverEvents(domain?.resolver);
   const metadata: EnsMetadata = {};
 
   // Build metadata object from text records
