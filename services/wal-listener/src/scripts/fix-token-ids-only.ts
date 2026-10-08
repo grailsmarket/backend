@@ -69,11 +69,11 @@ async function queryGraphForDomains(names: string[]): Promise<Map<string, GraphD
       GRAPH_ENS_SUBGRAPH_URL,
       {
         query,
-        variables: { names }
+        variables: { names },
       },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 30000 // 30 second timeout
+        timeout: 30000, // 30 second timeout
       }
     );
 
@@ -105,9 +105,8 @@ function getCorrectTokenId(domain: GraphDomain): string {
   const isOwnedByWrapper = ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
   // Check if expired (expiryDate is in unix timestamp seconds)
-  const expiryTimestamp = typeof domain.expiryDate === 'string'
-    ? parseInt(domain.expiryDate)
-    : domain.expiryDate;
+  const expiryTimestamp =
+    typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
   const isExpired = expiryTimestamp * 1000 < Date.now();
 
   // Logic:
@@ -129,7 +128,9 @@ async function fixTokenIds() {
   const pool = getPostgresPool();
 
   console.log('=== Token ID Fix Script ===');
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`
+  );
 
   if (DRY_RUN) {
     console.log('🔍 Running in dry-run mode - no database updates will be performed\n');
@@ -166,12 +167,14 @@ async function fixTokenIds() {
       [NAME_WRAPPER_ADDRESS.toLowerCase(), BATCH_SIZE, offset]
     );
 
-    console.log(`Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`);
+    console.log(
+      `Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`
+    );
 
     // Process this batch in sub-batches for Graph queries
     for (let i = 0; i < result.rows.length; i += GRAPH_BATCH_SIZE) {
       const subBatch = result.rows.slice(i, i + GRAPH_BATCH_SIZE);
-      const names = subBatch.map(row => row.name);
+      const names = subBatch.map((row) => row.name);
 
       console.log(`  Querying Graph for ${names.length} names...`);
 
@@ -197,15 +200,18 @@ async function fixTokenIds() {
 
           // Check if token ID needs updating
           if (currentTokenId !== correctTokenId) {
-            const correctOwner = domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
-              ? domain.wrappedOwner.id?.toLowerCase()
-              : domain.owner.id?.toLowerCase();
+            const correctOwner =
+              domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()
+                ? domain.wrappedOwner.id?.toLowerCase()
+                : domain.owner.id?.toLowerCase();
 
             console.log(`  [UPDATE] ${name}`);
             console.log(`    Current:  ${currentTokenId}`);
             console.log(`    Correct:  ${correctTokenId}`);
             console.log(`    Owner:    ${correctOwner}`);
-            console.log(`    Wrapped:  ${domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()}`);
+            console.log(
+              `    Wrapped:  ${domain.owner.id.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()}`
+            );
 
             // Check if there's a placeholder name with the correct token_id
             const placeholderCheck = await pool.query(
@@ -216,7 +222,9 @@ async function fixTokenIds() {
             if (placeholderCheck.rows.length > 0) {
               const placeholderId = placeholderCheck.rows[0].id;
               const placeholderName = placeholderCheck.rows[0].name;
-              console.log(`    Found placeholder: ${placeholderName} (id: ${placeholderId}) with correct token_id`);
+              console.log(
+                `    Found placeholder: ${placeholderName} (id: ${placeholderId}) with correct token_id`
+              );
 
               // Update the database (only if not dry run)
               if (!DRY_RUN) {
@@ -225,26 +233,26 @@ async function fixTokenIds() {
 
                 try {
                   // Update foreign key references from placeholder to the real record
-                  await pool.query(
-                    'UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [id, placeholderId]
-                  );
-                  await pool.query(
-                    'UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [id, placeholderId]
-                  );
-                  await pool.query(
-                    'UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [id, placeholderId]
-                  );
+                  await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    id,
+                    placeholderId,
+                  ]);
+                  await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    id,
+                    placeholderId,
+                  ]);
+                  await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    id,
+                    placeholderId,
+                  ]);
                   await pool.query(
                     'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
                     [id, placeholderId]
                   );
-                  await pool.query(
-                    'UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2',
-                    [id, placeholderId]
-                  );
+                  await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                    id,
+                    placeholderId,
+                  ]);
 
                   // Delete the placeholder record
                   await pool.query('DELETE FROM ens_names WHERE id = $1', [placeholderId]);
@@ -263,7 +271,9 @@ async function fixTokenIds() {
                   throw txError;
                 }
               } else {
-                console.log(`    [DRY RUN] Would merge placeholder ${placeholderName} into ${name}`);
+                console.log(
+                  `    [DRY RUN] Would merge placeholder ${placeholderName} into ${name}`
+                );
                 console.log(`    [DRY RUN] Would update token_id and owner`);
               }
             } else {
@@ -284,7 +294,6 @@ async function fixTokenIds() {
           }
 
           processed++;
-
         } catch (error: any) {
           errors++;
           console.error(`  [ERROR] ${name} - ${error.message}`);
@@ -293,13 +302,15 @@ async function fixTokenIds() {
       }
 
       // Rate limit: small delay between Graph batch queries
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     offset += BATCH_SIZE;
 
     // Progress update
-    console.log(`\nProgress: ${processed}/${totalNames} (${Math.round((processed/totalNames)*100)}%)`);
+    console.log(
+      `\nProgress: ${processed}/${totalNames} (${Math.round((processed / totalNames) * 100)}%)`
+    );
     console.log(`Updated: ${updated} | Errors: ${errors} | Not Found: ${notFound}\n`);
   }
 

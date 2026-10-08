@@ -5,7 +5,9 @@ import { config } from '../../../shared/src';
 const OLD_REGISTRAR = '0x6090a6e47849629b7245dfa1ca21d94cd15878ef';
 const RECLAIM_SUBGRAPH_ID = '8zhr2kf1ka6B4sLmuhEzo8gQ7FTjay6DXQrefmRtNb8W';
 
-const HASH_REGISTERED_TOPIC0 = keccak256(toBytes('HashRegistered(bytes32,address,uint256,uint256)'));
+const HASH_REGISTERED_TOPIC0 = keccak256(
+  toBytes('HashRegistered(bytes32,address,uint256,uint256)')
+);
 const FROM_BLOCK = 3648534;
 const TO_BLOCK = 9380471;
 
@@ -95,7 +97,7 @@ async function queryEtherscanForDeeds(address: string): Promise<string[]> {
 
 async function getDeedAddressFromRegistrar(
   client: ReturnType<typeof createPublicClient>,
-  nameHash: string,
+  nameHash: string
 ): Promise<string | null> {
   try {
     const result = await client.readContract({
@@ -105,10 +107,7 @@ async function getDeedAddressFromRegistrar(
       args: [nameHash as `0x${string}`],
     });
     const deedAddress = (result as unknown as any[])[1] as string;
-    if (
-      deedAddress &&
-      deedAddress !== '0x0000000000000000000000000000000000000000'
-    ) {
+    if (deedAddress && deedAddress !== '0x0000000000000000000000000000000000000000') {
       return deedAddress;
     }
     return null;

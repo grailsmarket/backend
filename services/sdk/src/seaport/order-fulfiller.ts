@@ -9,11 +9,7 @@ import {
   BasicOrderType,
   ItemType,
 } from './types.js';
-import {
-  SEAPORT_ADDRESS,
-  DEFAULT_CONDUIT_KEY,
-  FULFILL_BASIC_ORDER_ABI,
-} from './constants.js';
+import { SEAPORT_ADDRESS, DEFAULT_CONDUIT_KEY, FULFILL_BASIC_ORDER_ABI } from './constants.js';
 
 /**
  * Extract Seaport parameters from various order data formats

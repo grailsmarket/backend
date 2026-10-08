@@ -90,7 +90,9 @@ function parseArgs(): Options {
       options.referrer = `0x${'0'.repeat(24)}${options.referrer.slice(2)}`;
     }
     if (!/^0x[0-9a-f]{64}$/.test(options.referrer)) {
-      console.error('Invalid --referrer value; expected 0x-prefixed 20-byte address or 32-byte referrer code');
+      console.error(
+        'Invalid --referrer value; expected 0x-prefixed 20-byte address or 32-byte referrer code'
+      );
       process.exit(1);
     }
   }
@@ -165,7 +167,9 @@ async function main() {
           AND src.registration_source IS NOT NULL${extraAliased}
       `);
       fixTotal = parseInt(fixCountResult.rows[0].total, 10);
-      console.log(`Found ${fixTotal} renewal activity records stamped 'blockchain' with a now-known referrer`);
+      console.log(
+        `Found ${fixTotal} renewal activity records stamped 'blockchain' with a now-known referrer`
+      );
     }
 
     if (options.dryRun) {
@@ -215,11 +219,11 @@ async function main() {
       const remaining = options.limit !== undefined ? options.limit - processed : undefined;
       if (remaining !== undefined && remaining <= 0) break;
 
-      const batchLimit = remaining !== undefined
-        ? Math.min(options.batchSize, remaining)
-        : options.batchSize;
+      const batchLimit =
+        remaining !== undefined ? Math.min(options.batchSize, remaining) : options.batchSize;
 
-      const batchResult = await pool.query(`
+      const batchResult = await pool.query(
+        `
         INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
@@ -255,12 +259,17 @@ async function main() {
             AND ah.transaction_hash = r.transaction_hash
         )
         RETURNING id
-      `, [lastId, batchLimit]);
+      `,
+        [lastId, batchLimit]
+      );
 
       // Get the actual max id from the batch to advance
-      const batchMaxResult = await pool.query(`
+      const batchMaxResult = await pool.query(
+        `
         SELECT id FROM renewals WHERE id > $1${extraBare} ORDER BY id ASC LIMIT $2
-      `, [lastId, batchLimit]);
+      `,
+        [lastId, batchLimit]
+      );
 
       if (batchMaxResult.rows.length === 0) break;
 
@@ -270,7 +279,9 @@ async function main() {
       processed += batchMaxResult.rows.length;
 
       if (options.verbose) {
-        console.log(`  Batch: processed=${batchMaxResult.rows.length}, inserted=${batchInserted}, lastId=${lastId}`);
+        console.log(
+          `  Batch: processed=${batchMaxResult.rows.length}, inserted=${batchInserted}, lastId=${lastId}`
+        );
       }
 
       if (batchMaxResult.rows.length < batchLimit) break;

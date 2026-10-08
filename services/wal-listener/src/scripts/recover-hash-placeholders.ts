@@ -15,6 +15,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -35,7 +36,9 @@ interface DomainData {
 }
 
 // Query The Graph for multiple domains by token IDs in a single batch
-async function queryGraphForNamesBatch(tokenIdHexArray: string[]): Promise<Map<string, DomainData>> {
+async function queryGraphForNamesBatch(
+  tokenIdHexArray: string[]
+): Promise<Map<string, DomainData>> {
   console.log(`    Querying The Graph for ${tokenIdHexArray.length} token IDs...`);
 
   const query = `
@@ -137,7 +140,7 @@ async function queryGraphForNamesBatch(tokenIdHexArray: string[]): Promise<Map<s
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverHashPlaceholders(options: {
@@ -204,7 +207,9 @@ async function recoverHashPlaceholders(options: {
     for (let i = 0; i < placeholders.length; i += batchSize) {
       const batch = placeholders.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`
+      );
 
       // Convert all token IDs in this batch to hex
       const tokenIdMap = new Map<string, PlaceholderRecord>();
@@ -233,10 +238,16 @@ async function recoverHashPlaceholders(options: {
         if (domainData) {
           console.log(`  ✅ ${placeholder.name} → ${domainData.name}`);
           console.log(`     Owner: ${domainData.owner || 'N/A'}`);
-          console.log(`     Expiry: ${domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000).toISOString() : 'N/A'}`);
+          console.log(
+            `     Expiry: ${domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000).toISOString() : 'N/A'}`
+          );
 
-          const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
-          const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
+          const expiryDate = domainData.expiryDate
+            ? new Date(parseInt(domainData.expiryDate) * 1000)
+            : null;
+          const registrationDate = domainData.registrationDate
+            ? new Date(parseInt(domainData.registrationDate) * 1000)
+            : null;
 
           if (!dryRun) {
             // Update database
@@ -256,7 +267,7 @@ async function recoverHashPlaceholders(options: {
                   expiryDate,
                   registrationDate,
                   JSON.stringify({ text_records: domainData.textRecords }),
-                  placeholder.id
+                  placeholder.id,
                 ]
               );
               recovered++;
@@ -268,7 +279,9 @@ async function recoverHashPlaceholders(options: {
             recovered++;
           }
         } else {
-          console.log(`  ⚠️  ${placeholder.name} - No result from The Graph (token: ${tokenIdHex.substring(0, 10)}...)`);
+          console.log(
+            `  ⚠️  ${placeholder.name} - No result from The Graph (token: ${tokenIdHex.substring(0, 10)}...)`
+          );
           skipped++;
         }
       }
@@ -295,7 +308,6 @@ async function recoverHashPlaceholders(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `hash-placeholder-recovery-${timestamp}.json`;
 
@@ -317,7 +329,6 @@ async function recoverHashPlaceholders(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);

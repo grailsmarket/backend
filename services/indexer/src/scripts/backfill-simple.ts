@@ -34,12 +34,14 @@ async function resolveTokenIds(tokenIds: string[]): Promise<Map<string, string |
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const labelhashes = tokenIds.map(id => {
+    const labelhashes = tokenIds.map((id) => {
       const hex = BigInt(id).toString(16).padStart(64, '0');
       return '0x' + hex;
     });
 
-    const graphUrl = process.env.GRAPH_ENS_SUBGRAPH_URL || 'https://api.thegraph.com/subgraphs/name/ensdomains/ens';
+    const graphUrl =
+      process.env.GRAPH_ENS_SUBGRAPH_URL ||
+      'https://api.thegraph.com/subgraphs/name/ensdomains/ens';
 
     const response = await fetch(graphUrl, {
       method: 'POST',
@@ -54,9 +56,9 @@ async function resolveTokenIds(tokenIds: string[]): Promise<Map<string, string |
             }
           }
         `,
-        variables: { labelhashes }
+        variables: { labelhashes },
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -79,11 +81,11 @@ async function resolveTokenIds(tokenIds: string[]): Promise<Map<string, string |
     for (let i = 0; i < tokenIds.length; i++) {
       const labelhash = labelhashes[i].toLowerCase();
       const domain = domainMap.get(labelhash);
-      results.set(tokenIds[i], domain ? (domain.name || domain.labelName || null) : null);
+      results.set(tokenIds[i], domain ? domain.name || domain.labelName || null : null);
     }
 
     return results;
-  } catch (error) {
+  } catch {
     clearTimeout(timeoutId);
     for (const id of tokenIds) results.set(id, null);
     return results;
@@ -106,9 +108,16 @@ async function backfill(batchSize: number, limit?: number) {
     const currentBatchSize = limit ? Math.min(batchSize, limit - stats.processed) : batchSize;
 
     // Fetch batch
-    const batchResult: any = lastId === null
-      ? await pool.query(`SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') ORDER BY id DESC LIMIT $1`, [currentBatchSize])
-      : await pool.query(`SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') AND id < $1 ORDER BY id DESC LIMIT $2`, [lastId, currentBatchSize]);
+    const batchResult: any =
+      lastId === null
+        ? await pool.query(
+            `SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') ORDER BY id DESC LIMIT $1`,
+            [currentBatchSize]
+          )
+        : await pool.query(
+            `SELECT id, token_id, name FROM ens_names WHERE (name LIKE 'token-%' OR name LIKE '[%].eth') AND id < $1 ORDER BY id DESC LIMIT $2`,
+            [lastId, currentBatchSize]
+          );
 
     const batch: any[] = batchResult.rows;
     if (batch.length === 0) break;
@@ -129,13 +138,19 @@ async function backfill(batchSize: number, limit?: number) {
           const hasNumbers = /\d/.test(name);
           const nameHasEmoji = hasEmoji(name);
 
-          const existing = await client.query('SELECT id FROM ens_names WHERE name = $1 AND id != $2', [name, row.id]);
+          const existing = await client.query(
+            'SELECT id FROM ens_names WHERE name = $1 AND id != $2',
+            [name, row.id]
+          );
 
           if (existing.rows.length > 0) {
             await client.query('DELETE FROM ens_names WHERE id = $1', [row.id]);
             stats.duplicates++;
           } else {
-            await client.query('UPDATE ens_names SET name = $1, has_numbers = $2, has_emoji = $3 WHERE id = $4', [name, hasNumbers, nameHasEmoji, row.id]);
+            await client.query(
+              'UPDATE ens_names SET name = $1, has_numbers = $2, has_emoji = $3 WHERE id = $4',
+              [name, hasNumbers, nameHasEmoji, row.id]
+            );
             stats.resolved++;
           }
         } else {
@@ -145,25 +160,29 @@ async function backfill(batchSize: number, limit?: number) {
       }
 
       await client.query('COMMIT');
-    } catch (error) {
+    } catch {
       await client.query('ROLLBACK');
       stats.failed += batch.length;
     } finally {
       client.release();
     }
 
-    console.log(`Batch ${batchNum}: ${stats.processed} processed | ${stats.resolved} resolved | ${stats.skipped} skipped | ${stats.duplicates} dupes`);
+    console.log(
+      `Batch ${batchNum}: ${stats.processed} processed | ${stats.resolved} resolved | ${stats.skipped} skipped | ${stats.duplicates} dupes`
+    );
 
     // Clear and wait
     batch.length = 0;
     resolved.clear();
 
     if (global.gc) global.gc();
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   console.log('\nDone!');
-  console.log(`Processed: ${stats.processed}, Resolved: ${stats.resolved}, Skipped: ${stats.skipped}, Duplicates: ${stats.duplicates}, Failed: ${stats.failed}`);
+  console.log(
+    `Processed: ${stats.processed}, Resolved: ${stats.resolved}, Skipped: ${stats.skipped}, Duplicates: ${stats.duplicates}, Failed: ${stats.failed}`
+  );
 }
 
 async function main() {
@@ -206,14 +225,14 @@ async function main() {
     console.error('Fatal error:', error);
     try {
       await pool.end();
-    } catch (e) {
+    } catch {
       // ignore
     }
     process.exit(1);
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Unhandled error:', err);
   process.exit(1);
 });

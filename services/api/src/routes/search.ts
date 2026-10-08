@@ -1,9 +1,23 @@
 import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, type APIResponse } from '../../../shared/src';
-import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
-import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
+import {
+  buildSearchResults,
+  createUnregisteredPlaceholder,
+  type SearchResult,
+} from '../utils/response-builder';
+import {
+  buildESFilters,
+  buildESSort,
+  calculateMinScore,
+  buildESQuery,
+} from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
-import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
+import {
+  fetchExportData,
+  exportRowsToCSV,
+  CSV_HEADERS,
+  MAX_EXPORT_ROWS,
+} from '../utils/csv-export';
 import { z } from 'zod';
 
 // Schema for bulk exact search request
@@ -26,90 +40,107 @@ const BulkFiltersSearchSchema = z.object({
   limit: z.number().int().min(1).max(100).optional().default(20),
 
   // Sorting
-  sortBy: z.enum([
-    'price', 'expiry_date', 'registration_date', 'creation_date', 'last_sale_date',
-    'last_sale_price', 'character_count', 'watchers_count', 'alphabetical', 'offer',
-    'listing_date', 'listing_expiry', 'google_monthly_searches', 'google_avg_cpc'
-  ]).optional(),
+  sortBy: z
+    .enum([
+      'price',
+      'expiry_date',
+      'registration_date',
+      'creation_date',
+      'last_sale_date',
+      'last_sale_price',
+      'character_count',
+      'watchers_count',
+      'alphabetical',
+      'offer',
+      'listing_date',
+      'listing_expiry',
+      'google_monthly_searches',
+      'google_avg_cpc',
+    ])
+    .optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 
   // Filters object (same structure as GET /search filters parameter)
-  filters: z.object({
-    // Price filters
-    minPrice: z.string().optional(),
-    maxPrice: z.string().optional(),
-    minOffer: z.string().optional(),
-    maxOffer: z.string().optional(),
+  filters: z
+    .object({
+      // Price filters
+      minPrice: z.string().optional(),
+      maxPrice: z.string().optional(),
+      minOffer: z.string().optional(),
+      maxOffer: z.string().optional(),
 
-    // Length filters
-    minLength: z.coerce.number().optional(),
-    maxLength: z.coerce.number().optional(),
+      // Length filters
+      minLength: z.coerce.number().optional(),
+      maxLength: z.coerce.number().optional(),
 
-    // Count filters (require PostgreSQL - not in ES index)
-    minWatchersCount: z.coerce.number().optional(),
-    maxWatchersCount: z.coerce.number().optional(),
-    minViewCount: z.coerce.number().optional(),
-    maxViewCount: z.coerce.number().optional(),
-    minClubsCount: z.coerce.number().optional(),
-    maxClubsCount: z.coerce.number().optional(),
+      // Count filters (require PostgreSQL - not in ES index)
+      minWatchersCount: z.coerce.number().optional(),
+      maxWatchersCount: z.coerce.number().optional(),
+      minViewCount: z.coerce.number().optional(),
+      maxViewCount: z.coerce.number().optional(),
+      minClubsCount: z.coerce.number().optional(),
+      maxClubsCount: z.coerce.number().optional(),
 
-    // Legacy character filters
-    hasNumbers: booleanString,
-    hasEmoji: booleanString,
+      // Legacy character filters
+      hasNumbers: booleanString,
+      hasEmoji: booleanString,
 
-    // Tri-state character filters
-    digits: z.enum(['include', 'exclude', 'only']).optional(),
-    letters: z.enum(['include', 'exclude', 'only']).optional(),
-    emoji: z.enum(['include', 'exclude', 'only']).optional(),
-    repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
+      // Tri-state character filters
+      digits: z.enum(['include', 'exclude', 'only']).optional(),
+      letters: z.enum(['include', 'exclude', 'only']).optional(),
+      emoji: z.enum(['include', 'exclude', 'only']).optional(),
+      repeatingChars: z.enum(['include', 'exclude', 'only']).optional(),
 
-    // String pattern filters
-    contains: z.string().optional(),
-    startsWith: z.string().optional(),
-    endsWith: z.string().optional(),
-    doesNotContain: z.string().optional(),
-    doesNotStartWith: z.string().optional(),
-    doesNotEndWith: z.string().optional(),
+      // String pattern filters
+      contains: z.string().optional(),
+      startsWith: z.string().optional(),
+      endsWith: z.string().optional(),
+      doesNotContain: z.string().optional(),
+      doesNotStartWith: z.string().optional(),
+      doesNotEndWith: z.string().optional(),
 
-    // Listing/market filters
-    listed: booleanString,
-    hasOffer: booleanString,
-    showListings: booleanString,
-    showUnlisted: booleanString,
-    marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
+      // Listing/market filters
+      listed: booleanString,
+      hasOffer: booleanString,
+      showListings: booleanString,
+      showUnlisted: booleanString,
+      marketplace: z.enum(['grails', 'opensea', 'all']).optional(),
 
-    // Club filters
-    clubs: z.array(z.string()).optional(),
-    excludeClubs: z.array(z.string()).optional(),
-    inAnyClub: booleanString,
+      // Club filters
+      clubs: z.array(z.string()).optional(),
+      excludeClubs: z.array(z.string()).optional(),
+      inAnyClub: booleanString,
 
-    // Unified status filter
-    status: z.union([
-      z.enum(['registered', 'grace', 'premium', 'available', 'all']),
-      z.array(z.enum(['registered', 'grace', 'premium', 'available', 'all']))
-    ]).optional(),
+      // Unified status filter
+      status: z
+        .union([
+          z.enum(['registered', 'grace', 'premium', 'available', 'all']),
+          z.array(z.enum(['registered', 'grace', 'premium', 'available', 'all'])),
+        ])
+        .optional(),
 
-    // Legacy expiration filters
-    isExpired: booleanString,
-    isGracePeriod: booleanString,
-    isPremiumPeriod: booleanString,
-    expiringWithinDays: z.coerce.number().optional(),
-    includeExpired: booleanString,
+      // Legacy expiration filters
+      isExpired: booleanString,
+      isGracePeriod: booleanString,
+      isPremiumPeriod: booleanString,
+      expiringWithinDays: z.coerce.number().optional(),
+      includeExpired: booleanString,
 
-    // Sale history filters
-    hasSales: booleanString,
-    lastSoldAfter: z.string().optional(),
-    lastSoldBefore: z.string().optional(),
-    minDaysSinceLastSale: z.coerce.number().optional(),
-    maxDaysSinceLastSale: z.coerce.number().optional(),
+      // Sale history filters
+      hasSales: booleanString,
+      lastSoldAfter: z.string().optional(),
+      lastSoldBefore: z.string().optional(),
+      minDaysSinceLastSale: z.coerce.number().optional(),
+      maxDaysSinceLastSale: z.coerce.number().optional(),
 
-    // Creation date filters
-    minCreationDate: z.string().optional(),
-    maxCreationDate: z.string().optional(),
+      // Creation date filters
+      minCreationDate: z.string().optional(),
+      maxCreationDate: z.string().optional(),
 
-    // Owner filter
-    owner: z.string().optional(),
-  }).optional(),
+      // Owner filter
+      owner: z.string().optional(),
+    })
+    .optional(),
 });
 
 // Placeholder result for terms not found in bulk exact search
@@ -182,7 +213,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
     const transformedQuery: any = {
       q: rawQuery.q || '',
       page: isExport ? 1 : parseInt(rawQuery.page || '1', 10),
-      limit: isExport ? Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS) : Math.min(requestedLimit, 100),
+      limit: isExport
+        ? Math.min(requestedLimit || MAX_EXPORT_ROWS, MAX_EXPORT_ROWS)
+        : Math.min(requestedLimit, 100),
       sortBy: rawQuery.sortBy,
       sortOrder: rawQuery.sortOrder,
       filters: {},
@@ -212,7 +245,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
               // Handle comma-separated values (e.g., "club1,club2" -> ["club1", "club2"])
               const stringValue = String(value);
               if (stringValue.includes(',')) {
-                const splitValues = stringValue.split(',').map(v => v.trim()).filter(v => v);
+                const splitValues = stringValue
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter((v) => v);
                 transformedQuery.filters[filterName].push(...splitValues);
               } else {
                 // Convert to string for clubs filter
@@ -232,7 +268,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
               // Special handling for status - support comma-separated values
               const stringValue = String(value);
               if (stringValue.includes(',')) {
-                transformedQuery.filters[filterName] = stringValue.split(',').map(v => v.trim()).filter(v => v);
+                transformedQuery.filters[filterName] = stringValue
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter((v) => v);
               } else {
                 transformedQuery.filters[filterName] = value;
               }
@@ -245,7 +284,55 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     const { q, page, limit, filters, sortBy, sortOrder } = transformedQuery;
-    const { minPrice, maxPrice, minOffer, maxOffer, minLength, maxLength, minWatchersCount, maxWatchersCount, minViewCount, maxViewCount, minClubsCount, maxClubsCount, hasEmoji, hasNumbers, showListings = false, showUnlisted = false, clubs, excludeClubs, inAnyClub, isExpired, isGracePeriod, isPremiumPeriod, expiringWithinDays, hasSales, lastSoldAfter, lastSoldBefore, minDaysSinceLastSale, maxDaysSinceLastSale, minCreationDate, maxCreationDate, owner, includeExpired = false, contains, startsWith, endsWith, doesNotContain, doesNotStartWith, doesNotEndWith, status, listed, hasOffer, digits, letters, emoji, repeatingChars, marketplace, uniqueSeller } = filters;
+    const {
+      minPrice,
+      maxPrice,
+      minOffer,
+      maxOffer,
+      minLength,
+      maxLength,
+      minWatchersCount,
+      maxWatchersCount,
+      minViewCount,
+      maxViewCount,
+      minClubsCount,
+      maxClubsCount,
+      hasEmoji,
+      hasNumbers,
+      showListings = false,
+      showUnlisted = false,
+      clubs,
+      excludeClubs,
+      inAnyClub,
+      isExpired,
+      isGracePeriod,
+      isPremiumPeriod,
+      expiringWithinDays,
+      hasSales,
+      lastSoldAfter,
+      lastSoldBefore,
+      minDaysSinceLastSale,
+      maxDaysSinceLastSale,
+      minCreationDate,
+      maxCreationDate,
+      owner,
+      includeExpired = false,
+      contains,
+      startsWith,
+      endsWith,
+      doesNotContain,
+      doesNotStartWith,
+      doesNotEndWith,
+      status,
+      listed,
+      hasOffer,
+      digits,
+      letters,
+      emoji,
+      repeatingChars,
+      marketplace,
+      uniqueSeller,
+    } = filters;
     const from = (page - 1) * limit;
 
     // Resolve owner filter - can be either address or ENS name
@@ -270,9 +357,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
           if (resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address) {
             resolvedOwnerAddress = resolveResult.rows[0].owner_address.toLowerCase();
-            fastify.log.info(`Owner filter: ENS name="${owner}" resolved to address="${resolvedOwnerAddress}"`);
+            fastify.log.info(
+              `Owner filter: ENS name="${owner}" resolved to address="${resolvedOwnerAddress}"`
+            );
           } else {
-            fastify.log.warn(`Owner filter: ENS name="${owner}" not found in database, will return no results`);
+            fastify.log.warn(
+              `Owner filter: ENS name="${owner}" not found in database, will return no results`
+            );
             // Set to a non-existent address so query returns empty results
             resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
           }
@@ -284,24 +375,36 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
     }
 
-    fastify.log.info(`Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, inAnyClub=${inAnyClub}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}, uniqueSeller=${uniqueSeller}`);
+    fastify.log.info(
+      `Search request: q="${q}", page=${page}, limit=${limit}, minLength=${minLength}, maxLength=${maxLength}, hasEmoji=${hasEmoji}, hasNumbers=${hasNumbers}, showListings=${showListings}, showUnlisted=${showUnlisted}, clubs=${Array.isArray(clubs) ? clubs.join(',') : clubs}, inAnyClub=${inAnyClub}, isExpired=${isExpired}, isGracePeriod=${isGracePeriod}, isPremiumPeriod=${isPremiumPeriod}, expiringWithinDays=${expiringWithinDays}, hasSales=${hasSales}, owner=${owner}, resolvedOwner=${resolvedOwnerAddress}, sortBy=${sortBy}, uniqueSeller=${uniqueSeller}`
+    );
 
     // Try Elasticsearch first, but fall back to PostgreSQL if it fails
     // Also force PostgreSQL for sorts/filters that don't exist in Elasticsearch
-    let usePostgresql = sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count';
+    let usePostgresql =
+      sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count';
 
     // Force PostgreSQL for count filters since these fields are not in ES index
-    if (minWatchersCount !== undefined || maxWatchersCount !== undefined ||
-        minViewCount !== undefined || maxViewCount !== undefined ||
-        minClubsCount !== undefined || maxClubsCount !== undefined) {
+    if (
+      minWatchersCount !== undefined ||
+      maxWatchersCount !== undefined ||
+      minViewCount !== undefined ||
+      maxViewCount !== undefined ||
+      minClubsCount !== undefined ||
+      maxClubsCount !== undefined
+    ) {
       usePostgresql = true;
-      fastify.log.info('Forcing PostgreSQL because count filters are used (not available in Elasticsearch)');
+      fastify.log.info(
+        'Forcing PostgreSQL because count filters are used (not available in Elasticsearch)'
+      );
     }
 
     // Force PostgreSQL for marketplace filter since 'source' is not in ES index
     if (marketplace && marketplace !== 'all') {
       usePostgresql = true;
-      fastify.log.info(`Forcing PostgreSQL because marketplace filter="${marketplace}" (source not in Elasticsearch)`);
+      fastify.log.info(
+        `Forcing PostgreSQL because marketplace filter="${marketplace}" (source not in Elasticsearch)`
+      );
     }
 
     // Force PostgreSQL for uniqueSeller filter - requires CTE with ROW_NUMBER()
@@ -313,8 +416,12 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     // Validate and force PostgreSQL for ranking sort
     if (sortBy === 'ranking') {
-      const isValidClubForRanking = clubs && Array.isArray(clubs) && clubs.length === 1
-        && !clubs.includes('any') && !clubs.includes('none');
+      const isValidClubForRanking =
+        clubs &&
+        Array.isArray(clubs) &&
+        clubs.length === 1 &&
+        !clubs.includes('any') &&
+        !clubs.includes('none');
 
       if (!isValidClubForRanking) {
         return reply.status(400).send({
@@ -328,27 +435,37 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
 
       usePostgresql = true;
-      fastify.log.info('Forcing PostgreSQL because sortBy=ranking (requires club_memberships JOIN)');
+      fastify.log.info(
+        'Forcing PostgreSQL because sortBy=ranking (requires club_memberships JOIN)'
+      );
     }
 
     // Force PostgreSQL for specific club filters (to include unregistered names from club_memberships)
-    const hasSpecificClubs = Array.isArray(clubs) && clubs.length > 0
-      && !clubs.includes('any') && !clubs.includes('none');
+    const hasSpecificClubs =
+      Array.isArray(clubs) && clubs.length > 0 && !clubs.includes('any') && !clubs.includes('none');
     if (hasSpecificClubs && !usePostgresql) {
       usePostgresql = true;
-      fastify.log.info('Forcing PostgreSQL because specific clubs filter is active (includes unregistered club members)');
+      fastify.log.info(
+        'Forcing PostgreSQL because specific clubs filter is active (includes unregistered club members)'
+      );
     }
 
     if (usePostgresql && sortBy === 'watchers_count') {
-      fastify.log.info('Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)');
+      fastify.log.info(
+        'Forcing PostgreSQL because sortBy=watchers_count (not available in Elasticsearch)'
+      );
     }
 
     if (usePostgresql && sortBy === 'view_count') {
-      fastify.log.info('Forcing PostgreSQL because sortBy=view_count (not available in Elasticsearch)');
+      fastify.log.info(
+        'Forcing PostgreSQL because sortBy=view_count (not available in Elasticsearch)'
+      );
     }
 
     if (usePostgresql && sortBy === 'clubs_count') {
-      fastify.log.info('Forcing PostgreSQL because sortBy=clubs_count (not available in Elasticsearch)');
+      fastify.log.info(
+        'Forcing PostgreSQL because sortBy=clubs_count (not available in Elasticsearch)'
+      );
     }
 
     // Build Elasticsearch query using shared utility
@@ -423,7 +540,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
     // Debug logging for price sort
     if (sortBy === 'price') {
-      fastify.log.info(`Price sort query - sortBy: ${sortBy}, sortOrder: ${sortOrder}, showListings: ${showListings}`);
+      fastify.log.info(
+        `Price sort query - sortBy: ${sortBy}, sortOrder: ${sortOrder}, showListings: ${showListings}`
+      );
       fastify.log.info(`ES Query: ${JSON.stringify(esQuery, null, 2)}`);
     }
 
@@ -431,101 +550,110 @@ export async function searchRoutes(fastify: FastifyInstance) {
       try {
         const esResult = await es.search(esQuery);
 
-      fastify.log.info('Elasticsearch returned results');
+        fastify.log.info('Elasticsearch returned results');
 
-      // Extract ENS names from Elasticsearch results
-      const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
+        // Extract ENS names from Elasticsearch results
+        const allNames = esResult.hits.hits.map((hit: any) => hit._source.name);
 
-      // Filter out placeholder names (token-### and [hash].eth)
-      // Note: Numeric names like 0000.eth are valid ENS names (999 club, 10k club, etc.)
-      const ensNames = allNames.filter((name: string) => {
-        return name && !name.startsWith('token-') && !name.startsWith('[');
-      });
+        // Filter out placeholder names (token-### and [hash].eth)
+        // Note: Numeric names like 0000.eth are valid ENS names (999 club, 10k club, etc.)
+        const ensNames = allNames.filter((name: string) => {
+          return name && !name.startsWith('token-') && !name.startsWith('[');
+        });
 
-      fastify.log.info(`ES returned ${allNames.length} names, ${ensNames.length} after filtering placeholders. First 5: ${JSON.stringify(ensNames.slice(0, 5))}`);
+        fastify.log.info(
+          `ES returned ${allNames.length} names, ${ensNames.length} after filtering placeholders. First 5: ${JSON.stringify(ensNames.slice(0, 5))}`
+        );
 
-      if (ensNames.length === 0) {
-        fastify.log.info('No ES results found');
+        if (ensNames.length === 0) {
+          fastify.log.info('No ES results found');
 
-        // Handle export mode - return empty CSV with headers
-        if (isExport) {
-          reply.header('Content-Type', 'text/csv');
-          reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
-          return reply.send(CSV_HEADERS.join(',') + '\n');
+          // Handle export mode - return empty CSV with headers
+          if (isExport) {
+            reply.header('Content-Type', 'text/csv');
+            reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+            return reply.send(CSV_HEADERS.join(',') + '\n');
+          }
+
+          return reply.send({
+            success: true,
+            data: {
+              results: [],
+              pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total: 0,
+                totalPages: 0,
+                hasNext: false,
+                hasPrev: false,
+              },
+            },
+            meta: {
+              timestamp: new Date().toISOString(),
+              version: '1.0.0',
+            },
+          });
         }
 
-        return reply.send({
-          success: true,
-          data: {
-            results: [],
-            pagination: {
-              page: parseInt(page),
-              limit: parseInt(limit),
-              total: 0,
-              totalPages: 0,
-              hasNext: false,
-              hasPrev: false,
+        // Handle export mode - use fast lightweight query instead of buildSearchResults
+        if (isExport) {
+          const exportRows = await fetchExportData(pool, ensNames);
+          const csvContent = await exportRowsToCSV(exportRows);
+          reply.header('Content-Type', 'text/csv');
+          reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
+          return reply.send(csvContent);
+        }
+
+        // Get user ID if authenticated
+        const userId = request.user ? parseInt(request.user.sub) : undefined;
+
+        // Build search results using shared utility
+        const results = await buildSearchResults(ensNames, userId);
+
+        fastify.log.info(
+          `buildSearchResults returned ${results.length} results from ${ensNames.length} names`
+        );
+
+        // If Elasticsearch returned names but PostgreSQL has none of them,
+        // it means ES has stale data. Fall back to PostgreSQL.
+        if (results.length === 0 && ensNames.length > 0) {
+          fastify.log.warn(
+            `Elasticsearch returned ${ensNames.length} names but PostgreSQL has none of them. Falling back to PostgreSQL for this query.`
+          );
+          usePostgresql = true;
+        } else {
+          const currentPage = parseInt(page);
+          const pageLimit = parseInt(limit);
+          const total =
+            typeof esResult.hits.total === 'object'
+              ? esResult.hits.total.value
+              : esResult.hits.total || 0;
+          const totalPages = Math.ceil(total / pageLimit);
+
+          const response: APIResponse<{
+            results: any[];
+            pagination: any;
+          }> = {
+            success: true,
+            data: {
+              results,
+              pagination: {
+                page: currentPage,
+                limit: pageLimit,
+                total,
+                totalPages,
+                hasNext: currentPage < totalPages,
+                hasPrev: currentPage > 1,
+              },
             },
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-            version: '1.0.0',
-          },
-        });
-      }
-
-      // Handle export mode - use fast lightweight query instead of buildSearchResults
-      if (isExport) {
-        const exportRows = await fetchExportData(pool, ensNames);
-        const csvContent = await exportRowsToCSV(exportRows);
-        reply.header('Content-Type', 'text/csv');
-        reply.header('Content-Disposition', `attachment; filename="${filename}.csv"`);
-        return reply.send(csvContent);
-      }
-
-      // Get user ID if authenticated
-      const userId = request.user ? parseInt(request.user.sub) : undefined;
-
-      // Build search results using shared utility
-      const results = await buildSearchResults(ensNames, userId);
-
-      fastify.log.info(`buildSearchResults returned ${results.length} results from ${ensNames.length} names`);
-
-      // If Elasticsearch returned names but PostgreSQL has none of them,
-      // it means ES has stale data. Fall back to PostgreSQL.
-      if (results.length === 0 && ensNames.length > 0) {
-        fastify.log.warn(`Elasticsearch returned ${ensNames.length} names but PostgreSQL has none of them. Falling back to PostgreSQL for this query.`);
-        usePostgresql = true;
-      } else {
-        const currentPage = parseInt(page);
-        const pageLimit = parseInt(limit);
-        const total = typeof esResult.hits.total === 'object' ? esResult.hits.total.value : (esResult.hits.total || 0);
-        const totalPages = Math.ceil(total / pageLimit);
-
-        const response: APIResponse<{
-          results: any[];
-          pagination: any;
-        }> = {
-          success: true,
-          data: {
-            results,
-            pagination: {
-              page: currentPage,
-              limit: pageLimit,
-              total,
-              totalPages,
-              hasNext: currentPage < totalPages,
-              hasPrev: currentPage > 1,
+            meta: {
+              timestamp: new Date().toISOString(),
+              version: '1.0.0',
             },
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-            version: '1.0.0',
-          },
-        };
+          };
 
-        return reply.send(response);
-      }
+          return reply.send(response);
+        }
       } catch (error: any) {
         fastify.log.warn('Elasticsearch search failed, falling back to PostgreSQL:', error.message);
         usePostgresql = true;
@@ -533,16 +661,21 @@ export async function searchRoutes(fastify: FastifyInstance) {
     }
 
     if (usePostgresql) {
-
       // Fallback to PostgreSQL-based search
       // Unified listed filter: true = only listed, false = only unlisted
       // Legacy showListings/showUnlisted kept for backward compatibility
       // Marketplace filter implies listingsOnly since it filters by listing source
       const hasMarketplaceFilter = marketplace && marketplace !== 'all';
-      const listingsOnly = listed === 'true' || listed === true || showListings === true || showListings === 'true' || hasMarketplaceFilter;
-      const unlistedOnly = listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true';
-      let whereConditions: string[] = [];
-      let params: any[] = [];
+      const listingsOnly =
+        listed === 'true' ||
+        listed === true ||
+        showListings === true ||
+        showListings === 'true' ||
+        hasMarketplaceFilter;
+      const unlistedOnly =
+        listed === 'false' || listed === false || showUnlisted === true || showUnlisted === 'true';
+      const whereConditions: string[] = [];
+      const params: any[] = [];
       let paramCount = 1;
 
       // Determine when to apply the "exclude premium/available" filter (PostgreSQL path)
@@ -557,7 +690,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Skip the filter when:
       // - includeExpired is explicitly true
       // - explicit expiration/status filters are set (user knows what they want)
-      const pgHasExplicitStatusFilter = status !== undefined &&
+      const pgHasExplicitStatusFilter =
+        status !== undefined &&
         (Array.isArray(status) ? status.length > 0 && !status.includes('all') : status !== 'all');
       const pgHasExplicitExpirationFilter = pgHasExplicitStatusFilter;
 
@@ -566,10 +700,16 @@ export async function searchRoutes(fastify: FastifyInstance) {
         includeExpired !== true &&
         includeExpired !== 'true' &&
         !pgHasExplicitExpirationFilter &&
-        (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry');
+        (resolvedOwnerAddress ||
+          sortBy === 'expiry_date' ||
+          sortBy === 'price' ||
+          sortBy === 'listing_date' ||
+          sortBy === 'listing_expiry');
 
       if (pgShouldExcludePremiumAvailable) {
-        whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+        whereConditions.push(
+          `(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`
+        );
       }
 
       // When specific clubs are active, name-pattern filters reference cm.ens_name
@@ -608,11 +748,15 @@ export async function searchRoutes(fastify: FastifyInstance) {
         whereConditions.push(`(l.id IS NULL OR l.status != 'active')`);
       }
 
-      fastify.log.info(`Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
+      fastify.log.info(
+        `Using PostgreSQL fallback, query="${q}", showListings=${listingsOnly}, showUnlisted=${unlistedOnly}, sortBy=${sortBy}, sortOrder=${sortOrder}`
+      );
 
       // Add unified status filter - supports single value or array (OR logic for multiple)
       if (status && status !== 'all') {
-        const statuses = Array.isArray(status) ? status.filter((s: string) => s !== 'all') : [status];
+        const statuses = Array.isArray(status)
+          ? status.filter((s: string) => s !== 'all')
+          : [status];
 
         // Helper to build SQL condition for a single status
         const buildStatusCondition = (s: string): string | null => {
@@ -689,12 +833,16 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add watchers count filters
       if (minWatchersCount !== undefined) {
-        whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`);
+        whereConditions.push(
+          `(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) >= $${paramCount}`
+        );
         params.push(parseInt(String(minWatchersCount)));
         paramCount++;
       }
       if (maxWatchersCount !== undefined) {
-        whereConditions.push(`(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`);
+        whereConditions.push(
+          `(SELECT COUNT(DISTINCT user_id) FROM watchlist WHERE ens_name_id = en.id) <= $${paramCount}`
+        );
         params.push(parseInt(String(maxWatchersCount)));
         paramCount++;
       }
@@ -767,9 +915,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       // Add hasOffer filter
       if (hasOffer === 'true' || hasOffer === true) {
-        whereConditions.push(`en.highest_offer_wei IS NOT NULL AND CAST(en.highest_offer_wei AS NUMERIC) > 0`);
+        whereConditions.push(
+          `en.highest_offer_wei IS NOT NULL AND CAST(en.highest_offer_wei AS NUMERIC) > 0`
+        );
       } else if (hasOffer === 'false' || hasOffer === false) {
-        whereConditions.push(`(en.highest_offer_wei IS NULL OR CAST(en.highest_offer_wei AS NUMERIC) <= 0)`);
+        whereConditions.push(
+          `(en.highest_offer_wei IS NULL OR CAST(en.highest_offer_wei AS NUMERIC) <= 0)`
+        );
       }
 
       // Add offer amount filters
@@ -930,7 +1082,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       }
 
       // Build ORDER BY clause based on sortBy parameter
-      let orderByClause = '';
+      let orderByClause: string;
       const order = sortOrder || (sortBy === 'ranking' ? 'asc' : 'desc');
       const sqlOrder = order.toUpperCase();
 
@@ -982,9 +1134,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // When uniqueSeller is enabled, count unique sellers instead of unique names
       let countQuery: string;
       // When hasSpecificClubs + ranking, we already have cm from club-based FROM; use cm.rank directly
-      const rankingJoin = sortBy === 'ranking' && !hasSpecificClubs
-        ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}`
-        : '';
+      const rankingJoin =
+        sortBy === 'ranking' && !hasSpecificClubs
+          ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}`
+          : '';
       // Club-based FROM clauses
       const clubFromBase = `club_memberships cm LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)`;
       const clubFromWithListings = `club_memberships cm JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) JOIN listings l ON l.ens_name_id = en.id`;
@@ -1022,7 +1175,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Build SELECT clause - need to include sort column when using DISTINCT
       // PostgreSQL requires ORDER BY columns to be in SELECT list when using DISTINCT
       // When hasSpecificClubs, include is_registered flag for placeholder detection
-      const nameSelect = hasSpecificClubs ? `${nameCol} as name, (en.id IS NOT NULL) as is_registered` : 'DISTINCT en.name';
+      const nameSelect = hasSpecificClubs
+        ? `${nameCol} as name, (en.id IS NOT NULL) as is_registered`
+        : 'DISTINCT en.name';
       let selectClause = nameSelect;
       let watchersJoin = '';
       if (sortBy === 'watchers_count') {
@@ -1103,7 +1258,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
         // Only include listings JOIN when sort or filter actually needs listing columns.
         // Otherwise the JOIN creates duplicate rows for names with multiple active listings,
         // causing LIMIT to return fewer unique names than expected after dedup.
-        const clubNeedsListingsJoin = sortBy === 'listing_date' || sortBy === 'listing_expiry' || unlistedOnly;
+        const clubNeedsListingsJoin =
+          sortBy === 'listing_date' || sortBy === 'listing_expiry' || unlistedOnly;
         dataQuery = `
           SELECT ${selectClause}
           FROM ${clubFromBase}
@@ -1118,7 +1274,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         dataQuery = `
           SELECT ${selectClause}
           FROM ens_names en
-          ${(sortBy === 'price' || sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count') ? '' : 'LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = \'active\''}
+          ${sortBy === 'price' || sortBy === 'watchers_count' || sortBy === 'view_count' || sortBy === 'clubs_count' ? '' : "LEFT JOIN listings l ON l.ens_name_id = en.id AND l.status = 'active'"}
           ${watchersJoin}
           ${rankingJoin}
           WHERE ${whereClause}
@@ -1173,16 +1329,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
           // Build full results for registered names
           const registeredResults = await buildSearchResults(registeredNames, userId);
-          const registeredMap = new Map(
-            registeredResults.map(r => [r.name.toLowerCase(), r])
-          );
+          const registeredMap = new Map(registeredResults.map((r) => [r.name.toLowerCase(), r]));
 
           // Fetch clubs for unregistered names to populate placeholders accurately
           const unregisteredNames = uniqueRows
             .filter((row: any) => !row.is_registered)
             .map((row: any) => row.name);
 
-          let unregisteredClubsMap = new Map<string, string[]>();
+          const unregisteredClubsMap = new Map<string, string[]>();
           if (unregisteredNames.length > 0) {
             const clubsResult = await pool.query(
               `SELECT ens_name, array_agg(club_name) as clubs
@@ -1197,25 +1351,33 @@ export async function searchRoutes(fastify: FastifyInstance) {
           }
 
           // Merge in query order: registered → lookup from map, unregistered → placeholder
-          results = uniqueRows.map((row: any) => {
-            if (row.is_registered) {
-              return registeredMap.get(row.name.toLowerCase());
-            } else {
-              const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || clubs;
-              return createUnregisteredPlaceholder(row.name, nameClubs);
-            }
-          }).filter((r): r is SearchResult => r !== undefined);
+          results = uniqueRows
+            .map((row: any) => {
+              if (row.is_registered) {
+                return registeredMap.get(row.name.toLowerCase());
+              } else {
+                const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || clubs;
+                return createUnregisteredPlaceholder(row.name, nameClubs);
+              }
+            })
+            .filter((r): r is SearchResult => r !== undefined);
         } else {
           // Standard path: all names are registered
           results = await buildSearchResults(allNames, userId);
         }
 
-        fastify.log.info(`PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(allNames.slice(0, 5))}`);
+        fastify.log.info(
+          `PostgreSQL returned ${dataResult.rows.length} rows. First 5 names: ${JSON.stringify(allNames.slice(0, 5))}`
+        );
         if (sortBy === 'price') {
-          const sortValues = dataResult.rows.slice(0, 5).map((row: any) => row.sort_value || row.price_wei);
+          const sortValues = dataResult.rows
+            .slice(0, 5)
+            .map((row: any) => row.sort_value || row.price_wei);
           fastify.log.info(`First 5 sort values for price: ${JSON.stringify(sortValues)}`);
         }
-        fastify.log.info(`Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`);
+        fastify.log.info(
+          `Pagination: page=${currentPage}, limit=${limit}, total=${total}, totalPages=${totalPages}, hasNext=${currentPage < totalPages}`
+        );
 
         return reply.send({
           success: true,
@@ -1236,7 +1398,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
           },
         });
       } catch (pgError: any) {
-        fastify.log.error({ error: pgError, query: dataQuery, params }, 'PostgreSQL fallback search also failed');
+        fastify.log.error(
+          { error: pgError, query: dataQuery, params },
+          'PostgreSQL fallback search also failed'
+        );
         return reply.status(500).send({
           success: false,
           error: {
@@ -1279,10 +1444,12 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Paginate the input terms
       const paginatedTerms = terms.slice(offset, offset + limit);
 
-      fastify.log.info(`Bulk exact search request: ${total} total terms, page ${page}/${totalPages}, showing ${paginatedTerms.length} terms`);
+      fastify.log.info(
+        `Bulk exact search request: ${total} total terms, page ${page}/${totalPages}, showing ${paginatedTerms.length} terms`
+      );
 
       // Normalize terms - add .eth suffix if not present for exact matching
-      const normalizedTerms = paginatedTerms.map(term => {
+      const normalizedTerms = paginatedTerms.map((term) => {
         const lower = term.toLowerCase().trim();
         return lower.endsWith('.eth') ? lower : `${lower}.eth`;
       });
@@ -1323,7 +1490,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
         foundNames = esResult.hits.hits.map((hit: any) => hit._source.name.toLowerCase());
         fastify.log.info(`Elasticsearch found ${foundNames.length} exact matches`);
       } catch (esError: any) {
-        fastify.log.warn('Elasticsearch bulk exact search failed, falling back to PostgreSQL:', esError.message);
+        fastify.log.warn(
+          'Elasticsearch bulk exact search failed, falling back to PostgreSQL:',
+          esError.message
+        );
 
         // Fallback to PostgreSQL
         const placeholders = normalizedTerms.map((_, i) => `$${i + 1}`).join(',');
@@ -1346,9 +1516,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
       const userId = request.user ? parseInt(request.user.sub) : undefined;
 
       // Build enriched results for found names
-      const enrichedResults = foundNames.length > 0
-        ? await buildSearchResults(foundNames, userId)
-        : [];
+      const enrichedResults =
+        foundNames.length > 0 ? await buildSearchResults(foundNames, userId) : [];
 
       // Create a map of name -> enriched result for quick lookup
       const resultsMap = new Map<string, SearchResult>();
@@ -1431,10 +1600,12 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
       const { terms, page, limit, sortBy, sortOrder, filters = {} } = parseResult.data;
 
-      fastify.log.info(`Bulk filters search request: ${terms.length} terms, page ${page}, limit ${limit}, sortBy=${sortBy}, sortOrder=${sortOrder}`);
+      fastify.log.info(
+        `Bulk filters search request: ${terms.length} terms, page ${page}, limit ${limit}, sortBy=${sortBy}, sortOrder=${sortOrder}`
+      );
 
       // Normalize terms - add .eth suffix if not present
-      const normalizedTerms = terms.map(term => {
+      const normalizedTerms = terms.map((term) => {
         const lower = term.toLowerCase().trim();
         return lower.endsWith('.eth') ? lower : `${lower}.eth`;
       });
@@ -1458,9 +1629,13 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
             if (resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address) {
               resolvedOwnerAddress = resolveResult.rows[0].owner_address.toLowerCase();
-              fastify.log.info(`Bulk filters owner filter: ENS name="${filters.owner}" resolved to address="${resolvedOwnerAddress}"`);
+              fastify.log.info(
+                `Bulk filters owner filter: ENS name="${filters.owner}" resolved to address="${resolvedOwnerAddress}"`
+              );
             } else {
-              fastify.log.warn(`Bulk filters owner filter: ENS name="${filters.owner}" not found, will return no results`);
+              fastify.log.warn(
+                `Bulk filters owner filter: ENS name="${filters.owner}" not found, will return no results`
+              );
               resolvedOwnerAddress = '0x0000000000000000000000000000000000000000';
             }
           } catch (error: any) {
@@ -1474,7 +1649,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
       let usePostgresql = sortBy === 'watchers_count';
       if (filters.marketplace && filters.marketplace !== 'all') {
         usePostgresql = true;
-        fastify.log.info(`Bulk filters: Forcing PostgreSQL because marketplace filter="${filters.marketplace}"`);
+        fastify.log.info(
+          `Bulk filters: Forcing PostgreSQL because marketplace filter="${filters.marketplace}"`
+        );
       }
 
       // Try Elasticsearch first
@@ -1533,11 +1710,14 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
           // Extract names from ES results
           const foundNames = esResult.hits.hits.map((hit: any) => hit._source.name);
-          const total = typeof esResult.hits.total === 'object'
-            ? esResult.hits.total.value
-            : (esResult.hits.total || 0);
+          const total =
+            typeof esResult.hits.total === 'object'
+              ? esResult.hits.total.value
+              : esResult.hits.total || 0;
 
-          fastify.log.info(`Bulk filters ES search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`);
+          fastify.log.info(
+            `Bulk filters ES search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`
+          );
 
           // Handle empty results
           if (foundNames.length === 0) {
@@ -1573,7 +1753,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
           // If ES returned names but PostgreSQL has none, fall back to PostgreSQL
           if (results.length === 0 && foundNames.length > 0) {
-            fastify.log.warn(`Bulk filters: ES returned ${foundNames.length} names but PostgreSQL has none. Falling back to PostgreSQL.`);
+            fastify.log.warn(
+              `Bulk filters: ES returned ${foundNames.length} names but PostgreSQL has none. Falling back to PostgreSQL.`
+            );
             usePostgresql = true;
           } else {
             const totalPages = Math.ceil(total / limit);
@@ -1608,7 +1790,10 @@ export async function searchRoutes(fastify: FastifyInstance) {
             return reply.send(response);
           }
         } catch (error: any) {
-          fastify.log.warn('Bulk filters ES search failed, falling back to PostgreSQL:', error.message);
+          fastify.log.warn(
+            'Bulk filters ES search failed, falling back to PostgreSQL:',
+            error.message
+          );
           usePostgresql = true;
         }
       }
@@ -1633,11 +1818,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
 
         // Listing filters
         const hasMarketplaceFilter = filters.marketplace && filters.marketplace !== 'all';
-        const listingsOnly = filters.listed === 'true' || filters.listed === true ||
-                            filters.showListings === 'true' || filters.showListings === true ||
-                            hasMarketplaceFilter;
-        const unlistedOnly = filters.listed === 'false' || filters.listed === false ||
-                            filters.showUnlisted === 'true' || filters.showUnlisted === true;
+        const listingsOnly =
+          filters.listed === 'true' ||
+          filters.listed === true ||
+          filters.showListings === 'true' ||
+          filters.showListings === true ||
+          hasMarketplaceFilter;
+        const unlistedOnly =
+          filters.listed === 'false' ||
+          filters.listed === false ||
+          filters.showUnlisted === 'true' ||
+          filters.showUnlisted === true;
 
         if (listingsOnly) {
           whereConditions.push(`l.status = 'active'`);
@@ -1714,9 +1905,16 @@ export async function searchRoutes(fastify: FastifyInstance) {
           const statusConditions: string[] = [];
           for (const s of statuses) {
             if (s === 'registered') statusConditions.push(`en.expiry_date > NOW()`);
-            else if (s === 'grace') statusConditions.push(`(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`);
-            else if (s === 'premium') statusConditions.push(`(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`);
-            else if (s === 'available') statusConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+            else if (s === 'grace')
+              statusConditions.push(
+                `(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`
+              );
+            else if (s === 'premium')
+              statusConditions.push(
+                `(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`
+              );
+            else if (s === 'available')
+              statusConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
           }
           if (statusConditions.length > 0) {
             whereConditions.push(`(${statusConditions.join(' OR ')})`);
@@ -1730,7 +1928,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         }
 
         if (filters.expiringWithinDays) {
-          whereConditions.push(`en.expiry_date > NOW() AND en.expiry_date <= NOW() + INTERVAL '${parseInt(String(filters.expiringWithinDays))} days'`);
+          whereConditions.push(
+            `en.expiry_date > NOW() AND en.expiry_date <= NOW() + INTERVAL '${parseInt(String(filters.expiringWithinDays))} days'`
+          );
         }
 
         // Owner filter
@@ -1786,7 +1986,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
           }
         }
 
-        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+        const whereClause =
+          whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
         const offset = (page - 1) * limit;
 
         // Count query
@@ -1818,7 +2019,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const totalPages = Math.ceil(total / limit);
         const foundNames = dataResult.rows.map((row: any) => row.name);
 
-        fastify.log.info(`Bulk filters PostgreSQL search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`);
+        fastify.log.info(
+          `Bulk filters PostgreSQL search: ${foundNames.length} results from ${terms.length} input terms, total=${total}`
+        );
 
         // Handle empty results
         if (foundNames.length === 0) {

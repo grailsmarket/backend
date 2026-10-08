@@ -97,11 +97,14 @@ export async function poapRoutes(fastify: FastifyInstance) {
 
         const claimedLink = claimResult.rows[0];
 
-        fastify.log.info({
-          userId,
-          poapLinkId: claimedLink.id,
-          claimedAt: claimedLink.claimed_at,
-        }, 'User claimed POAP link');
+        fastify.log.info(
+          {
+            userId,
+            poapLinkId: claimedLink.id,
+            claimedAt: claimedLink.claimed_at,
+          },
+          'User claimed POAP link'
+        );
 
         const response: APIResponse<{ link: string; claimed_at: string }> = {
           success: true,
@@ -116,19 +119,20 @@ export async function poapRoutes(fastify: FastifyInstance) {
         };
 
         return reply.send(response);
-
       } catch (error) {
         await client.query('ROLLBACK');
         throw error;
       } finally {
         client.release();
       }
-
     } catch (error: any) {
-      fastify.log.error({
-        error: error.message,
-        userId,
-      }, 'Failed to claim POAP link');
+      fastify.log.error(
+        {
+          error: error.message,
+          userId,
+        },
+        'Failed to claim POAP link'
+      );
 
       return reply.status(500).send({
         success: false,
@@ -195,12 +199,14 @@ export async function poapRoutes(fastify: FastifyInstance) {
       };
 
       return reply.send(response);
-
     } catch (error: any) {
-      fastify.log.error({
-        error: error.message,
-        userId,
-      }, 'Failed to check POAP status');
+      fastify.log.error(
+        {
+          error: error.message,
+          userId,
+        },
+        'Failed to check POAP status'
+      );
 
       return reply.status(500).send({
         success: false,
@@ -251,11 +257,13 @@ export async function poapRoutes(fastify: FastifyInstance) {
       };
 
       return reply.send(response);
-
     } catch (error: any) {
-      fastify.log.error({
-        error: error.message,
-      }, 'Failed to get POAP stats');
+      fastify.log.error(
+        {
+          error: error.message,
+        },
+        'Failed to get POAP stats'
+      );
 
       return reply.status(500).send({
         success: false,

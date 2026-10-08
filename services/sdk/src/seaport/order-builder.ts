@@ -99,13 +99,11 @@ export class SeaportOrderBuilder {
     ];
 
     // Calculate fees
-    const platformFee = platformFeeRecipient && platformFeeBps > 0
-      ? calculateFee(priceWei, platformFeeBps)
-      : 0n;
+    const platformFee =
+      platformFeeRecipient && platformFeeBps > 0 ? calculateFee(priceWei, platformFeeBps) : 0n;
 
-    const brokerFee = brokerFeeRecipient && brokerFeeBps > 0
-      ? calculateFee(priceWei, brokerFeeBps)
-      : 0n;
+    const brokerFee =
+      brokerFeeRecipient && brokerFeeBps > 0 ? calculateFee(priceWei, brokerFeeBps) : 0n;
 
     // Calculate seller proceeds
     const totalFees = platformFee + brokerFee;

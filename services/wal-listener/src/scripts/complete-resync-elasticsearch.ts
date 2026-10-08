@@ -17,7 +17,14 @@
  *   npm run build && node dist/wal-listener/src/scripts/complete-resync-elasticsearch.js
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  closeAllConnections,
+  isEthOrWeth,
+  hasEmoji,
+} from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -144,7 +151,9 @@ function calculateSaleHistoryState(lastSaleDate: string | null) {
 
   const now = new Date();
   const saleDate = new Date(lastSaleDate);
-  const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+  const daysSinceLastSale = Math.floor(
+    (now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
 
   return {
     lastSaleDate,
@@ -160,7 +169,7 @@ async function getEthPriceUsd(): Promise<number> {
   const now = Date.now();
 
   // Return cached price if still valid
-  if (cachedEthPrice !== null && (now - ethPriceCacheTime) < ETH_PRICE_CACHE_TTL) {
+  if (cachedEthPrice !== null && now - ethPriceCacheTime < ETH_PRICE_CACHE_TTL) {
     return cachedEthPrice;
   }
 
@@ -175,7 +184,7 @@ async function getEthPriceUsd(): Promise<number> {
       ethPriceCacheTime = now;
       return cachedEthPrice;
     }
-  } catch (error) {
+  } catch {
     console.warn('Failed to fetch ETH price from database, using fallback');
   }
 
@@ -189,13 +198,21 @@ async function getEthPriceUsd(): Promise<number> {
 /**
  * Calculate USD price from wei amount and currency address
  */
-function calculatePriceUsd(priceWei: string | null, currencyAddress: string | null, ethPriceUsd: number): number | null {
+function calculatePriceUsd(
+  priceWei: string | null,
+  currencyAddress: string | null,
+  ethPriceUsd: number
+): number | null {
   if (!priceWei) return null;
 
   const normalizedCurrency = (currencyAddress || '').toLowerCase();
   const priceNum = parseFloat(priceWei);
 
-  if (isEthOrWeth(normalizedCurrency) || normalizedCurrency === '' || normalizedCurrency === '0x0000000000000000000000000000000000000000') {
+  if (
+    isEthOrWeth(normalizedCurrency) ||
+    normalizedCurrency === '' ||
+    normalizedCurrency === '0x0000000000000000000000000000000000000000'
+  ) {
     // ETH or WETH: convert from wei (18 decimals) to ETH, then to USD
     const priceInEth = priceNum / Math.pow(10, ETH_DECIMALS);
     return priceInEth * ethPriceUsd;
@@ -212,7 +229,11 @@ function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
   const name = data.name || '';
   const expirationState = calculateExpirationState(data.expiry_date);
   const saleHistoryState = calculateSaleHistoryState(data.last_sale_date);
-  const priceUsd = calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
+  const priceUsd = calculatePriceUsd(
+    data.listing_price,
+    data.listing_currency_address,
+    ethPriceUsd
+  );
 
   return {
     name,
@@ -246,7 +267,12 @@ function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
   };
 }
 
-async function processBatch(offset: number, batchSize: number, totalRows: number, ethPriceUsd: number): Promise<number> {
+async function processBatch(
+  offset: number,
+  batchSize: number,
+  totalRows: number,
+  ethPriceUsd: number
+): Promise<number> {
   // Complete query with all JOINs for listings and offers
   const query = `
     SELECT
@@ -308,12 +334,17 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
 
   if (response.errors) {
     const errors = response.items?.filter((item: any) => item.index?.error);
-    console.error(`Batch had ${errors?.length || 0} errors. First error:`, errors?.[0]?.index?.error);
+    console.error(
+      `Batch had ${errors?.length || 0} errors. First error:`,
+      errors?.[0]?.index?.error
+    );
   }
 
   const endRange = Math.min(offset + result.rows.length, totalRows);
   const percentage = ((endRange / totalRows) * 100).toFixed(1);
-  console.log(`[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`);
+  console.log(
+    `[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`
+  );
 
   return result.rows.length;
 }
@@ -347,17 +378,19 @@ async function completeResync() {
 
     // Disable refresh for speed
     console.log('Optimizing index settings for bulk import...');
-    await esClient.indices.putSettings({
-      index: config.elasticsearch.index,
-      body: {
-        index: {
-          refresh_interval: '-1',
-          number_of_replicas: 0,
+    await esClient.indices
+      .putSettings({
+        index: config.elasticsearch.index,
+        body: {
+          index: {
+            refresh_interval: '-1',
+            number_of_replicas: 0,
+          },
         },
-      },
-    }).catch(() => {
-      console.log('Note: Could not adjust settings (index might not exist yet)');
-    });
+      })
+      .catch(() => {
+        console.log('Note: Could not adjust settings (index might not exist yet)');
+      });
 
     console.log(`Batch size: ${BATCH_SIZE.toLocaleString()}`);
     console.log(`Concurrent batches: ${CONCURRENT_BATCHES}\n`);
@@ -387,7 +420,7 @@ async function completeResync() {
 
       // Small delay between batch groups to let DB breathe
       if (offset < totalRows) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 

@@ -62,7 +62,7 @@ function parseArgs(): { dryRun: boolean; batchSize: number; verbose: boolean; re
   const resume = args.includes('--resume');
 
   let batchSize = 100;
-  const batchArg = args.find(arg => arg.startsWith('--batch-size='));
+  const batchArg = args.find((arg) => arg.startsWith('--batch-size='));
   if (batchArg) {
     const parsed = parseInt(batchArg.split('=')[1], 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -87,9 +87,7 @@ async function saveProgress(progress: Progress): Promise<void> {
   await fs.writeFile(PROGRESS_FILE, JSON.stringify(progress, null, 2));
 }
 
-async function findMatchingRegistration(
-  mintEvent: MintEvent
-): Promise<Registration | null> {
+async function findMatchingRegistration(mintEvent: MintEvent): Promise<Registration | null> {
   // Primary match: by ens_name_id + transaction_hash
   if (mintEvent.transaction_hash) {
     const txMatch = await pool.query<Registration>(
@@ -121,26 +119,28 @@ async function findMatchingRegistration(
     }
   }
 
-//   // Last resort: any registration for this ens_name_id
-//   const anyMatch = await pool.query<Registration>(
-//     `SELECT id, total_cost_wei, transaction_hash, block_number
-//      FROM registrations
-//      WHERE ens_name_id = $1
-//      ORDER BY block_number DESC
-//      LIMIT 1`,
-//     [mintEvent.ens_name_id]
-//   );
+  //   // Last resort: any registration for this ens_name_id
+  //   const anyMatch = await pool.query<Registration>(
+  //     `SELECT id, total_cost_wei, transaction_hash, block_number
+  //      FROM registrations
+  //      WHERE ens_name_id = $1
+  //      ORDER BY block_number DESC
+  //      LIMIT 1`,
+  //     [mintEvent.ens_name_id]
+  //   );
 
-//   return anyMatch.rows.length > 0 ? anyMatch.rows[0] : null;
+  //   return anyMatch.rows.length > 0 ? anyMatch.rows[0] : null;
 
-    return null;    
+  return null;
 }
 
 async function backfillMintPrices(): Promise<void> {
   const { dryRun, batchSize, verbose, resume } = parseArgs();
 
   console.log('=== Backfill Mint Prices from Registrations ===\n');
-  console.log(`Mode: ${dryRun ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`);
+  console.log(
+    `Mode: ${dryRun ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`
+  );
   console.log(`Batch size: ${batchSize}`);
   console.log(`Verbose: ${verbose}`);
   console.log('');
@@ -214,7 +214,6 @@ async function backfillMintPrices(): Promise<void> {
     );
 
     if (mintEventsResult.rows.length === 0) {
-      hasMore = false;
       break;
     }
 
@@ -257,7 +256,9 @@ async function backfillMintPrices(): Promise<void> {
 
           if (verbose) {
             const ethPrice = (parseFloat(registration.total_cost_wei) / 1e18).toFixed(6);
-            console.log(`  [UPDATED] Activity ${mintEvent.id} - ${mintEvent.name} (${ethPrice} ETH)`);
+            console.log(
+              `  [UPDATED] Activity ${mintEvent.id} - ${mintEvent.name} (${ethPrice} ETH)`
+            );
           }
         }
 
@@ -285,13 +286,13 @@ async function backfillMintPrices(): Promise<void> {
     await saveProgress(progress);
 
     // Show batch summary
-    const processed = progress.updated + progress.noMatch + progress.skipped;
-    const remaining = totalRemaining - processed + (progress.lastProcessedId > 0 ? 0 : 0);
-    console.log(`  Batch complete. Updated: ${progress.updated}, No match: ${progress.noMatch}, Errors: ${progress.errors.length}`);
+    console.log(
+      `  Batch complete. Updated: ${progress.updated}, No match: ${progress.noMatch}, Errors: ${progress.errors.length}`
+    );
 
     // Delay between batches
     if (hasMore) {
-      await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
   }
 
@@ -301,11 +302,13 @@ async function backfillMintPrices(): Promise<void> {
   console.log(`Updated: ${progress.updated}`);
   console.log(`No Matching Registration: ${progress.noMatch}`);
   console.log(`Skipped (Errors): ${progress.skipped}`);
-  console.log(`Duration: ${Math.floor((Date.now() - new Date(progress.startTime).getTime()) / 1000)}s`);
+  console.log(
+    `Duration: ${Math.floor((Date.now() - new Date(progress.startTime).getTime()) / 1000)}s`
+  );
 
   if (progress.errors.length > 0) {
     console.log(`\nErrors encountered (${progress.errors.length}):`);
-    progress.errors.slice(0, 10).forEach(err => {
+    progress.errors.slice(0, 10).forEach((err) => {
       console.log(`  ${err.name} (ID: ${err.id}): ${err.error}`);
     });
     if (progress.errors.length > 10) {

@@ -21,10 +21,9 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
 
       const pool = getPostgresPool();
 
-      const broadcastResult = await pool.query(
-        'SELECT id FROM admin_broadcasts WHERE id = $1',
-        [broadcastId]
-      );
+      const broadcastResult = await pool.query('SELECT id FROM admin_broadcasts WHERE id = $1', [
+        broadcastId,
+      ]);
       if (broadcastResult.rows.length === 0) {
         logger.warn({ broadcastId }, 'Admin broadcast not found, skipping');
         return;
@@ -52,7 +51,13 @@ export async function registerAdminBroadcastWorker(boss: PgBoss): Promise<void> 
 
       if (channels.includes('email') && user.email_verified && user.email) {
         try {
-          const template = buildAdminBroadcastEmail({ title, body, linkUrl, imageUrl, unsubscribeUrl });
+          const template = buildAdminBroadcastEmail({
+            title,
+            body,
+            linkUrl,
+            imageUrl,
+            unsubscribeUrl,
+          });
           await sendEmail(user.email, template);
         } catch (error) {
           logger.error({ error, userId, broadcastId }, 'Failed to send admin broadcast email');

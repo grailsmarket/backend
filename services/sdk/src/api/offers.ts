@@ -57,10 +57,7 @@ export class OffersAPI {
    * @param filters - Optional filters and pagination
    * @returns Paginated list of offers
    */
-  async getByName(
-    name: string,
-    filters?: OfferFilters
-  ): Promise<PaginatedOffersResponse<Offer>> {
+  async getByName(name: string, filters?: OfferFilters): Promise<PaginatedOffersResponse<Offer>> {
     const params: Record<string, string | number | boolean | undefined> = {
       page: filters?.page,
       limit: filters?.limit,

@@ -39,11 +39,11 @@ const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.a
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const GRACE_PERIOD_SECONDS = 90 * 24 * 60 * 60;
 
-const DB_BATCH_SIZE = 500;       // Records fetched from DB per iteration
-const UPDATE_BATCH_SIZE = 50;    // Updates batched into single transaction
+const DB_BATCH_SIZE = 500; // Records fetched from DB per iteration
+const UPDATE_BATCH_SIZE = 50; // Updates batched into single transaction
 const MAX_GRAPH_RETRIES = 3;
 const GRAPH_RETRY_DELAY_MS = 1000;
-const CHECKPOINT_INTERVAL = 5;   // Save checkpoint every N DB batches
+const CHECKPOINT_INTERVAL = 5; // Save checkpoint every N DB batches
 
 const CHECKPOINT_FILE = path.join(process.cwd(), 'data', 'validate-checkpoint.json');
 const RESULTS_FILE = path.join(process.cwd(), 'data', 'validate-results.jsonl');
@@ -194,8 +194,10 @@ async function queryGraphBatch(names: string[]): Promise<Map<string, GraphDomain
       lastError = error;
       if (attempt < MAX_GRAPH_RETRIES) {
         const delay = GRAPH_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(`  Graph query failed (attempt ${attempt}/${MAX_GRAPH_RETRIES}), retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.warn(
+          `  Graph query failed (attempt ${attempt}/${MAX_GRAPH_RETRIES}), retrying in ${delay}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -209,20 +211,20 @@ async function queryGraphBatch(names: string[]): Promise<Map<string, GraphDomain
 async function queryGraphConcurrent(
   records: EnsNameRecord[],
   graphBatchSize: number,
-  concurrency: number,
+  concurrency: number
 ): Promise<Map<string, GraphDomainData>> {
   const combined = new Map<string, GraphDomainData>();
 
   // Split records into Graph-sized batches
   const batches: string[][] = [];
   for (let i = 0; i < records.length; i += graphBatchSize) {
-    batches.push(records.slice(i, i + graphBatchSize).map(r => r.name));
+    batches.push(records.slice(i, i + graphBatchSize).map((r) => r.name));
   }
 
   // Process batches with limited concurrency
   for (let i = 0; i < batches.length; i += concurrency) {
     const chunk = batches.slice(i, i + concurrency);
-    const results = await Promise.all(chunk.map(names => queryGraphBatch(names)));
+    const results = await Promise.all(chunk.map((names) => queryGraphBatch(names)));
 
     for (const resultMap of results) {
       for (const [key, value] of resultMap) {
@@ -232,7 +234,7 @@ async function queryGraphConcurrent(
 
     // Small delay between concurrent groups
     if (i + concurrency < batches.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
@@ -244,7 +246,7 @@ async function queryGraphConcurrent(
 function validateRecord(
   record: EnsNameRecord,
   graphData: GraphDomainData,
-  fixTokenIds: boolean,
+  fixTokenIds: boolean
 ): { mismatches: string[]; updates: Record<string, any> } | null {
   const mismatches: string[] = [];
   const updates: Record<string, any> = {};
@@ -271,7 +273,9 @@ function validateRecord(
     if (!dbExpiry || Math.abs(graphExpiry.getTime() - dbExpiry.getTime()) > 1000) {
       const isNewer = !dbExpiry || graphExpiry.getTime() > dbExpiry.getTime();
       if (isNewer || !dbExpiry) {
-        mismatches.push(`expiry_date: ${dbExpiry?.toISOString() || 'NULL'} -> ${graphExpiry.toISOString()}`);
+        mismatches.push(
+          `expiry_date: ${dbExpiry?.toISOString() || 'NULL'} -> ${graphExpiry.toISOString()}`
+        );
         updates.expiry_date = graphExpiry;
       }
     }
@@ -282,7 +286,9 @@ function validateRecord(
     const graphRegDate = new Date(parseInt(graphData.registrationDate) * 1000);
     const dbRegDate = record.registration_date;
     if (!dbRegDate || Math.abs(graphRegDate.getTime() - dbRegDate.getTime()) > 1000) {
-      mismatches.push(`registration_date: ${dbRegDate?.toISOString() || 'NULL'} -> ${graphRegDate.toISOString()}`);
+      mismatches.push(
+        `registration_date: ${dbRegDate?.toISOString() || 'NULL'} -> ${graphRegDate.toISOString()}`
+      );
       updates.registration_date = graphRegDate;
     }
   }
@@ -291,7 +297,9 @@ function validateRecord(
   if (fixTokenIds && graphData.labelhash) {
     const correctTokenId = getCorrectTokenId(graphData);
     if (record.token_id !== correctTokenId) {
-      mismatches.push(`token_id: ${record.token_id.substring(0, 20)}... -> ${correctTokenId.substring(0, 20)}...`);
+      mismatches.push(
+        `token_id: ${record.token_id.substring(0, 20)}... -> ${correctTokenId.substring(0, 20)}...`
+      );
       updates.token_id = correctTokenId;
     }
   }
@@ -325,7 +333,7 @@ async function flushUpdates(pool: any, pendingUpdates: PendingUpdate[]): Promise
 
       await client.query(
         `UPDATE ens_names SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`,
-        values,
+        values
       );
       updated++;
     }
@@ -354,12 +362,18 @@ function loadCheckpoint(): Checkpoint | null {
     if (fs.existsSync(CHECKPOINT_FILE)) {
       return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf-8'));
     }
-  } catch {}
+  } catch {
+    // Unreadable or corrupt checkpoint: treat as no checkpoint
+  }
   return null;
 }
 
 function clearCheckpoint() {
-  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch {}
+  try {
+    if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE);
+  } catch {
+    /* best-effort: a leftover checkpoint file is harmless */
+  }
 }
 
 // --- Results file ---
@@ -402,7 +416,9 @@ async function main() {
     if (checkpoint) {
       startFromId = checkpoint.lastId;
       resumedProcessed = checkpoint.processed;
-      console.log(`Resuming from checkpoint: id > ${startFromId} (${resumedProcessed.toLocaleString()} already done)\n`);
+      console.log(
+        `Resuming from checkpoint: id > ${startFromId} (${resumedProcessed.toLocaleString()} already done)\n`
+      );
     } else {
       console.log('No checkpoint found, starting from beginning\n');
     }
@@ -438,7 +454,11 @@ async function main() {
 
   // Clear results file on fresh start
   if (!shouldResume) {
-    try { if (fs.existsSync(RESULTS_FILE)) fs.unlinkSync(RESULTS_FILE); } catch {}
+    try {
+      if (fs.existsSync(RESULTS_FILE)) fs.unlinkSync(RESULTS_FILE);
+    } catch {
+      /* best-effort: if removal fails, new results are appended to the old file */
+    }
   }
 
   // Graceful shutdown
@@ -446,8 +466,14 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\n\nShutting down gracefully...');
-    saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
-    console.log(`Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`);
+    saveCheckpoint({
+      lastId: currentLastId,
+      processed: currentProcessed,
+      startedAt: new Date(startTime).toISOString(),
+    });
+    console.log(
+      `Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`
+    );
     console.log('Run with --resume to continue.\n');
     await closeAllConnections();
     process.exit(0);
@@ -458,7 +484,8 @@ async function main() {
 
   try {
     // Get total qualifying records
-    const countResult = await pool.query(`
+    const countResult = await pool.query(
+      `
       SELECT COUNT(*) as total FROM ens_names
       WHERE name NOT LIKE '#%'
         AND name NOT LIKE 'token-%'
@@ -466,7 +493,9 @@ async function main() {
         AND name NOT LIKE '[%].eth'
         AND name LIKE '%.eth'
         AND id > $1
-    `, [startFromId]);
+    `,
+      [startFromId]
+    );
     let totalToProcess = parseInt(countResult.rows[0].total);
     if (limit > 0) totalToProcess = Math.min(totalToProcess, limit);
 
@@ -480,7 +509,8 @@ async function main() {
       const fetchSize = Math.min(DB_BATCH_SIZE, limitRemaining);
 
       // Keyset pagination
-      const result = await pool.query(`
+      const result = await pool.query(
+        `
         SELECT id, name, token_id, owner_address, registrant, expiry_date, registration_date
         FROM ens_names
         WHERE id > $1
@@ -491,7 +521,9 @@ async function main() {
           AND name LIKE '%.eth'
         ORDER BY id ASC
         LIMIT $2
-      `, [currentLastId, fetchSize]);
+      `,
+        [currentLastId, fetchSize]
+      );
 
       if (result.rows.length === 0) break;
 
@@ -566,18 +598,23 @@ async function main() {
       const etaSeconds = rate > 0 ? remaining / rate : 0;
       const etaMin = Math.floor(etaSeconds / 60);
       const etaSec = Math.floor(etaSeconds % 60);
-      const pct = totalToProcess > 0 ? ((processedThisRun / totalToProcess) * 100).toFixed(1) : '0.0';
+      const pct =
+        totalToProcess > 0 ? ((processedThisRun / totalToProcess) * 100).toFixed(1) : '0.0';
 
       console.log(
         `\n[${pct}%] ${currentProcessed.toLocaleString()} validated | ` +
-        `${stats.invalid} mismatches | ` +
-        `${Math.round(rate)} rec/s | ` +
-        `ETA ${etaMin}m${etaSec}s\n`
+          `${stats.invalid} mismatches | ` +
+          `${Math.round(rate)} rec/s | ` +
+          `ETA ${etaMin}m${etaSec}s\n`
       );
 
       // Periodic checkpoint
       if (dbBatchCount % CHECKPOINT_INTERVAL === 0) {
-        saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
+        saveCheckpoint({
+          lastId: currentLastId,
+          processed: currentProcessed,
+          startedAt: new Date(startTime).toISOString(),
+        });
       }
     }
 
@@ -604,8 +641,12 @@ async function main() {
     console.log('Validation Summary');
     console.log('='.repeat(50));
     console.log(`Total processed:    ${total.toLocaleString()}`);
-    console.log(`Valid:              ${stats.valid.toLocaleString()} (${total ? ((stats.valid / total) * 100).toFixed(1) : 0}%)`);
-    console.log(`Mismatches:         ${stats.invalid.toLocaleString()} (${total ? ((stats.invalid / total) * 100).toFixed(1) : 0}%)`);
+    console.log(
+      `Valid:              ${stats.valid.toLocaleString()} (${total ? ((stats.valid / total) * 100).toFixed(1) : 0}%)`
+    );
+    console.log(
+      `Mismatches:         ${stats.invalid.toLocaleString()} (${total ? ((stats.invalid / total) * 100).toFixed(1) : 0}%)`
+    );
     console.log(`Not found in Graph: ${stats.notFound.toLocaleString()}`);
     console.log(`Update errors:      ${stats.errors.toLocaleString()}`);
     if (!dryRun) {
@@ -631,7 +672,11 @@ async function main() {
     await closeAllConnections();
     process.exit(0);
   } catch (error: any) {
-    saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
+    saveCheckpoint({
+      lastId: currentLastId,
+      processed: currentProcessed,
+      startedAt: new Date(startTime).toISOString(),
+    });
     console.error('\nValidation failed:', error.message);
     console.error(`Checkpoint saved. Run with --resume to continue.\n`);
     await closeAllConnections();

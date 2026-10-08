@@ -54,7 +54,6 @@ async function resyncSingleName() {
 
     await pool.end();
     process.exit(0);
-
   } catch (error: any) {
     console.error(`Failed to resync: ${error.message}`);
     console.error(error);

@@ -40,10 +40,9 @@ export async function votesRoutes(fastify: FastifyInstance) {
       const userId = parseInt(request.user.sub);
 
       // Resolve ENS name to ens_name_id
-      const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
-        [ensName]
-      );
+      const ensResult = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [
+        ensName,
+      ]);
 
       if (ensResult.rows.length === 0) {
         return reply.status(404).send({
@@ -224,9 +223,8 @@ export async function votesRoutes(fastify: FastifyInstance) {
       const offset = (page - 1) * limit;
 
       // Map sortBy to column name
-      const sortColumn = sortBy === 'netScore' ? 'net_score' :
-                        sortBy === 'upvotes' ? 'upvotes' :
-                        'downvotes';
+      const sortColumn =
+        sortBy === 'netScore' ? 'net_score' : sortBy === 'upvotes' ? 'upvotes' : 'downvotes';
 
       // Run count and data queries in parallel
       const countQuery = 'SELECT COUNT(*) FROM ens_names WHERE upvotes > 0 OR downvotes > 0';

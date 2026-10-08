@@ -11,13 +11,11 @@ async function main() {
     size: 20,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      sort: [
-        { price: { order: 'asc' } }
-      ],
-      _source: ['name', 'price', 'status']
-    }
+      sort: [{ price: { order: 'asc' } }],
+      _source: ['name', 'price', 'status'],
+    },
   });
 
   console.log('Comparing ES prices vs PG prices for top 20 sorted results:\n');
@@ -31,7 +29,8 @@ async function main() {
     const esPrice = (hit._source as any).price;
 
     // Get actual price from PostgreSQL
-    const pgResult = await pool.query(`
+    const pgResult = await pool.query(
+      `
       SELECT
         l.price_wei
       FROM ens_names en
@@ -39,17 +38,21 @@ async function main() {
       WHERE en.id = $1
       ORDER BY l.created_at DESC
       LIMIT 1
-    `, [parseInt(esId)]);
+    `,
+      [parseInt(esId)]
+    );
 
     const pgPrice = pgResult.rows[0]?.price_wei;
-    
+
     const esEth = esPrice ? (parseFloat(esPrice) / 1e18).toFixed(4) : 'N/A';
     const pgEth = pgPrice ? (parseFloat(pgPrice) / 1e18).toFixed(4) : 'N/A';
-    
+
     const match = esPrice === pgPrice ? '✓' : '✗';
-    
-    console.log(`${match} ${esName.padEnd(25)} ES: ${esEth.padStart(10)} ETH | PG: ${pgEth.padStart(10)} ETH`);
-    
+
+    console.log(
+      `${match} ${esName.padEnd(25)} ES: ${esEth.padStart(10)} ETH | PG: ${pgEth.padStart(10)} ETH`
+    );
+
     if (esPrice !== pgPrice) {
       console.log(`  MISMATCH! ES has ${esPrice}, PG has ${pgPrice}`);
     }

@@ -132,9 +132,8 @@ function getCorrectTokenId(domain: GraphDomain): string {
   const ownerAddress = domain.owner.id.toLowerCase();
   const isOwnedByWrapper = ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
-  const expiryTimestamp = typeof domain.expiryDate === 'string'
-    ? parseInt(domain.expiryDate)
-    : domain.expiryDate;
+  const expiryTimestamp =
+    typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
   const isExpired = expiryTimestamp * 1000 < Date.now();
 
   if (isOwnedByWrapper && !isExpired) {
@@ -185,7 +184,7 @@ async function fixHashPlaceholderNames() {
     let resolved = 0;
     let merged = 0;
     let converted = 0;
-    let errors = 0;
+    const errors = 0;
 
     for (const row of result.rows) {
       // The token ID is the part after 'token-'
@@ -261,7 +260,6 @@ async function fixHashPlaceholderNames() {
 
         // Current is placeholder (#...), duplicate might be real name or token- placeholder
         // Keep the one with the real name, or keep the duplicate if both are placeholders
-        const currentIsPlaceholder = true; // We know current starts with #
         const dupIsPlaceholder = dup.name.startsWith('token-') || dup.name.startsWith('#');
 
         const keepId = dupIsPlaceholder ? row.id : dup.id;
@@ -275,11 +273,26 @@ async function fixHashPlaceholderNames() {
             await pool.query('SET LOCAL session_replication_role = replica');
 
             // Move foreign keys from delete record to keep record
-            await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-            await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-            await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-            await pool.query('UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-            await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
+            await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+              keepId,
+              deleteId,
+            ]);
+            await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+              keepId,
+              deleteId,
+            ]);
+            await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+              keepId,
+              deleteId,
+            ]);
+            await pool.query(
+              'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
+              [keepId, deleteId]
+            );
+            await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+              keepId,
+              deleteId,
+            ]);
 
             // Delete the record we don't want
             await pool.query('DELETE FROM ens_names WHERE id = $1', [deleteId]);
@@ -337,7 +350,7 @@ async function fixHashPlaceholderNames() {
       }
 
       // Rate limit
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
     console.log('\n===================================');
@@ -350,7 +363,9 @@ async function fixHashPlaceholderNames() {
     console.log('===================================\n');
 
     // Verify no records remain
-    const verifyResult = await pool.query(`SELECT COUNT(*) FROM ens_names WHERE name ~ '^#[0-9]+$'`);
+    const verifyResult = await pool.query(
+      `SELECT COUNT(*) FROM ens_names WHERE name ~ '^#[0-9]+$'`
+    );
     const remaining = parseInt(verifyResult.rows[0].count);
 
     if (remaining === 0) {

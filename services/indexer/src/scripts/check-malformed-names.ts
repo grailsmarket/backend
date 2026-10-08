@@ -10,13 +10,14 @@
  * Usage: npx tsx src/scripts/fix-attacker-names.ts [--dry-run]
  */
 
-import { labelhash, namehash, normalize } from 'viem/ens';
+import { labelhash, normalize } from 'viem/ens';
 import { config, getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const ATTACKER_ADDRESS = '0x43e47385f6b3f8bdbe02c210bf5c74b6c34ff441'.toLowerCase();
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'.toLowerCase();
-const ENS_SUBGRAPH_URL = config.theGraph?.ensSubgraphUrl || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const ENS_SUBGRAPH_URL =
+  config.theGraph?.ensSubgraphUrl || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -80,7 +81,7 @@ async function queryGraphForName(name: string): Promise<{ owner: string; tokenId
     headers,
     body: JSON.stringify({
       query,
-      variables: { labelhash: labelhashHex }
+      variables: { labelhash: labelhashHex },
     }),
   });
 
@@ -89,7 +90,7 @@ async function queryGraphForName(name: string): Promise<{ owner: string; tokenId
     return null;
   }
 
-  const data = await response.json() as { data?: { domains?: GraphDomain[] } };
+  const data = (await response.json()) as { data?: { domains?: GraphDomain[] } };
   const domains = data.data?.domains || [];
 
   if (domains.length === 0) {
@@ -129,7 +130,9 @@ async function main() {
   console.log('ENS Name Ownership Fix Script');
   console.log('='.repeat(60));
   console.log(`Attacker address: ${ATTACKER_ADDRESS}`);
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (will update database)'}`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (will update database)'}`
+  );
   console.log('='.repeat(60));
   console.log();
 
@@ -221,7 +224,7 @@ async function main() {
     }
 
     // Small delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log();
@@ -241,7 +244,7 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Script failed:', err);
   process.exit(1);
 });

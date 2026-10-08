@@ -11,7 +11,8 @@ import { mainnet } from 'viem/chains';
 import { config } from '../../../shared/src';
 
 const ETH_REGISTRAR_CONTROLLER_2 = '0x59e16fccd424cc24e280be16e11bcd56fb0ce547' as const;
-const OUR_REFERRAL_CODE = '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
+const OUR_REFERRAL_CODE =
+  '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
 
 const NAME_RENEWED_EVENT = parseAbiItem(
   'event NameRenewed(string label, bytes32 indexed labelhash, uint256 cost, uint256 expires, bytes32 referrer)'

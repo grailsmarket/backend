@@ -23,26 +23,32 @@ async function createNotification(params: {
   data: any;
 }): Promise<void> {
   // Get user_id from users table (if exists)
-  const userResult = await pool.query(`
+  const userResult = await pool.query(
+    `
     SELECT id FROM users WHERE LOWER(address) = LOWER($1) LIMIT 1
-  `, [params.user_address]);
+  `,
+    [params.user_address]
+  );
 
   // Only create notification if user exists in system
   if (userResult.rows.length > 0) {
     const userId = userResult.rows[0].id;
 
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO notifications (user_id, type, metadata, created_at)
       VALUES ($1, $2, $3, NOW())
-    `, [
-      userId,
-      params.type,
-      JSON.stringify({
-        title: params.title,
-        message: params.message,
-        ...params.data
-      })
-    ]);
+    `,
+      [
+        userId,
+        params.type,
+        JSON.stringify({
+          title: params.title,
+          message: params.message,
+          ...params.data,
+        }),
+      ]
+    );
   } else {
     console.log(`User ${params.user_address} not found, skipping notification`);
   }
@@ -61,7 +67,8 @@ export async function updateListingStatus(
   try {
     if (!isValid && action !== 'refunded') {
       // Mark as unfunded
-      const updateResult = await pool.query(`
+      const updateResult = await pool.query(
+        `
         UPDATE listings
         SET status = 'unfunded',
             unfunded_at = NOW(),
@@ -70,16 +77,21 @@ export async function updateListingStatus(
         WHERE id = $1
           AND status = 'active'
         RETURNING seller_address
-      `, [listingId, reason]);
+      `,
+        [listingId, reason]
+      );
 
       if (updateResult.rows.length > 0) {
         // Get listing details for notification
-        const listing = await pool.query(`
+        const listing = await pool.query(
+          `
           SELECT l.seller_address, en.name
           FROM listings l
           JOIN ens_names en ON en.id = l.ens_name_id
           WHERE l.id = $1
-        `, [listingId]);
+        `,
+          [listingId]
+        );
 
         if (listing.rows.length > 0) {
           const { seller_address, name } = listing.rows[0];
@@ -94,17 +106,17 @@ export async function updateListingStatus(
               listing_id: listingId,
               name,
               reason,
-              details
-            }
+              details,
+            },
           });
 
           console.log(`Listing ${listingId} (${name}) marked as unfunded: ${reason}`);
         }
       }
-
     } else if (isValid && action === 'refunded') {
       // Was unfunded, now valid again - restore to active
-      const updateResult = await pool.query(`
+      const updateResult = await pool.query(
+        `
         UPDATE listings
         SET status = 'active',
             unfunded_at = NULL,
@@ -113,16 +125,21 @@ export async function updateListingStatus(
         WHERE id = $1
           AND status = 'unfunded'
         RETURNING seller_address
-      `, [listingId]);
+      `,
+        [listingId]
+      );
 
       if (updateResult.rows.length > 0) {
         // Get listing details for notification
-        const listing = await pool.query(`
+        const listing = await pool.query(
+          `
           SELECT l.seller_address, en.name
           FROM listings l
           JOIN ens_names en ON en.id = l.ens_name_id
           WHERE l.id = $1
-        `, [listingId]);
+        `,
+          [listingId]
+        );
 
         if (listing.rows.length > 0) {
           const { seller_address, name } = listing.rows[0];
@@ -135,25 +152,28 @@ export async function updateListingStatus(
             message: `Your listing for ${name} is now active again`,
             data: {
               listing_id: listingId,
-              name
-            }
+              name,
+            },
           });
 
           console.log(`Listing ${listingId} (${name}) restored to active`);
         }
       }
-
     } else {
       // Still valid, just update timestamp
-      await pool.query(`
+      await pool.query(
+        `
         UPDATE listings
         SET last_validated_at = NOW()
         WHERE id = $1
-      `, [listingId]);
+      `,
+        [listingId]
+      );
     }
 
     // Update validation state tracking
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO validation_state (entity_type, entity_id, last_check_at, next_check_at, check_count)
       VALUES ('listing', $1, NOW(), NOW() + INTERVAL '1 hour', 1)
       ON CONFLICT (entity_type, entity_id)
@@ -162,8 +182,9 @@ export async function updateListingStatus(
         next_check_at = NOW() + INTERVAL '1 hour',
         check_count = validation_state.check_count + 1,
         consecutive_failures = CASE WHEN $2 THEN validation_state.consecutive_failures + 1 ELSE 0 END
-    `, [listingId, !isValid]);
-
+    `,
+      [listingId, !isValid]
+    );
   } catch (error: any) {
     console.error(`Error updating listing status for ${listingId}:`, error);
     throw error;
@@ -183,7 +204,8 @@ export async function updateOfferStatus(
   try {
     if (!isValid && action !== 'refunded') {
       // Mark as unfunded
-      const updateResult = await pool.query(`
+      const updateResult = await pool.query(
+        `
         UPDATE offers
         SET status = 'unfunded',
             unfunded_at = NOW(),
@@ -192,16 +214,21 @@ export async function updateOfferStatus(
         WHERE id = $1
           AND status = 'pending'
         RETURNING buyer_address
-      `, [offerId, reason]);
+      `,
+        [offerId, reason]
+      );
 
       if (updateResult.rows.length > 0) {
         // Get offer details for notification
-        const offer = await pool.query(`
+        const offer = await pool.query(
+          `
           SELECT o.buyer_address, en.name, o.offer_amount_wei, o.currency_address
           FROM offers o
           JOIN ens_names en ON en.id = o.ens_name_id
           WHERE o.id = $1
-        `, [offerId]);
+        `,
+          [offerId]
+        );
 
         if (offer.rows.length > 0) {
           const { buyer_address, name } = offer.rows[0];
@@ -217,17 +244,17 @@ export async function updateOfferStatus(
               offer_id: offerId,
               name,
               reason,
-              details
-            }
+              details,
+            },
           });
 
           console.log(`Offer ${offerId} on ${name} marked as unfunded: ${reason}`);
         }
       }
-
     } else if (isValid && action === 'refunded') {
       // Was unfunded, now valid again - restore to pending
-      const updateResult = await pool.query(`
+      const updateResult = await pool.query(
+        `
         UPDATE offers
         SET status = 'pending',
             unfunded_at = NULL,
@@ -236,16 +263,21 @@ export async function updateOfferStatus(
         WHERE id = $1
           AND status = 'unfunded'
         RETURNING buyer_address
-      `, [offerId]);
+      `,
+        [offerId]
+      );
 
       if (updateResult.rows.length > 0) {
         // Get offer details for notification
-        const offer = await pool.query(`
+        const offer = await pool.query(
+          `
           SELECT o.buyer_address, en.name
           FROM offers o
           JOIN ens_names en ON en.id = o.ens_name_id
           WHERE o.id = $1
-        `, [offerId]);
+        `,
+          [offerId]
+        );
 
         if (offer.rows.length > 0) {
           const { buyer_address, name } = offer.rows[0];
@@ -258,25 +290,28 @@ export async function updateOfferStatus(
             message: `Your offer on ${name} is now active again`,
             data: {
               offer_id: offerId,
-              name
-            }
+              name,
+            },
           });
 
           console.log(`Offer ${offerId} on ${name} restored to pending`);
         }
       }
-
     } else {
       // Still valid, just update timestamp
-      await pool.query(`
+      await pool.query(
+        `
         UPDATE offers
         SET last_validated_at = NOW()
         WHERE id = $1
-      `, [offerId]);
+      `,
+        [offerId]
+      );
     }
 
     // Update validation state tracking
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO validation_state (entity_type, entity_id, last_check_at, next_check_at, check_count)
       VALUES ('offer', $1, NOW(), NOW() + INTERVAL '5 minutes', 1)
       ON CONFLICT (entity_type, entity_id)
@@ -285,8 +320,9 @@ export async function updateOfferStatus(
         next_check_at = NOW() + INTERVAL '5 minutes',
         check_count = validation_state.check_count + 1,
         consecutive_failures = CASE WHEN $2 THEN validation_state.consecutive_failures + 1 ELSE 0 END
-    `, [offerId, !isValid]);
-
+    `,
+      [offerId, !isValid]
+    );
   } catch (error: any) {
     console.error(`Error updating offer status for ${offerId}:`, error);
     throw error;

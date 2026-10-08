@@ -27,18 +27,18 @@ interface ActivityWSClient {
   id: string;
   ws: WebSocket;
   addressSubscriptions: Set<string>; // Set of addresses to watch
-  nameSubscriptions: Set<string>;     // Set of ENS names to watch
-  subscribeAll: boolean;              // Subscribe to all activity
-  clubSubscription: string | null;    // Single club subscription (replaces previous)
+  nameSubscriptions: Set<string>; // Set of ENS names to watch
+  subscribeAll: boolean; // Subscribe to all activity
+  clubSubscription: string | null; // Single club subscription (replaces previous)
   eventTypeFilters: {
-    include?: Set<string>;            // If set, only include these event types
-    exclude?: Set<string>;            // If set, exclude these event types
+    include?: Set<string>; // If set, only include these event types
+    exclude?: Set<string>; // If set, exclude these event types
   };
   platformFilters: {
-    include?: Set<string>;            // If set, only include these platforms
-    exclude?: Set<string>;            // If set, exclude these platforms
+    include?: Set<string>; // If set, only include these platforms
+    exclude?: Set<string>; // If set, exclude these platforms
   };
-  userId: number | null;             // Authenticated user id (from ?token=), required for watchlist filter
+  userId: number | null; // Authenticated user id (from ?token=), required for watchlist filter
   priceFilter: { minWei?: bigint; maxWei?: bigint }; // ETH/WETH price threshold (wei)
   watchlistFilter: { active: boolean; ensNameIds: Set<number> }; // Restrict to watchlisted names
 }
@@ -52,7 +52,7 @@ const typingThrottle = new Map<string, number>();
 const TYPING_MIN_INTERVAL_MS = 200;
 
 // Track broadcast stats for debugging
-let broadcastStats = {
+const broadcastStats = {
   totalBroadcasts: 0,
   lastBroadcastTime: null as Date | null,
   lastEventType: null as string | null,
@@ -62,7 +62,7 @@ export function getWebSocketStats() {
   return {
     eventsClients: clients.size,
     activityClients: activityClients.size,
-    activityClientDetails: Array.from(activityClients.values()).map(c => ({
+    activityClientDetails: Array.from(activityClients.values()).map((c) => ({
       id: c.id,
       subscribeAll: c.subscribeAll,
       addressSubscriptions: Array.from(c.addressSubscriptions),
@@ -78,7 +78,7 @@ export function getWebSocketStats() {
       },
     })),
     chatClients: chatClients.size,
-    chatClientDetails: Array.from(chatClients.values()).map(c => ({
+    chatClientDetails: Array.from(chatClients.values()).map((c) => ({
       id: c.id,
       userId: c.userId,
       subscribed: c.subscribed,
@@ -109,21 +109,25 @@ export async function websocketRoutes(fastify: FastifyInstance) {
 
     clients.set(clientId, client);
 
-    connection.socket.send(JSON.stringify({
-      type: 'connected',
-      clientId,
-      timestamp: new Date().toISOString(),
-    }));
+    connection.socket.send(
+      JSON.stringify({
+        type: 'connected',
+        clientId,
+        timestamp: new Date().toISOString(),
+      })
+    );
 
     connection.socket.on('message', (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString());
         handleMessage(client, data);
-      } catch (error) {
-        connection.socket.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format',
-        }));
+      } catch {
+        connection.socket.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Invalid message format',
+          })
+        );
       }
     });
 
@@ -140,29 +144,35 @@ export async function websocketRoutes(fastify: FastifyInstance) {
   fastify.get('/orders', { websocket: true }, (connection, req) => {
     const clientId = req.id;
 
-    connection.socket.send(JSON.stringify({
-      type: 'connected',
-      channel: 'orders',
-      clientId,
-      timestamp: new Date().toISOString(),
-    }));
+    connection.socket.send(
+      JSON.stringify({
+        type: 'connected',
+        channel: 'orders',
+        clientId,
+        timestamp: new Date().toISOString(),
+      })
+    );
 
     connection.socket.on('message', (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString());
 
         if (data.type === 'subscribe') {
-          connection.socket.send(JSON.stringify({
-            type: 'subscribed',
-            orderId: data.orderId,
-            timestamp: new Date().toISOString(),
-          }));
+          connection.socket.send(
+            JSON.stringify({
+              type: 'subscribed',
+              orderId: data.orderId,
+              timestamp: new Date().toISOString(),
+            })
+          );
         }
-      } catch (error) {
-        connection.socket.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format',
-        }));
+      } catch {
+        connection.socket.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Invalid message format',
+          })
+        );
       }
     });
 
@@ -204,15 +214,19 @@ export async function websocketRoutes(fastify: FastifyInstance) {
       subscribedGlobal: false,
     };
     chatClients.set(clientId, client);
-    console.log(`[WebSocket] Chat client connected: ${clientId} (user ${userId ?? 'anonymous'}), total: ${chatClients.size}`);
+    console.log(
+      `[WebSocket] Chat client connected: ${clientId} (user ${userId ?? 'anonymous'}), total: ${chatClients.size}`
+    );
 
-    connection.socket.send(JSON.stringify({
-      type: 'connected',
-      channel: 'chats',
-      clientId,
-      userId,
-      timestamp: new Date().toISOString(),
-    }));
+    connection.socket.send(
+      JSON.stringify({
+        type: 'connected',
+        channel: 'chats',
+        clientId,
+        userId,
+        timestamp: new Date().toISOString(),
+      })
+    );
 
     connection.socket.on('message', (raw: Buffer) => {
       try {
@@ -221,7 +235,9 @@ export async function websocketRoutes(fastify: FastifyInstance) {
           req.log.error({ err }, 'Chat WS message handler error');
         });
       } catch {
-        connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
+        connection.socket.send(
+          JSON.stringify({ type: 'error', message: 'Invalid message format' })
+        );
       }
     });
 
@@ -271,14 +287,18 @@ export async function websocketRoutes(fastify: FastifyInstance) {
     };
 
     activityClients.set(clientId, client);
-    console.log(`[WebSocket] Activity client connected: ${clientId}, total clients: ${activityClients.size}`);
+    console.log(
+      `[WebSocket] Activity client connected: ${clientId}, total clients: ${activityClients.size}`
+    );
 
-    connection.socket.send(JSON.stringify({
-      type: 'connected',
-      channel: 'activity',
-      clientId,
-      timestamp: new Date().toISOString(),
-    }));
+    connection.socket.send(
+      JSON.stringify({
+        type: 'connected',
+        channel: 'activity',
+        clientId,
+        timestamp: new Date().toISOString(),
+      })
+    );
 
     connection.socket.on('message', (message: Buffer) => {
       try {
@@ -286,11 +306,13 @@ export async function websocketRoutes(fastify: FastifyInstance) {
         void handleActivityMessage(client, data).catch((error) => {
           req.log.error({ error }, 'Error handling activity WS message');
         });
-      } catch (error) {
-        connection.socket.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format',
-        }));
+      } catch {
+        connection.socket.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Invalid message format',
+          })
+        );
       }
     });
 
@@ -311,60 +333,72 @@ function handleMessage(client: WSClient, data: any) {
     case 'subscribe':
       if (data.event) {
         client.subscriptions.add(data.event);
-        client.ws.send(JSON.stringify({
-          type: 'subscribed',
-          event: data.event,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'subscribed',
+            event: data.event,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'unsubscribe':
       if (data.event) {
         client.subscriptions.delete(data.event);
-        client.ws.send(JSON.stringify({
-          type: 'unsubscribed',
-          event: data.event,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'unsubscribed',
+            event: data.event,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'ping':
-      client.ws.send(JSON.stringify({
-        type: 'pong',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'pong',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     default:
-      client.ws.send(JSON.stringify({
-        type: 'error',
-        message: `Unknown message type: ${data.type}`,
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'error',
+          message: `Unknown message type: ${data.type}`,
+        })
+      );
   }
 }
 
 export function broadcastEvent(event: string, data: any) {
-  clients.forEach(client => {
+  clients.forEach((client) => {
     if (client.subscriptions.has(event)) {
-      client.ws.send(JSON.stringify({
-        type: 'event',
-        event,
-        data,
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'event',
+          event,
+          data,
+          timestamp: new Date().toISOString(),
+        })
+      );
     }
   });
 }
 
 export function broadcastToAll(data: any) {
-  clients.forEach(client => {
-    client.ws.send(JSON.stringify({
-      type: 'broadcast',
-      data,
-      timestamp: new Date().toISOString(),
-    }));
+  clients.forEach((client) => {
+    client.ws.send(
+      JSON.stringify({
+        type: 'broadcast',
+        data,
+        timestamp: new Date().toISOString(),
+      })
+    );
   });
 }
 
@@ -372,32 +406,38 @@ async function handleActivityMessage(client: ActivityWSClient, data: any) {
   switch (data.type) {
     case 'subscribe_all':
       client.subscribeAll = true;
-      client.ws.send(JSON.stringify({
-        type: 'subscribed',
-        subscription_type: 'all',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'subscribed',
+          subscription_type: 'all',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'unsubscribe_all':
       client.subscribeAll = false;
-      client.ws.send(JSON.stringify({
-        type: 'unsubscribed',
-        subscription_type: 'all',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'unsubscribed',
+          subscription_type: 'all',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'subscribe_address':
       if (data.address) {
         const normalizedAddress = data.address.toLowerCase();
         client.addressSubscriptions.add(normalizedAddress);
-        client.ws.send(JSON.stringify({
-          type: 'subscribed',
-          subscription_type: 'address',
-          address: normalizedAddress,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'subscribed',
+            subscription_type: 'address',
+            address: normalizedAddress,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
@@ -405,58 +445,68 @@ async function handleActivityMessage(client: ActivityWSClient, data: any) {
       if (data.address) {
         const normalizedAddress = data.address.toLowerCase();
         client.addressSubscriptions.delete(normalizedAddress);
-        client.ws.send(JSON.stringify({
-          type: 'unsubscribed',
-          subscription_type: 'address',
-          address: normalizedAddress,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'unsubscribed',
+            subscription_type: 'address',
+            address: normalizedAddress,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'subscribe_name':
       if (data.name) {
         client.nameSubscriptions.add(data.name);
-        client.ws.send(JSON.stringify({
-          type: 'subscribed',
-          subscription_type: 'name',
-          name: data.name,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'subscribed',
+            subscription_type: 'name',
+            name: data.name,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'unsubscribe_name':
       if (data.name) {
         client.nameSubscriptions.delete(data.name);
-        client.ws.send(JSON.stringify({
-          type: 'unsubscribed',
-          subscription_type: 'name',
-          name: data.name,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'unsubscribed',
+            subscription_type: 'name',
+            name: data.name,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'subscribe_club':
       if (data.club) {
         client.clubSubscription = data.club;
-        client.ws.send(JSON.stringify({
-          type: 'subscribed',
-          subscription_type: 'club',
-          club: data.club,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'subscribed',
+            subscription_type: 'club',
+            club: data.club,
+            timestamp: new Date().toISOString(),
+          })
+        );
       }
       break;
 
     case 'unsubscribe_club':
       client.clubSubscription = null;
-      client.ws.send(JSON.stringify({
-        type: 'unsubscribed',
-        subscription_type: 'club',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'unsubscribed',
+          subscription_type: 'club',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'set_event_filter':
@@ -469,28 +519,35 @@ async function handleActivityMessage(client: ActivityWSClient, data: any) {
           client.eventTypeFilters.exclude = new Set(data.event_types);
           client.eventTypeFilters.include = undefined;
         }
-        client.ws.send(JSON.stringify({
-          type: 'filter_set',
-          filter_kind: 'event_type',
-          filter_type: data.filter_type,
-          event_types: data.event_types,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'filter_set',
+            filter_kind: 'event_type',
+            filter_type: data.filter_type,
+            event_types: data.event_types,
+            timestamp: new Date().toISOString(),
+          })
+        );
       } else {
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid filter format. Expected: { type: "set_event_filter", filter_type: "include"|"exclude", event_types: string[] }',
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message:
+              'Invalid filter format. Expected: { type: "set_event_filter", filter_type: "include"|"exclude", event_types: string[] }',
+          })
+        );
       }
       break;
 
     case 'clear_event_filter':
       client.eventTypeFilters = {};
-      client.ws.send(JSON.stringify({
-        type: 'filter_cleared',
-        filter_kind: 'event_type',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'filter_cleared',
+          filter_kind: 'event_type',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'set_platform_filter':
@@ -503,28 +560,35 @@ async function handleActivityMessage(client: ActivityWSClient, data: any) {
           client.platformFilters.exclude = new Set(data.platforms);
           client.platformFilters.include = undefined;
         }
-        client.ws.send(JSON.stringify({
-          type: 'filter_set',
-          filter_kind: 'platform',
-          filter_type: data.filter_type,
-          platforms: data.platforms,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'filter_set',
+            filter_kind: 'platform',
+            filter_type: data.filter_type,
+            platforms: data.platforms,
+            timestamp: new Date().toISOString(),
+          })
+        );
       } else {
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid filter format. Expected: { type: "set_platform_filter", filter_type: "include"|"exclude", platforms: string[] }',
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message:
+              'Invalid filter format. Expected: { type: "set_platform_filter", filter_type: "include"|"exclude", platforms: string[] }',
+          })
+        );
       }
       break;
 
     case 'clear_platform_filter':
       client.platformFilters = {};
-      client.ws.send(JSON.stringify({
-        type: 'filter_cleared',
-        filter_kind: 'platform',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'filter_cleared',
+          filter_kind: 'platform',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'set_price_filter': {
@@ -536,97 +600,116 @@ async function handleActivityMessage(client: ActivityWSClient, data: any) {
       const minWei = parseWei(data.min_price_wei);
       const maxWei = parseWei(data.max_price_wei);
       if (minWei === undefined && maxWei === undefined) {
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid price filter. Expected min_price_wei and/or max_price_wei as decimal wei strings',
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message:
+              'Invalid price filter. Expected min_price_wei and/or max_price_wei as decimal wei strings',
+          })
+        );
         break;
       }
       client.priceFilter = { minWei, maxWei };
-      client.ws.send(JSON.stringify({
-        type: 'filter_set',
-        filter_kind: 'price',
-        min_price_wei: minWei?.toString() ?? null,
-        max_price_wei: maxWei?.toString() ?? null,
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'filter_set',
+          filter_kind: 'price',
+          min_price_wei: minWei?.toString() ?? null,
+          max_price_wei: maxWei?.toString() ?? null,
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
     }
 
     case 'clear_price_filter':
       client.priceFilter = {};
-      client.ws.send(JSON.stringify({
-        type: 'filter_cleared',
-        filter_kind: 'price',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'filter_cleared',
+          filter_kind: 'price',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'set_watchlist_filter': {
       // { type:'set_watchlist_filter', list_id?: number } - requires an authenticated connection (?token=)
       // Snapshots the user's watchlisted name ids; the client re-sends this to refresh.
       if (client.userId == null) {
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Authentication required for watchlist filter. Connect with ?token=<jwt>',
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Authentication required for watchlist filter. Connect with ?token=<jwt>',
+          })
+        );
         break;
       }
       try {
         const pool = getPostgresPool();
         const listId =
           typeof data.list_id === 'number' && Number.isInteger(data.list_id) ? data.list_id : null;
-        const result = listId != null
-          ? await pool.query(
-              'SELECT ens_name_id FROM watchlist WHERE user_id = $1 AND list_id = $2',
-              [client.userId, listId]
-            )
-          : await pool.query(
-              'SELECT ens_name_id FROM watchlist WHERE user_id = $1',
-              [client.userId]
-            );
+        const result =
+          listId != null
+            ? await pool.query(
+                'SELECT ens_name_id FROM watchlist WHERE user_id = $1 AND list_id = $2',
+                [client.userId, listId]
+              )
+            : await pool.query('SELECT ens_name_id FROM watchlist WHERE user_id = $1', [
+                client.userId,
+              ]);
         client.watchlistFilter = {
           active: true,
           ensNameIds: new Set(result.rows.map((r) => Number(r.ens_name_id))),
         };
-        client.ws.send(JSON.stringify({
-          type: 'filter_set',
-          filter_kind: 'watchlist',
-          list_id: listId,
-          count: client.watchlistFilter.ensNameIds.size,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'filter_set',
+            filter_kind: 'watchlist',
+            list_id: listId,
+            count: client.watchlistFilter.ensNameIds.size,
+            timestamp: new Date().toISOString(),
+          })
+        );
       } catch (error) {
         console.error('Error loading watchlist for activity WS filter:', error);
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Failed to load watchlist filter',
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Failed to load watchlist filter',
+          })
+        );
       }
       break;
     }
 
     case 'clear_watchlist_filter':
       client.watchlistFilter = { active: false, ensNameIds: new Set() };
-      client.ws.send(JSON.stringify({
-        type: 'filter_cleared',
-        filter_kind: 'watchlist',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'filter_cleared',
+          filter_kind: 'watchlist',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     case 'ping':
-      client.ws.send(JSON.stringify({
-        type: 'pong',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'pong',
+          timestamp: new Date().toISOString(),
+        })
+      );
       break;
 
     default:
-      client.ws.send(JSON.stringify({
-        type: 'error',
-        message: `Unknown message type: ${data.type}`,
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'error',
+          message: `Unknown message type: ${data.type}`,
+        })
+      );
   }
 }
 
@@ -650,9 +733,11 @@ export function broadcastActivityEvent(activityData: any) {
   broadcastStats.lastBroadcastTime = new Date();
   broadcastStats.lastEventType = event_type;
 
-  console.log(`[WebSocket] Broadcasting activity event: ${event_type}, clients: ${activityClients.size}`);
+  console.log(
+    `[WebSocket] Broadcasting activity event: ${event_type}, clients: ${activityClients.size}`
+  );
 
-  activityClients.forEach(client => {
+  activityClients.forEach((client) => {
     let shouldSend = false;
 
     // Check if client is subscribed to all activity
@@ -666,7 +751,10 @@ export function broadcastActivityEvent(activityData: any) {
     }
 
     // Check if client is subscribed to the counterparty address
-    if (counterparty_address && client.addressSubscriptions.has(counterparty_address.toLowerCase())) {
+    if (
+      counterparty_address &&
+      client.addressSubscriptions.has(counterparty_address.toLowerCase())
+    ) {
       shouldSend = true;
     }
 
@@ -695,28 +783,34 @@ export function broadcastActivityEvent(activityData: any) {
     // Apply platform filters
     if (shouldSend) {
       if (client.platformFilters.include) {
-        shouldSend = !!activityData.platform && client.platformFilters.include.has(activityData.platform);
+        shouldSend =
+          !!activityData.platform && client.platformFilters.include.has(activityData.platform);
       } else if (client.platformFilters.exclude) {
-        shouldSend = !activityData.platform || !client.platformFilters.exclude.has(activityData.platform);
+        shouldSend =
+          !activityData.platform || !client.platformFilters.exclude.has(activityData.platform);
       }
     }
 
     // Apply watchlist filter (AND): keep only events for the user's watchlisted names.
     if (shouldSend && client.watchlistFilter.active) {
-      shouldSend = ens_name_id != null && client.watchlistFilter.ensNameIds.has(Number(ens_name_id));
+      shouldSend =
+        ens_name_id != null && client.watchlistFilter.ensNameIds.has(Number(ens_name_id));
     }
 
     // Apply price threshold filter (AND). An active bound requires a real, in-range price; no-price
     // events (NULL/empty price_wei) are excluded. Priced events must be ETH/WETH-denominated
     // (null currency = ETH-denominated mint/renewal) and within range.
-    if (shouldSend && (client.priceFilter.minWei !== undefined || client.priceFilter.maxWei !== undefined)) {
+    if (
+      shouldSend &&
+      (client.priceFilter.minWei !== undefined || client.priceFilter.maxWei !== undefined)
+    ) {
       if (price_wei == null || price_wei === '') {
         // no-price events are excluded while filtering by price
         shouldSend = false;
       } else if (!(currency_address == null || isEthOrWeth(currency_address))) {
         shouldSend = false;
       } else {
-        let priceWei: bigint | null = null;
+        let priceWei: bigint | null;
         try {
           priceWei = BigInt(price_wei);
         } catch {
@@ -725,20 +819,24 @@ export function broadcastActivityEvent(activityData: any) {
         if (priceWei == null) {
           shouldSend = false;
         } else {
-          if (client.priceFilter.minWei !== undefined && priceWei < client.priceFilter.minWei) shouldSend = false;
-          if (client.priceFilter.maxWei !== undefined && priceWei > client.priceFilter.maxWei) shouldSend = false;
+          if (client.priceFilter.minWei !== undefined && priceWei < client.priceFilter.minWei)
+            shouldSend = false;
+          if (client.priceFilter.maxWei !== undefined && priceWei > client.priceFilter.maxWei)
+            shouldSend = false;
         }
       }
     }
 
     if (shouldSend) {
       try {
-        client.ws.send(JSON.stringify({
-          type: 'activity_event',
-          event_type,
-          data: activityData,
-          timestamp: new Date().toISOString(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'activity_event',
+            event_type,
+            data: activityData,
+            timestamp: new Date().toISOString(),
+          })
+        );
       } catch (error) {
         console.error('Error sending activity event to client:', error);
       }
@@ -758,39 +856,47 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
         return;
       }
       client.subscribed = true;
-      client.ws.send(JSON.stringify({
-        type: 'subscribed',
-        channel: 'chats',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'subscribed',
+          channel: 'chats',
+          timestamp: new Date().toISOString(),
+        })
+      );
       return;
 
     case 'unsubscribe':
       client.subscribed = false;
-      client.ws.send(JSON.stringify({
-        type: 'unsubscribed',
-        channel: 'chats',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'unsubscribed',
+          channel: 'chats',
+          timestamp: new Date().toISOString(),
+        })
+      );
       return;
 
     case 'subscribe_global':
       // Anyone may subscribe to the global room, including anonymous clients.
       client.subscribedGlobal = true;
-      client.ws.send(JSON.stringify({
-        type: 'subscribed',
-        channel: 'global_chat',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'subscribed',
+          channel: 'global_chat',
+          timestamp: new Date().toISOString(),
+        })
+      );
       return;
 
     case 'unsubscribe_global':
       client.subscribedGlobal = false;
-      client.ws.send(JSON.stringify({
-        type: 'unsubscribed',
-        channel: 'global_chat',
-        timestamp: new Date().toISOString(),
-      }));
+      client.ws.send(
+        JSON.stringify({
+          type: 'unsubscribed',
+          channel: 'global_chat',
+          timestamp: new Date().toISOString(),
+        })
+      );
       return;
 
     case 'typing':
@@ -823,7 +929,11 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
         chatClients.forEach((c) => {
           if (c.userId === client.userId) return;
           if (!c.subscribedGlobal) return;
-          try { c.ws.send(payload); } catch { /* socket closed mid-send */ }
+          try {
+            c.ws.send(payload);
+          } catch {
+            /* socket closed mid-send */
+          }
         });
         return;
       }
@@ -844,7 +954,11 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
         if (c.userId === client.userId) return;
         if (!c.subscribed) return;
         if (c.userId === null || !participantIds.includes(c.userId)) return;
-        try { c.ws.send(payload); } catch { /* socket closed mid-send */ }
+        try {
+          c.ws.send(payload);
+        } catch {
+          /* socket closed mid-send */
+        }
       });
       return;
     }
@@ -854,7 +968,9 @@ async function handleChatMessage(client: ChatWSClient, data: any) {
       return;
 
     default:
-      client.ws.send(JSON.stringify({ type: 'error', message: `Unknown message type: ${data.type}` }));
+      client.ws.send(
+        JSON.stringify({ type: 'error', message: `Unknown message type: ${data.type}` })
+      );
   }
 }
 
@@ -881,7 +997,11 @@ function fanOutToParticipants(participantUserIds: number[], payload: object) {
   chatClients.forEach((c) => {
     if (!c.subscribed) return;
     if (c.userId === null || !participantUserIds.includes(c.userId)) return;
-    try { c.ws.send(json); } catch { /* socket closed mid-send */ }
+    try {
+      c.ws.send(json);
+    } catch {
+      /* socket closed mid-send */
+    }
   });
 }
 
@@ -890,7 +1010,11 @@ function fanOutToGlobal(payload: object) {
   const json = JSON.stringify(payload);
   chatClients.forEach((c) => {
     if (!c.subscribedGlobal) return;
-    try { c.ws.send(json); } catch { /* socket closed mid-send */ }
+    try {
+      c.ws.send(json);
+    } catch {
+      /* socket closed mid-send */
+    }
   });
 }
 
@@ -902,10 +1026,17 @@ export function broadcastGlobalChatEvent(args: { message: ChatMessageRecord }) {
   });
 }
 
-export function broadcastGlobalChatDeletedEvent(args: { messageId: string; deletedByAdmin: boolean }) {
+export function broadcastGlobalChatDeletedEvent(args: {
+  messageId: string;
+  deletedByAdmin: boolean;
+}) {
   fanOutToGlobal({
     type: 'chat:message_deleted',
-    data: { chat_id: GLOBAL_CHAT_ID, message_id: args.messageId, deleted_by_admin: args.deletedByAdmin },
+    data: {
+      chat_id: GLOBAL_CHAT_ID,
+      message_id: args.messageId,
+      deleted_by_admin: args.deletedByAdmin,
+    },
     timestamp: new Date().toISOString(),
   });
 }
@@ -989,7 +1120,11 @@ export function broadcastChatDeletedEvent(args: {
 }) {
   fanOutToParticipants(args.participantUserIds, {
     type: 'chat:message_deleted',
-    data: { chat_id: args.chatId, message_id: args.messageId, deleted_by_admin: args.deletedByAdmin },
+    data: {
+      chat_id: args.chatId,
+      message_id: args.messageId,
+      deleted_by_admin: args.deletedByAdmin,
+    },
     timestamp: new Date().toISOString(),
   });
 }
@@ -1006,10 +1141,7 @@ export function broadcastChatEditedEvent(args: {
   });
 }
 
-export function broadcastChatCreatedEvent(args: {
-  chat: unknown;
-  participantUserIds: number[];
-}) {
+export function broadcastChatCreatedEvent(args: { chat: unknown; participantUserIds: number[] }) {
   fanOutToParticipants(args.participantUserIds, {
     type: 'chat:created',
     data: { chat: args.chat },

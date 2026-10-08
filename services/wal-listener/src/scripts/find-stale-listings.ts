@@ -94,9 +94,10 @@ function getCorrectOwner(domain: GraphDomain): { owner: string | null; isExpired
   // Check if fully expired (expiry + 111 days)
   let isExpired = false;
   if (domain.registration?.expiryDate) {
-    const expiryTimestamp = typeof domain.registration.expiryDate === 'string'
-      ? parseInt(domain.registration.expiryDate)
-      : domain.registration.expiryDate;
+    const expiryTimestamp =
+      typeof domain.registration.expiryDate === 'string'
+        ? parseInt(domain.registration.expiryDate)
+        : domain.registration.expiryDate;
     const expiryMs = expiryTimestamp * 1000;
     const fullyExpiredAt = expiryMs + TOTAL_EXPIRY_BUFFER_MS;
 
@@ -168,11 +169,14 @@ async function findStaleListings() {
   }
 
   // Check for existing sale records
-  const listingIds = suspectListings.map(l => l.listing_id);
-  const salesResult = await pool.query(`
+  const listingIds = suspectListings.map((l) => l.listing_id);
+  const salesResult = await pool.query(
+    `
     SELECT DISTINCT listing_id FROM sales WHERE listing_id = ANY($1)
-  `, [listingIds]);
-  const listingsWithSales = new Set(salesResult.rows.map(r => r.listing_id));
+  `,
+    [listingIds]
+  );
+  const listingsWithSales = new Set(salesResult.rows.map((r) => r.listing_id));
 
   // Process in batches, querying The Graph for actual owners
   const staleListings: StaleListing[] = [];
@@ -181,7 +185,7 @@ async function findStaleListings() {
 
   for (let i = 0; i < suspectListings.length; i += BATCH_SIZE) {
     const batch = suspectListings.slice(i, i + BATCH_SIZE);
-    const names = batch.map(l => l.name);
+    const names = batch.map((l) => l.name);
 
     const domainMap = await queryGraphByName(names);
 
@@ -245,8 +249,8 @@ async function findStaleListings() {
       const rate = processed / elapsed;
       console.log(
         `Progress: ${processed}/${suspectListings.length} | ` +
-        `Stale: ${staleListings.length} | ` +
-        `Rate: ${Math.round(rate)}/s`
+          `Stale: ${staleListings.length} | ` +
+          `Rate: ${Math.round(rate)}/s`
       );
     }
   }
@@ -255,10 +259,10 @@ async function findStaleListings() {
   const summary = {
     totalSuspect: suspectListings.length,
     totalStale: staleListings.length,
-    withSaleRecord: staleListings.filter(l => l.hasSaleRecord).length,
-    withoutSaleRecord: staleListings.filter(l => !l.hasSaleRecord).length,
-    expired: staleListings.filter(l => l.isExpired).length,
-    ownerChanged: staleListings.filter(l => !l.isExpired && l.graphOwnerAddress).length,
+    withSaleRecord: staleListings.filter((l) => l.hasSaleRecord).length,
+    withoutSaleRecord: staleListings.filter((l) => !l.hasSaleRecord).length,
+    expired: staleListings.filter((l) => l.isExpired).length,
+    ownerChanged: staleListings.filter((l) => !l.isExpired && l.graphOwnerAddress).length,
   };
 
   if (OUTPUT_JSON) {
@@ -274,9 +278,11 @@ async function findStaleListings() {
 
     if (summary.withoutSaleRecord > 0) {
       console.log('\n=== Listings needing sale recovery ===');
-      const needRecovery = staleListings.filter(l => !l.hasSaleRecord && !l.isExpired);
+      const needRecovery = staleListings.filter((l) => !l.hasSaleRecord && !l.isExpired);
       for (const listing of needRecovery.slice(0, 20)) {
-        console.log(`  ${listing.name} (ID: ${listing.listingId}) - seller: ${listing.sellerAddress.slice(0, 10)}... -> owner: ${listing.graphOwnerAddress?.slice(0, 10)}...`);
+        console.log(
+          `  ${listing.name} (ID: ${listing.listingId}) - seller: ${listing.sellerAddress.slice(0, 10)}... -> owner: ${listing.graphOwnerAddress?.slice(0, 10)}...`
+        );
       }
       if (needRecovery.length > 20) {
         console.log(`  ... and ${needRecovery.length - 20} more`);

@@ -72,11 +72,11 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
       GRAPH_ENS_SUBGRAPH_URL,
       {
         query,
-        variables: { names }
+        variables: { names },
       },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
+        timeout: 30000,
       }
     );
 
@@ -123,9 +123,8 @@ function getCorrectTokenId(domain: GraphDomain): string {
   const isOwnedByWrapper = registrantAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
   // Check if expired
-  const expiryTimestamp = typeof domain.expiryDate === 'string'
-    ? parseInt(domain.expiryDate)
-    : domain.expiryDate;
+  const expiryTimestamp =
+    typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
   const isExpired = expiryTimestamp * 1000 < Date.now();
 
   if (isOwnedByWrapper && !isExpired) {
@@ -163,7 +162,9 @@ async function fixDuplicateNames() {
   const pool = getPostgresPool();
 
   console.log('=== Duplicate Names Fix Script ===');
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}`
+  );
   if (NAME_FILTER) {
     console.log(`Filter: --name "${NAME_FILTER}"`);
   }
@@ -180,7 +181,7 @@ async function fixDuplicateNames() {
           HAVING COUNT(*) > 1
           ORDER BY name
         `,
-        values: [NAME_FILTER]
+        values: [NAME_FILTER],
       }
     : {
         text: `
@@ -190,7 +191,7 @@ async function fixDuplicateNames() {
           HAVING COUNT(*) > 1
           ORDER BY name
         `,
-        values: []
+        values: [],
       };
   const duplicatesResult = await pool.query(duplicatesQuery);
 
@@ -211,9 +212,11 @@ async function fixDuplicateNames() {
   // Process in batches
   for (let i = 0; i < duplicatesResult.rows.length; i += BATCH_SIZE) {
     const batch = duplicatesResult.rows.slice(i, i + BATCH_SIZE);
-    const names = batch.map(row => row.name);
+    const names = batch.map((row) => row.name);
 
-    console.log(`\nQuerying Graph for batch ${Math.floor(i / BATCH_SIZE) + 1} (${names.length} names)...`);
+    console.log(
+      `\nQuerying Graph for batch ${Math.floor(i / BATCH_SIZE) + 1} (${names.length} names)...`
+    );
 
     const domainMap = await queryGraphByName(names);
 
@@ -273,7 +276,8 @@ async function fixDuplicateNames() {
         if (!correctRecordId) {
           console.log(`  No record has correct token_id, checking activity...`);
 
-          const activityCheck = await pool.query(`
+          const activityCheck = await pool.query(
+            `
             SELECT e.id,
                    (SELECT COUNT(*) FROM listings WHERE ens_name_id = e.id) as listing_count,
                    (SELECT COUNT(*) FROM offers WHERE ens_name_id = e.id) as offer_count,
@@ -287,7 +291,9 @@ async function fixDuplicateNames() {
               (SELECT COUNT(*) FROM sales WHERE ens_name_id = e.id) DESC,
               e.created_at DESC
             LIMIT 1
-          `, [ids]);
+          `,
+            [ids]
+          );
 
           correctRecordId = activityCheck.rows[0].id;
           incorrectRecordIds = ids.filter((id: number) => id !== correctRecordId);
@@ -311,60 +317,110 @@ async function fixDuplicateNames() {
             // Update foreign keys to point to correct record
             for (const incorrectId of incorrectRecordIds) {
               // Tables without ens_name_id unique constraints — direct UPDATE
-              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
-              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
-              await pool.query('UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
-              await pool.query('UPDATE notifications SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
+              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
+              await pool.query(
+                'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
+                [correctRecordId, incorrectId]
+              );
+              await pool.query('UPDATE notifications SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // Tables WITH ens_name_id in a unique constraint — delete conflicts first, then UPDATE rest
               // watchlist: UNIQUE(user_id, ens_name_id)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM watchlist WHERE ens_name_id = $1
                 AND user_id IN (SELECT user_id FROM watchlist WHERE ens_name_id = $2)
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // sales: UNIQUE(transaction_hash, ens_name_id)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM sales WHERE ens_name_id = $1
                 AND transaction_hash IN (SELECT transaction_hash FROM sales WHERE ens_name_id = $2)
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // name_views: UNIQUE(ens_name_id, viewer_identifier)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM name_views WHERE ens_name_id = $1
                 AND viewer_identifier IN (SELECT viewer_identifier FROM name_views WHERE ens_name_id = $2)
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE name_views SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE name_views SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // name_votes: UNIQUE(ens_name_id, user_id)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM name_votes WHERE ens_name_id = $1
                 AND user_id IN (SELECT user_id FROM name_votes WHERE ens_name_id = $2)
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE name_votes SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE name_votes SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // cart_items: UNIQUE(user_id, ens_name_id, cart_type_id)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM cart_items WHERE ens_name_id = $1
                 AND (user_id, cart_type_id) IN (
                   SELECT user_id, cart_type_id FROM cart_items WHERE ens_name_id = $2
                 )
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE cart_items SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE cart_items SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
 
               // registrations: UNIQUE(transaction_hash, ens_name_id)
-              await pool.query(`
+              await pool.query(
+                `
                 DELETE FROM registrations WHERE ens_name_id = $1
                 AND transaction_hash IN (SELECT transaction_hash FROM registrations WHERE ens_name_id = $2)
-              `, [incorrectId, correctRecordId]);
-              await pool.query('UPDATE registrations SET ens_name_id = $1 WHERE ens_name_id = $2', [correctRecordId, incorrectId]);
+              `,
+                [incorrectId, correctRecordId]
+              );
+              await pool.query('UPDATE registrations SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                correctRecordId,
+                incorrectId,
+              ]);
             }
 
             // Delete incorrect records
             await pool.query('DELETE FROM ens_names WHERE id = ANY($1)', [incorrectRecordIds]);
-            console.log(`  Deleted ${incorrectRecordIds.length} duplicate record(s): ${incorrectRecordIds.join(', ')}`);
+            console.log(
+              `  Deleted ${incorrectRecordIds.length} duplicate record(s): ${incorrectRecordIds.join(', ')}`
+            );
 
             // Update correct record with all correct data from The Graph
             await pool.query(
@@ -376,28 +432,42 @@ async function fixDuplicateNames() {
                 registrant = COALESCE($5, registrant),
                 updated_at = NOW()
               WHERE id = $6`,
-              [correctTokenId, correctOwner.toLowerCase(), expiryDate, registrationDate, registrantAddress, correctRecordId]
+              [
+                correctTokenId,
+                correctOwner.toLowerCase(),
+                expiryDate,
+                registrationDate,
+                registrantAddress,
+                correctRecordId,
+              ]
             );
 
             // Recalculate denormalized counts (triggers are disabled via session_replication_role = replica)
-            await pool.query(`
+            await pool.query(
+              `
               UPDATE ens_names SET
                 view_count = (SELECT COUNT(*) FROM name_views WHERE ens_name_id = $1),
                 upvotes = (SELECT COUNT(*) FROM name_votes WHERE ens_name_id = $1 AND vote = 1),
                 downvotes = (SELECT COUNT(*) FROM name_votes WHERE ens_name_id = $1 AND vote = -1),
                 net_score = (SELECT COALESCE(SUM(vote), 0) FROM name_votes WHERE ens_name_id = $1)
               WHERE id = $1
-            `, [correctRecordId]);
+            `,
+              [correctRecordId]
+            );
 
             await pool.query('COMMIT');
-            console.log(`  ✓ Merged into record ${correctRecordId} with correct data (token_id, owner, expiry, registration)`);
+            console.log(
+              `  ✓ Merged into record ${correctRecordId} with correct data (token_id, owner, expiry, registration)`
+            );
             merged++;
           } catch (txError) {
             await pool.query('ROLLBACK');
             throw txError;
           }
         } else {
-          console.log(`  [DRY RUN] Would merge FK references from records ${incorrectRecordIds.join(', ')} → ${correctRecordId}:`);
+          console.log(
+            `  [DRY RUN] Would merge FK references from records ${incorrectRecordIds.join(', ')} → ${correctRecordId}:`
+          );
           console.log(`    - listings, offers, activity_history, notifications (direct UPDATE)`);
           console.log(`    - watchlist (delete conflicts on user_id, then UPDATE)`);
           console.log(`    - sales (delete conflicts on transaction_hash, then UPDATE)`);
@@ -405,19 +475,22 @@ async function fixDuplicateNames() {
           console.log(`    - name_votes (delete conflicts on user_id, then UPDATE)`);
           console.log(`    - cart_items (delete conflicts on user_id+cart_type_id, then UPDATE)`);
           console.log(`    - registrations (delete conflicts on transaction_hash, then UPDATE)`);
-          console.log(`  [DRY RUN] Would delete duplicate ens_names records: ${incorrectRecordIds.join(', ')}`);
+          console.log(
+            `  [DRY RUN] Would delete duplicate ens_names records: ${incorrectRecordIds.join(', ')}`
+          );
           console.log(`  [DRY RUN] Would update record ${correctRecordId} with:`);
           console.log(`    - token_id: ${correctTokenId}`);
           console.log(`    - owner_address: ${correctOwner}`);
           console.log(`    - expiry_date: ${expiryDate?.toISOString() || '(keep existing)'}`);
-          console.log(`    - registration_date: ${registrationDate?.toISOString() || '(keep existing)'}`);
+          console.log(
+            `    - registration_date: ${registrationDate?.toISOString() || '(keep existing)'}`
+          );
           console.log(`    - registrant: ${registrantAddress || '(keep existing)'}`);
           console.log(`  [DRY RUN] Would recalculate view_count, upvotes, downvotes, net_score`);
           merged++;
         }
 
         processed++;
-
       } catch (error: any) {
         errors++;
         console.error(`[ERROR] ${name} - ${error.message}`);
@@ -426,7 +499,7 @@ async function fixDuplicateNames() {
     }
 
     // Rate limit
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   console.log('\n=== Duplicate Names Fix Complete ===');

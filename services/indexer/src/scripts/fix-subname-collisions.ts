@@ -9,7 +9,8 @@ import { namehash, labelhash, normalize } from 'viem/ens';
 import { config, getPostgresPool } from '../../../shared/src';
 
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'.toLowerCase();
-const ENS_SUBGRAPH_URL = config.theGraph?.ensSubgraphUrl || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const ENS_SUBGRAPH_URL =
+  config.theGraph?.ensSubgraphUrl || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose');
@@ -100,7 +101,7 @@ async function queryGraphByNamehash(nameToQuery: string): Promise<GraphDomain | 
       headers,
       body: JSON.stringify({
         query,
-        variables: { namehash: namehashHex }
+        variables: { namehash: namehashHex },
       }),
     });
 
@@ -108,7 +109,7 @@ async function queryGraphByNamehash(nameToQuery: string): Promise<GraphDomain | 
       return null;
     }
 
-    const data = await response.json() as { data?: { domain?: GraphDomain } };
+    const data = (await response.json()) as { data?: { domain?: GraphDomain } };
     return data.data?.domain || null;
   } catch {
     return null;
@@ -122,7 +123,7 @@ async function queryGraphByNamehashBatch(names: string[]): Promise<Map<string, G
   const results = new Map<string, GraphDomain>();
   if (names.length === 0) return results;
 
-  const namehashes = names.map(name => {
+  const namehashes = names.map((name) => {
     const hash = namehash(name);
     const hexString = BigInt(hash).toString(16).padStart(64, '0');
     return '0x' + hexString;
@@ -166,7 +167,7 @@ async function queryGraphByNamehashBatch(names: string[]): Promise<Map<string, G
       headers,
       body: JSON.stringify({
         query,
-        variables: { namehashes }
+        variables: { namehashes },
       }),
     });
 
@@ -174,7 +175,7 @@ async function queryGraphByNamehashBatch(names: string[]): Promise<Map<string, G
       return results;
     }
 
-    const data = await response.json() as { data?: { domains?: GraphDomain[] } };
+    const data = (await response.json()) as { data?: { domains?: GraphDomain[] } };
     const domains = data.data?.domains || [];
 
     for (const domain of domains) {
@@ -298,7 +299,11 @@ function extractTokenIdFromOrderData(orderData: any): string | null {
 /**
  * Determine which name a token_id belongs to by checking if it matches namehash or labelhash
  */
-function determineNameForTokenId(tokenId: string, subnameName: string, twoLDName: string): string | null {
+function determineNameForTokenId(
+  tokenId: string,
+  subnameName: string,
+  twoLDName: string
+): string | null {
   const subnameNamehash = computeNamehashTokenId(subnameName);
   const twoLDLabelhash = computeLabelhashTokenId(twoLDName);
   const twoLDNamehash = computeNamehashTokenId(twoLDName);
@@ -372,7 +377,8 @@ async function main() {
   let notFoundCount = 0;
   let fixedCount = 0;
   let relatedDataFixedCount = 0;
-  const affectedWithRelatedData: Array<{ name: string; id: number; counts: RelatedDataCounts }> = [];
+  const affectedWithRelatedData: Array<{ name: string; id: number; counts: RelatedDataCounts }> =
+    [];
 
   // Process subnames
   console.log('Processing subnames...');
@@ -418,21 +424,28 @@ async function main() {
       const graphExpiryTime = graphExpiry.getTime();
       const dayInMs = 24 * 60 * 60 * 1000;
       if (Math.abs(dbExpiryTime - graphExpiryTime) > dayInMs) {
-        issues.push(`expiry: ${expiry_date?.toISOString() || 'null'} -> ${graphExpiry.toISOString()}`);
+        issues.push(
+          `expiry: ${expiry_date?.toISOString() || 'null'} -> ${graphExpiry.toISOString()}`
+        );
       }
     }
 
     if (issues.length > 0) {
       mismatchCount++;
       console.log(`  MISMATCH: ${name}`);
-      issues.forEach(iss => console.log(`    ${iss}`));
+      issues.forEach((iss) => console.log(`    ${iss}`));
 
       const relatedCounts = await getRelatedDataCounts(pool, id);
-      const hasRelatedData = relatedCounts.listings > 0 || relatedCounts.offers > 0 ||
-                             relatedCounts.sales > 0 || relatedCounts.activity > 0;
+      const hasRelatedData =
+        relatedCounts.listings > 0 ||
+        relatedCounts.offers > 0 ||
+        relatedCounts.sales > 0 ||
+        relatedCounts.activity > 0;
 
       if (hasRelatedData) {
-        console.log(`    RELATED DATA: ${relatedCounts.listings} listings, ${relatedCounts.offers} offers, ${relatedCounts.sales} sales, ${relatedCounts.activity} activity`);
+        console.log(
+          `    RELATED DATA: ${relatedCounts.listings} listings, ${relatedCounts.offers} offers, ${relatedCounts.sales} sales, ${relatedCounts.activity} activity`
+        );
         affectedWithRelatedData.push({ name, id, counts: relatedCounts });
       }
 
@@ -448,15 +461,34 @@ async function main() {
         if (existingWithTokenId.rows.length > 0) {
           // Record with correct token_id exists - merge data to it and delete this duplicate
           const correctRecord = existingWithTokenId.rows[0];
-          console.log(`    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`);
-          console.log(`    Moving related data from id=${id} to id=${correctRecord.id} and deleting duplicate...`);
+          console.log(
+            `    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`
+          );
+          console.log(
+            `    Moving related data from id=${id} to id=${correctRecord.id} and deleting duplicate...`
+          );
 
           // Move related data to the correct record
-          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
-          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
-          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
-          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
-          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, id]);
+          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            id,
+          ]);
+          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            id,
+          ]);
+          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            id,
+          ]);
+          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            id,
+          ]);
+          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            id,
+          ]);
 
           // Delete the duplicate record
           await pool.query(`DELETE FROM ens_names WHERE id = $1`, [id]);
@@ -476,7 +508,7 @@ async function main() {
     }
 
     if (i % 10 === 0) {
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
 
@@ -509,12 +541,14 @@ async function main() {
 
   for (let i = 0; i < existingTwoLDs.length; i += BATCH_SIZE) {
     const batch = existingTwoLDs.slice(i, i + BATCH_SIZE);
-    console.log(`  Querying Graph batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(existingTwoLDs.length / BATCH_SIZE)}...`);
+    console.log(
+      `  Querying Graph batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(existingTwoLDs.length / BATCH_SIZE)}...`
+    );
     const batchResults = await queryGraphByNamehashBatch(batch);
     for (const [name, domain] of batchResults) {
       graphResults.set(name, domain);
     }
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
   }
 
   let twoLDMismatchCount = 0;
@@ -543,14 +577,16 @@ async function main() {
       const graphExpiryTime = graphExpiry.getTime();
       const dayInMs = 24 * 60 * 60 * 1000;
       if (Math.abs(dbExpiryTime - graphExpiryTime) > dayInMs) {
-        issues.push(`expiry: ${dbRecord.expiry_date?.toISOString() || 'null'} -> ${graphExpiry.toISOString()}`);
+        issues.push(
+          `expiry: ${dbRecord.expiry_date?.toISOString() || 'null'} -> ${graphExpiry.toISOString()}`
+        );
       }
     }
 
     if (issues.length > 0) {
       twoLDMismatchCount++;
       console.log(`  2LD MISMATCH: ${twoLDName}`);
-      issues.forEach(iss => console.log(`    ${iss}`));
+      issues.forEach((iss) => console.log(`    ${iss}`));
 
       if (!DRY_RUN) {
         // Check if a record with the correct token_id already exists
@@ -561,14 +597,31 @@ async function main() {
 
         if (existingWithTokenId.rows.length > 0) {
           const correctRecord = existingWithTokenId.rows[0];
-          console.log(`    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`);
+          console.log(
+            `    DUPLICATE: Correct record exists (id=${correctRecord.id}, name=${correctRecord.name})`
+          );
           console.log(`    Moving related data and deleting duplicate...`);
 
-          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
-          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
-          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
-          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
-          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [correctRecord.id, dbRecord.id]);
+          await pool.query(`UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            dbRecord.id,
+          ]);
+          await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            dbRecord.id,
+          ]);
+          await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            dbRecord.id,
+          ]);
+          await pool.query(`UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            dbRecord.id,
+          ]);
+          await pool.query(`UPDATE transactions SET ens_name_id = $1 WHERE ens_name_id = $2`, [
+            correctRecord.id,
+            dbRecord.id,
+          ]);
 
           await pool.query(`DELETE FROM ens_names WHERE id = $1`, [dbRecord.id]);
           console.log(`    MERGED & DELETED duplicate`);
@@ -635,7 +688,9 @@ async function main() {
         if (tokenIdFromOrder) {
           const correctName = determineNameForTokenId(tokenIdFromOrder, subname.name, twoLDName);
           if (correctName === twoLDName) {
-            console.log(`    LISTING ${listing.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+            console.log(
+              `    LISTING ${listing.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`
+            );
             if (!DRY_RUN) {
               await pool.query(
                 `UPDATE listings SET ens_name_id = $1, updated_at = NOW() WHERE id = $2`,
@@ -658,12 +713,14 @@ async function main() {
         if (tokenIdFromOrder) {
           const correctName = determineNameForTokenId(tokenIdFromOrder, subname.name, twoLDName);
           if (correctName === twoLDName) {
-            console.log(`    OFFER ${offer.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
+            console.log(
+              `    OFFER ${offer.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`
+            );
             if (!DRY_RUN) {
-              await pool.query(
-                `UPDATE offers SET ens_name_id = $1 WHERE id = $2`,
-                [twoLDRecord.id, offer.id]
-              );
+              await pool.query(`UPDATE offers SET ens_name_id = $1 WHERE id = $2`, [
+                twoLDRecord.id,
+                offer.id,
+              ]);
               relatedDataFixedCount++;
             }
           }
@@ -683,10 +740,10 @@ async function main() {
           if (correctName === twoLDName) {
             console.log(`    SALE ${sale.id}: belongs to ${twoLDName} (token ${tokenIdFromOrder})`);
             if (!DRY_RUN) {
-              await pool.query(
-                `UPDATE sales SET ens_name_id = $1 WHERE id = $2`,
-                [twoLDRecord.id, sale.id]
-              );
+              await pool.query(`UPDATE sales SET ens_name_id = $1 WHERE id = $2`, [
+                twoLDRecord.id,
+                sale.id,
+              ]);
               relatedDataFixedCount++;
             }
           }
@@ -700,7 +757,9 @@ async function main() {
   console.log('='.repeat(70));
   console.log('Summary');
   console.log('='.repeat(70));
-  console.log(`Subnames: ${subnames.length} checked, ${correctCount} correct, ${mismatchCount} mismatched, ${notFoundCount} not found`);
+  console.log(
+    `Subnames: ${subnames.length} checked, ${correctCount} correct, ${mismatchCount} mismatched, ${notFoundCount} not found`
+  );
   console.log(`2LD mismatches: ${twoLDMismatchCount}`);
   if (!DRY_RUN) {
     console.log(`Subnames fixed: ${fixedCount}`);
@@ -712,7 +771,7 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Failed:', err);
   process.exit(1);
 });

@@ -77,9 +77,7 @@ describe('Grails SDK Integration Tests', () => {
     });
 
     it('should throw NotFoundError for non-existent name', async () => {
-      await expect(
-        client.names.get('thisdoesnotexist12345678.eth')
-      ).rejects.toThrow(NotFoundError);
+      await expect(client.names.get('thisdoesnotexist12345678.eth')).rejects.toThrow(NotFoundError);
     });
 
     it('should get name metadata', async () => {

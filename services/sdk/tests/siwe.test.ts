@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { createSiweMessage, prepareSiweMessage, createSiweMessageString } from '../src/auth/siwe.js';
+import {
+  createSiweMessage,
+  prepareSiweMessage,
+  createSiweMessageString,
+} from '../src/auth/siwe.js';
 
 describe('SIWE utilities', () => {
   const testParams = {

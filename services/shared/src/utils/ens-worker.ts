@@ -4,10 +4,26 @@ import { config } from '../config';
 
 // Common text record keys to try when The Graph keys aren't available
 const COMMON_TEXT_KEYS = [
-  'avatar', 'description', 'display', 'email', 'keywords', 'mail',
-  'notice', 'location', 'phone', 'url', 'name', 'header',
-  'com.github', 'com.twitter', 'org.telegram', 'com.discord',
-  'com.reddit', 'com.linkedin', 'io.keybase', 'xyz.farcaster',
+  'avatar',
+  'description',
+  'display',
+  'email',
+  'keywords',
+  'mail',
+  'notice',
+  'location',
+  'phone',
+  'url',
+  'name',
+  'header',
+  'com.github',
+  'com.twitter',
+  'org.telegram',
+  'com.discord',
+  'com.reddit',
+  'com.linkedin',
+  'io.keybase',
+  'xyz.farcaster',
 ];
 
 const BAD_RESOLVER = '0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41';
@@ -22,7 +38,7 @@ const BAD_RESOLVER = '0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41';
 export function needsEnsWorkerFallback(
   resolverAddress: string | null | undefined,
   texts: string[] | null | undefined,
-  textChangeds: Array<{ key: string; value: string | null }> | null | undefined,
+  textChangeds: Array<{ key: string; value: string | null }> | null | undefined
 ): boolean {
   // Check for the known bad resolver
   if (resolverAddress && resolverAddress.toLowerCase() === BAD_RESOLVER) {
@@ -34,9 +50,7 @@ export function needsEnsWorkerFallback(
     if (!textChangeds || textChangeds.length === 0) {
       return true;
     }
-    const hasAnyValue = textChangeds.some(
-      (r) => r.value != null && r.value !== '',
-    );
+    const hasAnyValue = textChangeds.some((r) => r.value != null && r.value !== '');
     if (!hasAnyValue) {
       return true;
     }
@@ -50,9 +64,7 @@ export function needsEnsWorkerFallback(
  *
  * Returns a flat Record<string, string> of text record key/value pairs.
  */
-export async function fetchTextRecordsFromEnsWorker(
-  name: string,
-): Promise<Record<string, string>> {
+export async function fetchTextRecordsFromEnsWorker(name: string): Promise<Record<string, string>> {
   const url = `${config.theGraph.ensWorkerUrl}/u/${name}`;
 
   const response = await fetch(url, {
@@ -62,7 +74,7 @@ export async function fetchTextRecordsFromEnsWorker(
 
   if (!response.ok) {
     throw new Error(
-      `ENS worker request failed for ${name}: ${response.status} ${response.statusText}`,
+      `ENS worker request failed for ${name}: ${response.status} ${response.statusText}`
     );
   }
 
@@ -90,7 +102,7 @@ export async function fetchTextRecordsFromEnsWorker(
  */
 export async function fetchTextRecordsOnChain(
   name: string,
-  textKeys?: string[],
+  textKeys?: string[]
 ): Promise<Record<string, string>> {
   const keys = textKeys && textKeys.length > 0 ? textKeys : COMMON_TEXT_KEYS;
 
@@ -108,7 +120,7 @@ export async function fetchTextRecordsOnChain(
         key,
       });
       return { key, value };
-    }),
+    })
   );
 
   for (const result of results) {

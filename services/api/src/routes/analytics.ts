@@ -1,16 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
+import {
+  getPostgresPool,
+  type APIResponse,
+  CURRENCY_ADDRESSES,
+  getRegistrationSource,
+} from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { REGISTRATION_NAME_BLOCKLIST } from '../config/name-blocklist';
 
 const TimeRangeSchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d', 'all']).default('7d'),
-});
-
-const ClubAnalyticsQuerySchema = z.object({
-  club: z.string().min(1),
-  period: z.enum(['24h', '7d', '30d', '90d']).default('7d'),
 });
 
 const SalesQuerySchema = z.object({
@@ -66,11 +66,19 @@ function parseClubsFilter(rawClubs: string | string[] | undefined): string[] {
 
   if (Array.isArray(rawClubs)) {
     // Handle array - also split any comma-separated values within array elements
-    return rawClubs.flatMap(c => c.split(',').map(v => v.trim()).filter(v => v));
+    return rawClubs.flatMap((c) =>
+      c
+        .split(',')
+        .map((v) => v.trim())
+        .filter((v) => v)
+    );
   }
 
   // Handle single string - split on comma
-  return rawClubs.split(',').map(c => c.trim()).filter(c => c);
+  return rawClubs
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c);
 }
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
@@ -89,15 +97,27 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '90d': '90 days',
-      'all': '100 years', // Effectively no limit
+      all: '100 years', // Effectively no limit
     };
     const interval = periodMap[query.period];
 
-    const [totalNamesResult, activeListingsResult, activeOffersResult, totalWatchersResult, totalViewsResult, volumeResult, activityResult] = await Promise.all([
+    const [
+      totalNamesResult,
+      activeListingsResult,
+      activeOffersResult,
+      totalWatchersResult,
+      totalViewsResult,
+      volumeResult,
+      activityResult,
+    ] = await Promise.all([
       // Individual stats queries (avoids cartesian product from JOINs)
-      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW()`),
+      pool.query(
+        `SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW()`
+      ),
       pool.query(`SELECT COUNT(*) as active_listings FROM listings WHERE status = 'active'`),
-      pool.query(`SELECT COUNT(*) as active_offers FROM offers WHERE status IN ('pending', 'active')`),
+      pool.query(
+        `SELECT COUNT(*) as active_offers FROM offers WHERE status IN ('pending', 'active')`
+      ),
       pool.query(`SELECT COUNT(DISTINCT user_id) as total_watchers FROM watchlist`),
       pool.query(`SELECT COALESCE(SUM(view_count), 0) as total_views FROM ens_names`),
 
@@ -190,7 +210,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '90d': '90 days',
-      'all': '100 years',
+      all: '100 years',
     };
     const interval = periodMap[query.period];
 
@@ -299,7 +319,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '90d': '90 days',
-      'all': '100 years',
+      all: '100 years',
     };
     const interval = periodMap[query.period];
 
@@ -323,7 +343,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       success: true,
       data: {
         period: query.period,
-        trends: result.rows.map(row => ({
+        trends: result.rows.map((row) => ({
           date: row.date,
           sales_count: parseInt(row.sales_count),
           volume_wei: row.volume_wei,
@@ -353,7 +373,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '90d': '90 days',
-      'all': '100 years',
+      all: '100 years',
     };
     const interval = periodMap[query.period];
 
@@ -384,7 +404,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       success: true,
       data: {
         period: query.period,
-        distribution: result.rows.map(row => ({
+        distribution: result.rows.map((row) => ({
           price_range: row.price_range,
           sales_count: parseInt(row.sales_count),
           total_volume_wei: row.total_volume_wei,
@@ -471,7 +491,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '1y': '1 year',
-      'all': '100 years',
+      all: '100 years',
     };
     return map[period] || '7 days';
   };
@@ -502,7 +522,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Build filter conditions for summary/by_length queries (no limit/offset params)
     const summaryConditions: string[] = [];
     const summaryParams: any[] = [];
-    let summaryParamNum = 1;
+    const summaryParamNum = 1;
 
     // Build filter conditions for data query (has limit/offset as $1 and $2)
     const dataConditions: string[] = [];
@@ -512,7 +532,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Build filter conditions for count query (no limit/offset params)
     const countConditions: string[] = [];
     const countParams: any[] = [];
-    let countParamNum = 1;
+    const countParamNum = 1;
 
     if (clubs.length > 0) {
       if (clubs.includes('none')) {
@@ -529,11 +549,11 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(anyClubCondition);
       } else {
         // Specific clubs - array overlap
-        summaryConditions.push(`en.clubs && $${summaryParamNum++}::text[]`);
+        summaryConditions.push(`en.clubs && $${summaryParamNum}::text[]`);
         summaryParams.push(clubs);
         dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
@@ -541,13 +561,15 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     // Hide blocklisted names from the displayed results (results-only scope;
     // aggregate stats/counts are intentionally left untouched).
     if (REGISTRATION_NAME_BLOCKLIST.length > 0) {
-      dataConditions.push(`LOWER(en.name) <> ALL($${dataParamNum++}::text[])`);
-      dataParams.push(REGISTRATION_NAME_BLOCKLIST.map(n => n.toLowerCase()));
+      dataConditions.push(`LOWER(en.name) <> ALL($${dataParamNum}::text[])`);
+      dataParams.push(REGISTRATION_NAME_BLOCKLIST.map((n) => n.toLowerCase()));
     }
 
-    const summaryFilterClause = summaryConditions.length > 0 ? 'AND ' + summaryConditions.join(' AND ') : '';
+    const summaryFilterClause =
+      summaryConditions.length > 0 ? 'AND ' + summaryConditions.join(' AND ') : '';
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
-    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
+    const countFilterClause =
+      countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     // Determine if we need JOIN for club filtering
     const needsJoin = clubs.length > 0;
@@ -674,7 +696,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             premium_registrations: parseInt(stats.premium_registrations || '0'),
             unique_registrants: parseInt(stats.unique_registrants || '0'),
           },
-          by_length: byLength.map(row => ({
+          by_length: byLength.map((row) => ({
             name_length: row.name_length,
             count: parseInt(row.count),
             total_cost_wei: row.total_cost_wei || '0',
@@ -682,7 +704,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             avg_base_cost_wei: row.avg_base_cost_wei || '0',
             avg_premium_wei: row.avg_premium_wei || '0',
           })),
-          results: dataResult.rows.map(row => ({
+          results: dataResult.rows.map((row) => ({
             id: row.id,
             name: row.name,
             registrant_address: row.registrant_address,
@@ -738,7 +760,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       '7d': '7 days',
       '30d': '30 days',
       '90d': '90 days',
-      'all': '100 years',
+      all: '100 years',
     };
     const interval = periodMap[query.period];
 
@@ -765,7 +787,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         success: true,
         data: {
           period: query.period,
-          breakdown: result.rows.map(row => ({
+          breakdown: result.rows.map((row) => ({
             name_length: row.name_length,
             count: parseInt(row.count),
             total_cost_wei: row.total_cost_wei || '0',
@@ -842,15 +864,16 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
-    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
+    const countFilterClause =
+      countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([
@@ -964,15 +987,16 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
-    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
+    const countFilterClause =
+      countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([
@@ -1086,15 +1110,16 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         countConditions.push(`en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0`);
       } else {
         // Specific clubs - array overlap
-        dataConditions.push(`en.clubs && $${dataParamNum++}::text[]`);
+        dataConditions.push(`en.clubs && $${dataParamNum}::text[]`);
         dataParams.push(clubs);
-        countConditions.push(`en.clubs && $${countParamNum++}::text[]`);
+        countConditions.push(`en.clubs && $${countParamNum}::text[]`);
         countParams.push(clubs);
       }
     }
 
     const dataFilterClause = dataConditions.length > 0 ? 'AND ' + dataConditions.join(' AND ') : '';
-    const countFilterClause = countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
+    const countFilterClause =
+      countConditions.length > 0 ? 'AND ' + countConditions.join(' AND ') : '';
 
     try {
       const [dataResult, countResult] = await Promise.all([

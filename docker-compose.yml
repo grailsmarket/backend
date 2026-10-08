@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: grails
       POSTGRES_PASSWORD: grails_password
     ports:
-      - "5433:5432"
+      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./services/shared/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -20,7 +20,7 @@ services:
       -c max_wal_senders=10
       -c shared_preload_libraries='pgoutput'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U grails"]
+      test: ['CMD-SHELL', 'pg_isready -U grails']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,11 +29,11 @@ services:
     image: redis:7-alpine
     container_name: grails-redis
     ports:
-      - "6380:6379"
+      - '6380:6379'
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,13 +44,13 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
     ports:
-      - "9201:9200"
+      - '9201:9200'
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      test: ['CMD-SHELL', 'curl -f http://localhost:9200/_cluster/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 5

@@ -17,123 +17,131 @@ import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsea
  * Processes jobs scheduled to run at exact expires_at time
  */
 export async function registerExpiryWorker(boss: PgBoss): Promise<void> {
-  await boss.work<ExpireOrdersJob>(
-    QUEUE_NAMES.EXPIRE_ORDERS,
-    async (job) => {
-      const { type, id } = job.data;
+  await boss.work<ExpireOrdersJob>(QUEUE_NAMES.EXPIRE_ORDERS, async (job) => {
+    const { type, id } = job.data;
 
-      logger.info({ type, id }, 'Processing expiry job');
+    logger.info({ type, id }, 'Processing expiry job');
 
-      const pool = getPostgresPool();
+    const pool = getPostgresPool();
 
-      try {
-        if (type === 'listing') {
-          const result = await pool.query(
-            `UPDATE listings
+    try {
+      if (type === 'listing') {
+        const result = await pool.query(
+          `UPDATE listings
              SET status = 'expired', updated_at = NOW()
              WHERE id = $1
                AND status = 'active'
                AND expires_at <= NOW()
              RETURNING id, status, expires_at, ens_name_id`,
+          [id]
+        );
+
+        if (result.rows.length > 0) {
+          const expiredListing = result.rows[0];
+          logger.info({ listingId: id, row: expiredListing }, 'Listing expired successfully');
+
+          // Recalculate club floor price since a listing expired
+          try {
+            const clubsResult = await pool.query('SELECT clubs FROM ens_names WHERE id = $1', [
+              expiredListing.ens_name_id,
+            ]);
+            const clubs = clubsResult.rows[0]?.clubs || [];
+
+            if (clubs.length > 0) {
+              await boss.send('update-club-floor-price', {
+                clubNames: clubs,
+                eventType: 'delete', // Triggers full recalculation since listing is no longer active
+              });
+              logger.info(
+                { listingId: id, clubs },
+                'Published club floor price recalculation (listing expired)'
+              );
+            }
+          } catch (queueError) {
+            logger.error(
+              { error: queueError, listingId: id },
+              'Failed to publish club floor price recalculation'
+            );
+          }
+        } else {
+          // Check if listing exists and why it wasn't updated
+          const checkResult = await pool.query(
+            'SELECT id, status, expires_at FROM listings WHERE id = $1',
             [id]
           );
 
-          if (result.rows.length > 0) {
-            const expiredListing = result.rows[0];
-            logger.info({ listingId: id, row: expiredListing }, 'Listing expired successfully');
-
-            // Recalculate club floor price since a listing expired
-            try {
-              const clubsResult = await pool.query(
-                'SELECT clubs FROM ens_names WHERE id = $1',
-                [expiredListing.ens_name_id]
-              );
-              const clubs = clubsResult.rows[0]?.clubs || [];
-
-              if (clubs.length > 0) {
-                await boss.send('update-club-floor-price', {
-                  clubNames: clubs,
-                  eventType: 'delete', // Triggers full recalculation since listing is no longer active
-                });
-                logger.info({ listingId: id, clubs }, 'Published club floor price recalculation (listing expired)');
-              }
-            } catch (queueError) {
-              logger.error({ error: queueError, listingId: id }, 'Failed to publish club floor price recalculation');
-            }
+          if (checkResult.rows.length === 0) {
+            logger.warn({ listingId: id }, 'Listing not found');
           } else {
-            // Check if listing exists and why it wasn't updated
-            const checkResult = await pool.query(
-              'SELECT id, status, expires_at FROM listings WHERE id = $1',
-              [id]
+            const listing = checkResult.rows[0];
+            logger.info(
+              { listingId: id, status: listing.status, expiresAt: listing.expires_at },
+              'Listing not expired - already in different status or not yet expired'
             );
-
-            if (checkResult.rows.length === 0) {
-              logger.warn({ listingId: id }, 'Listing not found');
-            } else {
-              const listing = checkResult.rows[0];
-              logger.info(
-                { listingId: id, status: listing.status, expiresAt: listing.expires_at },
-                'Listing not expired - already in different status or not yet expired'
-              );
-            }
           }
-        } else if (type === 'offer') {
-          const result = await pool.query(
-            `UPDATE offers
+        }
+      } else if (type === 'offer') {
+        const result = await pool.query(
+          `UPDATE offers
              SET status = 'expired'
              WHERE id = $1
                AND status = 'pending'
                AND expires_at <= NOW()
              RETURNING id, status, expires_at, ens_name_id`,
+          [id]
+        );
+
+        if (result.rows.length > 0) {
+          const expiredOffer = result.rows[0];
+          logger.info({ offerId: id, row: expiredOffer }, 'Offer expired successfully');
+
+          // Check if this was the highest offer and trigger recalculation
+          try {
+            const checkHighest = await pool.query(
+              'SELECT highest_offer_id FROM ens_names WHERE id = $1',
+              [expiredOffer.ens_name_id]
+            );
+
+            if (checkHighest.rows[0]?.highest_offer_id === id) {
+              await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, {
+                ensNameId: expiredOffer.ens_name_id,
+              });
+              logger.info(
+                { offerId: id, ensNameId: expiredOffer.ens_name_id },
+                'Published recalculate highest offer (expired offer was highest)'
+              );
+            }
+          } catch (queueError) {
+            logger.error(
+              { error: queueError, offerId: id },
+              'Failed to publish recalculate highest offer job'
+            );
+          }
+        } else {
+          // Check if offer exists and why it wasn't updated
+          const checkResult = await pool.query(
+            'SELECT id, status, expires_at FROM offers WHERE id = $1',
             [id]
           );
 
-          if (result.rows.length > 0) {
-            const expiredOffer = result.rows[0];
-            logger.info({ offerId: id, row: expiredOffer }, 'Offer expired successfully');
-
-            // Check if this was the highest offer and trigger recalculation
-            try {
-              const checkHighest = await pool.query(
-                'SELECT highest_offer_id FROM ens_names WHERE id = $1',
-                [expiredOffer.ens_name_id]
-              );
-
-              if (checkHighest.rows[0]?.highest_offer_id === id) {
-                await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, {
-                  ensNameId: expiredOffer.ens_name_id,
-                });
-                logger.info({ offerId: id, ensNameId: expiredOffer.ens_name_id }, 'Published recalculate highest offer (expired offer was highest)');
-              }
-            } catch (queueError) {
-              logger.error({ error: queueError, offerId: id }, 'Failed to publish recalculate highest offer job');
-            }
+          if (checkResult.rows.length === 0) {
+            logger.warn({ offerId: id }, 'Offer not found');
           } else {
-            // Check if offer exists and why it wasn't updated
-            const checkResult = await pool.query(
-              'SELECT id, status, expires_at FROM offers WHERE id = $1',
-              [id]
+            const offer = checkResult.rows[0];
+            logger.info(
+              { offerId: id, status: offer.status, expiresAt: offer.expires_at },
+              'Offer not expired - already in different status or not yet expired'
             );
-
-            if (checkResult.rows.length === 0) {
-              logger.warn({ offerId: id }, 'Offer not found');
-            } else {
-              const offer = checkResult.rows[0];
-              logger.info(
-                { offerId: id, status: offer.status, expiresAt: offer.expires_at },
-                'Offer not expired - already in different status or not yet expired'
-              );
-            }
           }
-        } else {
-          logger.error({ type }, 'Unknown expiry type');
         }
-      } catch (error) {
-        logger.error({ error, type, id }, 'Error expiring order');
-        throw error; // Will trigger pg-boss retry
+      } else {
+        logger.error({ type }, 'Unknown expiry type');
       }
+    } catch (error) {
+      logger.error({ error, type, id }, 'Error expiring order');
+      throw error; // Will trigger pg-boss retry
     }
-  );
+  });
 
   logger.info('Expiry worker registered');
 }
@@ -150,32 +158,30 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
   );
 
   // Register the worker to process batch jobs
-  await boss.work(
-    QUEUE_NAMES.BATCH_EXPIRE_ORDERS,
-    async () => {
-      logger.info('Running batch expiry check');
+  await boss.work(QUEUE_NAMES.BATCH_EXPIRE_ORDERS, async () => {
+    logger.info('Running batch expiry check');
 
-      const pool = getPostgresPool();
+    const pool = getPostgresPool();
 
-      try {
-        let totalExpiredListings = 0;
-        let totalExpiredOffers = 0;
+    try {
+      let totalExpiredListings = 0;
+      let totalExpiredOffers = 0;
 
-        // Process in smaller batches to avoid pg_notify issues with rapid-fire triggers
-        const BATCH_SIZE = 10;
+      // Process in smaller batches to avoid pg_notify issues with rapid-fire triggers
+      const BATCH_SIZE = 10;
 
-        // Track all ens_name_ids that need floor price recalculation
-        const ensNameIdsForFloorRecalc: number[] = [];
+      // Track all ens_name_ids that need floor price recalculation
+      const ensNameIdsForFloorRecalc: number[] = [];
 
-        // Expire overdue listings in batches
-        while (true) {
-          await pool.query('BEGIN');
-          try {
-            // Disable triggers for this transaction
-            await pool.query('SET LOCAL session_replication_role = replica');
+      // Expire overdue listings in batches
+      while (true) {
+        await pool.query('BEGIN');
+        try {
+          // Disable triggers for this transaction
+          await pool.query('SET LOCAL session_replication_role = replica');
 
-            const listingsResult = await pool.query(
-              `UPDATE listings
+          const listingsResult = await pool.query(
+            `UPDATE listings
                SET status = 'expired', updated_at = NOW()
                WHERE id IN (
                  SELECT id FROM listings
@@ -185,78 +191,96 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
                  LIMIT $1
                )
                RETURNING id, ens_name_id`,
-              [BATCH_SIZE]
-            );
+            [BATCH_SIZE]
+          );
 
-            await pool.query('COMMIT');
-            totalExpiredListings += listingsResult.rows.length;
+          await pool.query('COMMIT');
+          totalExpiredListings += listingsResult.rows.length;
 
-            // Collect ens_name_ids for floor price recalculation
-            for (const row of listingsResult.rows) {
-              if (row.ens_name_id && !ensNameIdsForFloorRecalc.includes(row.ens_name_id)) {
-                ensNameIdsForFloorRecalc.push(row.ens_name_id);
-              }
+          // Collect ens_name_ids for floor price recalculation
+          for (const row of listingsResult.rows) {
+            if (row.ens_name_id && !ensNameIdsForFloorRecalc.includes(row.ens_name_id)) {
+              ensNameIdsForFloorRecalc.push(row.ens_name_id);
             }
-
-            if (listingsResult.rows.length < BATCH_SIZE) {
-              break; // No more listings to expire
-            }
-          } catch (txError) {
-            await pool.query('ROLLBACK');
-            throw txError;
           }
+
+          if (listingsResult.rows.length < BATCH_SIZE) {
+            break; // No more listings to expire
+          }
+        } catch (txError) {
+          await pool.query('ROLLBACK');
+          throw txError;
+        }
+      }
+
+      // Trigger floor price recalculation for all affected clubs
+      if (ensNameIdsForFloorRecalc.length > 0) {
+        try {
+          const clubsResult = await pool.query(
+            'SELECT DISTINCT unnest(clubs) as club FROM ens_names WHERE id = ANY($1) AND clubs IS NOT NULL',
+            [ensNameIdsForFloorRecalc]
+          );
+          const clubs = clubsResult.rows.map((row: any) => row.club);
+
+          if (clubs.length > 0) {
+            await boss.send('update-club-floor-price', {
+              clubNames: clubs,
+              eventType: 'delete', // Triggers full recalculation
+            });
+            logger.info(
+              { clubs, expiredCount: ensNameIdsForFloorRecalc.length },
+              'Published club floor price recalculation (batch listing expiry)'
+            );
+          }
+        } catch (queueError) {
+          logger.error(
+            { error: queueError },
+            'Failed to publish club floor price recalculation for batch expiry'
+          );
         }
 
-        // Trigger floor price recalculation for all affected clubs
-        if (ensNameIdsForFloorRecalc.length > 0) {
-          try {
-            const clubsResult = await pool.query(
-              'SELECT DISTINCT unnest(clubs) as club FROM ens_names WHERE id = ANY($1) AND clubs IS NOT NULL',
-              [ensNameIdsForFloorRecalc]
-            );
-            const clubs = clubsResult.rows.map((row: any) => row.club);
+        // Sync expired listings to Elasticsearch
+        // Since triggers are disabled, WAL listener won't receive updates
+        // We manually sync each affected ENS name to remove stale listing data from ES
+        try {
+          const esSync = new ElasticsearchSync();
+          logger.info(
+            { count: ensNameIdsForFloorRecalc.length },
+            'Syncing expired listings to Elasticsearch'
+          );
 
-            if (clubs.length > 0) {
-              await boss.send('update-club-floor-price', {
-                clubNames: clubs,
-                eventType: 'delete', // Triggers full recalculation
-              });
-              logger.info({ clubs, expiredCount: ensNameIdsForFloorRecalc.length }, 'Published club floor price recalculation (batch listing expiry)');
+          for (const ensNameId of ensNameIdsForFloorRecalc) {
+            try {
+              await esSync.updateENSNameListing(ensNameId);
+            } catch (syncError) {
+              logger.error(
+                { error: syncError, ensNameId },
+                'Failed to sync ENS name to Elasticsearch after listing expiry'
+              );
             }
-          } catch (queueError) {
-            logger.error({ error: queueError }, 'Failed to publish club floor price recalculation for batch expiry');
           }
 
-          // Sync expired listings to Elasticsearch
-          // Since triggers are disabled, WAL listener won't receive updates
-          // We manually sync each affected ENS name to remove stale listing data from ES
-          try {
-            const esSync = new ElasticsearchSync();
-            logger.info({ count: ensNameIdsForFloorRecalc.length }, 'Syncing expired listings to Elasticsearch');
-
-            for (const ensNameId of ensNameIdsForFloorRecalc) {
-              try {
-                await esSync.updateENSNameListing(ensNameId);
-              } catch (syncError) {
-                logger.error({ error: syncError, ensNameId }, 'Failed to sync ENS name to Elasticsearch after listing expiry');
-              }
-            }
-
-            logger.info({ count: ensNameIdsForFloorRecalc.length }, 'Completed Elasticsearch sync for expired listings');
-          } catch (esSyncError) {
-            logger.error({ error: esSyncError }, 'Failed to initialize Elasticsearch sync for batch expiry');
-          }
+          logger.info(
+            { count: ensNameIdsForFloorRecalc.length },
+            'Completed Elasticsearch sync for expired listings'
+          );
+        } catch (esSyncError) {
+          logger.error(
+            { error: esSyncError },
+            'Failed to initialize Elasticsearch sync for batch expiry'
+          );
         }
+      }
 
-        // Expire overdue offers in batches
-        while (true) {
-          await pool.query('BEGIN');
-          try {
-            // Disable triggers for this transaction
-            await pool.query('SET LOCAL session_replication_role = replica');
+      // Expire overdue offers in batches
+      while (true) {
+        await pool.query('BEGIN');
+        try {
+          // Disable triggers for this transaction
+          await pool.query('SET LOCAL session_replication_role = replica');
 
-            const offersResult = await pool.query(
-              `UPDATE offers
+          const offersResult = await pool.query(
+            `UPDATE offers
                SET status = 'expired'
                WHERE id IN (
                  SELECT id FROM offers
@@ -266,65 +290,69 @@ export async function registerBatchExpiryWorker(boss: PgBoss): Promise<void> {
                  LIMIT $1
                )
                RETURNING id, ens_name_id`,
-              [BATCH_SIZE]
-            );
-
-            await pool.query('COMMIT');
-            totalExpiredOffers += offersResult.rows.length;
-
-            // Trigger recalculation for each expired offer that might have been highest
-            if (offersResult.rows.length > 0) {
-              try {
-                // Get unique ens_name_ids that need recalculation
-                const ensNameIds = [...new Set(offersResult.rows.map((row: any) => row.ens_name_id))];
-
-                for (const ensNameId of ensNameIds) {
-                  // Check if any of the expired offers was the highest for this name
-                  const checkHighest = await pool.query(
-                    `SELECT highest_offer_id FROM ens_names WHERE id = $1`,
-                    [ensNameId]
-                  );
-
-                  const wasHighest = offersResult.rows.some(
-                    (row: any) => row.id === checkHighest.rows[0]?.highest_offer_id && row.ens_name_id === ensNameId
-                  );
-
-                  if (wasHighest) {
-                    await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, { ensNameId });
-                    logger.info({ ensNameId }, 'Published recalculate highest offer (batch expiry)');
-                  }
-                }
-              } catch (queueError) {
-                logger.error({ error: queueError }, 'Failed to publish recalculate jobs for batch expired offers');
-              }
-            }
-
-            if (offersResult.rows.length < BATCH_SIZE) {
-              break; // No more offers to expire
-            }
-          } catch (txError) {
-            await pool.query('ROLLBACK');
-            throw txError;
-          }
-        }
-
-        // Re-enable triggers (SET LOCAL will auto-reset at end of transaction anyway)
-        await pool.query('SET LOCAL session_replication_role = DEFAULT');
-
-        if (totalExpiredListings > 0 || totalExpiredOffers > 0) {
-          logger.info(
-            { expiredListings: totalExpiredListings, expiredOffers: totalExpiredOffers },
-            'Batch expiry completed - found overdue orders'
+            [BATCH_SIZE]
           );
-        } else {
-          logger.debug('Batch expiry completed - no overdue orders found');
+
+          await pool.query('COMMIT');
+          totalExpiredOffers += offersResult.rows.length;
+
+          // Trigger recalculation for each expired offer that might have been highest
+          if (offersResult.rows.length > 0) {
+            try {
+              // Get unique ens_name_ids that need recalculation
+              const ensNameIds = [...new Set(offersResult.rows.map((row: any) => row.ens_name_id))];
+
+              for (const ensNameId of ensNameIds) {
+                // Check if any of the expired offers was the highest for this name
+                const checkHighest = await pool.query(
+                  `SELECT highest_offer_id FROM ens_names WHERE id = $1`,
+                  [ensNameId]
+                );
+
+                const wasHighest = offersResult.rows.some(
+                  (row: any) =>
+                    row.id === checkHighest.rows[0]?.highest_offer_id &&
+                    row.ens_name_id === ensNameId
+                );
+
+                if (wasHighest) {
+                  await boss.send(QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER, { ensNameId });
+                  logger.info({ ensNameId }, 'Published recalculate highest offer (batch expiry)');
+                }
+              }
+            } catch (queueError) {
+              logger.error(
+                { error: queueError },
+                'Failed to publish recalculate jobs for batch expired offers'
+              );
+            }
+          }
+
+          if (offersResult.rows.length < BATCH_SIZE) {
+            break; // No more offers to expire
+          }
+        } catch (txError) {
+          await pool.query('ROLLBACK');
+          throw txError;
         }
-      } catch (error) {
-        logger.error({ error }, 'Error in batch expiry job');
-        throw error;
       }
+
+      // Re-enable triggers (SET LOCAL will auto-reset at end of transaction anyway)
+      await pool.query('SET LOCAL session_replication_role = DEFAULT');
+
+      if (totalExpiredListings > 0 || totalExpiredOffers > 0) {
+        logger.info(
+          { expiredListings: totalExpiredListings, expiredOffers: totalExpiredOffers },
+          'Batch expiry completed - found overdue orders'
+        );
+      } else {
+        logger.debug('Batch expiry completed - no overdue orders found');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Error in batch expiry job');
+      throw error;
     }
-  );
+  });
 
   logger.info('Batch expiry worker registered (runs every 5 minutes)');
 }

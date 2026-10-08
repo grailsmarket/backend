@@ -48,7 +48,7 @@ describe('Activity Club Filter API', () => {
     try {
       await fetch(`${API_BASE_URL}/health`);
     } catch (error) {
-      throw new Error('API server not running. Start it with: npm run dev');
+      throw new Error('API server not running. Start it with: npm run dev', { cause: error });
     }
   });
 
@@ -94,7 +94,9 @@ describe('Activity Club Filter API', () => {
     });
 
     it('should combine club filter with multiple event_types', async () => {
-      const response = await fetch(`${API_BASE_URL}/api/v1/activity?club=999&event_type=sold&event_type=listed`);
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/activity?club=999&event_type=sold&event_type=listed`
+      );
       expect(response.ok).toBe(true);
 
       const json = (await response.json()) as ActivityResponse;

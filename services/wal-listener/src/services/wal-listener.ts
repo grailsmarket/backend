@@ -71,7 +71,7 @@ export class WALListener {
     // Try trigger-based CDC first, fall back to polling if it fails
     try {
       await this.setupTriggerBasedCDC();
-    } catch (error) {
+    } catch {
       logger.error('Trigger-based CDC failed, using polling instead');
       await this.startPolling();
     }
@@ -116,8 +116,11 @@ export class WALListener {
 
         for (const row of listingChanges.rows) {
           // Determine if this is an INSERT or UPDATE based on created_at vs updated_at
-          const isInsert = row.created_at && row.updated_at &&
-            Math.abs(new Date(row.created_at).getTime() - new Date(row.updated_at).getTime()) < 1000; // Within 1 second
+          const isInsert =
+            row.created_at &&
+            row.updated_at &&
+            Math.abs(new Date(row.created_at).getTime() - new Date(row.updated_at).getTime()) <
+              1000; // Within 1 second
 
           await this.processChange({
             table: 'listings',
@@ -142,7 +145,6 @@ export class WALListener {
           });
           lastProcessed.offers = row.created_at;
         }
-
       } catch (error) {
         logger.error('Error during polling:', error);
       }
@@ -161,7 +163,7 @@ export class WALListener {
     logger.debug(`Received ${change.operation} on ${change.table}`, {
       table: change.table,
       operation: change.operation,
-      dataId: change.data?.id
+      dataId: change.data?.id,
     });
 
     try {
@@ -201,12 +203,14 @@ export class WALListener {
         // when users view a name (which increments view_count)
         if (change.oldData && change.data) {
           const ignoredFields = ['view_count', 'updated_at'];
-          const changedFields = Object.keys(change.data).filter(key => {
+          const changedFields = Object.keys(change.data).filter((key) => {
             return !ignoredFields.includes(key) && change.oldData[key] !== change.data[key];
           });
 
           if (changedFields.length === 0) {
-            logger.debug(`Skipping ES update for ${change.data.name} - only view_count/updated_at changed`);
+            logger.debug(
+              `Skipping ES update for ${change.data.name} - only view_count/updated_at changed`
+            );
             break;
           }
         }
@@ -230,7 +234,9 @@ export class WALListener {
               // Skip burn events (to zero address) - these are usually temporary states or wrapped names
               // The indexer will handle actual burns if needed
               if (newOwner === ZERO_ADDRESS.toLowerCase()) {
-                logger.debug(`Skipping burn event for ${change.data.token_id} - zero address updates are handled by indexer`);
+                logger.debug(
+                  `Skipping burn event for ${change.data.token_id} - zero address updates are handled by indexer`
+                );
                 // Don't create burn activity records anymore
               }
               // DISABLED: Transfer sent/received events
@@ -273,7 +279,7 @@ export class WALListener {
       if (change.operation === 'UPDATE') {
         if (change.oldData && change.data) {
           const ignoredFields = ['last_validated_at', 'updated_at'];
-          const changedFields = Object.keys(change.data).filter(key => {
+          const changedFields = Object.keys(change.data).filter((key) => {
             if (ignoredFields.includes(key)) return false;
             // Compare values - use JSON.stringify for deep comparison
             const oldStr = JSON.stringify(change.oldData[key]);
@@ -286,7 +292,9 @@ export class WALListener {
             return;
           }
 
-          logger.info(`Syncing listing ${change.data.id} to ES (changed: ${changedFields.join(', ')})`);
+          logger.info(
+            `Syncing listing ${change.data.id} to ES (changed: ${changedFields.join(', ')})`
+          );
           await this.esSync.updateENSNameListing(ensNameId);
         } else {
           // No oldData available - update ES since we can't tell what changed
@@ -295,7 +303,9 @@ export class WALListener {
         }
       } else {
         // For INSERT/DELETE, always update ES
-        logger.info(`Syncing listing ${change.data?.id || change.oldData?.id} to ES (${change.operation})`);
+        logger.info(
+          `Syncing listing ${change.data?.id || change.oldData?.id} to ES (${change.operation})`
+        );
         await this.esSync.updateENSNameListing(ensNameId);
       }
     }
@@ -317,7 +327,10 @@ export class WALListener {
           // Check for various update scenarios
           if (change.oldData && change.data) {
             // Listing price updated
-            if (change.oldData.price_wei !== change.data.price_wei && change.data.status === 'active') {
+            if (
+              change.oldData.price_wei !== change.data.price_wei &&
+              change.data.status === 'active'
+            ) {
               await this.activityHistory.handleListingUpdated(change.oldData, change.data);
             }
 
@@ -377,7 +390,8 @@ export class WALListener {
               // We need to get the seller address from the sales table
               // Note: We cannot use ens_names.owner_address because ownership may have already
               // been transferred to the buyer by the time we process this WAL event
-              const sellerAddress = change.data.seller_address || change.data.metadata?.seller_address;
+              const sellerAddress =
+                change.data.seller_address || change.data.metadata?.seller_address;
               if (sellerAddress) {
                 await this.activityHistory.handleOfferAccepted(change.data, sellerAddress);
               } else {
@@ -392,9 +406,14 @@ export class WALListener {
                     [change.data.ens_name_id, change.data.buyer_address]
                   );
                   if (result.rows.length > 0) {
-                    await this.activityHistory.handleOfferAccepted(change.data, result.rows[0].seller_address);
+                    await this.activityHistory.handleOfferAccepted(
+                      change.data,
+                      result.rows[0].seller_address
+                    );
                   } else {
-                    logger.warn(`No sale record found for accepted offer ${change.data.id}, cannot create activity history`);
+                    logger.warn(
+                      `No sale record found for accepted offer ${change.data.id}, cannot create activity history`
+                    );
                   }
                 } catch (err) {
                   logger.error('Failed to fetch seller address for offer acceptance:', err);
@@ -431,7 +450,7 @@ export class WALListener {
     try {
       // Look up the ens_names.id by matching label_name
       const result = await this.pool.query(
-        'SELECT id FROM ens_names WHERE REPLACE(name, \'.eth\', \'\') = $1 LIMIT 1',
+        "SELECT id FROM ens_names WHERE REPLACE(name, '.eth', '') = $1 LIMIT 1",
         [name]
       );
 
@@ -464,7 +483,9 @@ export class WALListener {
       `);
 
       if (functionCheck.rows.length === 0) {
-        throw new Error('notify_changes function not found - ensure database migrations have been run');
+        throw new Error(
+          'notify_changes function not found - ensure database migrations have been run'
+        );
       }
 
       logger.info('Verified notify_changes function exists');
@@ -472,14 +493,19 @@ export class WALListener {
       // Verify triggers exist for each table (created by migrations)
       const tables = ['ens_names', 'listings', 'offers', 'google_metrics'];
       for (const table of tables) {
-        const triggerCheck = await this.client.query(`
+        const triggerCheck = await this.client.query(
+          `
           SELECT 1 FROM pg_trigger
           WHERE tgname LIKE $1
           AND tgrelid = $2::regclass
-        `, [`%notify%`, table]);
+        `,
+          [`%notify%`, table]
+        );
 
         if (triggerCheck.rows.length === 0) {
-          logger.warn(`No notify trigger found for ${table} - notifications for this table may not work`);
+          logger.warn(
+            `No notify trigger found for ${table} - notifications for this table may not work`
+          );
         } else {
           logger.info(`Verified notify trigger exists for ${table}`);
         }
@@ -517,7 +543,10 @@ export class WALListener {
   /**
    * Publish notification jobs for users watching this listing's ENS name
    */
-  private async publishNotificationsForListing(listingData: any, notificationType: 'new-listing' | 'price-change' | 'sale') {
+  private async publishNotificationsForListing(
+    listingData: any,
+    notificationType: 'new-listing' | 'price-change' | 'sale'
+  ) {
     try {
       const { getQueueClient, QUEUE_NAMES } = await import('../queue');
       const boss = await getQueueClient();
@@ -563,7 +592,11 @@ export class WALListener {
 
       if (watchers.rows.length > 0) {
         logger.info(
-          { ensNameId: listingData.ens_name_id, watchersCount: watchers.rows.length, notificationType },
+          {
+            ensNameId: listingData.ens_name_id,
+            watchersCount: watchers.rows.length,
+            notificationType,
+          },
           'Published notification jobs for listing change'
         );
       } else {
@@ -573,12 +606,15 @@ export class WALListener {
         );
       }
     } catch (error: any) {
-      logger.error({
-        error: error?.message || String(error),
-        errorStack: error?.stack,
-        errorCode: error?.code,
-        listingData
-      }, 'Failed to publish listing notifications');
+      logger.error(
+        {
+          error: error?.message || String(error),
+          errorStack: error?.stack,
+          errorCode: error?.code,
+          listingData,
+        },
+        'Failed to publish listing notifications'
+      );
     }
   }
 
@@ -604,7 +640,10 @@ export class WALListener {
         GROUP BY w.user_id, u.email
       `;
 
-      const watchers = await this.pool.query(watchlistQuery, [offerData.ens_name_id, offerData.offer_amount_wei]);
+      const watchers = await this.pool.query(watchlistQuery, [
+        offerData.ens_name_id,
+        offerData.offer_amount_wei,
+      ]);
 
       for (const watcher of watchers.rows) {
         await boss.send(QUEUE_NAMES.SEND_NOTIFICATION, {
@@ -639,7 +678,10 @@ export class WALListener {
                OR ($2::NUMERIC / 1e18) >= u.min_offer_threshold)
       `;
 
-      const ownerResult = await this.pool.query(ownerQuery, [offerData.ens_name_id, offerData.offer_amount_wei]);
+      const ownerResult = await this.pool.query(ownerQuery, [
+        offerData.ens_name_id,
+        offerData.offer_amount_wei,
+      ]);
 
       if (ownerResult.rows.length > 0) {
         const owner = ownerResult.rows[0];
@@ -688,7 +730,8 @@ export class WALListener {
 
       // Use sale price if available, fall back to listing price
       const priceWei = saleData?.sale_price_wei || listingData.price_wei;
-      const buyerAddress = saleData?.buyer_address || listingData.buyer_address || listingData.metadata?.buyer_address;
+      const buyerAddress =
+        saleData?.buyer_address || listingData.buyer_address || listingData.metadata?.buyer_address;
       const transactionHash = saleData?.transaction_hash || listingData.transaction_hash;
 
       // Find the seller (user with matching address)

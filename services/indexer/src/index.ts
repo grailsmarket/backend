@@ -10,7 +10,9 @@ async function start() {
 
   // Check RPC URL configuration
   if (!config.blockchain.rpcUrl || config.blockchain.rpcUrl.includes('YOUR_')) {
-    logger.error('RPC_URL is not configured properly. Please set a valid RPC URL in your .env file');
+    logger.error(
+      'RPC_URL is not configured properly. Please set a valid RPC URL in your .env file'
+    );
     logger.info('You can get a free RPC URL from:');
     logger.info('  - Infura: https://infura.io');
     logger.info('  - Alchemy: https://www.alchemy.com');
@@ -34,11 +36,14 @@ async function start() {
     await getQueueClient();
     logger.info('pg-boss queue client initialized successfully');
   } catch (error: any) {
-    logger.error({
-      errorMessage: error?.message || String(error),
-      errorStack: error?.stack,
-      errorCode: error?.code
-    }, 'Failed to initialize pg-boss queue client');
+    logger.error(
+      {
+        errorMessage: error?.message || String(error),
+        errorStack: error?.stack,
+        errorCode: error?.code,
+      },
+      'Failed to initialize pg-boss queue client'
+    );
     logger.warn('Continuing without queue support - ownership updates will not be published');
   }
 
@@ -95,20 +100,24 @@ async function start() {
     process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason: any, promise) => {
+  process.on('unhandledRejection', (reason: any, _promise) => {
     const errorCode = reason?.code;
     const errorMessage = reason?.message || String(reason);
 
-    logger.error({
-      reason: errorMessage,
-      stack: reason?.stack,
-      code: errorCode,
-      detail: reason?.detail,
-    }, 'Unhandled rejection');
+    logger.error(
+      {
+        reason: errorMessage,
+        stack: reason?.stack,
+        code: errorCode,
+        detail: reason?.detail,
+      },
+      'Unhandled rejection'
+    );
 
     // Don't exit on transient database connection errors (53300 = too many clients)
     // These are recoverable and the connection pool will retry
-    const isTransientDbError = errorCode === '53300' ||
+    const isTransientDbError =
+      errorCode === '53300' ||
       errorMessage?.includes('too many clients') ||
       errorMessage?.includes('connection pool');
 

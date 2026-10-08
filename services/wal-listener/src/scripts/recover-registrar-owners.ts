@@ -16,6 +16,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const ENS_REGISTRAR_ADDRESS = '0x283af0b28c62c092c9727f1ee09c02ca627eb7f5';
@@ -99,7 +100,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recoverRegistrarOwners(options: {
@@ -159,7 +160,9 @@ async function recoverRegistrarOwners(options: {
     // Show examples
     console.log('Sample records:');
     registrarRecords.slice(0, 5).forEach((r) => {
-      console.log(`  ID ${r.id}: ${r.name} (owner: ${r.owner_address}, registrant: ${r.registrant || 'null'})`);
+      console.log(
+        `  ID ${r.id}: ${r.name} (owner: ${r.owner_address}, registrant: ${r.registrant || 'null'})`
+      );
     });
     console.log('');
 
@@ -174,7 +177,9 @@ async function recoverRegistrarOwners(options: {
     for (let i = 0; i < registrarRecords.length; i += batchSize) {
       const batch = registrarRecords.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, registrarRecords.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, registrarRecords.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, RegistrarRecord>();
@@ -240,11 +245,7 @@ async function recoverRegistrarOwners(options: {
                SET owner_address = $1,
                    registrant = $2
                WHERE id = $3`,
-              [
-                newOwner,
-                newRegistrant,
-                record.id
-              ]
+              [newOwner, newRegistrant, record.id]
             );
             recovered++;
           } catch (updateError: any) {
@@ -278,7 +279,6 @@ async function recoverRegistrarOwners(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `registrar-recovery-${timestamp}.json`;
 
@@ -296,7 +296,6 @@ async function recoverRegistrarOwners(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Fatal error:', error.message);
     console.error(error.stack);

@@ -13,21 +13,21 @@ async function main() {
         bool: {
           must: [
             { term: { status: 'active' } },
-            { range: { expiry_date: { gt: 'now' } } }  // Not expired: use dynamic date check
-          ]
-        }
+            { range: { expiry_date: { gt: 'now' } } }, // Not expired: use dynamic date check
+          ],
+        },
       },
       sort: [{ price: { order: 'asc' } }],
-      _source: ['name', 'price']
-    }
+      _source: ['name', 'price'],
+    },
   });
 
   console.log('Raw ES documents after resync:\n');
-  
+
   for (const hit of result.hits.hits) {
     const price = (hit._source as any).price;
     const sortValue = hit.sort ? hit.sort[0] : 'N/A';
-    
+
     console.log(`ID: ${hit._id}`);
     console.log(`Name: ${(hit._source as any).name}`);
     console.log(`Price (raw): ${JSON.stringify(price)}`);

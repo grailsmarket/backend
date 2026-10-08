@@ -31,12 +31,14 @@ export interface CreateSiweMessageParams {
  */
 export function createSiweMessage(params: CreateSiweMessageParams): SiweMessage {
   // Default domain/uri for Node.js environments
-  const defaultDomain = typeof globalThis !== 'undefined' && 'location' in globalThis
-    ? (globalThis as unknown as { location: { host: string } }).location.host
-    : 'grails.app';
-  const defaultUri = typeof globalThis !== 'undefined' && 'location' in globalThis
-    ? (globalThis as unknown as { location: { origin: string } }).location.origin
-    : 'https://grails.app';
+  const defaultDomain =
+    typeof globalThis !== 'undefined' && 'location' in globalThis
+      ? (globalThis as unknown as { location: { host: string } }).location.host
+      : 'grails.app';
+  const defaultUri =
+    typeof globalThis !== 'undefined' && 'location' in globalThis
+      ? (globalThis as unknown as { location: { origin: string } }).location.origin
+      : 'https://grails.app';
 
   const {
     address,

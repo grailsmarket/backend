@@ -46,14 +46,14 @@ const VERBOSE = process.argv.includes('--verbose');
 
 // Parse --limit argument
 let LIMIT = 0;
-const limitArg = process.argv.find(arg => arg.startsWith('--limit='));
+const limitArg = process.argv.find((arg) => arg.startsWith('--limit='));
 if (limitArg) {
   LIMIT = parseInt(limitArg.split('=')[1]);
 }
 
 // Parse --name argument for checking a specific name
 let SPECIFIC_NAME: string | null = null;
-const nameArg = process.argv.find(arg => arg.startsWith('--name='));
+const nameArg = process.argv.find((arg) => arg.startsWith('--name='));
 if (nameArg) {
   SPECIFIC_NAME = nameArg.split('=')[1];
   if (!SPECIFIC_NAME.endsWith('.eth')) {
@@ -114,7 +114,7 @@ async function processBatchWithMulticall(
   let unwrapped = 0;
 
   // Step 1: Check ownerOf for all names to find which are wrapped
-  const ownerCalls = names.map(record => {
+  const ownerCalls = names.map((record) => {
     const label = record.name.replace('.eth', '');
     const labelHash = computeLabelhash(label);
     return {
@@ -195,7 +195,7 @@ async function processBatchWithMulticall(
       }
 
       const registrarExpiry = registrarResult.result as bigint;
-      const [wrapperOwner, fuses, wrapperExpiry] = wrapperResult.result as [string, number, bigint];
+      const [, , wrapperExpiry] = wrapperResult.result as [string, number, bigint];
 
       // Expected wrapper expiry = registrar expiry + grace period
       const expectedWrapperExpiry = registrarExpiry + GRACE_PERIOD;
@@ -296,10 +296,18 @@ async function checkSpecificName(client: PublicClient, name: string) {
 
   console.log('');
   console.log('=== Expiry Comparison ===');
-  console.log(`BaseRegistrar expiry:   ${new Date(Number(registrarExpiry) * 1000).toISOString()} (${registrarExpiry})`);
-  console.log(`NameWrapper expiry:     ${new Date(Number(wrapperExpiry) * 1000).toISOString()} (${wrapperExpiry})`);
-  console.log(`Expected wrapper expiry: ${new Date(Number(expectedWrapperExpiry) * 1000).toISOString()} (${expectedWrapperExpiry})`);
-  console.log(`Grace period:           ${Number(GRACE_PERIOD) / 86400} days (${GRACE_PERIOD} seconds)`);
+  console.log(
+    `BaseRegistrar expiry:   ${new Date(Number(registrarExpiry) * 1000).toISOString()} (${registrarExpiry})`
+  );
+  console.log(
+    `NameWrapper expiry:     ${new Date(Number(wrapperExpiry) * 1000).toISOString()} (${wrapperExpiry})`
+  );
+  console.log(
+    `Expected wrapper expiry: ${new Date(Number(expectedWrapperExpiry) * 1000).toISOString()} (${expectedWrapperExpiry})`
+  );
+  console.log(
+    `Grace period:           ${Number(GRACE_PERIOD) / 86400} days (${GRACE_PERIOD} seconds)`
+  );
   console.log('');
 
   const diff = expectedWrapperExpiry - BigInt(wrapperExpiry);
@@ -308,7 +316,9 @@ async function checkSpecificName(client: PublicClient, name: string) {
   const wrapperExpiredFlag = BigInt(wrapperExpiry) < now;
   const registrarExpiredFlag = registrarExpiry < now;
 
-  console.log(`Wrapper expired: ${wrapperExpiredFlag} (${wrapperExpiredFlag ? 'YES - purchases will fail!' : 'No'})`);
+  console.log(
+    `Wrapper expired: ${wrapperExpiredFlag} (${wrapperExpiredFlag ? 'YES - purchases will fail!' : 'No'})`
+  );
   console.log(`Registrar expired: ${registrarExpiredFlag}`);
   console.log('');
 
@@ -325,7 +335,9 @@ async function checkSpecificName(client: PublicClient, name: string) {
     console.log('This name was likely renewed through the old ETHRegistrarController');
     console.log('instead of the NameWrapper-aware controller.');
   } else if (diff < 0n) {
-    console.log(`ℹ️  Wrapper expiry is ${Math.abs(diffDays).toFixed(2)} days AHEAD of expected (unusual but harmless).`);
+    console.log(
+      `ℹ️  Wrapper expiry is ${Math.abs(diffDays).toFixed(2)} days AHEAD of expected (unusual but harmless).`
+    );
   } else {
     console.log(`✅ Name is properly synced.`);
   }
@@ -349,7 +361,9 @@ async function main() {
   console.log('=== Find Desynced Wrapped ENS Names (OPTIMIZED) ===');
   console.log(`Mode: ${DRY_RUN ? 'DRY RUN (use --save to persist)' : 'SAVING RESULTS'}`);
   console.log(`RPC URL: ${config.blockchain.rpcUrl.substring(0, 30)}...`);
-  console.log(`Batch size: ${MULTICALL_BATCH_SIZE} names/multicall, ${CONCURRENT_BATCHES} concurrent`);
+  console.log(
+    `Batch size: ${MULTICALL_BATCH_SIZE} names/multicall, ${CONCURRENT_BATCHES} concurrent`
+  );
   if (LIMIT > 0) console.log(`Limit: ${LIMIT}`);
   if (SPECIFIC_NAME) console.log(`Checking specific name: ${SPECIFIC_NAME}`);
   console.log('');
@@ -411,7 +425,7 @@ async function main() {
     }
 
     // Process batches concurrently
-    const batchPromises = batches.map(batch => processBatchWithMulticall(client, batch));
+    const batchPromises = batches.map((batch) => processBatchWithMulticall(client, batch));
     const batchResults = await Promise.all(batchPromises);
 
     // Aggregate results
@@ -424,7 +438,9 @@ async function main() {
       // Log desynced names as they're found
       for (const d of batchResult.desynced) {
         const severity = d.wrapperExpired ? '🚨 CRITICAL' : '⚠️  WARNING';
-        console.log(`\n${severity}: ${d.name} (diff: ${d.diffDays.toFixed(2)} days${d.wrapperExpired ? ', WRAPPER EXPIRED!' : ''})`);
+        console.log(
+          `\n${severity}: ${d.name} (diff: ${d.diffDays.toFixed(2)} days${d.wrapperExpired ? ', WRAPPER EXPIRED!' : ''})`
+        );
       }
     }
 
@@ -438,19 +454,19 @@ async function main() {
 
     process.stdout.write(
       `\rProgress: ${processed.toLocaleString()}/${total.toLocaleString()} (${Math.round((processed / total) * 100)}%) | ` +
-      `Wrapped: ${wrapped.toLocaleString()} | Unwrapped: ${unwrapped.toLocaleString()} | ` +
-      `Desynced: ${allDesynced.length} | Errors: ${errors} | ` +
-      `Rate: ${Math.round(rate)}/s | ETA: ${Math.round(eta)}s    `
+        `Wrapped: ${wrapped.toLocaleString()} | Unwrapped: ${unwrapped.toLocaleString()} | ` +
+        `Desynced: ${allDesynced.length} | Errors: ${errors} | ` +
+        `Rate: ${Math.round(rate)}/s | ETA: ${Math.round(eta)}s    `
     );
 
     // Small delay between batch groups
-    await new Promise(resolve => setTimeout(resolve, RPC_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, RPC_DELAY_MS));
   }
 
   const totalTime = (Date.now() - startTime) / 1000;
 
-  const criticalCount = allDesynced.filter(d => d.wrapperExpired).length;
-  const warningCount = allDesynced.filter(d => !d.wrapperExpired).length;
+  const criticalCount = allDesynced.filter((d) => d.wrapperExpired).length;
+  const warningCount = allDesynced.filter((d) => !d.wrapperExpired).length;
 
   console.log('\n\n=== Results ===');
   console.log(`Total processed: ${processed.toLocaleString()}`);
@@ -473,14 +489,14 @@ async function main() {
 
     if (criticalCount > 0) {
       console.log('\n=== 🚨 CRITICAL: Wrapper Already Expired (purchases will fail) ===');
-      for (const d of allDesynced.filter(x => x.wrapperExpired)) {
+      for (const d of allDesynced.filter((x) => x.wrapperExpired)) {
         console.log(`  ${d.name} - diff: ${d.diffDays.toFixed(2)} days`);
       }
     }
 
     if (warningCount > 0) {
       console.log('\n=== ⚠️  WARNING: Desynced but not yet expired ===');
-      for (const d of allDesynced.filter(x => !x.wrapperExpired)) {
+      for (const d of allDesynced.filter((x) => !x.wrapperExpired)) {
         console.log(`  ${d.name} - diff: ${d.diffDays.toFixed(2)} days`);
       }
     }
@@ -490,26 +506,31 @@ async function main() {
       const fs = await import('fs');
 
       // CSV output
-      const csvHeader = 'name,owner_address,severity,diff_days,wrapper_expired,registrar_expiry,wrapper_expiry,expected_wrapper_expiry,diff_seconds,id,token_id';
-      const csvRows = allDesynced.map(d => [
-        d.name,
-        d.ownerAddress || '',
-        d.wrapperExpired ? 'critical' : 'warning',
-        d.diffDays.toFixed(2),
-        d.wrapperExpired ? 'true' : 'false',
-        new Date(Number(d.registrarExpiry) * 1000).toISOString(),
-        new Date(Number(d.wrapperExpiry) * 1000).toISOString(),
-        new Date(Number(d.expectedWrapperExpiry) * 1000).toISOString(),
-        d.diffSeconds.toString(),
-        d.id,
-        d.tokenId,
-      ].join(','));
+      const csvHeader =
+        'name,owner_address,severity,diff_days,wrapper_expired,registrar_expiry,wrapper_expiry,expected_wrapper_expiry,diff_seconds,id,token_id';
+      const csvRows = allDesynced.map((d) =>
+        [
+          d.name,
+          d.ownerAddress || '',
+          d.wrapperExpired ? 'critical' : 'warning',
+          d.diffDays.toFixed(2),
+          d.wrapperExpired ? 'true' : 'false',
+          new Date(Number(d.registrarExpiry) * 1000).toISOString(),
+          new Date(Number(d.wrapperExpiry) * 1000).toISOString(),
+          new Date(Number(d.expectedWrapperExpiry) * 1000).toISOString(),
+          d.diffSeconds.toString(),
+          d.id,
+          d.tokenId,
+        ].join(',')
+      );
 
       const csvContent = [csvHeader, ...csvRows].join('\n');
       const csvPath = 'desynced-names.csv';
       fs.writeFileSync(csvPath, csvContent);
       console.log(`\nResults saved to ${csvPath}`);
-      console.log(`  Total: ${allDesynced.length} | Critical: ${criticalCount} | Warning: ${warningCount}`);
+      console.log(
+        `  Total: ${allDesynced.length} | Critical: ${criticalCount} | Warning: ${warningCount}`
+      );
     } else {
       console.log('\n[DRY RUN] Run with --save to persist results to desynced-names.csv');
     }

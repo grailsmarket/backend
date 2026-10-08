@@ -78,10 +78,7 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
           [newOwner.toLowerCase(), ensNameId]
         );
 
-        logger.info(
-          { ensNameId, ensName, oldOwner: currentOwner, newOwner },
-          'Ownership updated'
-        );
+        logger.info({ ensNameId, ensName, oldOwner: currentOwner, newOwner }, 'Ownership updated');
 
         // Mark listings as unfunded (ownership changed = seller can't fulfill)
         // Using unfunded instead of cancelled allows revalidation if ownership returns
@@ -108,7 +105,7 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
           const validationJobs = unfundedListings.rows.map((listing) => ({
             name: 'validate-listing-ownership',
             data: { listingId: listing.id },
-            singletonKey: `listing-${listing.id}`
+            singletonKey: `listing-${listing.id}`,
           }));
 
           await boss.insert(validationJobs);

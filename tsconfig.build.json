@@ -8,8 +8,6 @@
       "@grails/shared/*": ["./services/shared/src/*"]
     }
   },
-  "include": [
-    "services/*/src/**/*"
-  ],
+  "include": ["services/*/src/**/*"],
   "exclude": ["node_modules", "**/dist"]
 }

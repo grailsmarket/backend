@@ -39,7 +39,9 @@ async function get(key: string, full: boolean) {
   if (full || value.length <= 500) {
     console.log(value);
   } else {
-    console.log(value.slice(0, 500) + `\n\n... truncated (${value.length} chars total, use --full to see all)`);
+    console.log(
+      value.slice(0, 500) + `\n\n... truncated (${value.length} chars total, use --full to see all)`
+    );
   }
 }
 

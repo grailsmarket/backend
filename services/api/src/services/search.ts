@@ -4,7 +4,7 @@ interface SearchQuery {
   q: string;
   page: number;
   limit: number;
-  ensNames?: string[];  // Optional: restrict search to specific ENS names (for watchlist filtering)
+  ensNames?: string[]; // Optional: restrict search to specific ENS names (for watchlist filtering)
   filters?: {
     minPrice?: string;
     maxPrice?: string;
@@ -12,18 +12,27 @@ interface SearchQuery {
     maxLength?: number;
     hasNumbers?: boolean;
     hasEmoji?: boolean;
-    clubs?: string[];  // Array of club names to filter by
+    clubs?: string[]; // Array of club names to filter by
     isExpired?: boolean;
     isGracePeriod?: boolean;
     isPremiumPeriod?: boolean;
     expiringWithinDays?: number;
     hasSales?: boolean;
-    lastSoldAfter?: string;  // ISO date string
-    lastSoldBefore?: string;  // ISO date string
+    lastSoldAfter?: string; // ISO date string
+    lastSoldBefore?: string; // ISO date string
     minDaysSinceLastSale?: number;
     maxDaysSinceLastSale?: number;
   };
-  sortBy?: 'price' | 'expiry_date' | 'registration_date' | 'creation_date' | 'last_sale_date' | 'last_sale_price' | 'character_count' | 'watchers_count' | 'offer';
+  sortBy?:
+    | 'price'
+    | 'expiry_date'
+    | 'registration_date'
+    | 'creation_date'
+    | 'last_sale_date'
+    | 'last_sale_price'
+    | 'character_count'
+    | 'watchers_count'
+    | 'offer';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -138,11 +147,11 @@ export async function searchNames(query: SearchQuery) {
         filter.push({
           bool: {
             should: [
-              { range: { expiry_date: { gt: 'now' } } },  // Not expired
-              { range: { expiry_date: { lte: 'now-90d' } } }  // Past grace period
+              { range: { expiry_date: { gt: 'now' } } }, // Not expired
+              { range: { expiry_date: { lte: 'now-90d' } } }, // Past grace period
             ],
-            minimum_should_match: 1
-          }
+            minimum_should_match: 1,
+          },
         });
       }
     }
@@ -157,11 +166,11 @@ export async function searchNames(query: SearchQuery) {
         filter.push({
           bool: {
             should: [
-              { range: { expiry_date: { gt: 'now-90d' } } },  // Not expired or in grace
-              { range: { expiry_date: { lte: 'now-111d' } } }  // Past premium period
+              { range: { expiry_date: { gt: 'now-90d' } } }, // Not expired or in grace
+              { range: { expiry_date: { lte: 'now-111d' } } }, // Past premium period
             ],
-            minimum_should_match: 1
-          }
+            minimum_should_match: 1,
+          },
         });
       }
     }
@@ -174,7 +183,7 @@ export async function searchNames(query: SearchQuery) {
         bool: {
           must: [
             { exists: { field: 'expiry_date' } },
-            { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } }
+            { range: { expiry_date: { gt: 'now', lte: `now+${days}d` } } },
           ],
         },
       });
@@ -269,7 +278,10 @@ export async function searchNames(query: SearchQuery) {
       highlight: hit.highlight,
     }));
 
-    const totalCount = typeof response.hits.total === 'object' && response.hits.total ? response.hits.total.value : response.hits.total as number;
+    const totalCount =
+      typeof response.hits.total === 'object' && response.hits.total
+        ? response.hits.total.value
+        : (response.hits.total as number);
     const totalPages = Math.ceil(totalCount / query.limit);
 
     return {

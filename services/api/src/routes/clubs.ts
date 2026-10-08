@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getPostgresPool, type APIResponse, getFile, isStorageEnabled } from '../../../shared/src';
-import { searchNames } from '../services/search';
-import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
+import {
+  buildSearchResults,
+  createUnregisteredPlaceholder,
+  type SearchResult,
+} from '../utils/response-builder';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
 
 // In-memory cache for S3 images
@@ -80,7 +83,7 @@ const VALID_CLASSIFICATIONS = [
   'letters',
   'fantasy',
   'crypto',
-  'ai'
+  'ai',
 ] as const;
 
 // Volume/price fields that need numeric casting for sorting
@@ -113,17 +116,17 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       let classifications: string[] = [];
       const rawClass = rawQuery['class[]'];
       if (rawClass) {
-        classifications = Array.isArray(rawClass)
-          ? rawClass
-          : [rawClass];
+        classifications = Array.isArray(rawClass) ? rawClass : [rawClass];
         // Filter to valid classifications only
         classifications = classifications.filter((c) =>
-          VALID_CLASSIFICATIONS.includes(c as typeof VALID_CLASSIFICATIONS[number])
+          VALID_CLASSIFICATIONS.includes(c as (typeof VALID_CLASSIFICATIONS)[number])
         );
       }
 
       // Validate sort field
-      const sortBy = VALID_SORT_FIELDS.includes(rawQuery.sortBy as typeof VALID_SORT_FIELDS[number])
+      const sortBy = VALID_SORT_FIELDS.includes(
+        rawQuery.sortBy as (typeof VALID_SORT_FIELDS)[number]
+      )
         ? rawQuery.sortBy
         : 'total_sales_volume_wei';
       const sortOrder = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
@@ -143,14 +146,15 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       // Search filter (wildcard on name and description)
       if (search) {
-        whereConditions.push(`(c.name ILIKE $${paramCount} OR c.description ILIKE $${paramCount} OR c.display_name ILIKE $${paramCount})`);
+        whereConditions.push(
+          `(c.name ILIKE $${paramCount} OR c.description ILIKE $${paramCount} OR c.display_name ILIKE $${paramCount})`
+        );
         params.push(`%${search}%`);
         paramCount++;
       }
 
-      const whereClause = whereConditions.length > 0
-        ? `WHERE ${whereConditions.join(' AND ')}`
-        : '';
+      const whereClause =
+        whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       // Build ORDER BY clause with numeric casting for volume/price fields
       // and computed expressions for percentage/ratio fields
@@ -226,7 +230,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          clubs: result.rows.map(club => ({
+          clubs: result.rows.map((club) => ({
             ...club,
             avatar_url: club.avatar_image_key ? `/api/v1/clubs/${club.name}/avatar` : null,
             header_url: club.header_image_key ? `/api/v1/clubs/${club.name}/header` : null,
@@ -274,8 +278,8 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       // Build WHERE clause - if no clubs specified, match any club
       const hasClubFilter = clubs.length > 0;
       const clubFilter = hasClubFilter
-        ? 'clubs && $1::text[]'  // Array overlap with selected clubs
-        : 'clubs IS NOT NULL AND array_length(clubs, 1) > 0';  // Any club
+        ? 'clubs && $1::text[]' // Array overlap with selected clubs
+        : 'clubs IS NOT NULL AND array_length(clubs, 1) > 0'; // Any club
 
       // Get unique holder count (deduplicated across clubs)
       // Include registered and grace period names, exclude premium and available
@@ -304,9 +308,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       // Build params based on whether clubs filter is present
       const countParams = hasClubFilter ? [clubs] : [];
-      const holdersParams = hasClubFilter
-        ? [clubs, limitNum, offset]
-        : [limitNum, offset];
+      const holdersParams = hasClubFilter ? [clubs, limitNum, offset] : [limitNum, offset];
 
       // If no clubs filter, get all club names for the response
       const allClubsQuery = 'SELECT name FROM clubs ORDER BY name';
@@ -318,16 +320,14 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       ]);
 
       const uniqueHolders = parseInt(countResult.rows[0].unique_holders);
-      const responseClubs = hasClubFilter
-        ? clubs
-        : allClubsResult.rows.map(row => row.name);
+      const responseClubs = hasClubFilter ? clubs : allClubsResult.rows.map((row) => row.name);
 
       return reply.send({
         success: true,
         data: {
           clubs: responseClubs,
           unique_holders: uniqueHolders,
-          holders: holdersResult.rows.map(row => ({
+          holders: holdersResult.rows.map((row) => ({
             address: row.address,
             name_count: parseInt(row.name_count),
           })),
@@ -352,7 +352,11 @@ export async function clubsRoutes(fastify: FastifyInstance) {
   });
 
   // Serve club image from S3 (avatar or header)
-  async function serveClubImage(request: FastifyRequest, reply: FastifyReply, imageType: 'avatar' | 'header') {
+  async function serveClubImage(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    imageType: 'avatar' | 'header'
+  ) {
     const { clubName } = request.params as { clubName: string };
 
     try {
@@ -388,7 +392,11 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
       // Cache in memory
       evictStaleImages();
-      imageCache.set(imageKey, { body: file.body, contentType: file.contentType, cachedAt: Date.now() });
+      imageCache.set(imageKey, {
+        body: file.body,
+        contentType: file.contentType,
+        cachedAt: Date.now(),
+      });
 
       return reply
         .header('Content-Type', file.contentType)
@@ -494,16 +502,14 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         .map((row: any) => row.name);
 
       const registeredResults = await buildSearchResults(registeredNames);
-      const registeredMap = new Map(
-        registeredResults.map(r => [r.name.toLowerCase(), r])
-      );
+      const registeredMap = new Map(registeredResults.map((r) => [r.name.toLowerCase(), r]));
 
       // Fetch all clubs for unregistered names
       const unregisteredNames = namesResult.rows
         .filter((row: any) => !row.is_registered)
         .map((row: any) => row.name);
 
-      let unregisteredClubsMap = new Map<string, string[]>();
+      const unregisteredClubsMap = new Map<string, string[]>();
       if (unregisteredNames.length > 0) {
         const clubsResult = await pool.query(
           `SELECT ens_name, array_agg(club_name) as clubs
@@ -518,14 +524,16 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       }
 
       // Merge in query order
-      const nameResults: SearchResult[] = namesResult.rows.map((row: any) => {
-        if (row.is_registered) {
-          return registeredMap.get(row.name.toLowerCase());
-        } else {
-          const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || [clubName];
-          return createUnregisteredPlaceholder(row.name, nameClubs);
-        }
-      }).filter((r): r is SearchResult => r !== undefined);
+      const nameResults: SearchResult[] = namesResult.rows
+        .map((row: any) => {
+          if (row.is_registered) {
+            return registeredMap.get(row.name.toLowerCase());
+          } else {
+            const nameClubs = unregisteredClubsMap.get(row.name.toLowerCase()) || [clubName];
+            return createUnregisteredPlaceholder(row.name, nameClubs);
+          }
+        })
+        .filter((r): r is SearchResult => r !== undefined);
 
       const response: APIResponse = {
         success: true,
@@ -618,7 +626,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         data: {
           clubs: [clubName],
           unique_holders: uniqueHolders,
-          holders: holdersResult.rows.map(row => ({
+          holders: holdersResult.rows.map((row) => ({
             address: row.address,
             name_count: parseInt(row.name_count),
           })),
@@ -717,9 +725,10 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       // Build the date filter based on status
       // Premium: expired 90-111 days ago
       // Available: expired > 111 days ago
-      const dateFilter = status === 'premium'
-        ? `expiry_date <= NOW() - INTERVAL '90 days' AND expiry_date > NOW() - INTERVAL '111 days'`
-        : `expiry_date <= NOW() - INTERVAL '111 days'`;
+      const dateFilter =
+        status === 'premium'
+          ? `expiry_date <= NOW() - INTERVAL '90 days' AND expiry_date > NOW() - INTERVAL '111 days'`
+          : `expiry_date <= NOW() - INTERVAL '111 days'`;
 
       const result = await pool.query(
         `

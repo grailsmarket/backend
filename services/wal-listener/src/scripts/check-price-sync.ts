@@ -13,17 +13,17 @@ async function main() {
     size: 50,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      sort: [
-        { price: { order: 'asc' } }
-      ],
-      _source: ['name', 'price', 'status']
-    }
+      sort: [{ price: { order: 'asc' } }],
+      _source: ['name', 'price', 'status'],
+    },
   });
 
-  console.log(`Found ${esResult.hits.hits.length} records with status: active, sorted by price ASC\n`);
-  
+  console.log(
+    `Found ${esResult.hits.hits.length} records with status: active, sorted by price ASC\n`
+  );
+
   let mismatchCount = 0;
   let noListingCount = 0;
 
@@ -35,7 +35,8 @@ async function main() {
     const esPrice = (hit._source as any).price;
 
     // Get actual price from PostgreSQL
-    const pgResult = await pool.query(`
+    const pgResult = await pool.query(
+      `
       SELECT
         en.id,
         en.name,
@@ -50,14 +51,15 @@ async function main() {
         LIMIT 1
       ) l ON true
       WHERE en.id = $1
-    `, [parseInt(esId)]);
+    `,
+      [parseInt(esId)]
+    );
 
     if (pgResult.rows.length === 0) {
       console.log(`✗ ID ${esId} not found in PG`);
       continue;
     }
 
-    const pgName = pgResult.rows[0].name;
     const pgPrice = pgResult.rows[0].listing_price;
     const pgListingStatus = pgResult.rows[0].listing_status;
 

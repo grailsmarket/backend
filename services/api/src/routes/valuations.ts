@@ -98,7 +98,13 @@ function createValuationRunId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function readIntegerOption(value: unknown, fallback: number, min: number, max: number, field: string): number {
+function readIntegerOption(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  field: string
+): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isInteger(value)) {
     throw new ValuationValidationError(`${field} must be an integer`);
@@ -115,7 +121,9 @@ function parseRequestBody(body: ValuationEvidenceRequest | null, premiumDefaultE
   // request-body knob could skew everyone's appraisal for that label. Any
   // premiumRegistrationFloorEth in the body is ignored.
   if (!/^\d+(\.\d+)?$/.test(premiumDefaultEth)) {
-    throw new ValuationValidationError('Configured premiumRegistrationFloorEth is not a valid ETH amount');
+    throw new ValuationValidationError(
+      'Configured premiumRegistrationFloorEth is not a valid ETH amount'
+    );
   }
 
   return {
@@ -149,18 +157,34 @@ function mapValuationError(error: unknown): { status: number; code: string; mess
   }
   if (error instanceof ValuationConfigError || error instanceof ValuationPromptError) {
     // Don't leak config/prompt internals; signal retry-later instead.
-    return { status: 503, code: 'VALUATION_UNAVAILABLE', message: 'Valuation is temporarily unavailable' };
+    return {
+      status: 503,
+      code: 'VALUATION_UNAVAILABLE',
+      message: 'Valuation is temporarily unavailable',
+    };
   }
   if (error instanceof ValuationGenerationError) {
-    return { status: 502, code: 'GENERATION_FAILED', message: 'Could not generate a valuation right now. Please try again.' };
+    return {
+      status: 502,
+      code: 'GENERATION_FAILED',
+      message: 'Could not generate a valuation right now. Please try again.',
+    };
   }
   if (error instanceof Web2TldDataRequestError) {
     // Missing API key is a server misconfiguration -> retry-later, like config errors.
     if (error.code === 'MISSING_WEB2_TLD_DATA_KEY') {
-      return { status: 503, code: 'VALUATION_UNAVAILABLE', message: 'Valuation is temporarily unavailable' };
+      return {
+        status: 503,
+        code: 'VALUATION_UNAVAILABLE',
+        message: 'Valuation is temporarily unavailable',
+      };
     }
     // Otherwise the upstream Web2 footprint provider failed (network/timeout/5xx/auth).
-    return { status: 502, code: 'WEB2_PROVIDER_FAILED', message: 'Could not reach the Web2 footprint provider. Please try again.' };
+    return {
+      status: 502,
+      code: 'WEB2_PROVIDER_FAILED',
+      message: 'Could not reach the Web2 footprint provider. Please try again.',
+    };
   }
   return { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to generate valuation evidence' };
 }
@@ -332,7 +356,10 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
             });
           } catch (error) {
             consumeOpenAICostRunSummary(logPrefix);
-            logger.error({ err: error, label: target.keyword }, `${logPrefix} valuation generation failed`);
+            logger.error(
+              { err: error, label: target.keyword },
+              `${logPrefix} valuation generation failed`
+            );
             await recordValuationGeneration({
               userId,
               label: target.keyword,
@@ -383,10 +410,16 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
             costUsd: costSummary?.costUsd ?? null,
             durationMs,
           }).catch((error) => {
-            logger.error({ err: error, label: target.keyword }, `${logPrefix} generation audit insert failed`);
+            logger.error(
+              { err: error, label: target.keyword },
+              `${logPrefix} generation audit insert failed`
+            );
           });
           if (costSummary) {
-            logger.info({ valuation: logPrefix, cost: costSummary }, `${logPrefix} OpenAI run cost summary`);
+            logger.info(
+              { valuation: logPrefix, cost: costSummary },
+              `${logPrefix} OpenAI run cost summary`
+            );
           }
           return result;
         };
@@ -403,7 +436,10 @@ export async function valuationsRoutes(fastify: FastifyInstance) {
       } catch (error) {
         // Pre-stream errors (config/eligibility/validation) and non-streaming
         // generation errors land here as clean JSON responses.
-        if (!(error instanceof ValuationTargetError) && !(error instanceof Error && /must be|Invalid ETH amount/.test(error.message))) {
+        if (
+          !(error instanceof ValuationTargetError) &&
+          !(error instanceof Error && /must be|Invalid ETH amount/.test(error.message))
+        ) {
           logger.error({ err: error, rawName }, `${logPrefix} valuation request failed`);
         }
         return sendError(reply, error);

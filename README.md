@@ -13,7 +13,7 @@ The system is built with a microservices architecture consisting of:
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+ with TypeScript
+- **Runtime**: Node.js 20.19+ or 22.13+ with TypeScript
 - **API Framework**: Fastify
 - **Blockchain**: Viem 2.x
 - **Database**: PostgreSQL 15+
@@ -23,7 +23,7 @@ The system is built with a microservices architecture consisting of:
 
 ## Prerequisites
 
-- Node.js 20+ and npm 10+
+- Node.js 20.19+ or 22.13+ and npm 10+
 - PostgreSQL 15+ (with logical replication enabled)
 - Redis 7+
 - Elasticsearch 8.x
@@ -156,9 +156,14 @@ See `.env.example` for all configuration options .
 npm test
 ```
 
-### Linting
+### Linting & Formatting
+ESLint (`eslint.config.mjs`) and Prettier (`.prettierrc.json`) are configured at the repo root and cover all services except `services/docs`.
+
 ```bash
-npm run lint
+npm run lint          # ESLint across the repo
+npm run lint:fix      # ESLint with auto-fix
+npm run format        # Prettier write
+npm run format:check  # Prettier check (CI-friendly)
 ```
 
 ### Type Checking

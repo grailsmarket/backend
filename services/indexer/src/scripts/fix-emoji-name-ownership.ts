@@ -49,8 +49,8 @@ import { logger } from '../utils/logger';
 const APPLY = process.argv.includes('--apply');
 const VERBOSE = process.argv.includes('--verbose');
 const NAME_FILTERS = process.argv
-  .filter(a => a.startsWith('--name='))
-  .map(a => a.slice('--name='.length));
+  .filter((a) => a.startsWith('--name='))
+  .map((a) => a.slice('--name='.length));
 
 // Literal U+FE0F (variation selector-16) and U+20E3 (combining enclosing keycap).
 const FE0F = '️';
@@ -71,8 +71,8 @@ interface FkChild {
 
 type Classification =
   | 'ok'
-  | 'invalid'           // can't normalize
-  | 'unresolved'        // The Graph returned nothing
+  | 'invalid' // can't normalize
+  | 'unresolved' // The Graph returned nothing
   | 'name-mismatch'
   | 'token-mismatch'
   | 'owner-mismatch'
@@ -133,7 +133,7 @@ async function discoverFkChildren(pool: Pool): Promise<FkChild[]> {
       AND ccu.column_name = 'id'
     ORDER BY tc.table_name, kcu.column_name
   `);
-  return result.rows.map(r => ({ table: r.child_table, column: r.child_column }));
+  return result.rows.map((r) => ({ table: r.child_table, column: r.child_column }));
 }
 
 /** Canonical labelhash (decimal) of a normalized 2LD label, or null if not a single-label .eth. */
@@ -152,7 +152,7 @@ async function repointChildren(
   client: PoolClient,
   children: FkChild[],
   staleId: number,
-  keeperId: number,
+  keeperId: number
 ): Promise<{ repointed: number; skipped: Array<{ table: string; column: string }> }> {
   let repointed = 0;
   const skipped: Array<{ table: string; column: string }> = [];
@@ -164,10 +164,10 @@ async function repointChildren(
     // Fast path: move the whole table at once inside a savepoint.
     await client.query('SAVEPOINT repoint_tbl');
     try {
-      const res = await client.query(
-        `UPDATE ${t} SET ${c} = $1 WHERE ${c} = $2`,
-        [keeperId, staleId],
-      );
+      const res = await client.query(`UPDATE ${t} SET ${c} = $1 WHERE ${c} = $2`, [
+        keeperId,
+        staleId,
+      ]);
       await client.query('RELEASE SAVEPOINT repoint_tbl');
       repointed += res.rowCount ?? 0;
     } catch (err: any) {
@@ -176,17 +176,11 @@ async function repointChildren(
       await client.query('ROLLBACK TO SAVEPOINT repoint_tbl');
       await client.query('RELEASE SAVEPOINT repoint_tbl');
 
-      const rows = await client.query(
-        `SELECT ctid FROM ${t} WHERE ${c} = $1`,
-        [staleId],
-      );
+      const rows = await client.query(`SELECT ctid FROM ${t} WHERE ${c} = $1`, [staleId]);
       for (const row of rows.rows) {
         await client.query('SAVEPOINT repoint_row');
         try {
-          await client.query(
-            `UPDATE ${t} SET ${c} = $1 WHERE ctid = $2`,
-            [keeperId, row.ctid],
-          );
+          await client.query(`UPDATE ${t} SET ${c} = $1 WHERE ctid = $2`, [keeperId, row.ctid]);
           await client.query('RELEASE SAVEPOINT repoint_row');
           repointed += 1;
         } catch (rowErr: any) {
@@ -195,7 +189,9 @@ async function repointChildren(
           await client.query('RELEASE SAVEPOINT repoint_row');
           // Leave on the stale row; it is dropped when the stale ens_names row is deleted.
           skipped.push({ table, column });
-          console.log(`        - skip ${table}.${column} ctid=${row.ctid} (would duplicate a keeper row)`);
+          console.log(
+            `        - skip ${table}.${column} ctid=${row.ctid} (would duplicate a keeper row)`
+          );
         }
       }
     }
@@ -211,7 +207,9 @@ async function main() {
   console.log('='.repeat(70));
   console.log('Fix Emoji / Keycap ENS Name Ownership');
   console.log('='.repeat(70));
-  console.log(`Mode:        ${APPLY ? 'APPLY (will write to the database)' : 'DRY RUN (no changes)'}`);
+  console.log(
+    `Mode:        ${APPLY ? 'APPLY (will write to the database)' : 'DRY RUN (no changes)'}`
+  );
   console.log(`Subgraph:    ${config.theGraph?.ensSubgraphUrl}`);
   if (NAME_FILTERS.length) console.log(`Name filter: ${NAME_FILTERS.join(', ')}`);
   console.log('='.repeat(70));
@@ -219,7 +217,7 @@ async function main() {
 
   const children = await discoverFkChildren(pool);
   console.log(`Discovered ${children.length} FK child column(s) on ens_names(id):`);
-  console.log('  ' + children.map(c => `${c.table}.${c.column}`).join(', '));
+  console.log('  ' + children.map((c) => `${c.table}.${c.column}`).join(', '));
   console.log();
 
   // Candidate rows: 2LD .eth (single label), non-placeholder, that look emoji/keycap.
@@ -240,14 +238,14 @@ async function main() {
         AND (has_emoji = true OR position($1 in name) > 0 OR position($2 in name) > 0)
         ${nameClause}
       ORDER BY id`,
-    params,
+    params
   );
 
   console.log(`Found ${candidates.rows.length} candidate emoji/keycap name(s) to check\n`);
 
   for (const row of candidates.rows) {
     stats.scanned++;
-    const { id, name, token_id, owner_address, registrant } = row;
+    const { id, name, token_id, owner_address } = row;
 
     if (isPlaceholderName(name)) {
       stats.ok++;
@@ -278,9 +276,9 @@ async function main() {
       continue;
     }
 
-    const correctName = resolved.name;                 // canonical name from The Graph
-    const correctTokenId = resolved.correctTokenId;    // namehash if wrapped+unexpired, else labelhash
-    const trueOwner = resolved.ownerAddress;           // already resolves wrapper -> wrappedOwner
+    const correctName = resolved.name; // canonical name from The Graph
+    const correctTokenId = resolved.correctTokenId; // namehash if wrapped+unexpired, else labelhash
+    const trueOwner = resolved.ownerAddress; // already resolves wrapper -> wrappedOwner
     const trueRegistrant = resolved.registrantAddress;
 
     const nameWrong = name !== correctName;
@@ -297,14 +295,22 @@ async function main() {
     const conflict = await pool.query<{ id: number; name: string; token_id: string }>(
       `SELECT id, name, token_id FROM ens_names
         WHERE (name = $1 OR token_id = $2) AND id != $3`,
-      [correctName, correctTokenId, id],
+      [correctName, correctTokenId, id]
     );
 
     if (conflict.rows.length === 0) {
       // ---- No conflict: fix this row in place. ----
-      classify(nameWrong ? 'name-mismatch' : tokenWrong ? 'token-mismatch' : 'owner-mismatch', row, null);
-      console.log(`         stored : name=${JSON.stringify(name)} token=${token_id} owner=${owner_address}`);
-      console.log(`         canon  : name=${JSON.stringify(correctName)} token=${correctTokenId} owner=${trueOwner ?? '(unknown)'}`);
+      classify(
+        nameWrong ? 'name-mismatch' : tokenWrong ? 'token-mismatch' : 'owner-mismatch',
+        row,
+        null
+      );
+      console.log(
+        `         stored : name=${JSON.stringify(name)} token=${token_id} owner=${owner_address}`
+      );
+      console.log(
+        `         canon  : name=${JSON.stringify(correctName)} token=${correctTokenId} owner=${trueOwner ?? '(unknown)'}`
+      );
 
       if (APPLY) {
         try {
@@ -316,7 +322,7 @@ async function main() {
                     registrant = COALESCE($4, registrant),
                     updated_at = NOW()
               WHERE id = $5`,
-            [correctName, correctTokenId, trueOwner, trueRegistrant, id],
+            [correctName, correctTokenId, trueOwner, trueRegistrant, id]
           );
           console.log(`         => FIXED in place`);
           stats.fixedInPlace++;
@@ -333,7 +339,9 @@ async function main() {
       const keeper = conflict.rows[0];
       classify('conflict', row, `keeper id=${keeper.id} already holds canonical name/token`);
       console.log(`         stale  : id=${id} name=${JSON.stringify(name)} token=${token_id}`);
-      console.log(`         keeper : id=${keeper.id} name=${JSON.stringify(keeper.name)} token=${keeper.token_id}`);
+      console.log(
+        `         keeper : id=${keeper.id} name=${JSON.stringify(keeper.name)} token=${keeper.token_id}`
+      );
 
       if (APPLY) {
         const client = await pool.connect();
@@ -348,14 +356,16 @@ async function main() {
                     registrant = COALESCE($3, registrant),
                     updated_at = NOW()
               WHERE id = $4`,
-            [correctTokenId, trueOwner, trueRegistrant, keeper.id],
+            [correctTokenId, trueOwner, trueRegistrant, keeper.id]
           );
 
           const { repointed, skipped } = await repointChildren(client, children, id, keeper.id);
           await client.query('DELETE FROM ens_names WHERE id = $1', [id]);
 
           await client.query('COMMIT');
-          console.log(`         => MERGED into id=${keeper.id} (repointed ${repointed} child row(s), skipped ${skipped.length})`);
+          console.log(
+            `         => MERGED into id=${keeper.id} (repointed ${repointed} child row(s), skipped ${skipped.length})`
+          );
           stats.merged++;
           stats.childrenRepointed += repointed;
           stats.childrenSkipped += skipped.length;
@@ -367,13 +377,15 @@ async function main() {
           client.release();
         }
       } else {
-        console.log(`         => would merge into id=${keeper.id}, re-point its children, then delete stale row (dry run)`);
+        console.log(
+          `         => would merge into id=${keeper.id}, re-point its children, then delete stale row (dry run)`
+        );
         stats.merged++;
       }
     }
 
     // Be gentle with The Graph / RPC.
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
   }
 
   console.log();
@@ -407,7 +419,7 @@ main()
     console.log('\nDone.');
     process.exit(0);
   })
-  .catch(err => {
+  .catch((err) => {
     logger.error('fix-emoji-name-ownership failed:', err);
     console.error(err);
     process.exit(1);

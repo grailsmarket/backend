@@ -23,7 +23,7 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 1,
     },
     async (job) => {
-      const { ensNameId, nameHash, name, priority } = job.data;
+      const { ensNameId, name, priority } = job.data;
 
       logger.info({ ensNameId, name, priority }, 'Syncing ENS metadata');
 
@@ -75,16 +75,14 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
   );
 
   // Register the worker to schedule individual sync jobs
-  await boss.work(
-    QUEUE_NAMES.SCHEDULE_DAILY_ENS_SYNC,
-    async () => {
-      logger.info('Running daily ENS sync scheduler');
+  await boss.work(QUEUE_NAMES.SCHEDULE_DAILY_ENS_SYNC, async () => {
+    logger.info('Running daily ENS sync scheduler');
 
-      const pool = getPostgresPool();
+    const pool = getPostgresPool();
 
-      try {
-        // Get ENS names with active listings, offers, recent views, or on watchlists
-        const result = await pool.query(`
+    try {
+      // Get ENS names with active listings, offers, recent views, or on watchlists
+      const result = await pool.query(`
           SELECT DISTINCT en.id, en.token_id, en.name
           FROM ens_names en
           WHERE
@@ -98,30 +96,32 @@ export async function registerDailyEnsSyncScheduler(boss: PgBoss): Promise<void>
             OR EXISTS (SELECT 1 FROM watchlist w WHERE w.ens_name_id = en.id)
         `);
 
-        logger.info({ count: result.rows.length }, 'Scheduling ENS sync jobs (listings, offers, views, watchlist)');
+      logger.info(
+        { count: result.rows.length },
+        'Scheduling ENS sync jobs (listings, offers, views, watchlist)'
+      );
 
-        // Publish individual sync jobs
-        const jobs = result.rows.map((row) => ({
-          name: QUEUE_NAMES.SYNC_ENS_DATA,
-          data: {
-            ensNameId: row.id,
-            nameHash: row.token_id,
-            name: row.name,
-            priority: 'normal' as const,
-          },
-        }));
+      // Publish individual sync jobs
+      const jobs = result.rows.map((row) => ({
+        name: QUEUE_NAMES.SYNC_ENS_DATA,
+        data: {
+          ensNameId: row.id,
+          nameHash: row.token_id,
+          name: row.name,
+          priority: 'normal' as const,
+        },
+      }));
 
-        // Batch publish jobs (pg-boss can handle this efficiently)
-        if (jobs.length > 0) {
-          await boss.insert(jobs);
-          logger.info({ jobsScheduled: jobs.length }, 'ENS sync jobs scheduled');
-        }
-      } catch (error) {
-        logger.error({ error }, 'Error scheduling daily ENS sync');
-        throw error;
+      // Batch publish jobs (pg-boss can handle this efficiently)
+      if (jobs.length > 0) {
+        await boss.insert(jobs);
+        logger.info({ jobsScheduled: jobs.length }, 'ENS sync jobs scheduled');
       }
+    } catch (error) {
+      logger.error({ error }, 'Error scheduling daily ENS sync');
+      throw error;
     }
-  );
+  });
 
   logger.info('Daily ENS sync scheduler registered (runs at 2 AM daily)');
 }
@@ -138,16 +138,14 @@ export async function registerMetadataBackfillScheduler(boss: PgBoss): Promise<v
   );
 
   // Register the worker to schedule individual sync jobs
-  await boss.work(
-    QUEUE_NAMES.SCHEDULE_METADATA_BACKFILL,
-    async () => {
-      logger.info('Running weekly metadata backfill scheduler');
+  await boss.work(QUEUE_NAMES.SCHEDULE_METADATA_BACKFILL, async () => {
+    logger.info('Running weekly metadata backfill scheduler');
 
-      const pool = getPostgresPool();
+    const pool = getPostgresPool();
 
-      try {
-        // Get names with empty metadata or only resolver address (limit to prevent overwhelming)
-        const result = await pool.query(`
+    try {
+      // Get names with empty metadata or only resolver address (limit to prevent overwhelming)
+      const result = await pool.query(`
           SELECT id, token_id, name
           FROM ens_names
           WHERE (metadata = '{}'::jsonb
@@ -159,30 +157,32 @@ export async function registerMetadataBackfillScheduler(boss: PgBoss): Promise<v
           LIMIT 5000
         `);
 
-        logger.info({ count: result.rows.length }, 'Scheduling metadata backfill jobs for names with empty/incomplete metadata');
+      logger.info(
+        { count: result.rows.length },
+        'Scheduling metadata backfill jobs for names with empty/incomplete metadata'
+      );
 
-        // Publish individual sync jobs
-        const jobs = result.rows.map((row) => ({
-          name: QUEUE_NAMES.SYNC_ENS_DATA,
-          data: {
-            ensNameId: row.id,
-            nameHash: row.token_id,
-            name: row.name,
-            priority: 'normal' as const,
-          },
-        }));
+      // Publish individual sync jobs
+      const jobs = result.rows.map((row) => ({
+        name: QUEUE_NAMES.SYNC_ENS_DATA,
+        data: {
+          ensNameId: row.id,
+          nameHash: row.token_id,
+          name: row.name,
+          priority: 'normal' as const,
+        },
+      }));
 
-        // Batch publish jobs (pg-boss can handle this efficiently)
-        if (jobs.length > 0) {
-          await boss.insert(jobs);
-          logger.info({ jobsScheduled: jobs.length }, 'Metadata backfill jobs scheduled');
-        }
-      } catch (error) {
-        logger.error({ error }, 'Error scheduling metadata backfill');
-        throw error;
+      // Batch publish jobs (pg-boss can handle this efficiently)
+      if (jobs.length > 0) {
+        await boss.insert(jobs);
+        logger.info({ jobsScheduled: jobs.length }, 'Metadata backfill jobs scheduled');
       }
+    } catch (error) {
+      logger.error({ error }, 'Error scheduling metadata backfill');
+      throw error;
     }
-  );
+  });
 
   logger.info('Metadata backfill scheduler registered (runs at 3 AM every Sunday)');
 }

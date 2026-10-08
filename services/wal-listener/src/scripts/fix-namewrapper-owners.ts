@@ -75,9 +75,10 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
 function getCorrectOwner(domain: GraphDomain): string | null {
   // Check if fully expired (expiry + 111 days)
   if (domain.registration?.expiryDate) {
-    const expiryTimestamp = typeof domain.registration.expiryDate === 'string'
-      ? parseInt(domain.registration.expiryDate)
-      : domain.registration.expiryDate;
+    const expiryTimestamp =
+      typeof domain.registration.expiryDate === 'string'
+        ? parseInt(domain.registration.expiryDate)
+        : domain.registration.expiryDate;
     const expiryMs = expiryTimestamp * 1000;
     const fullyExpiredAt = expiryMs + TOTAL_EXPIRY_BUFFER_MS;
 
@@ -112,10 +113,9 @@ async function fixNamewrapperOwners() {
   console.log(`Mode: ${DRY_RUN ? 'DRY RUN' : 'LIVE'}\n`);
 
   // Count affected records
-  const countResult = await pool.query(
-    `SELECT COUNT(*) FROM ens_names WHERE owner_address = $1`,
-    [NAME_WRAPPER_ADDRESS]
-  );
+  const countResult = await pool.query(`SELECT COUNT(*) FROM ens_names WHERE owner_address = $1`, [
+    NAME_WRAPPER_ADDRESS,
+  ]);
   const total = parseInt(countResult.rows[0].count);
   console.log(`Found ${total.toLocaleString()} records to fix\n`);
 
@@ -137,7 +137,7 @@ async function fixNamewrapperOwners() {
 
     if (result.rows.length === 0) break;
 
-    const names = result.rows.map(r => r.name);
+    const names = result.rows.map((r) => r.name);
     const domainMap = await queryGraphByName(names);
 
     for (const row of result.rows) {
@@ -184,9 +184,9 @@ async function fixNamewrapperOwners() {
     const remaining = (total - processed) / rate;
 
     console.log(
-      `Progress: ${processed.toLocaleString()}/${total.toLocaleString()} (${Math.round((processed/total)*100)}%) | ` +
-      `Fixed: ${fixed.toLocaleString()} | Skipped: ${skipped.toLocaleString()} | Not Found: ${notFound.toLocaleString()} | ` +
-      `Rate: ${Math.round(rate)}/s | ETA: ${Math.round(remaining/60)}m`
+      `Progress: ${processed.toLocaleString()}/${total.toLocaleString()} (${Math.round((processed / total) * 100)}%) | ` +
+        `Fixed: ${fixed.toLocaleString()} | Skipped: ${skipped.toLocaleString()} | Not Found: ${notFound.toLocaleString()} | ` +
+        `Rate: ${Math.round(rate)}/s | ETA: ${Math.round(remaining / 60)}m`
     );
   }
 
@@ -197,10 +197,9 @@ async function fixNamewrapperOwners() {
   console.log(`Not found in Graph: ${notFound.toLocaleString()}`);
 
   // Verify
-  const verifyResult = await pool.query(
-    `SELECT COUNT(*) FROM ens_names WHERE owner_address = $1`,
-    [NAME_WRAPPER_ADDRESS]
-  );
+  const verifyResult = await pool.query(`SELECT COUNT(*) FROM ens_names WHERE owner_address = $1`, [
+    NAME_WRAPPER_ADDRESS,
+  ]);
   const remaining = parseInt(verifyResult.rows[0].count);
   console.log(`\nRemaining NameWrapper records: ${remaining.toLocaleString()}`);
 

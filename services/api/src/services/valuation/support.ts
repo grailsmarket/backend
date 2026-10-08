@@ -56,7 +56,11 @@ export function normalizeValuationLabel(input: string): string | null {
   const stripped = input.replace(/\.eth$/i, '').trim();
   if (!stripped) return null;
 
-  const cleaned = stripped.replaceAll(' ', '').replaceAll('_', '').replaceAll('.', '').toLowerCase();
+  const cleaned = stripped
+    .replaceAll(' ', '')
+    .replaceAll('_', '')
+    .replaceAll('.', '')
+    .toLowerCase();
   if (!cleaned) return null;
 
   try {
@@ -287,13 +291,17 @@ function validatePlaceholders(key: ValuationPromptKey, content: string): void {
   if (missing.length > 0 || unexpected.length > 0) {
     const parts: string[] = [];
     if (missing.length > 0) parts.push(`missing ${missing.map((p) => `{{${p}}}`).join(', ')}`);
-    if (unexpected.length > 0) parts.push(`unexpected ${unexpected.map((p) => `{{${p}}}`).join(', ')}`);
+    if (unexpected.length > 0)
+      parts.push(`unexpected ${unexpected.map((p) => `{{${p}}}`).join(', ')}`);
     throw new ValuationPromptError(`Prompt "${key}" placeholder mismatch: ${parts.join('; ')}`);
   }
 }
 
 const PROMPT_CACHE_TTL_MS = 60_000;
-const promptCache = new Map<ValuationPromptKey, { content: string; version: number; expiresAt: number }>();
+const promptCache = new Map<
+  ValuationPromptKey,
+  { content: string; version: number; expiresAt: number }
+>();
 
 export function clearValuationPromptCache(): void {
   promptCache.clear();
@@ -405,7 +413,9 @@ export async function getCachedValuation(label: string): Promise<StoredValuation
  * `marketActivity.summary` are read. Pure/non-mutating: the input (used for
  * storage and held in the in-flight run) is left untouched.
  */
-export function toPublicValuation(result: ValuationEvidenceResult | StoredValuationResult): PublicValuationResult {
+export function toPublicValuation(
+  result: ValuationEvidenceResult | StoredValuationResult
+): PublicValuationResult {
   const { appraisal, web2, searchDemand, nameResearch, marketActivity } = result.evidence;
   const { model: _omitModel, ...publicAppraisal } = appraisal;
   const { monthlyTrend: _omitMonthlyTrend, ...publicSearchDemand } = searchDemand;

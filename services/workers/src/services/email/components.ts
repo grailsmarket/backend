@@ -59,7 +59,7 @@ export function highlightCompare(
   oldLabel: string,
   oldValue: string,
   newLabel: string,
-  newValue: string,
+  newValue: string
 ): string {
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 24px 0;">

@@ -7,8 +7,6 @@ const ChartQuerySchema = z.object({
   club: z.string().optional(),
 });
 
-type ChartQuery = z.infer<typeof ChartQuerySchema>;
-
 interface TimeConfig {
   interval: string;
   truncUnit: 'hour' | 'day' | 'week' | 'month';
@@ -41,10 +39,16 @@ function getTimeConfig(period: string): TimeConfig {
  */
 function parseClubFilter(club: string | undefined): string[] {
   if (!club) return [];
-  return club.split(',').map(c => c.trim()).filter(c => c);
+  return club
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c);
 }
 
-function buildClubCondition(clubs: string[], paramNum: number): { condition: string; params: any[] } {
+function buildClubCondition(
+  clubs: string[],
+  paramNum: number
+): { condition: string; params: any[] } {
   if (clubs.length === 0) {
     return { condition: '', params: [] };
   }
@@ -135,7 +139,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           period: query.period,
           club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
-          points: result.rows.map(row => ({
+          points: result.rows.map((row) => ({
             date: row.date.toISOString(),
             total: row.total,
             grails: row.grails,
@@ -218,7 +222,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           period: query.period,
           club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
-          points: result.rows.map(row => ({
+          points: result.rows.map((row) => ({
             date: row.date.toISOString(),
             total: row.total,
             grails: row.grails,
@@ -300,7 +304,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           period: query.period,
           club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
-          points: result.rows.map(row => ({
+          points: result.rows.map((row) => ({
             date: row.date.toISOString(),
             total: row.total,
             grails: row.grails,
@@ -388,7 +392,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           period: query.period,
           club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
-          points: result.rows.map(row => ({
+          points: result.rows.map((row) => ({
             date: row.date.toISOString(),
             count: row.count,
             total_cost_wei: row.total_cost_wei,
@@ -473,7 +477,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           period: query.period,
           club: query.club || null,
           clubs: clubs.length > 0 ? clubs : null,
-          points: result.rows.map(row => ({
+          points: result.rows.map((row) => ({
             date: row.date.toISOString(),
             total: row.total,
             grails: row.grails,

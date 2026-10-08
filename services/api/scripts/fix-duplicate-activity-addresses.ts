@@ -62,7 +62,9 @@ async function getDuplicateRecords(): Promise<DuplicateRecord[]> {
 /**
  * Try to fix record by looking up sale from offer_id
  */
-async function fixFromOffer(record: DuplicateRecord): Promise<{ buyer: string; seller: string } | null> {
+async function fixFromOffer(
+  record: DuplicateRecord
+): Promise<{ buyer: string; seller: string } | null> {
   const offerId = record.metadata?.offer_id;
   if (!offerId) {
     return null;
@@ -99,7 +101,9 @@ async function fixFromOffer(record: DuplicateRecord): Promise<{ buyer: string; s
 /**
  * Try to fix record by looking up sale from sale_id
  */
-async function fixFromSale(record: DuplicateRecord): Promise<{ buyer: string; seller: string } | null> {
+async function fixFromSale(
+  record: DuplicateRecord
+): Promise<{ buyer: string; seller: string } | null> {
   const saleId = record.metadata?.sale_id;
   if (!saleId) {
     return null;
@@ -145,7 +149,9 @@ async function updateRecord(
   if (dryRun) {
     console.log(`  [DRY RUN] Would update record ${record.id}:`);
     console.log(`    Event: ${record.event_type}`);
-    console.log(`    Old: actor=${record.actor_address}, counterparty=${record.counterparty_address}`);
+    console.log(
+      `    Old: actor=${record.actor_address}, counterparty=${record.counterparty_address}`
+    );
     console.log(`    New: actor=${newActorAddress}, counterparty=${newCounterpartyAddress}`);
     return true;
   }
@@ -221,7 +227,7 @@ async function cleanupDuplicateAddresses(dryRun: boolean, deleteUnfixable: boole
     console.log(`  Current address: ${record.actor_address}`);
     console.log(`  Metadata: ${JSON.stringify(record.metadata)}`);
 
-    let addresses: { buyer: string; seller: string } | null = null;
+    let addresses: { buyer: string; seller: string } | null;
 
     // Try to fix from offer_id first
     if (record.metadata?.offer_id) {
@@ -298,7 +304,7 @@ cleanupDuplicateAddresses(dryRun, deleteUnfixable)
     console.log('Done!');
     process.exit(0);
   })
-  .catch(error => {
+  .catch((error) => {
     console.error('Cleanup failed:', error);
     process.exit(1);
   });

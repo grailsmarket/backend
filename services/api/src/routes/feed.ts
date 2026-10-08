@@ -33,9 +33,7 @@ const FeedQuerySchema = z.object({
     .transform((v) => {
       if (v == null) return undefined;
       const raw = Array.isArray(v) ? v : v.split(',');
-      const parsed = Array.from(
-        new Set(raw.map((s) => s.trim().toLowerCase()).filter(Boolean))
-      );
+      const parsed = Array.from(new Set(raw.map((s) => s.trim().toLowerCase()).filter(Boolean)));
       return parsed.length ? parsed : undefined;
     })
     .pipe(z.array(KindEnum).min(1).max(2).optional()),
@@ -181,7 +179,10 @@ export async function feedRoutes(fastify: FastifyInstance) {
         let clubsAny = false;
         let clubsList: string[] | null = null;
         if (clubs) {
-          const parts = clubs.split(',').map((c) => c.trim()).filter(Boolean);
+          const parts = clubs
+            .split(',')
+            .map((c) => c.trim())
+            .filter(Boolean);
           const hasAny = parts.some((p) => p.toLowerCase() === 'any');
           if (hasAny && parts.length > 1) {
             return sendError(
@@ -314,27 +315,37 @@ export async function feedRoutes(fastify: FastifyInstance) {
         if (priceClause) actShared.push(priceClause);
         if (hasMuted) {
           actShared.push(`ah.actor_address != ALL(${mutedPh})`);
-          actShared.push(`(ah.counterparty_address IS NULL OR ah.counterparty_address != ALL(${mutedPh}))`);
+          actShared.push(
+            `(ah.counterparty_address IS NULL OR ah.counterparty_address != ALL(${mutedPh}))`
+          );
         }
         if (watchlistActive) actShared.push(wlClause('ah.ens_name_id'));
         // EFP following: restrict to actors the caller follows. Hashed semi-join
         // (not `= ANY`) so membership is O(1)/row across a large following set.
         if (followingPh) {
-          actShared.push(`ah.actor_address IN (SELECT a FROM unnest(${followingPh}::text[]) AS t(a))`);
+          actShared.push(
+            `ah.actor_address IN (SELECT a FROM unnest(${followingPh}::text[]) AS t(a))`
+          );
         }
 
         const actData = [...actShared];
         const actCount = [...actShared];
         if (owner) {
           actData.push(`en.owner_address = ${ownerPh}`);
-          actCount.push(`ah.ens_name_id IN (SELECT id FROM ens_names WHERE owner_address = ${ownerPh})`);
+          actCount.push(
+            `ah.ens_name_id IN (SELECT id FROM ens_names WHERE owner_address = ${ownerPh})`
+          );
         }
         if (clubsAny) {
           actData.push(`(en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0)`);
-          actCount.push(`ah.ens_name_id IN (SELECT id FROM ens_names WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0)`);
+          actCount.push(
+            `ah.ens_name_id IN (SELECT id FROM ens_names WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0)`
+          );
         } else if (clubsList) {
           actData.push(`en.clubs && ${clubsPh}::text[]`);
-          actCount.push(`ah.ens_name_id IN (SELECT id FROM ens_names WHERE clubs && ${clubsPh}::text[])`);
+          actCount.push(
+            `ah.ens_name_id IN (SELECT id FROM ens_names WHERE clubs && ${clubsPh}::text[])`
+          );
         }
 
         // --- Comment branch predicates. Always restricted to visible comments. ---
@@ -345,7 +356,9 @@ export async function feedRoutes(fastify: FastifyInstance) {
         const comCount = [...comShared];
         if (hasMuted) {
           comData.push(`u.address != ALL(${mutedPh})`);
-          comCount.push(`NOT EXISTS (SELECT 1 FROM users mu WHERE mu.id = c.user_id AND mu.address = ANY(${mutedPh}))`);
+          comCount.push(
+            `NOT EXISTS (SELECT 1 FROM users mu WHERE mu.id = c.user_id AND mu.address = ANY(${mutedPh}))`
+          );
         }
         // EFP following: restrict to comment authors the caller follows. The data
         // query has `JOIN users u`; the count query reaches users via EXISTS.
@@ -357,14 +370,20 @@ export async function feedRoutes(fastify: FastifyInstance) {
         }
         if (owner) {
           comData.push(`en.owner_address = ${ownerPh}`);
-          comCount.push(`c.ens_name_id IN (SELECT id FROM ens_names WHERE owner_address = ${ownerPh})`);
+          comCount.push(
+            `c.ens_name_id IN (SELECT id FROM ens_names WHERE owner_address = ${ownerPh})`
+          );
         }
         if (clubsAny) {
           comData.push(`(en.clubs IS NOT NULL AND array_length(en.clubs, 1) > 0)`);
-          comCount.push(`c.ens_name_id IN (SELECT id FROM ens_names WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0)`);
+          comCount.push(
+            `c.ens_name_id IN (SELECT id FROM ens_names WHERE clubs IS NOT NULL AND array_length(clubs, 1) > 0)`
+          );
         } else if (clubsList) {
           comData.push(`en.clubs && ${clubsPh}::text[]`);
-          comCount.push(`c.ens_name_id IN (SELECT id FROM ens_names WHERE clubs && ${clubsPh}::text[])`);
+          comCount.push(
+            `c.ens_name_id IN (SELECT id FROM ens_names WHERE clubs && ${clubsPh}::text[])`
+          );
         }
 
         // Pagination params. `cap` (= offset + limit) bounds each branch's inner

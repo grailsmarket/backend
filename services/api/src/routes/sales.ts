@@ -5,7 +5,7 @@ import {
   getSalesByName,
   getSalesByAddress,
   getRecentSales,
-  getSalesAnalytics
+  getSalesAnalytics,
 } from '../../../shared/src';
 import { cacheHandler, longCacheHandler } from '../middleware/cache';
 
@@ -112,12 +112,7 @@ export async function salesRoutes(fastify: FastifyInstance) {
     const offset = (currentPage - 1) * pageLimit;
 
     try {
-      const { results, total } = await getSalesByAddress(
-        address,
-        type,
-        pageLimit,
-        offset
-      );
+      const { results, total } = await getSalesByAddress(address, type, pageLimit, offset);
       const totalPages = Math.ceil(total / pageLimit);
 
       const response: APIResponse = {
@@ -166,10 +161,7 @@ export async function salesRoutes(fastify: FastifyInstance) {
 
       if (isNaN(parseInt(nameOrId))) {
         // It's a name
-        const result = await pool.query(
-          'SELECT id FROM ens_names WHERE name = $1',
-          [nameOrId]
-        );
+        const result = await pool.query('SELECT id FROM ens_names WHERE name = $1', [nameOrId]);
         if (result.rows.length === 0) {
           return reply.status(404).send({
             success: false,

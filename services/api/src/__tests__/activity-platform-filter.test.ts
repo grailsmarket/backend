@@ -42,7 +42,7 @@ describe('Activity Platform Filter API', () => {
     try {
       await fetch(`${API_BASE_URL}/health`);
     } catch (error) {
-      throw new Error('API server not running. Start it with: npm run dev');
+      throw new Error('API server not running. Start it with: npm run dev', { cause: error });
     }
   });
 

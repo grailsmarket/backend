@@ -16,7 +16,7 @@ import {
   USDC_ADDRESS,
   OPENSEA_CONDUIT_ADDRESS,
   MARKETPLACE_CONDUIT_ADDRESS,
-  SEAPORT_ADDRESS
+  SEAPORT_ADDRESS,
 } from './types';
 
 const pool = getPostgresPool();
@@ -32,7 +32,8 @@ export function initializeProvider(rpcUrl: string) {
  * Fetch offer from database
  */
 async function fetchOffer(offerId: number): Promise<OfferWithBalance | null> {
-  const result = await pool.query(`
+  const result = await pool.query(
+    `
     SELECT
       o.id,
       o.buyer_address,
@@ -46,7 +47,9 @@ async function fetchOffer(offerId: number): Promise<OfferWithBalance | null> {
     FROM offers o
     JOIN ens_names en ON en.id = o.ens_name_id
     WHERE o.id = $1
-  `, [offerId]);
+  `,
+    [offerId]
+  );
 
   if (result.rows.length === 0) {
     return null;
@@ -96,7 +99,11 @@ async function getTokenBalance(tokenAddress: string, holderAddress: string): Pro
 /**
  * Get ERC20 token allowance
  */
-async function getTokenAllowance(tokenAddress: string, owner: string, spender: string): Promise<bigint> {
+async function getTokenAllowance(
+  tokenAddress: string,
+  owner: string,
+  spender: string
+): Promise<bigint> {
   if (!provider) {
     throw new Error('Provider not initialized. Call initializeProvider() first.');
   }
@@ -150,7 +157,7 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
       return {
         isValid: false,
         reason: 'offer_not_found',
-        checkedAt: new Date()
+        checkedAt: new Date(),
       };
     }
 
@@ -165,7 +172,7 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
       return {
         isValid: false,
         reason: 'unsupported_currency',
-        checkedAt: new Date()
+        checkedAt: new Date(),
       };
     }
 
@@ -190,8 +197,8 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
         details: {
           currentBalance: balance.toString(),
           requiredBalance: required.toString(),
-          currency
-        }
+          currency,
+        },
       };
     }
 
@@ -212,8 +219,8 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
           details: {
             currentAllowance: allowance.toString(),
             requiredAllowance: required.toString(),
-            currency
-          }
+            currency,
+          },
         };
       }
     }
@@ -221,37 +228,11 @@ export async function validateOfferBalance(offerId: number): Promise<ValidationR
     // 6. All checks passed - offer is funded
     return {
       isValid: true,
-      checkedAt: new Date()
+      checkedAt: new Date(),
     };
-
   } catch (error: any) {
     // Unexpected error during validation
     console.error(`Error validating offer ${offerId}:`, error);
     throw error; // Let pg-boss retry
   }
-}
-
-/**
- * Validate balance result helper
- */
-function validateBalanceResult(balance: bigint, priceWei: string, currency: Currency): ValidationResult {
-  const required = BigInt(priceWei);
-
-  if (balance < required) {
-    return {
-      isValid: false,
-      reason: `insufficient_${currency.toLowerCase()}`,
-      checkedAt: new Date(),
-      details: {
-        currentBalance: balance.toString(),
-        requiredBalance: required.toString(),
-        currency
-      }
-    };
-  }
-
-  return {
-    isValid: true,
-    checkedAt: new Date()
-  };
 }

@@ -14,7 +14,7 @@ export function buildListingCancelledEmail(params: {
   const body = `
     ${bodyIntro(
       `Listing cancelled`,
-      `The listing for <strong>${escapeHtml(ensName)}</strong> was cancelled because the name was transferred to a new owner, which invalidates the existing listing.`,
+      `The listing for <strong>${escapeHtml(ensName)}</strong> was cancelled because the name was transferred to a new owner, which invalidates the existing listing.`
     )}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 16px 0 8px 0;">
       ${button(listingUrl, 'View on Grails')}

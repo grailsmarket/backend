@@ -3,9 +3,7 @@ import { renderEmailLayout, bodyIntro } from '../layout';
 import { button } from '../components';
 import { colors, fonts } from '../tokens';
 
-export function buildEmailVerificationEmail(params: {
-  verificationUrl: string;
-}): EmailTemplate {
+export function buildEmailVerificationEmail(params: { verificationUrl: string }): EmailTemplate {
   const { verificationUrl } = params;
   const subject = `Verify your email — Grails`;
   const preheaderText = `Confirm your email to start receiving Grails notifications.`;
@@ -13,7 +11,7 @@ export function buildEmailVerificationEmail(params: {
   const body = `
     ${bodyIntro(
       `Verify your email`,
-      `Thanks for adding your email to Grails. Click the button below to confirm it and start receiving notifications about the names you watch and own.`,
+      `Thanks for adding your email to Grails. Click the button below to confirm it and start receiving notifications about the names you watch and own.`
     )}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 24px 0 8px 0;">
       ${button(verificationUrl, 'Verify email')}

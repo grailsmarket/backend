@@ -31,11 +31,7 @@ export class GrailsAPIError extends GrailsError {
   readonly details?: unknown;
   readonly requestId?: string;
 
-  constructor(
-    statusCode: number,
-    error: APIErrorDetails,
-    requestId?: string
-  ) {
+  constructor(statusCode: number, error: APIErrorDetails, requestId?: string) {
     super(error.message);
     this.name = 'GrailsAPIError';
     this.statusCode = statusCode;

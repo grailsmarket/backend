@@ -3,11 +3,11 @@ import jwt from 'jsonwebtoken';
 import { config } from '../../../shared/src';
 
 export interface JWTPayload {
-  sub: string;      // User ID
-  address: string;  // Ethereum address
+  sub: string; // User ID
+  address: string; // Ethereum address
   isAdmin: boolean;
-  iat: number;      // Issued at
-  exp: number;      // Expires at
+  iat: number; // Issued at
+  exp: number; // Expires at
 }
 
 declare module 'fastify' {
@@ -19,11 +19,7 @@ declare module 'fastify' {
 /**
  * Generate JWT token for authenticated user
  */
-export function generateToken(user: {
-  id: number;
-  address: string;
-  is_admin?: boolean;
-}): string {
+export function generateToken(user: { id: number; address: string; is_admin?: boolean }): string {
   const secret = config.jwt.secret;
   if (!secret) {
     throw new Error('JWT_SECRET is not configured');
@@ -53,7 +49,7 @@ export function verifyToken(token: string): JWTPayload {
     const decoded = jwt.verify(token, secret) as JWTPayload;
     return decoded;
   } catch (error) {
-    throw new Error('Invalid token');
+    throw new Error('Invalid token', { cause: error });
   }
 }
 
@@ -61,10 +57,7 @@ export function verifyToken(token: string): JWTPayload {
  * Fastify middleware to require authentication
  * Usage: { preHandler: requireAuth }
  */
-export async function requireAuth(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
+export async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   try {
     // Extract token from Authorization header
     const authHeader = request.headers.authorization;
@@ -122,10 +115,7 @@ export async function requireAuth(
  * Middleware to require admin access.
  * Usage: { preHandler: [requireAuth, requireAdmin] }
  */
-export async function requireAdmin(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   if (!request.user) {
     return reply.status(401).send({
       success: false,
@@ -153,10 +143,7 @@ export async function requireAdmin(
  * Optional auth middleware - doesn't fail if no token provided
  * Attaches user if valid token present
  */
-export async function optionalAuth(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
+export async function optionalAuth(request: FastifyRequest, _reply: FastifyReply) {
   try {
     const authHeader = request.headers.authorization;
 

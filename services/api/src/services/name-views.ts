@@ -47,7 +47,9 @@ export function getViewerIdentifier(request: FastifyRequest): {
   // Fastify with trust proxy will set x-forwarded-for
   const forwarded = request.headers['x-forwarded-for'];
   const ip = forwarded
-    ? (Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0].trim())
+    ? Array.isArray(forwarded)
+      ? forwarded[0]
+      : forwarded.split(',')[0].trim()
     : request.ip;
 
   const hashedIP = hashIP(ip);
@@ -87,15 +89,9 @@ export async function trackAuthenticatedNameView(
     const isNewView = result.rows.length > 0;
 
     if (isNewView) {
-      logger.debug(
-        { ensNameId, userId },
-        'Tracked new authenticated name view'
-      );
+      logger.debug({ ensNameId, userId }, 'Tracked new authenticated name view');
     } else {
-      logger.debug(
-        { ensNameId, userId },
-        'Duplicate authenticated view - not counted'
-      );
+      logger.debug({ ensNameId, userId }, 'Duplicate authenticated view - not counted');
     }
 
     return isNewView;
@@ -141,15 +137,9 @@ export async function trackNameView(
     const isNewView = result.rows.length > 0;
 
     if (isNewView) {
-      logger.debug(
-        { ensNameId, viewerType },
-        'Tracked new name view'
-      );
+      logger.debug({ ensNameId, viewerType }, 'Tracked new name view');
     } else {
-      logger.debug(
-        { ensNameId, viewerType },
-        'Duplicate view - not counted'
-      );
+      logger.debug({ ensNameId, viewerType }, 'Duplicate view - not counted');
     }
 
     return isNewView;
@@ -158,10 +148,7 @@ export async function trackNameView(
     // See migration file: after_name_view_insert trigger
   } catch (error: any) {
     // Log the error but don't throw - view tracking should never break the main request
-    logger.error(
-      { error: error.message, ensNameId, viewerType },
-      'Failed to track name view'
-    );
+    logger.error({ error: error.message, ensNameId, viewerType }, 'Failed to track name view');
     return false;
   }
 }
@@ -174,17 +161,11 @@ export async function trackNameView(
  */
 export async function getNameViewCount(ensNameId: number): Promise<number> {
   try {
-    const result = await pool.query(
-      'SELECT view_count FROM ens_names WHERE id = $1',
-      [ensNameId]
-    );
+    const result = await pool.query('SELECT view_count FROM ens_names WHERE id = $1', [ensNameId]);
 
     return result.rows[0]?.view_count || 0;
   } catch (error: any) {
-    logger.error(
-      { error: error.message, ensNameId },
-      'Failed to get name view count'
-    );
+    logger.error({ error: error.message, ensNameId }, 'Failed to get name view count');
     return 0;
   }
 }
@@ -196,10 +177,7 @@ export async function getNameViewCount(ensNameId: number): Promise<number> {
  * @param userId - The ID of the user
  * @returns true if the user has viewed this name before
  */
-export async function hasUserViewedName(
-  ensNameId: number,
-  userId: number
-): Promise<boolean> {
+export async function hasUserViewedName(ensNameId: number, userId: number): Promise<boolean> {
   try {
     const result = await pool.query(
       `SELECT 1 FROM name_views
@@ -236,10 +214,7 @@ export async function getMostViewedNames(limit: number = 10) {
 
     return result.rows;
   } catch (error: any) {
-    logger.error(
-      { error: error.message, limit },
-      'Failed to get most viewed names'
-    );
+    logger.error({ error: error.message, limit }, 'Failed to get most viewed names');
     return [];
   }
 }

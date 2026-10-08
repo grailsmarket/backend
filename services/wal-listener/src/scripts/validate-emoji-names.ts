@@ -163,8 +163,10 @@ async function queryGraphBatch(names: string[]): Promise<Map<string, GraphDomain
       lastError = error;
       if (attempt < MAX_GRAPH_RETRIES) {
         const delay = GRAPH_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(`  Graph query failed (attempt ${attempt}/${MAX_GRAPH_RETRIES}), retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.warn(
+          `  Graph query failed (attempt ${attempt}/${MAX_GRAPH_RETRIES}), retrying in ${delay}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -174,18 +176,18 @@ async function queryGraphBatch(names: string[]): Promise<Map<string, GraphDomain
 }
 
 async function queryGraphConcurrent(
-  records: EnsNameRecord[],
+  records: EnsNameRecord[]
 ): Promise<Map<string, GraphDomainData>> {
   const combined = new Map<string, GraphDomainData>();
 
   const batches: string[][] = [];
   for (let i = 0; i < records.length; i += GRAPH_BATCH_SIZE) {
-    batches.push(records.slice(i, i + GRAPH_BATCH_SIZE).map(r => r.name));
+    batches.push(records.slice(i, i + GRAPH_BATCH_SIZE).map((r) => r.name));
   }
 
   for (let i = 0; i < batches.length; i += GRAPH_CONCURRENCY) {
     const chunk = batches.slice(i, i + GRAPH_CONCURRENCY);
-    const results = await Promise.all(chunk.map(names => queryGraphBatch(names)));
+    const results = await Promise.all(chunk.map((names) => queryGraphBatch(names)));
 
     for (const resultMap of results) {
       for (const [key, value] of resultMap) {
@@ -194,7 +196,7 @@ async function queryGraphConcurrent(
     }
 
     if (i + GRAPH_CONCURRENCY < batches.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
@@ -205,7 +207,7 @@ async function queryGraphConcurrent(
 
 function validateRecord(
   record: EnsNameRecord,
-  graphData: GraphDomainData,
+  graphData: GraphDomainData
 ): { mismatches: string[]; updates: Record<string, any> } | null {
   const mismatches: string[] = [];
   const updates: Record<string, any> = {};
@@ -229,7 +231,9 @@ function validateRecord(
   if (graphData.labelhash) {
     const correctTokenId = getCorrectTokenId(graphData);
     if (record.token_id !== correctTokenId) {
-      mismatches.push(`token_id: ${record.token_id.substring(0, 20)}... -> ${correctTokenId.substring(0, 20)}...`);
+      mismatches.push(
+        `token_id: ${record.token_id.substring(0, 20)}... -> ${correctTokenId.substring(0, 20)}...`
+      );
       updates.token_id = correctTokenId;
     }
   }
@@ -241,7 +245,9 @@ function validateRecord(
     if (!dbExpiry || Math.abs(graphExpiry.getTime() - dbExpiry.getTime()) > 1000) {
       const isNewer = !dbExpiry || graphExpiry.getTime() > dbExpiry.getTime();
       if (isNewer || !dbExpiry) {
-        mismatches.push(`expiry_date: ${dbExpiry?.toISOString() || 'NULL'} -> ${graphExpiry.toISOString()}`);
+        mismatches.push(
+          `expiry_date: ${dbExpiry?.toISOString() || 'NULL'} -> ${graphExpiry.toISOString()}`
+        );
         updates.expiry_date = graphExpiry;
       }
     }
@@ -252,7 +258,9 @@ function validateRecord(
     const graphRegDate = new Date(parseInt(graphData.registrationDate) * 1000);
     const dbRegDate = record.registration_date;
     if (!dbRegDate || Math.abs(graphRegDate.getTime() - dbRegDate.getTime()) > 1000) {
-      mismatches.push(`registration_date: ${dbRegDate?.toISOString() || 'NULL'} -> ${graphRegDate.toISOString()}`);
+      mismatches.push(
+        `registration_date: ${dbRegDate?.toISOString() || 'NULL'} -> ${graphRegDate.toISOString()}`
+      );
       updates.registration_date = graphRegDate;
     }
   }
@@ -286,7 +294,7 @@ async function flushUpdates(pool: any, pendingUpdates: PendingUpdate[]): Promise
 
       await client.query(
         `UPDATE ens_names SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`,
-        values,
+        values
       );
       updated++;
     }
@@ -366,7 +374,7 @@ async function main() {
   // Count
   const countResult = await pool.query(
     `SELECT COUNT(*) as total FROM ens_names WHERE ${whereClause}`,
-    params,
+    params
   );
   let total = parseInt(countResult.rows[0].total);
   if (limit > 0) total = Math.min(total, limit);
@@ -399,7 +407,7 @@ async function main() {
        WHERE ${whereClause} AND id > $${paramIdx}
        ORDER BY id ASC
        LIMIT $${paramIdx + 1}`,
-      [...params, lastId, fetchSize],
+      [...params, lastId, fetchSize]
     );
 
     if (batchResult.rows.length === 0) break;
@@ -427,7 +435,12 @@ async function main() {
         for (const m of result.mismatches) console.log(`     ${m}`);
 
         if (!dryRun && Object.keys(result.updates).length > 0) {
-          pendingUpdates.push({ id: record.id, name: record.name, updates: result.updates, mismatches: result.mismatches });
+          pendingUpdates.push({
+            id: record.id,
+            name: record.name,
+            updates: result.updates,
+            mismatches: result.mismatches,
+          });
         }
       } else {
         valid++;
@@ -458,7 +471,7 @@ async function main() {
     const etaSeconds = rate > 0 ? remaining / rate : 0;
     const pct = total > 0 ? ((processed / total) * 100).toFixed(1) : '0.0';
     console.log(
-      `\n[${pct}%] ${processed}/${total} | ${invalid} mismatches | ${Math.round(rate)} rec/s | ETA ${Math.ceil(etaSeconds)}s\n`,
+      `\n[${pct}%] ${processed}/${total} | ${invalid} mismatches | ${Math.round(rate)} rec/s | ETA ${Math.ceil(etaSeconds)}s\n`
     );
   }
 

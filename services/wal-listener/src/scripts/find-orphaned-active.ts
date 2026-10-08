@@ -18,10 +18,10 @@ async function main() {
     size: 1000,
     body: {
       query: {
-        term: { status: 'active' }
+        term: { status: 'active' },
       },
-      _source: ['name', 'price']
-    }
+      _source: ['name', 'price'],
+    },
   });
 
   scrollId = searchResponse._scroll_id;
@@ -34,12 +34,9 @@ async function main() {
     console.log(`Checking batch of ${esIds.length} (${totalChecked} total checked)...`);
 
     // Check which IDs exist in PG
-    const pgResult = await pool.query(
-      'SELECT id FROM ens_names WHERE id = ANY($1)',
-      [esIds]
-    );
+    const pgResult = await pool.query('SELECT id FROM ens_names WHERE id = ANY($1)', [esIds]);
 
-    const pgIds = new Set(pgResult.rows.map(row => row.id));
+    const pgIds = new Set(pgResult.rows.map((row) => row.id));
 
     // Find IDs that don't exist in PG
     for (const hit of hits) {
@@ -57,7 +54,7 @@ async function main() {
     if (scrollId) {
       const scrollResponse = await es.scroll({
         scroll_id: scrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       hits = scrollResponse.hits.hits;

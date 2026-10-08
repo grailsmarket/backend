@@ -36,17 +36,20 @@ async function importPoapLinks(csvFilePath: string) {
   // Parse CSV file
   await new Promise<void>((resolve, reject) => {
     fs.createReadStream(csvFilePath)
-      .pipe(parse({
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      }))
+      .pipe(
+        parse({
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+        })
+      )
       .on('data', (row: CSVRow) => {
         rowCount++;
 
         // Try to find the link in the row
         // Check common column names: 'link', 'url', 'mint_link', etc.
-        const link = row.link || row.url || row.mint_link || row.Link || row.URL || Object.values(row)[0];
+        const link =
+          row.link || row.url || row.mint_link || row.Link || row.URL || Object.values(row)[0];
 
         if (link && typeof link === 'string' && link.trim()) {
           links.push(link.trim());
@@ -112,7 +115,6 @@ async function importPoapLinks(csvFilePath: string) {
     console.log(`   Inserted: ${insertedCount}`);
     console.log(`   Skipped (duplicates): ${skippedCount}`);
     console.log(`   Errors: ${errorCount}`);
-
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('\n❌ Transaction failed:', error);

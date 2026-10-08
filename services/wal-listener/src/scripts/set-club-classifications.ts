@@ -93,18 +93,15 @@ async function main() {
       const classifications = CLASSIFICATION_MAPPINGS[club.name];
 
       if (classifications && classifications.length > 0) {
-        await pool.query(
-          'UPDATE clubs SET classifications = $1 WHERE name = $2',
-          [classifications, club.name]
-        );
+        await pool.query('UPDATE clubs SET classifications = $1 WHERE name = $2', [
+          classifications,
+          club.name,
+        ]);
         console.log(`  [SET] ${club.name} -> [${classifications.join(', ')}]`);
         updated++;
       } else {
         // Set to NULL for uncategorized clubs
-        await pool.query(
-          'UPDATE clubs SET classifications = NULL WHERE name = $1',
-          [club.name]
-        );
+        await pool.query('UPDATE clubs SET classifications = NULL WHERE name = $1', [club.name]);
         console.log(`  [NULL] ${club.name} (uncategorized)`);
         uncategorized++;
       }

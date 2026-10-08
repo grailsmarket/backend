@@ -88,7 +88,9 @@ async function main() {
     rowsUpdated += result.rowCount || 0;
 
     const progress = Math.min(i + BATCH_SIZE, entries.length);
-    process.stdout.write(`\r  Processed ${progress}/${entries.length} (${rowsUpdated} membership rows updated)`);
+    process.stdout.write(
+      `\r  Processed ${progress}/${entries.length} (${rowsUpdated} membership rows updated)`
+    );
   }
 
   // Count distinct names that actually got ranked

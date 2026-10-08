@@ -67,7 +67,11 @@ export type ValuationProduce = (
   reportProgress: (event: ValuationEvidenceStreamStageEvent) => void
 ) => Promise<ValuationEvidenceResult>;
 
-export type ValuationErrorMapper = (error: unknown) => { status: number; code: string; message: string };
+export type ValuationErrorMapper = (error: unknown) => {
+  status: number;
+  code: string;
+  message: string;
+};
 
 type ValuationRun = {
   label: string;
@@ -278,6 +282,7 @@ type NameDetailsForEligibility = {
 // Strips emoji pictographs + modifiers so a purely-emoji label reduces to empty.
 // Digits carry the Unicode Emoji property but are NOT Extended_Pictographic, so
 // "123" is left intact here and handled by the digit-only check instead.
+// eslint-disable-next-line no-misleading-character-class -- ZWJ/VS16/keycap are listed individually on purpose so each is stripped on its own
 const EMOJI_STRIP_PATTERN = /[\p{Extended_Pictographic}\u200D\uFE0F\u20E3]/gu;
 
 export class ValuationTargetError extends Error {
@@ -300,16 +305,25 @@ function normalizeExactEthName(rawName: string): { normalizedName: string; keywo
   }
 
   if (!normalizedName.endsWith('.eth')) {
-    throw new ValuationTargetError('INVALID_NAME', 'Valuation evidence is only supported for .eth names');
+    throw new ValuationTargetError(
+      'INVALID_NAME',
+      'Valuation evidence is only supported for .eth names'
+    );
   }
 
   const keyword = normalizedName.slice(0, -'.eth'.length);
   if (!keyword) {
-    throw new ValuationTargetError('EMPTY_KEYWORD', 'Valuation evidence requires a non-empty .eth label');
+    throw new ValuationTargetError(
+      'EMPTY_KEYWORD',
+      'Valuation evidence requires a non-empty .eth label'
+    );
   }
 
   if (keyword.includes('.')) {
-    throw new ValuationTargetError('SUBNAME_NOT_SUPPORTED', 'Valuation evidence does not support subnames');
+    throw new ValuationTargetError(
+      'SUBNAME_NOT_SUPPORTED',
+      'Valuation evidence does not support subnames'
+    );
   }
 
   if (keyword.length > 20) {
@@ -381,7 +395,10 @@ export async function resolveValuationTarget(
   const logPrefix = options.logPrefix || '[valuation]';
   const { normalizedName, keyword } = normalizeExactEthName(rawName);
   const startedAt = performance.now();
-  valuationLogInfo(logPrefix, 'valuation target eligibility request start', { normalizedName, keyword });
+  valuationLogInfo(logPrefix, 'valuation target eligibility request start', {
+    normalizedName,
+    keyword,
+  });
 
   const result = await pool.query(
     `SELECT
@@ -400,7 +417,10 @@ export async function resolveValuationTarget(
 
   if (result.rows.length === 0) {
     valuationLogWarn(logPrefix, 'valuation target missing from Grails DB', { normalizedName });
-    throw new ValuationTargetError('NAME_NOT_IN_DATABASE', 'Valuation evidence is only supported for names in Grails');
+    throw new ValuationTargetError(
+      'NAME_NOT_IN_DATABASE',
+      'Valuation evidence is only supported for names in Grails'
+    );
   }
 
   const data = result.rows[0] as NameDetailsForEligibility;
@@ -412,7 +432,8 @@ export async function resolveValuationTarget(
     );
   }
 
-  const expiryDate = data.expiry_date instanceof Date ? data.expiry_date.toISOString() : String(data.expiry_date);
+  const expiryDate =
+    data.expiry_date instanceof Date ? data.expiry_date.toISOString() : String(data.expiry_date);
   const categoryContext = buildCategoryContext(data, options.categoryComments);
 
   valuationLogInfo(logPrefix, 'valuation target resolved', {
@@ -457,8 +478,22 @@ const WEB2_TLD_DATA_DEFAULT_BASE_URL = 'https://web2-tld-data-production.up.rail
 const WEB2_TLD_DATA_REQUEST_TIMEOUT_MS = 15_000;
 const WEB2_TLD_DATA_MAX_RETRIES = 2;
 const TOP_EXTENSIONS = [
-  'com', 'net', 'org', 'co', 'io', 'ai', 'xyz', 'app',
-  'dev', 'me', 'us', 'info', 'online', 'tech', 'cc', 'tv',
+  'com',
+  'net',
+  'org',
+  'co',
+  'io',
+  'ai',
+  'xyz',
+  'app',
+  'dev',
+  'me',
+  'us',
+  'info',
+  'online',
+  'tech',
+  'cc',
+  'tv',
 ];
 
 function normalizeExtension(value: unknown): string | null {
@@ -493,7 +528,9 @@ function mapWeb2TldDataToEvidence(
 ): ValuationWeb2Evidence {
   const tlds = normalizeTlds(response.tlds);
   const topExtensionCoverage = buildTopExtensionCoverage(tlds);
-  const topExtensionsRegistered = topExtensionCoverage.filter((extension) => extension.registered).length;
+  const topExtensionsRegistered = topExtensionCoverage.filter(
+    (extension) => extension.registered
+  ).length;
   // Trust the API-reported count (it is the authoritative tld_count across all
   // ~1,533 zones); fall back to the de-duplicated list length only if absent.
   const tldCount =
@@ -527,7 +564,9 @@ async function fetchWeb2TldData(label: string, logPrefix: string): Promise<Web2T
     });
   }
 
-  const baseUrl = (appConfig.valuation.web2TldDataBaseUrl || WEB2_TLD_DATA_DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const baseUrl = (
+    appConfig.valuation.web2TldDataBaseUrl || WEB2_TLD_DATA_DEFAULT_BASE_URL
+  ).replace(/\/+$/, '');
   const url = `${baseUrl}/label/${encodeURIComponent(label)}`;
 
   // web2-tld-data is a hard dependency for every uncached generation (the comps
@@ -608,9 +647,12 @@ async function fetchWeb2TldData(label: string, logPrefix: string): Promise<Web2T
     return json;
   }
 
-  throw new Web2TldDataRequestError(lastError?.message || 'web2-tld-data request failed after retries', {
-    code: 'NETWORK_ERROR',
-  });
+  throw new Web2TldDataRequestError(
+    lastError?.message || 'web2-tld-data request failed after retries',
+    {
+      code: 'NETWORK_ERROR',
+    }
+  );
 }
 
 export async function buildWeb2Evidence(
@@ -626,7 +668,8 @@ export async function buildWeb2Evidence(
   try {
     valuationLogInfo(logPrefix, 'Web2 evidence web2-tld-data lookup start', { lookupLabel });
     const response = await fetchWeb2TldData(lookupLabel, logPrefix);
-    const tldCount = typeof response.tld_count === 'number' ? response.tld_count : response.tlds?.length ?? 0;
+    const tldCount =
+      typeof response.tld_count === 'number' ? response.tld_count : (response.tlds?.length ?? 0);
     const evidence = mapWeb2TldDataToEvidence(
       lookupLabel,
       response,
@@ -668,10 +711,14 @@ function createSearchDemandEvidence(
   const monthlyTrend = Array.isArray(metrics?.monthlyTrend) ? metrics!.monthlyTrend : [];
   const estimatedYearlySearches =
     monthlyTrend.length > 0
-      ? Math.round((monthlyTrend.reduce((sum, point) => sum + point.searches, 0) / monthlyTrend.length) * 12)
+      ? Math.round(
+          (monthlyTrend.reduce((sum, point) => sum + point.searches, 0) / monthlyTrend.length) * 12
+        )
       : null;
   const hasSearchDemandData =
-    avgMonthlySearches !== null || estimatedYearlySearches !== null || (metrics?.avgCpc ?? null) !== null;
+    avgMonthlySearches !== null ||
+    estimatedYearlySearches !== null ||
+    (metrics?.avgCpc ?? null) !== null;
   const dataStatus = error ? 'error' : hasSearchDemandData ? 'available' : 'no_data';
 
   return {
@@ -826,7 +873,10 @@ function isPremiumRegistration(
   activity: ValuationActivitySale,
   premiumRegistrationFloorWei: string
 ): activity is ValuationMintEvent {
-  return activity.event_type === 'mint' && isWeiAtLeast(activity.metadata?.premium_wei, premiumRegistrationFloorWei);
+  return (
+    activity.event_type === 'mint' &&
+    isWeiAtLeast(activity.metadata?.premium_wei, premiumRegistrationFloorWei)
+  );
 }
 
 function isMintEvent(activity: ValuationActivitySale): activity is ValuationMintEvent {
@@ -842,7 +892,9 @@ function readWei(value: unknown): bigint {
 }
 
 function isComparableSale(activity: ValuationActivitySale, comparableSaleFloorWei: string) {
-  return activity.event_type === 'sold' && readWei(activity.price_wei) >= BigInt(comparableSaleFloorWei);
+  return (
+    activity.event_type === 'sold' && readWei(activity.price_wei) >= BigInt(comparableSaleFloorWei)
+  );
 }
 
 function compareWeiDesc(a: unknown, b: unknown) {
@@ -895,25 +947,33 @@ export async function hydrateMarketActivity(
     rows = result.rows.map(mapActivityRow);
   }
 
-  const targetNameEventsExcluded = rows.filter((row) => isActivityForEnsName(row, excludeName ?? undefined)).length;
+  const targetNameEventsExcluded = rows.filter((row) =>
+    isActivityForEnsName(row, excludeName ?? undefined)
+  ).length;
   const activityRows = rows.filter((row) => !isActivityForEnsName(row, excludeName ?? undefined));
 
   const allSold = activityRows.filter((activity) => activity.event_type === 'sold');
-  const comparableSales = allSold.filter((activity) => isComparableSale(activity, comparableSaleFloorWei));
+  const comparableSales = allSold.filter((activity) =>
+    isComparableSale(activity, comparableSaleFloorWei)
+  );
   const mintEvents = activityRows.filter(isMintEvent);
   const premiumRegistrations = mintEvents.filter((activity) =>
     isPremiumRegistration(activity, premiumRegistrationFloorWei)
   );
 
   const sales = [...comparableSales].sort((a, b) => compareWeiDesc(a.price_wei, b.price_wei));
-  const sortedMintEvents = [...mintEvents].sort((a, b) => compareWeiDesc(getMintSortWei(a), getMintSortWei(b)));
+  const sortedMintEvents = [...mintEvents].sort((a, b) =>
+    compareWeiDesc(getMintSortWei(a), getMintSortWei(b))
+  );
   const sortedPremiumRegistrations = [...premiumRegistrations].sort((a, b) =>
     compareWeiDesc(a.metadata.premium_wei, b.metadata.premium_wei)
   );
   const lowValueSalesExcluded = allSold.length - comparableSales.length;
 
   const termsWithSales = new Set(sales.map((sale) => sale.name.replace(/\.eth$/i, '')));
-  const termsWithMintEvents = new Set(sortedMintEvents.map((mint) => mint.name.replace(/\.eth$/i, '')));
+  const termsWithMintEvents = new Set(
+    sortedMintEvents.map((mint) => mint.name.replace(/\.eth$/i, ''))
+  );
   const termsWithPremiumRegistrations = new Set(
     sortedPremiumRegistrations.map((registration) => registration.name.replace(/\.eth$/i, ''))
   );
@@ -971,7 +1031,10 @@ export async function hydrateCategoryMarketActivity(
   const clubsToFetch = uniqueClubs.filter((club) => !ignored.has(club));
   const excludeName = options.excludeEnsName?.toLowerCase() ?? null;
 
-  valuationLogInfo(logPrefix, 'category activity hydration start', { clubs: clubsToFetch, skippedCategories });
+  valuationLogInfo(logPrefix, 'category activity hydration start', {
+    clubs: clubsToFetch,
+    skippedCategories,
+  });
 
   const rowsByClub = new Map<string, ValuationActivitySale[]>();
   for (const club of clubsToFetch) rowsByClub.set(club, []);
@@ -1001,8 +1064,12 @@ export async function hydrateCategoryMarketActivity(
 
   const categories = clubsToFetch.map((slug) => {
     const allRows = rowsByClub.get(slug) ?? [];
-    const targetNameEventsExcluded = allRows.filter((row) => isActivityForEnsName(row, excludeName ?? undefined)).length;
-    const activityRows = allRows.filter((row) => !isActivityForEnsName(row, excludeName ?? undefined));
+    const targetNameEventsExcluded = allRows.filter((row) =>
+      isActivityForEnsName(row, excludeName ?? undefined)
+    ).length;
+    const activityRows = allRows.filter(
+      (row) => !isActivityForEnsName(row, excludeName ?? undefined)
+    );
     const sales = activityRows.filter((activity) => activity.event_type === 'sold');
     const mintEvents = activityRows.filter(isMintEvent);
 
@@ -1021,7 +1088,10 @@ export async function hydrateCategoryMarketActivity(
   const eventsFound = categories.reduce((sum, category) => sum + category.eventsFound, 0);
   const salesFound = categories.reduce((sum, category) => sum + category.salesFound, 0);
   const mintEventsFound = categories.reduce((sum, category) => sum + category.mintEventsFound, 0);
-  const targetNameEventsExcluded = categories.reduce((sum, category) => sum + category.targetNameEventsExcluded, 0);
+  const targetNameEventsExcluded = categories.reduce(
+    (sum, category) => sum + category.targetNameEventsExcluded,
+    0
+  );
 
   valuationLogInfo(logPrefix, 'category activity hydration complete', {
     categoriesChecked: clubsToFetch.length,
@@ -1093,7 +1163,9 @@ export function buildCalibrationContext(
 
 type ProgressReporter = (event: ValuationEvidenceStreamStageEvent) => void;
 
-function capturePromise<T>(promise: Promise<T>): Promise<{ ok: true; data: T } | { ok: false; error: unknown }> {
+function capturePromise<T>(
+  promise: Promise<T>
+): Promise<{ ok: true; data: T } | { ok: false; error: unknown }> {
   return promise.then(
     (data) => ({ ok: true as const, data }),
     (error) => ({ ok: false as const, error })
@@ -1125,7 +1197,13 @@ async function getOrGenerateNameResearch(
   });
   if (nameResearch.dataStatus === 'available') {
     try {
-      await setCachedEvidence(label, 'name_research', nameResearch, nameResearch.model, evidenceCacheDays);
+      await setCachedEvidence(
+        label,
+        'name_research',
+        nameResearch,
+        nameResearch.model,
+        evidenceCacheDays
+      );
     } catch (error) {
       valuationLogInfo(logPrefix, 'name research cache write failed', {
         error: error instanceof Error ? error.message : error,
@@ -1170,7 +1248,13 @@ async function getOrGenerateRelatedTerms(
   const hasUsableSenses = relatedTerms.perSense.some((sense) => !sense.error);
   if (relatedTerms.source === 'ai_scoped_senses' && hasUsableSenses) {
     try {
-      await setCachedEvidence(label, 'related_terms', relatedTerms, relatedTerms.model, evidenceCacheDays);
+      await setCachedEvidence(
+        label,
+        'related_terms',
+        relatedTerms,
+        relatedTerms.model,
+        evidenceCacheDays
+      );
     } catch (error) {
       valuationLogInfo(logPrefix, 'related terms cache write failed', {
         error: error instanceof Error ? error.message : error,
@@ -1188,7 +1272,14 @@ export async function runValuationPipeline(args: {
   logPrefix: string;
   reportProgress: ProgressReporter;
 }): Promise<ValuationEvidenceResult> {
-  const { target, config, evidenceCacheDays, premiumRegistrationFloorWei, logPrefix, reportProgress } = args;
+  const {
+    target,
+    config,
+    evidenceCacheDays,
+    premiumRegistrationFloorWei,
+    logPrefix,
+    reportProgress,
+  } = args;
   const keyword = target.keyword; // label == keyword (no .eth suffix)
   const comparableSaleFloorWei = config.activity.comparableSaleFloorWei;
   const startedAt = performance.now();
@@ -1233,7 +1324,12 @@ export async function runValuationPipeline(args: {
 
   emitStage('researching_name_context', 'started');
   const searchDemandPromise = buildSearchDemandEvidence(keyword, { logPrefix });
-  const nameResearchPromise = getOrGenerateNameResearch(keyword, config, evidenceCacheDays, logPrefix);
+  const nameResearchPromise = getOrGenerateNameResearch(
+    keyword,
+    config,
+    evidenceCacheDays,
+    logPrefix
+  );
   // Wrapped in capturePromise so a transient DB rejection can't fire an
   // unhandledRejection during the long (LLM-bound) window before it's awaited
   // below — which, with no global handler, would crash the API process.
@@ -1248,7 +1344,11 @@ export async function runValuationPipeline(args: {
   const evidenceStartedAt = performance.now();
   const web2Result = await web2Promise;
   if (!web2Result.ok) {
-    void Promise.allSettled([searchDemandPromise, nameResearchPromise, categoryMarketActivityPromise]);
+    void Promise.allSettled([
+      searchDemandPromise,
+      nameResearchPromise,
+      categoryMarketActivityPromise,
+    ]);
     throw web2Result.error;
   }
 
@@ -1288,7 +1388,10 @@ export async function runValuationPipeline(args: {
       'web2_footprint_below_threshold',
       config.compsGate.skipMessage
     );
-    const [resolvedSearchDemand, research] = await Promise.all([searchDemandPromise, nameResearchPromise]);
+    const [resolvedSearchDemand, research] = await Promise.all([
+      searchDemandPromise,
+      nameResearchPromise,
+    ]);
     searchDemand = resolvedSearchDemand;
     nameResearch = research.nameResearch;
     // Emit the in-progress stage's completion before the next stage's status,
@@ -1301,9 +1404,18 @@ export async function runValuationPipeline(args: {
     emitStage('researching_name_context', 'completed');
     emitStage('looking_for_comparable_sales', 'started');
 
-    relatedTerms = await getOrGenerateRelatedTerms(keyword, nameResearch, research.fromCache, config, evidenceCacheDays, logPrefix);
+    relatedTerms = await getOrGenerateRelatedTerms(
+      keyword,
+      nameResearch,
+      research.fromCache,
+      config,
+      evidenceCacheDays,
+      logPrefix
+    );
 
-    const activityTerms = relatedTerms.terms.filter((term) => `${term}.eth` !== target.normalizedName);
+    const activityTerms = relatedTerms.terms.filter(
+      (term) => `${term}.eth` !== target.normalizedName
+    );
     const [resolvedMarketActivity, resolvedSearchDemand] = await Promise.all([
       hydrateMarketActivity(activityTerms, premiumRegistrationFloorWei, comparableSaleFloorWei, {
         logPrefix,
@@ -1323,7 +1435,12 @@ export async function runValuationPipeline(args: {
   const categoryMarketActivityResult = await categoryMarketActivityPromise;
   if (!categoryMarketActivityResult.ok) throw categoryMarketActivityResult.error;
   const categoryMarketActivity = categoryMarketActivityResult.data;
-  const calibrationContext = buildCalibrationContext(web2, searchDemand, target.categoryContext, config);
+  const calibrationContext = buildCalibrationContext(
+    web2,
+    searchDemand,
+    target.categoryContext,
+    config
+  );
 
   valuationLogInfo(logPrefix, 'evidence collection complete', {
     elapsedMs: Math.round(performance.now() - evidenceStartedAt),

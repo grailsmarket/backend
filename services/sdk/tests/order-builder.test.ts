@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SeaportOrderBuilder } from '../src/seaport/order-builder.js';
 import { OrderType, ItemType } from '../src/seaport/types.js';
-import { ENS_REGISTRAR_ADDRESS, ZERO_ADDRESS } from '../src/seaport/constants.js';
+import { ENS_REGISTRAR_ADDRESS } from '../src/seaport/constants.js';
 
 describe('SeaportOrderBuilder', () => {
   const builder = new SeaportOrderBuilder();
@@ -65,10 +65,7 @@ describe('SeaportOrderBuilder', () => {
       expect(order.consideration).toHaveLength(3);
 
       // Verify total adds up to price
-      const total = order.consideration.reduce(
-        (sum, item) => sum + BigInt(item.startAmount),
-        0n
-      );
+      const total = order.consideration.reduce((sum, item) => sum + BigInt(item.startAmount), 0n);
       expect(total.toString()).toBe('1000000000000000000');
     });
 

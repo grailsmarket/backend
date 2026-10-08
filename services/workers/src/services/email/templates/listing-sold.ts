@@ -15,7 +15,7 @@ export function buildListingSoldEmail(params: {
   const body = `
     ${bodyIntro(
       `Your listing sold`,
-      `Your listing for <strong>${escapeHtml(ensName)}</strong> just sold on Grails.`,
+      `Your listing for <strong>${escapeHtml(ensName)}</strong> just sold on Grails.`
     )}
     ${highlight('Sale price', `${escapeHtml(priceEth)} ETH`)}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td align="center" style="padding: 8px 0 8px 0;">

@@ -138,7 +138,9 @@ async function importCreationDates(options: {
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const rate = (totalProcessed / ((Date.now() - startTime) / 1000)).toFixed(0);
-      console.log(`Batch ${batchNumber}: ${rows.length} rows, ${matchedIds.length} matched, ${batchNotFound} missed | Total: ${totalProcessed} processed, ${totalUpdated} updated (${elapsed}s, ${rate}/s)`);
+      console.log(
+        `Batch ${batchNumber}: ${rows.length} rows, ${matchedIds.length} matched, ${batchNotFound} missed | Total: ${totalProcessed} processed, ${totalUpdated} updated (${elapsed}s, ${rate}/s)`
+      );
     }
 
     // Summary
@@ -148,7 +150,9 @@ async function importCreationDates(options: {
     console.log(`Successfully updated: ${totalUpdated}`);
     console.log(`Not found in created.json: ${totalNotFound}`);
     console.log(`Failed to update: ${totalFailed}`);
-    console.log(`Match rate: ${totalProcessed > 0 ? ((totalUpdated / totalProcessed) * 100).toFixed(2) : 0}%`);
+    console.log(
+      `Match rate: ${totalProcessed > 0 ? ((totalUpdated / totalProcessed) * 100).toFixed(2) : 0}%`
+    );
     console.log(`Time: ${totalTime}s\n`);
 
     if (dryRun) {
@@ -157,7 +161,6 @@ async function importCreationDates(options: {
     } else {
       console.log('✅ Database has been updated!\n');
     }
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);
@@ -168,7 +171,13 @@ async function importCreationDates(options: {
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const options: { file: string; dryRun?: boolean; limit?: number; batchSize?: number; offset?: number } = {
+const options: {
+  file: string;
+  dryRun?: boolean;
+  limit?: number;
+  batchSize?: number;
+  offset?: number;
+} = {
   file: '',
 };
 
@@ -192,7 +201,9 @@ for (let i = 0; i < args.length; i++) {
 
 if (!options.file) {
   console.error('Error: --file <path> is required');
-  console.error('Usage: npx tsx src/scripts/import-creation-dates.ts --file /path/to/created.json [--dry-run] [--limit N] [--batch-size N] [--offset N]');
+  console.error(
+    'Usage: npx tsx src/scripts/import-creation-dates.ts --file /path/to/created.json [--dry-run] [--limit N] [--batch-size N] [--offset N]'
+  );
   process.exit(1);
 }
 

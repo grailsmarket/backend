@@ -65,7 +65,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, num
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function backfillCreationDates(options: {
@@ -107,7 +107,8 @@ async function backfillCreationDates(options: {
     while (totalProcessed < limit) {
       const fetchSize = Math.min(dbPageSize, limit - totalProcessed);
 
-      const result = await pool.query(`
+      const result = await pool.query(
+        `
         SELECT id, name
         FROM ens_names
         WHERE creation_date IS NULL
@@ -117,7 +118,9 @@ async function backfillCreationDates(options: {
           AND name NOT LIKE '%.%.eth'
         ORDER BY id
         LIMIT $1
-      `, [fetchSize, lastId]);
+      `,
+        [fetchSize, lastId]
+      );
 
       if (result.rows.length === 0) break;
       pageNumber++;
@@ -141,7 +144,7 @@ async function backfillCreationDates(options: {
       for (let c = 0; c < chunks.length; c += concurrency) {
         const concurrentChunks = chunks.slice(c, c + concurrency);
         const results = await Promise.all(
-          concurrentChunks.map(chunk => queryGraphForNamesBatch(chunk))
+          concurrentChunks.map((chunk) => queryGraphForNamesBatch(chunk))
         );
 
         // Merge results and batch-update DB
@@ -206,7 +209,9 @@ async function backfillCreationDates(options: {
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const rate = (totalProcessed / ((Date.now() - startTime) / 1000)).toFixed(0);
-      console.log(`Page ${pageNumber}: ${rows.length} rows fetched | Updated: ${totalUpdated}, Skipped: ${totalSkipped}, Failed: ${totalFailed} | Total: ${totalProcessed} (${elapsed}s, ${rate}/s)`);
+      console.log(
+        `Page ${pageNumber}: ${rows.length} rows fetched | Updated: ${totalUpdated}, Skipped: ${totalSkipped}, Failed: ${totalFailed} | Total: ${totalProcessed} (${elapsed}s, ${rate}/s)`
+      );
     }
 
     // Summary
@@ -216,7 +221,9 @@ async function backfillCreationDates(options: {
     console.log(`Successfully updated: ${totalUpdated}`);
     console.log(`Not found in Graph: ${totalSkipped}`);
     console.log(`Failed to update: ${totalFailed}`);
-    console.log(`Success rate: ${totalProcessed > 0 ? ((totalUpdated / totalProcessed) * 100).toFixed(2) : 0}%`);
+    console.log(
+      `Success rate: ${totalProcessed > 0 ? ((totalUpdated / totalProcessed) * 100).toFixed(2) : 0}%`
+    );
     console.log(`Time: ${totalTime}s\n`);
 
     if (dryRun) {
@@ -225,7 +232,6 @@ async function backfillCreationDates(options: {
     } else {
       console.log('✅ Database has been updated!\n');
     }
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);
@@ -236,7 +242,13 @@ async function backfillCreationDates(options: {
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const options: { dryRun?: boolean; limit?: number; batchSize?: number; offset?: number; concurrency?: number } = {};
+const options: {
+  dryRun?: boolean;
+  limit?: number;
+  batchSize?: number;
+  offset?: number;
+  concurrency?: number;
+} = {};
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--dry-run') {

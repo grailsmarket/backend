@@ -142,28 +142,36 @@ describe('Registration Endpoints', () => {
     });
 
     it('should filter by period=24h', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=24h');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=24h'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('24h');
     });
 
     it('should filter by period=30d', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=30d');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=30d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('30d');
     });
 
     it('should filter by period=90d', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=90d');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=90d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('90d');
     });
 
     it('should filter by period=all', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=all');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=all'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('all');
@@ -188,11 +196,13 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return by_length sorted by name_length ascending', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=all');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=all'
+      );
 
       expect(result.success).toBe(true);
       if (result.data.by_length.length >= 2) {
-        const lengths = result.data.by_length.map(item => item.name_length);
+        const lengths = result.data.by_length.map((item) => item.name_length);
         for (let i = 1; i < lengths.length; i++) {
           expect(lengths[i]).toBeGreaterThan(lengths[i - 1]);
         }
@@ -205,7 +215,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have premium_registrations <= registration_count', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=all');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=all'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.summary.premium_registrations).toBeLessThanOrEqual(
@@ -216,7 +228,9 @@ describe('Registration Endpoints', () => {
 
   describe('GET /analytics/registrations/by-length', () => {
     it('should return detailed breakdown with default parameters', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data).toBeDefined();
@@ -225,7 +239,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return detailed fields including min/max/median', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=all');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=all'
+      );
 
       expect(result.success).toBe(true);
 
@@ -245,39 +261,49 @@ describe('Registration Endpoints', () => {
     });
 
     it('should filter by period=24h', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=24h');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=24h'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('24h');
     });
 
     it('should filter by period=30d', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=30d');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=30d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('30d');
     });
 
     it('should filter by period=90d', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=90d');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=90d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('90d');
     });
 
     it('should filter by period=all', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=all');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=all'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('all');
     });
 
     it('should return breakdown sorted by name_length ascending', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=all');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=all'
+      );
 
       expect(result.success).toBe(true);
       if (result.data.breakdown.length >= 2) {
-        const lengths = result.data.breakdown.map(item => item.name_length);
+        const lengths = result.data.breakdown.map((item) => item.name_length);
         for (let i = 1; i < lengths.length; i++) {
           expect(lengths[i]).toBeGreaterThan(lengths[i - 1]);
         }
@@ -285,7 +311,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have min_cost <= median_cost <= max_cost', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=all');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=all'
+      );
 
       expect(result.success).toBe(true);
       for (const item of result.data.breakdown) {
@@ -298,7 +326,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have premium_count <= count', async () => {
-      const result = await fetchEndpoint<RegistrationByLengthResponse>('/analytics/registrations/by-length?period=all');
+      const result = await fetchEndpoint<RegistrationByLengthResponse>(
+        '/analytics/registrations/by-length?period=all'
+      );
 
       expect(result.success).toBe(true);
       for (const item of result.data.breakdown) {
@@ -324,7 +354,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return hourly data for 1d period', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=1d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=1d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('1d');
@@ -332,7 +364,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return daily data for 7d period', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('7d');
@@ -340,7 +374,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return daily data for 30d period', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=30d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=30d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('30d');
@@ -348,7 +384,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return daily data for 1y period', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=1y');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=1y'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('1y');
@@ -356,7 +394,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return data points with correct structure', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       if (result.data.points.length > 0) {
@@ -372,7 +412,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return dates in ascending order', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       if (result.data.points.length >= 2) {
@@ -384,7 +426,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have no gaps in time series (7d)', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.points.length).toBeGreaterThanOrEqual(7);
@@ -400,7 +444,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have no gaps in time series (1d hourly)', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=1d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=1d'
+      );
 
       expect(result.success).toBe(true);
       expect(result.data.points.length).toBeGreaterThanOrEqual(24);
@@ -416,7 +462,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have premium_count <= count for each point', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       for (const point of result.data.points) {
@@ -425,7 +473,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should return zero values for points with no data', async () => {
-      const result = await fetchEndpoint<RegistrationChartResponse>('/charts/registrations?period=7d');
+      const result = await fetchEndpoint<RegistrationChartResponse>(
+        '/charts/registrations?period=7d'
+      );
 
       expect(result.success).toBe(true);
       // Points without data should have zeros, not nulls
@@ -458,7 +508,9 @@ describe('Registration Endpoints', () => {
     });
 
     it('should have consistent by_length counts with total', async () => {
-      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=all');
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>(
+        '/analytics/registrations?period=all'
+      );
 
       expect(result.success).toBe(true);
 

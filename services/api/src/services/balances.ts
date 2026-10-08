@@ -33,8 +33,7 @@ export async function fetchBalances(address: string): Promise<BalancesResult> {
   const multicall = new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider);
 
   // Encode balanceOf calls for each ERC20 token
-  const encodeBalanceOf = (addr: string) =>
-    BALANCE_OF_SELECTOR + addr.slice(2).padStart(64, '0');
+  const encodeBalanceOf = (addr: string) => BALANCE_OF_SELECTOR + addr.slice(2).padStart(64, '0');
 
   const calls = [
     // ETH balance via Multicall3.getEthBalance

@@ -9,8 +9,12 @@
  *   npx tsx src/scripts/sync-from-elasticsearch.ts
  */
 
-import { getElasticsearchClient, getPostgresPool, closeAllConnections, config } from '../../../shared/src';
-import { logger } from '../utils/logger';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  closeAllConnections,
+  config,
+} from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -20,7 +24,7 @@ async function syncFromElasticsearch() {
 
   // First, get total count from Elasticsearch
   const countResult = await esClient.count({
-    index: config.elasticsearch.index
+    index: config.elasticsearch.index,
   });
   const totalEsNames = countResult.count;
   console.log(`Total names in Elasticsearch: ${totalEsNames.toLocaleString()}`);
@@ -49,8 +53,19 @@ async function syncFromElasticsearch() {
       size: batchSize,
       body: {
         query: { match_all: {} },
-        _source: ['name', 'token_id', 'owner', 'expiry_date', 'registration_date', 'has_numbers', 'has_emoji', 'clubs', 'last_sale_price', 'last_sale_date']
-      }
+        _source: [
+          'name',
+          'token_id',
+          'owner',
+          'expiry_date',
+          'registration_date',
+          'has_numbers',
+          'has_emoji',
+          'clubs',
+          'last_sale_price',
+          'last_sale_date',
+        ],
+      },
     });
 
     scrollId = response._scroll_id;
@@ -60,7 +75,7 @@ async function syncFromElasticsearch() {
       processedCount += hits.length;
 
       // Extract all names from this batch
-      const names = hits.map(hit => (hit._source as any).name);
+      const names = hits.map((hit) => (hit._source as any).name);
 
       // Check which names exist in PostgreSQL
       const existsQuery = `
@@ -68,7 +83,7 @@ async function syncFromElasticsearch() {
         WHERE name = ANY($1::text[])
       `;
       const existsResult = await pool.query(existsQuery, [names]);
-      const existingNames = new Set(existsResult.rows.map(row => row.name));
+      const existingNames = new Set(existsResult.rows.map((row) => row.name));
 
       // Process each document in batch
       for (const hit of hits) {
@@ -121,37 +136,37 @@ async function syncFromElasticsearch() {
             source.has_emoji || false,
             source.clubs || [],
             source.last_sale_price || null,
-            source.last_sale_date || null
+            source.last_sale_date || null,
           ]);
 
           console.log(`✓ Synced: ${source.name} (token: ${source.token_id})`);
           synced++;
-
         } catch (error: any) {
           console.error(`✗ Failed to sync ${source.name}:`, error.message);
           failed++;
         }
       }
 
-      console.log(`Progress: ${processedCount}/${totalEsNames} (${((processedCount/totalEsNames)*100).toFixed(1)}%) | Synced: ${synced} | Skipped: ${skipped} | Failed: ${failed}`);
+      console.log(
+        `Progress: ${processedCount}/${totalEsNames} (${((processedCount / totalEsNames) * 100).toFixed(1)}%) | Synced: ${synced} | Skipped: ${skipped} | Failed: ${failed}`
+      );
 
       // Get next batch
       if (!scrollId) break;
 
       response = await esClient.scroll({
         scroll_id: scrollId,
-        scroll: '2m'
+        scroll: '2m',
       });
 
       hasMore = response.hits.hits.length > 0;
     }
-
   } finally {
     // Clean up scroll
     if (scrollId) {
       try {
         await esClient.clearScroll({ scroll_id: scrollId });
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors
       }
     }

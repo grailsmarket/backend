@@ -88,10 +88,7 @@ async function getEnsNameId(tokenId: string): Promise<number | null> {
     return tokenIdCache.get(tokenId)!;
   }
 
-  const result = await pool.query(
-    'SELECT id FROM ens_names WHERE token_id = $1',
-    [tokenId]
-  );
+  const result = await pool.query('SELECT id FROM ens_names WHERE token_id = $1', [tokenId]);
 
   const ensNameId = result.rows.length > 0 ? result.rows[0].id : null;
   tokenIdCache.set(tokenId, ensNameId);
@@ -160,10 +157,13 @@ async function mapToSalesRecord(row: CSVRow, stats: ImportStats): Promise<any | 
   // For non-ETH currencies (e.g. USDC), use the raw `amount` field which is already
   // in the token's smallest units, or fall back to convertToWei if amount is missing.
   const currencyAddr = row.currency_address?.toLowerCase() || '';
-  const isEth = isEthOrWeth(currencyAddr) || currencyAddr === '' || currencyAddr === '0x0000000000000000000000000000000000000000';
+  const isEth =
+    isEthOrWeth(currencyAddr) ||
+    currencyAddr === '' ||
+    currencyAddr === '0x0000000000000000000000000000000000000000';
   const salePriceWei = isEth
     ? convertToWei(row.price_decimal || row.price)
-    : (row.amount || convertToWei(row.price_decimal || row.price));
+    : row.amount || convertToWei(row.price_decimal || row.price);
 
   // Handle block_number - use from CSV if available, otherwise default to 0
   // (we can backfill later with actual block numbers if needed)
@@ -183,7 +183,8 @@ async function mapToSalesRecord(row: CSVRow, stats: ImportStats): Promise<any | 
     seller_address: sellerAddress?.toLowerCase() || null,
     buyer_address: buyerAddress?.toLowerCase() || null,
     sale_price_wei: salePriceWei,
-    currency_address: row.currency_address?.toLowerCase() || '0x0000000000000000000000000000000000000000',
+    currency_address:
+      row.currency_address?.toLowerCase() || '0x0000000000000000000000000000000000000000',
     transaction_hash: row.tx_hash || null,
     block_number: blockNumber,
     order_hash: row.order_id || null,
@@ -381,8 +382,8 @@ async function importSalesCSV(options: ImportOptions) {
       const rate = stats.rowsRead / elapsed;
       console.log(
         `Progress: ${stats.rowsRead.toLocaleString()} rows read, ` +
-        `${stats.rowsImported.toLocaleString()} imported, ` +
-        `${rate.toFixed(0)} rows/sec`
+          `${stats.rowsImported.toLocaleString()} imported, ` +
+          `${rate.toFixed(0)} rows/sec`
       );
     }
   }
@@ -427,13 +428,13 @@ if (!csvPath) {
 
 const options: ImportOptions = {
   csvPath,
-  orderKind: args.find(a => a.startsWith('--order-kind='))?.split('=')[1],
+  orderKind: args.find((a) => a.startsWith('--order-kind='))?.split('=')[1],
   dryRun: args.includes('--dry-run'),
-  batchSize: parseInt(args.find(a => a.startsWith('--batch-size='))?.split('=')[1] || '500'),
-  skipRows: parseInt(args.find(a => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
+  batchSize: parseInt(args.find((a) => a.startsWith('--batch-size='))?.split('=')[1] || '500'),
+  skipRows: parseInt(args.find((a) => a.startsWith('--skip-rows='))?.split('=')[1] || '0'),
 };
 
-importSalesCSV(options).catch(error => {
+importSalesCSV(options).catch((error) => {
   console.error('Import failed:', error);
   process.exit(1);
 });

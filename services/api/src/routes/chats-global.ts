@@ -85,18 +85,20 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
         [GLOBAL_CHAT_ID]
       );
       const chat = chatResult.rows[0];
-      return reply.send(ok({
-        chat_id: GLOBAL_CHAT_ID,
-        title: chat?.title ?? 'Grails Chat',
-        enabled: config.enabled,
-        max_message_length: config.max_message_length,
-        // Image feature flags (the kill switch is a global master, so clients can
-        // use it to gate the image button in DMs too) + the upload limits.
-        images_enabled: config.images_enabled,
-        max_image_bytes: MAX_IMAGE_BYTES,
-        max_images_per_message: MAX_IMAGES_PER_MESSAGE,
-        last_message_at: chat?.last_message_at ?? null,
-      }));
+      return reply.send(
+        ok({
+          chat_id: GLOBAL_CHAT_ID,
+          title: chat?.title ?? 'Grails Chat',
+          enabled: config.enabled,
+          max_message_length: config.max_message_length,
+          // Image feature flags (the kill switch is a global master, so clients can
+          // use it to gate the image button in DMs too) + the upload limits.
+          images_enabled: config.images_enabled,
+          max_image_bytes: MAX_IMAGE_BYTES,
+          max_images_per_message: MAX_IMAGES_PER_MESSAGE,
+          last_message_at: chat?.last_message_at ?? null,
+        })
+      );
     } catch (error) {
       fastify.log.error({ error }, 'Error fetching global chat info');
       return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to fetch global chat info');
@@ -165,16 +167,20 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       // Don't leak the raw deleter id publicly; expose only the admin-vs-author
       // distinction. deleted_by === author → self-delete ("by user"); a different
       // deleter → admin moderation ("by Admin").
-      const messages = result.rows.map(({ deleted_by, ...m }) => withAttachmentUrls({
-        ...m,
-        body: m.deleted_at ? null : m.body,
-        deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
-      }));
+      const messages = result.rows.map(({ deleted_by, ...m }) =>
+        withAttachmentUrls({
+          ...m,
+          body: m.deleted_at ? null : m.body,
+          deleted_by_admin: !!m.deleted_at && deleted_by != null && deleted_by !== m.sender_user_id,
+        })
+      );
 
-      return reply.send(ok({
-        messages,
-        nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
-      }));
+      return reply.send(
+        ok({
+          messages,
+          nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
+        })
+      );
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
@@ -211,7 +217,12 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
     const config = params.config ?? (await getGlobalChatConfig());
 
     if (!config.enabled) {
-      return { ok: false, status: 403, code: 'GLOBAL_CHAT_DISABLED', message: 'Global chat is currently disabled' };
+      return {
+        ok: false,
+        status: 403,
+        code: 'GLOBAL_CHAT_DISABLED',
+        message: 'Global chat is currently disabled',
+      };
     }
     if (body.length > config.max_message_length) {
       return {
@@ -222,7 +233,12 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       };
     }
     if (await callerIsBannedFromGlobalChat(pool, callerId)) {
-      return { ok: false, status: 403, code: 'CHAT_BANNED', message: 'You are banned from messaging' };
+      return {
+        ok: false,
+        status: 403,
+        code: 'CHAT_BANNED',
+        message: 'You are banned from messaging',
+      };
     }
 
     // Reply target must be a live message in this room.
@@ -230,7 +246,12 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
     if (replyToMessageId) {
       replyContext = await validateReplyTarget(pool, GLOBAL_CHAT_ID, replyToMessageId);
       if (!replyContext) {
-        return { ok: false, status: 400, code: 'INVALID_REPLY_TARGET', message: 'Reply target not found in this chat' };
+        return {
+          ok: false,
+          status: 400,
+          code: 'INVALID_REPLY_TARGET',
+          message: 'Reply target not found in this chat',
+        };
       }
     }
 
@@ -242,8 +263,7 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
     // frontend resolves identity from it, same as DMs). The 0859 trigger fires
     // pg_notify; ChatNotifier handles the WS fan-out. Always run inside a
     // transaction so the message + attachment commit atomically.
-    const insertSql =
-      `WITH new_msg AS (
+    const insertSql = `WITH new_msg AS (
          INSERT INTO messages (chat_id, sender_user_id, body, content_type, reply_to_message_id)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *
@@ -342,39 +362,43 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
    * POST /api/v1/chats/global/messages
    * Send a text message to the global room. Daily quota by tier (ENS ownership).
    */
-  fastify.post('/messages', {
-    preHandler: requireAuth,
-    config: {
-      rateLimit: {
-        // Admin-configurable via PATCH /chats/admin/global/config; the config
-        // is Redis-cached (30s, invalidated on PATCH) so this per-request
-        // lookup is cheap.
-        max: async () => (await getGlobalChatConfig()).rate_limit_per_minute,
-        timeWindow: 60_000,
+  fastify.post(
+    '/messages',
+    {
+      preHandler: requireAuth,
+      config: {
+        rateLimit: {
+          // Admin-configurable via PATCH /chats/admin/global/config; the config
+          // is Redis-cached (30s, invalidated on PATCH) so this per-request
+          // lookup is cheap.
+          max: async () => (await getGlobalChatConfig()).rate_limit_per_minute,
+          timeWindow: 60_000,
+        },
       },
     },
-  }, async (request, reply) => {
-    try {
-      const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
-      const result = await createGlobalMessage({
-        callerId: parseInt(request.user!.sub, 10),
-        callerAddress: request.user!.address,
-        body,
-        replyToMessageId: reply_to_message_id ?? null,
-        attachments: [],
-      });
-      if (!result.ok) {
-        return sendError(reply, result.status, result.code, result.message, result.details);
+    async (request, reply) => {
+      try {
+        const { body, reply_to_message_id } = SendMessageSchema.parse(request.body);
+        const result = await createGlobalMessage({
+          callerId: parseInt(request.user!.sub, 10),
+          callerAddress: request.user!.address,
+          body,
+          replyToMessageId: reply_to_message_id ?? null,
+          attachments: [],
+        });
+        if (!result.ok) {
+          return sendError(reply, result.status, result.code, result.message, result.details);
+        }
+        return reply.status(201).send(ok({ message: result.message, quota: result.quota }));
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error sending global chat message');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send message');
       }
-      return reply.status(201).send(ok({ message: result.message, quota: result.quota }));
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
-      }
-      fastify.log.error({ error }, 'Error sending global chat message');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send message');
     }
-  });
+  );
 
   /**
    * POST /api/v1/chats/global/messages/image
@@ -382,94 +406,110 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
    * `body` caption + optional `reply_to_message_id`). Same enabled/ban/quota
    * enforcement as text sends; gated by the `images_enabled` master switch.
    */
-  fastify.post('/messages/image', {
-    preHandler: requireAuth,
-    config: {
-      rateLimit: {
-        max: async () => (await getGlobalChatConfig()).rate_limit_per_minute,
-        timeWindow: 60_000,
+  fastify.post(
+    '/messages/image',
+    {
+      preHandler: requireAuth,
+      config: {
+        rateLimit: {
+          max: async () => (await getGlobalChatConfig()).rate_limit_per_minute,
+          timeWindow: 60_000,
+        },
       },
     },
-  }, async (request, reply) => {
-    const uploadedKeys: string[] = [];
-    try {
-      const callerId = parseInt(request.user!.sub, 10);
-      const callerAddress = request.user!.address;
+    async (request, reply) => {
+      const uploadedKeys: string[] = [];
+      try {
+        const callerId = parseInt(request.user!.sub, 10);
+        const callerAddress = request.user!.address;
 
-      const config = await getGlobalChatConfig();
-      if (!config.enabled) {
-        return sendError(reply, 403, 'GLOBAL_CHAT_DISABLED', 'Global chat is currently disabled');
-      }
-      if (!config.images_enabled) {
-        return sendError(reply, 403, 'IMAGES_DISABLED', 'Image messages are currently disabled');
-      }
-      if (!isStorageEnabled()) {
-        return sendError(reply, 503, 'STORAGE_UNAVAILABLE', 'Image storage is not configured');
-      }
-      // Cheap ban pre-check before consuming the upload (avoids a wasted write).
-      if (await callerIsBannedFromGlobalChat(pool, callerId)) {
-        return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
-      }
+        const config = await getGlobalChatConfig();
+        if (!config.enabled) {
+          return sendError(reply, 403, 'GLOBAL_CHAT_DISABLED', 'Global chat is currently disabled');
+        }
+        if (!config.images_enabled) {
+          return sendError(reply, 403, 'IMAGES_DISABLED', 'Image messages are currently disabled');
+        }
+        if (!isStorageEnabled()) {
+          return sendError(reply, 503, 'STORAGE_UNAVAILABLE', 'Image storage is not configured');
+        }
+        // Cheap ban pre-check before consuming the upload (avoids a wasted write).
+        if (await callerIsBannedFromGlobalChat(pool, callerId)) {
+          return sendError(reply, 403, 'CHAT_BANNED', 'You are banned from messaging');
+        }
 
-      const parsed = await parseImageUpload(request);
-      if ('error' in parsed) {
-        const map: Record<string, [number, string, string]> = {
-          NO_FILE: [400, 'NO_FILE', 'No image file provided'],
-          FILE_TOO_LARGE: [413, 'FILE_TOO_LARGE', `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`],
-          TOO_MANY_IMAGES: [400, 'TOO_MANY_IMAGES', `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`],
-          UNSUPPORTED_TYPE: [400, 'UNSUPPORTED_TYPE', 'Unsupported image type (allowed: jpeg, png, gif, webp)'],
-        };
-        const [status, code, message] = map[parsed.error];
-        return sendError(reply, status, code, message);
-      }
+        const parsed = await parseImageUpload(request);
+        if ('error' in parsed) {
+          const map: Record<string, [number, string, string]> = {
+            NO_FILE: [400, 'NO_FILE', 'No image file provided'],
+            FILE_TOO_LARGE: [
+              413,
+              'FILE_TOO_LARGE',
+              `Image exceeds the maximum size of ${MAX_IMAGE_BYTES} bytes`,
+            ],
+            TOO_MANY_IMAGES: [
+              400,
+              'TOO_MANY_IMAGES',
+              `A message may include at most ${MAX_IMAGES_PER_MESSAGE} images`,
+            ],
+            UNSUPPORTED_TYPE: [
+              400,
+              'UNSUPPORTED_TYPE',
+              'Unsupported image type (allowed: jpeg, png, gif, webp)',
+            ],
+          };
+          const [status, code, message] = map[parsed.error];
+          return sendError(reply, status, code, message);
+        }
 
-      const caption = (parsed.fields.body ?? '').trim();
-      const replyToRaw = parsed.fields.reply_to_message_id || null;
-      if (replyToRaw && !z.string().uuid().safeParse(replyToRaw).success) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid reply_to_message_id');
-      }
-      if (caption.length > config.max_message_length) {
-        return sendError(
-          reply,
-          400,
-          'MESSAGE_TOO_LONG',
-          `Caption exceeds the maximum length of ${config.max_message_length} characters`
-        );
-      }
+        const caption = (parsed.fields.body ?? '').trim();
+        const replyToRaw = parsed.fields.reply_to_message_id || null;
+        if (replyToRaw && !z.string().uuid().safeParse(replyToRaw).success) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid reply_to_message_id');
+        }
+        if (caption.length > config.max_message_length) {
+          return sendError(
+            reply,
+            400,
+            'MESSAGE_TOO_LONG',
+            `Caption exceeds the maximum length of ${config.max_message_length} characters`
+          );
+        }
 
-      // Upload every image first, tracking keys so any failure (here or in the
-      // insert) cleans them all up rather than orphaning objects in the bucket.
-      const attachments = [];
-      for (const f of parsed.files) {
-        const key = buildChatImageKey(GLOBAL_CHAT_ID, f.ext);
-        await uploadFile(key, f.buffer, f.mimetype);
-        uploadedKeys.push(key);
-        attachments.push({ storageKey: key, mimetype: f.mimetype, byteSize: f.buffer.length });
-      }
+        // Upload every image first, tracking keys so any failure (here or in the
+        // insert) cleans them all up rather than orphaning objects in the bucket.
+        const attachments = [];
+        for (const f of parsed.files) {
+          const key = buildChatImageKey(GLOBAL_CHAT_ID, f.ext);
+          await uploadFile(key, f.buffer, f.mimetype);
+          uploadedKeys.push(key);
+          attachments.push({ storageKey: key, mimetype: f.mimetype, byteSize: f.buffer.length });
+        }
 
-      const result = await createGlobalMessage({
-        callerId,
-        callerAddress,
-        body: caption,
-        replyToMessageId: replyToRaw,
-        attachments,
-        config,
-      });
-      if (!result.ok) {
-        // The insert failed (e.g. quota) — don't orphan the uploaded objects.
+        const result = await createGlobalMessage({
+          callerId,
+          callerAddress,
+          body: caption,
+          replyToMessageId: replyToRaw,
+          attachments,
+          config,
+        });
+        if (!result.ok) {
+          // The insert failed (e.g. quota) — don't orphan the uploaded objects.
+          await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
+          return sendError(reply, result.status, result.code, result.message, result.details);
+        }
+        return reply.status(201).send(ok({ message: result.message, quota: result.quota }));
+      } catch (error: any) {
         await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
-        return sendError(reply, result.status, result.code, result.message, result.details);
+        if (error instanceof z.ZodError) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
+        }
+        fastify.log.error({ error }, 'Error sending global chat image');
+        return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send image');
       }
-      return reply.status(201).send(ok({ message: result.message, quota: result.quota }));
-    } catch (error: any) {
-      await Promise.all(uploadedKeys.map((k) => deleteFile(k).catch(() => {})));
-      if (error instanceof z.ZodError) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid request', error.errors);
-      }
-      fastify.log.error({ error }, 'Error sending global chat image');
-      return sendError(reply, 500, 'INTERNAL_ERROR', 'Failed to send image');
     }
-  });
+  );
 
   /**
    * GET /api/v1/chats/global/quota
@@ -531,10 +571,19 @@ export async function chatsGlobalRoutes(fastify: FastifyInstance) {
       const total = totalResult.rows[0].count;
       const totalPages = Math.ceil(total / limit);
 
-      return reply.send(ok({
-        users: usersResult.rows,
-        pagination: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
-      }));
+      return reply.send(
+        ok({
+          users: usersResult.rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+          },
+        })
+      );
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(reply, 400, 'VALIDATION_ERROR', 'Invalid query', error.errors);

@@ -38,9 +38,14 @@ export async function registerPriceSyncWorker(boss: PgBoss) {
   logger.info({ queue: QUEUE_NAME, schedule: CRON_SCHEDULE }, 'Price sync worker registered');
 
   // Schedule recurring job (every 5 minutes)
-  await boss.schedule(QUEUE_NAME, CRON_SCHEDULE, {}, {
-    tz: 'UTC',
-  });
+  await boss.schedule(
+    QUEUE_NAME,
+    CRON_SCHEDULE,
+    {},
+    {
+      tz: 'UTC',
+    }
+  );
 
   logger.info({ queue: QUEUE_NAME, schedule: CRON_SCHEDULE }, 'Price sync cron job scheduled');
 

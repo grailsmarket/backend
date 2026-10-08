@@ -56,7 +56,7 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
           'SELECT id, slug, priority, criteria, is_default FROM personas ORDER BY priority DESC'
         );
         const personas = personasResult.rows;
-        const defaultPersona = personas.find(p => p.is_default);
+        const defaultPersona = personas.find((p) => p.is_default);
 
         if (!defaultPersona) {
           throw new Error('No default persona found — run seed migration first');
@@ -65,12 +65,10 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
         // Get all user addresses to classify
         let userAddresses: string[];
         if (targetAddresses && targetAddresses.length > 0) {
-          userAddresses = targetAddresses.map(a => a.toLowerCase());
+          userAddresses = targetAddresses.map((a) => a.toLowerCase());
         } else {
-          const usersResult = await pool.query<{ address: string }>(
-            'SELECT address FROM users'
-          );
-          userAddresses = usersResult.rows.map(r => r.address);
+          const usersResult = await pool.query<{ address: string }>('SELECT address FROM users');
+          userAddresses = usersResult.rows.map((r) => r.address);
         }
 
         logger.info({ userCount: userAddresses.length }, 'Users to classify');
@@ -89,7 +87,8 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
             club_count: string;
             avg_years_remaining: string | null;
             avg_registration_year: string | null;
-          }>(`
+          }>(
+            `
             SELECT
               owner_address,
               COUNT(*)::text as name_count,
@@ -101,7 +100,9 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
             WHERE owner_address = ANY($1)
               AND owner_address IS NOT NULL
             GROUP BY owner_address
-          `, [batch]);
+          `,
+            [batch]
+          );
 
           const nameStatsMap = new Map<string, NameStats>();
           for (const row of nameStatsResult.rows) {
@@ -109,8 +110,12 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
               name_count: parseInt(row.name_count, 10),
               digit_count: parseInt(row.digit_count, 10),
               club_count: parseInt(row.club_count, 10),
-              avg_years_remaining: row.avg_years_remaining ? parseFloat(row.avg_years_remaining) : null,
-              avg_registration_year: row.avg_registration_year ? parseFloat(row.avg_registration_year) : null,
+              avg_years_remaining: row.avg_years_remaining
+                ? parseFloat(row.avg_years_remaining)
+                : null,
+              avg_registration_year: row.avg_registration_year
+                ? parseFloat(row.avg_registration_year)
+                : null,
             });
           }
 
@@ -119,7 +124,8 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
             address: string;
             total_trades: string;
             recent_trades: string;
-          }>(`
+          }>(
+            `
             SELECT
               address,
               COUNT(*)::text as total_trades,
@@ -130,7 +136,9 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
               SELECT buyer_address as address, sale_date FROM sales WHERE buyer_address = ANY($1)
             ) t
             GROUP BY address
-          `, [batch]);
+          `,
+            [batch]
+          );
 
           const tradeStatsMap = new Map<string, TradeStats>();
           for (const row of tradeStatsResult.rows) {
@@ -145,12 +153,15 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
           const legendStatsResult = await pool.query<{
             minter_address: string;
             legend_count: string;
-          }>(`
+          }>(
+            `
             SELECT minter_address, COUNT(*)::text as legend_count
             FROM legends
             WHERE minter_address = ANY($1)
             GROUP BY minter_address
-          `, [batch]);
+          `,
+            [batch]
+          );
 
           const legendSet = new Set<string>();
           for (const row of legendStatsResult.rows) {
@@ -160,7 +171,11 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
           }
 
           // Score and classify each user in this batch
-          const updates: Array<{ address: string; personaId: number; scores: Record<string, number> }> = [];
+          const updates: Array<{
+            address: string;
+            personaId: number;
+            scores: Record<string, number>;
+          }> = [];
 
           for (const address of batch) {
             const nameStats = nameStatsMap.get(address);
@@ -189,10 +204,11 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
             for (const persona of personas) {
               if (persona.is_default) continue;
               const score = scores[persona.slug];
-              if (score >= MIN_SCORE_THRESHOLD && (
-                score > highestScore ||
-                (score === highestScore && persona.priority > winningPersona.priority)
-              )) {
+              if (
+                score >= MIN_SCORE_THRESHOLD &&
+                (score > highestScore ||
+                  (score === highestScore && persona.priority > winningPersona.priority))
+              ) {
                 highestScore = score;
                 winningPersona = persona;
               }
@@ -207,21 +223,30 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
 
           // Batch update users
           if (updates.length > 0) {
-            const values = updates.map((u, idx) => {
-              const base = idx * 3;
-              return `($${base + 1}, $${base + 2}, $${base + 3}::jsonb)`;
-            }).join(', ');
+            const values = updates
+              .map((u, idx) => {
+                const base = idx * 3;
+                return `($${base + 1}, $${base + 2}, $${base + 3}::jsonb)`;
+              })
+              .join(', ');
 
-            const params = updates.flatMap(u => [u.address, u.personaId, JSON.stringify(u.scores)]);
+            const params = updates.flatMap((u) => [
+              u.address,
+              u.personaId,
+              JSON.stringify(u.scores),
+            ]);
 
-            await pool.query(`
+            await pool.query(
+              `
               UPDATE users SET
                 persona_id = v.persona_id::int,
                 persona_classified_at = NOW(),
                 persona_scores = v.scores::jsonb
               FROM (VALUES ${values}) AS v(address, persona_id, scores)
               WHERE users.address = v.address
-            `, params);
+            `,
+              params
+            );
           }
 
           classified += batch.length;
@@ -231,10 +256,7 @@ export async function registerPersonaClassificationWorker(boss: PgBoss) {
           );
         }
 
-        logger.info(
-          { jobId: job.id, classified },
-          'Persona classification completed'
-        );
+        logger.info({ jobId: job.id, classified }, 'Persona classification completed');
 
         return { success: true, classified };
       } catch (error) {

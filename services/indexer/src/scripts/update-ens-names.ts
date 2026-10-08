@@ -11,7 +11,9 @@ import { getPostgresPool, closeAllConnections } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
-const GRAPH_URL = process.env.GRAPH_ENS_SUBGRAPH_URL || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_URL =
+  process.env.GRAPH_ENS_SUBGRAPH_URL ||
+  'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const GRAPH_API_KEY = process.env.GRAPH_API_KEY || '';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
@@ -68,7 +70,7 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
       headers,
       body: JSON.stringify({
         query,
-        variables: { labelhash }
+        variables: { labelhash },
       }),
     });
 
@@ -76,7 +78,7 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
       return null;
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     if (data.errors) {
       return null;
@@ -93,14 +95,18 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
         if (domain.registration?.expiryDate) {
           try {
             expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
-          } catch (e) {}
+          } catch {
+            // Malformed expiry timestamp from The Graph: leave expiryDate as null
+          }
         }
 
         let registrationDate: Date | null = null;
         if (domain.registration?.registrationDate) {
           try {
             registrationDate = new Date(parseInt(domain.registration.registrationDate) * 1000);
-          } catch (e) {}
+          } catch {
+            // Malformed registration timestamp from The Graph: leave registrationDate as null
+          }
         }
 
         // Get owner based on registrant - if registrant is NameWrapper, use wrappedOwner
@@ -128,7 +134,7 @@ async function fetchNameDataFromGraph(tokenId: string): Promise<GraphNameData | 
     }
 
     return null;
-  } catch (error: any) {
+  } catch {
     return null;
   }
 }
@@ -170,7 +176,7 @@ async function updateENSName(id: number, data: GraphNameData): Promise<boolean> 
       values
     );
     return true;
-  } catch (error: any) {
+  } catch {
     return false;
   }
 }
@@ -191,10 +197,7 @@ async function main() {
   try {
     // Get total count
     const countResult = await pool.query('SELECT COUNT(*) as total FROM ens_names');
-    const totalCount = Math.min(
-      parseInt(countResult.rows[0].total),
-      maxRecords || Infinity
-    );
+    const totalCount = Math.min(parseInt(countResult.rows[0].total), maxRecords || Infinity);
 
     console.log(`📝 Total records to process: ${totalCount}`);
     console.log('');
@@ -231,10 +234,10 @@ async function main() {
           }
 
           // Delay every 5 records to avoid rate limiting
-        //   if ((processed + i + 1) % 5 === 0) {
-        //     await new Promise(resolve => setTimeout(resolve, 200));
-        //   }
-        } catch (error: any) {
+          //   if ((processed + i + 1) % 5 === 0) {
+          //     await new Promise(resolve => setTimeout(resolve, 200));
+          //   }
+        } catch {
           failed++;
         }
       }

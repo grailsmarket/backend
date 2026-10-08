@@ -41,7 +41,11 @@ const ConfigSchema = z.object({
     streamUrl: z.string().default('wss://stream.openseabeta.com/socket/websocket'),
   }),
   theGraph: z.object({
-    ensSubgraphUrl: z.string().default('https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'),
+    ensSubgraphUrl: z
+      .string()
+      .default(
+        'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'
+      ),
     apiKey: z.string().optional(),
     ensWorkerUrl: z.string().default('https://ens.ethfollow.xyz'),
   }),
@@ -164,7 +168,7 @@ const rawConfig = {
   },
   monitoring: {
     sentryDsn: process.env.SENTRY_DSN,
-    logLevel: process.env.LOG_LEVEL as any || 'info',
+    logLevel: (process.env.LOG_LEVEL as any) || 'info',
   },
   jwt: {
     secret: process.env.JWT_SECRET,
@@ -230,7 +234,12 @@ const rawConfig = {
     endpoint: process.env.ENDPOINT,
     region: process.env.REGION || 'auto',
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
-    enabled: !!(process.env.BUCKET && process.env.ACCESS_KEY_ID && process.env.SECRET_ACCESS_KEY && process.env.ENDPOINT),
+    enabled: !!(
+      process.env.BUCKET &&
+      process.env.ACCESS_KEY_ID &&
+      process.env.SECRET_ACCESS_KEY &&
+      process.env.ENDPOINT
+    ),
   },
   valuation: {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
@@ -249,7 +258,7 @@ export const CURRENCY_ADDRESSES = {
 
 // ENS Controller addresses (for NameRegistered events with cost data)
 export const ENS_CONTROLLER_ADDRESSES = {
-  ORIGINAL: '0x253553366Da8546fC250F225fe3d25d0C782303b',      // Deployed May 2022
+  ORIGINAL: '0x253553366Da8546fC250F225fe3d25d0C782303b', // Deployed May 2022
   CONTROLLER_V2: '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2
 } as const;
 
@@ -262,8 +271,10 @@ export function getEnsControllerAddresses(): string[] {
 export function isEthOrWeth(currencyAddress: string | null | undefined): boolean {
   if (!currencyAddress) return false;
   const normalized = currencyAddress.toLowerCase();
-  return normalized === CURRENCY_ADDRESSES.ETH.toLowerCase() ||
-         normalized === CURRENCY_ADDRESSES.WETH.toLowerCase();
+  return (
+    normalized === CURRENCY_ADDRESSES.ETH.toLowerCase() ||
+    normalized === CURRENCY_ADDRESSES.WETH.toLowerCase()
+  );
 }
 
 // SQL fragment for filtering ETH/WETH currencies

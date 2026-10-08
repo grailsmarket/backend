@@ -33,13 +33,10 @@ async function findAndFixStaleListing() {
       body: {
         query: {
           bool: {
-            must: [
-              { exists: { field: 'price' } },
-              { range: { price: { gt: 0 } } }
-            ]
-          }
-        }
-      }
+            must: [{ exists: { field: 'price' } }, { range: { price: { gt: 0 } } }],
+          },
+        },
+      },
     });
 
     const totalWithPrices = countResult.count;
@@ -53,7 +50,13 @@ async function findAndFixStaleListing() {
     // Step 2: Use scroll API to fetch ALL names with prices
     console.log('Fetching all names with prices from Elasticsearch (using scroll)...');
 
-    const allEsRecords: Array<{ id: number; name: string; price: number; priceUsd: number; status: string }> = [];
+    const allEsRecords: Array<{
+      id: number;
+      name: string;
+      price: number;
+      priceUsd: number;
+      status: string;
+    }> = [];
 
     // Initial search with scroll
     let scrollResponse = await esClient.search({
@@ -62,15 +65,12 @@ async function findAndFixStaleListing() {
       body: {
         query: {
           bool: {
-            must: [
-              { exists: { field: 'price' } },
-              { range: { price: { gt: 0 } } }
-            ]
-          }
+            must: [{ exists: { field: 'price' } }, { range: { price: { gt: 0 } } }],
+          },
         },
         size: BATCH_SIZE,
-        _source: ['name', 'price', 'status', 'price_usd']
-      }
+        _source: ['name', 'price', 'status', 'price_usd'],
+      },
     });
 
     let scrollId = scrollResponse._scroll_id;
@@ -111,30 +111,35 @@ async function findAndFixStaleListing() {
     console.log('Checking active listings in PostgreSQL...');
 
     const idsWithActiveListings = new Set<number>();
-    const allIds = allEsRecords.map(r => r.id);
+    const allIds = allEsRecords.map((r) => r.id);
 
     for (let i = 0; i < allIds.length; i += DB_BATCH_SIZE) {
       const batchIds = allIds.slice(i, i + DB_BATCH_SIZE);
 
-      const dbResult = await pool.query(`
+      const dbResult = await pool.query(
+        `
         SELECT DISTINCT en.id
         FROM ens_names en
         INNER JOIN listings l ON l.ens_name_id = en.id
         WHERE en.id = ANY($1)
           AND l.status = 'active'
-      `, [batchIds]);
+      `,
+        [batchIds]
+      );
 
       for (const row of dbResult.rows) {
         idsWithActiveListings.add(row.id);
       }
 
-      process.stdout.write(`\r  Checked ${Math.min(i + DB_BATCH_SIZE, allIds.length)} / ${allIds.length} against DB...`);
+      process.stdout.write(
+        `\r  Checked ${Math.min(i + DB_BATCH_SIZE, allIds.length)} / ${allIds.length} against DB...`
+      );
     }
 
     console.log(`\n  Completed: ${idsWithActiveListings.size} have active listings in DB\n`);
 
     // Step 4: Find stale records
-    const staleRecords = allEsRecords.filter(r => !idsWithActiveListings.has(r.id));
+    const staleRecords = allEsRecords.filter((r) => !idsWithActiveListings.has(r.id));
 
     // Step 5: Report results
     console.log('=== Results ===\n');
@@ -153,9 +158,8 @@ async function findAndFixStaleListing() {
     console.log('\n=== Stale Records (first 30 by price) ===\n');
 
     for (const record of staleRecords.slice(0, 30)) {
-      const priceDisplay = record.price > 1e20
-        ? `${record.price.toExponential(2)} wei`
-        : `${record.price} wei`;
+      const priceDisplay =
+        record.price > 1e20 ? `${record.price.toExponential(2)} wei` : `${record.price} wei`;
       console.log(`${record.name}`);
       console.log(`  ID: ${record.id}, ES Price: ${priceDisplay}, ES Status: ${record.status}`);
     }
@@ -193,7 +197,6 @@ async function findAndFixStaleListing() {
       console.log('\n=== To fix these records, run with --fix flag ===');
       console.log('npx tsx src/scripts/fix-stale-listings-es.ts --fix\n');
     }
-
   } catch (error) {
     console.error('Error during analysis:', error);
   } finally {

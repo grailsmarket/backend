@@ -71,7 +71,7 @@ export function generateCacheKey(url: string, queryParams?: Record<string, any>)
   // Sort keys for consistent cache keys
   const sortedParams = Object.keys(queryParams)
     .sort()
-    .map(key => `${key}=${JSON.stringify(queryParams[key])}`)
+    .map((key) => `${key}=${JSON.stringify(queryParams[key])}`)
     .join('&');
 
   return `${baseKey}?${sortedParams}`;

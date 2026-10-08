@@ -17,7 +17,7 @@ const VERBOSE = process.argv.includes('--verbose');
 const OUTPUT_JSON = process.argv.includes('--output=json');
 
 let LIMIT = 0;
-const limitArg = process.argv.find(arg => arg.startsWith('--limit='));
+const limitArg = process.argv.find((arg) => arg.startsWith('--limit='));
 if (limitArg) {
   LIMIT = parseInt(limitArg.split('=')[1]);
 }
@@ -75,7 +75,10 @@ async function auditEnsNormalization() {
   }
 
   const issues: AuditRecord[] = [];
-  const normalizedToRecords = new Map<string, Array<{ id: number; name: string; tokenId: string; ownerAddress: string }>>();
+  const normalizedToRecords = new Map<
+    string,
+    Array<{ id: number; name: string; tokenId: string; ownerAddress: string }>
+  >();
 
   let processed = 0;
   let placeholders = 0;
@@ -90,12 +93,15 @@ async function auditEnsNormalization() {
   while (offset < effectiveLimit) {
     const batchLimit = Math.min(BATCH_SIZE, effectiveLimit - offset);
 
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT id, name, token_id, owner_address
       FROM ens_names
       ORDER BY id
       LIMIT $1 OFFSET $2
-    `, [batchLimit, offset]);
+    `,
+      [batchLimit, offset]
+    );
 
     if (result.rows.length === 0) break;
 
@@ -165,7 +171,9 @@ async function auditEnsNormalization() {
 
     if (!OUTPUT_JSON) {
       const pct = Math.round((processed / effectiveLimit) * 100);
-      process.stdout.write(`\rProgress: ${processed}/${effectiveLimit} (${pct}%) | Placeholders: ${placeholders} | Normalized: ${alreadyNormalized} | Needs fix: ${needsNormalization} | Invalid: ${invalid}`);
+      process.stdout.write(
+        `\rProgress: ${processed}/${effectiveLimit} (${pct}%) | Placeholders: ${placeholders} | Normalized: ${alreadyNormalized} | Needs fix: ${needsNormalization} | Invalid: ${invalid}`
+      );
     }
   }
 
@@ -178,14 +186,14 @@ async function auditEnsNormalization() {
   for (const [normalizedName, records] of normalizedToRecords.entries()) {
     if (records.length > 1) {
       // Check if all records have the exact same name string
-      const uniqueNames = new Set(records.map(r => r.name));
+      const uniqueNames = new Set(records.map((r) => r.name));
       const isNormalizationConflict = uniqueNames.size > 1;
       duplicateGroups.push({ normalizedName, isNormalizationConflict, records });
     }
   }
 
-  const exactDuplicates = duplicateGroups.filter(g => !g.isNormalizationConflict).length;
-  const normalizationConflicts = duplicateGroups.filter(g => g.isNormalizationConflict).length;
+  const exactDuplicates = duplicateGroups.filter((g) => !g.isNormalizationConflict).length;
+  const normalizationConflicts = duplicateGroups.filter((g) => g.isNormalizationConflict).length;
 
   const summary: AuditSummary = {
     totalRecords: processed,
@@ -199,10 +207,16 @@ async function auditEnsNormalization() {
   };
 
   if (OUTPUT_JSON) {
-    console.log(JSON.stringify({
-      summary,
-      issues: issues.slice(0, 1000), // Limit for output
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          summary,
+          issues: issues.slice(0, 1000), // Limit for output
+        },
+        null,
+        2
+      )
+    );
   } else {
     console.log('=== Summary ===');
     console.log(`Total records processed: ${summary.totalRecords}`);
@@ -211,11 +225,13 @@ async function auditEnsNormalization() {
     console.log(`Needs normalization: ${summary.needsNormalization}`);
     console.log(`Invalid names: ${summary.invalid}`);
     console.log(`Exact duplicates (same name, different token_id): ${summary.exactDuplicates}`);
-    console.log(`Normalization conflicts (different names → same normalized): ${summary.normalizationConflicts}`);
+    console.log(
+      `Normalization conflicts (different names → same normalized): ${summary.normalizationConflicts}`
+    );
 
     if (summary.needsNormalization > 0) {
       console.log('\n=== Sample: Names Needing Normalization ===');
-      const needsNormSamples = issues.filter(i => i.issue === 'needs_normalization').slice(0, 20);
+      const needsNormSamples = issues.filter((i) => i.issue === 'needs_normalization').slice(0, 20);
       for (const record of needsNormSamples) {
         console.log(`  id=${record.id}: "${record.name}" → "${record.normalizedName}"`);
       }
@@ -226,7 +242,7 @@ async function auditEnsNormalization() {
 
     if (summary.invalid > 0) {
       console.log('\n=== Sample: Invalid Names ===');
-      const invalidSamples = issues.filter(i => i.issue === 'invalid').slice(0, 20);
+      const invalidSamples = issues.filter((i) => i.issue === 'invalid').slice(0, 20);
       for (const record of invalidSamples) {
         console.log(`  id=${record.id}: "${record.name}" - ${record.error}`);
       }
@@ -235,15 +251,17 @@ async function auditEnsNormalization() {
       }
     }
 
-    const conflictGroups = duplicateGroups.filter(g => g.isNormalizationConflict);
-    const exactDupGroups = duplicateGroups.filter(g => !g.isNormalizationConflict);
+    const conflictGroups = duplicateGroups.filter((g) => g.isNormalizationConflict);
+    const exactDupGroups = duplicateGroups.filter((g) => !g.isNormalizationConflict);
 
     if (conflictGroups.length > 0) {
       console.log('\n=== Normalization Conflicts (different names → same normalized) ===');
       for (const group of conflictGroups.slice(0, 15)) {
         console.log(`  "${group.normalizedName}":`);
         for (const record of group.records) {
-          console.log(`    - id=${record.id} name="${record.name}" token_id=${record.tokenId.slice(0, 20)}...`);
+          console.log(
+            `    - id=${record.id} name="${record.name}" token_id=${record.tokenId.slice(0, 20)}...`
+          );
         }
       }
       if (conflictGroups.length > 15) {
@@ -273,7 +291,11 @@ auditEnsNormalization()
   .then((summary) => {
     if (!OUTPUT_JSON) {
       console.log('\nAudit complete.');
-      if (summary.needsNormalization > 0 || summary.invalid > 0 || summary.normalizationConflicts > 0) {
+      if (
+        summary.needsNormalization > 0 ||
+        summary.invalid > 0 ||
+        summary.normalizationConflicts > 0
+      ) {
         console.log('\nAction required: Run fix-ens-normalization.ts to resolve issues.');
       }
     }

@@ -18,7 +18,7 @@ export interface EnsNameMetadata {
  */
 export interface SearchResult {
   // ENS Name fields
-  id: number;  // ens_names.id - essential for creating offers and fulfilling them
+  id: number; // ens_names.id - essential for creating offers and fulfilling them
   name: string;
   token_id: string;
   owner: string | null;
@@ -27,7 +27,7 @@ export interface SearchResult {
   creation_date: Date | null;
   last_sale_date: Date | null;
   metadata: EnsNameMetadata | null;
-  metadata_updated_at: Date | null;  // When metadata was last fetched from The Graph
+  metadata_updated_at: Date | null; // When metadata was last fetched from The Graph
   clubs: string[] | null;
   club_ranks: Array<{ club: string; rank: number }> | null;
   has_numbers: boolean;
@@ -45,12 +45,12 @@ export interface SearchResult {
   upvotes: number;
   downvotes: number;
   net_score: number;
-  user_vote?: number | null;  // Only present if userId provided
+  user_vote?: number | null; // Only present if userId provided
 
   // Watchlist fields
   watchers_count: number;
   is_user_watching: boolean;
-  watchlist_record_id: number | null;  // Only present if user is watching
+  watchlist_record_id: number | null; // Only present if user is watching
 
   // Highest offer fields
   highest_offer_wei: string | null;
@@ -63,7 +63,7 @@ export interface SearchResult {
 
 export interface Listing {
   id: number;
-  price: string;  // price_wei renamed to price
+  price: string; // price_wei renamed to price
   currency_address: string;
   status: string;
   seller_address: string;
@@ -141,12 +141,16 @@ export async function buildSearchResults(
 
       -- Watchlist fields
       (SELECT COUNT(*) FROM watchlist WHERE ens_name_id = en.id) as watchers_count,
-      ${userId
-        ? `(SELECT EXISTS(SELECT 1 FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1})) as is_user_watching,`
-        : 'false as is_user_watching,'}
-      ${userId
-        ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
-        : 'NULL as watchlist_record_id,'}
+      ${
+        userId
+          ? `(SELECT EXISTS(SELECT 1 FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1})) as is_user_watching,`
+          : 'false as is_user_watching,'
+      }
+      ${
+        userId
+          ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
+          : 'NULL as watchlist_record_id,'
+      }
 
       -- Listing fields (aggregated as JSON array)
       COALESCE(
@@ -176,7 +180,7 @@ export async function buildSearchResults(
     ORDER BY CASE ${orderCases} END
   `;
 
-  const queryParams: (string | number)[] = ensNames.map(name => name.toLowerCase());
+  const queryParams: (string | number)[] = ensNames.map((name) => name.toLowerCase());
   if (userId !== undefined) {
     queryParams.push(userId);
   }

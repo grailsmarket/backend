@@ -19,7 +19,7 @@ async function main() {
     try {
       const esDoc = await es.get({
         index: 'ens_names',
-        id: row.id.toString()
+        id: row.id.toString(),
       });
 
       const esName = (esDoc._source as any).name;

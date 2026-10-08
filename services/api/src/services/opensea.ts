@@ -35,7 +35,7 @@ export async function getBestListingForNFT(tokenId: string): Promise<OpenSeaList
       {
         headers: {
           'X-API-KEY': OPENSEA_API_KEY,
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       }
     );
@@ -63,7 +63,7 @@ export async function getBestOfferForNFT(tokenId: string): Promise<OpenSeaOffer 
       {
         headers: {
           'X-API-KEY': OPENSEA_API_KEY,
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       }
     );

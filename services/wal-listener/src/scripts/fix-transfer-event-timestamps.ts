@@ -38,7 +38,7 @@ interface Stats {
 async function confirmAction(message: string): Promise<boolean> {
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 
   return new Promise((resolve) => {
@@ -211,7 +211,7 @@ async function main() {
                   tx.transaction_hash,
                   tx.block_number,
                   JSON.stringify({ token_id: tx.token_id, to_address: ZERO_ADDRESS }),
-                  tx.event_timestamp
+                  tx.event_timestamp,
                 ]
               );
               stats.createdBurn++;
@@ -234,7 +234,7 @@ async function main() {
                   tx.transaction_hash,
                   tx.block_number,
                   JSON.stringify({ token_id: tx.token_id, role: 'sender' }),
-                  tx.event_timestamp
+                  tx.event_timestamp,
                 ]
               );
               stats.createdSent++;
@@ -257,7 +257,7 @@ async function main() {
                   tx.transaction_hash,
                   tx.block_number,
                   JSON.stringify({ token_id: tx.token_id, role: 'recipient' }),
-                  tx.event_timestamp
+                  tx.event_timestamp,
                 ]
               );
               stats.createdReceived++;
@@ -269,11 +269,14 @@ async function main() {
         }
 
         const progress = Math.min(i + BATCH_SIZE, transfersResult.rows.length);
-        logger.info({
-          progress,
-          total: transfersResult.rows.length,
-          percent: Math.round((progress / transfersResult.rows.length) * 100)
-        }, 'Re-creation progress');
+        logger.info(
+          {
+            progress,
+            total: transfersResult.rows.length,
+            percent: Math.round((progress / transfersResult.rows.length) * 100),
+          },
+          'Re-creation progress'
+        );
       }
 
       // ============================================================================
@@ -301,7 +304,6 @@ async function main() {
     } finally {
       client.release();
     }
-
   } catch (error: any) {
     logger.error({ error: error.message, stack: error.stack }, 'Fix failed');
     console.error('\n❌ Transfer event fix failed:', error.message);

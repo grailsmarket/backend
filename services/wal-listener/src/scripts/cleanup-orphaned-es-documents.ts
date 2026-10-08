@@ -10,7 +10,12 @@
  *   npm run cleanup-orphans:dry      # Dry run - just report what would be deleted
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  closeAllConnections,
+} from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -21,7 +26,9 @@ const DELETE_BATCH_SIZE = 500; // How many documents to delete at a time
 
 const isDryRun = process.argv.includes('--dry-run');
 
-async function getESDocumentIds(scrollId?: string): Promise<{ ids: string[]; scrollId: string | null; total: number }> {
+async function getESDocumentIds(
+  scrollId?: string
+): Promise<{ ids: string[]; scrollId: string | null; total: number }> {
   if (scrollId) {
     const response = await esClient.scroll({
       scroll_id: scrollId,
@@ -46,7 +53,8 @@ async function getESDocumentIds(scrollId?: string): Promise<{ ids: string[]; scr
   });
 
   const ids = response.hits.hits.map((hit: any) => hit._id);
-  const total = typeof response.hits.total === 'object' ? response.hits.total.value : (response.hits.total || 0);
+  const total =
+    typeof response.hits.total === 'object' ? response.hits.total.value : response.hits.total || 0;
 
   return {
     ids,
@@ -57,25 +65,24 @@ async function getESDocumentIds(scrollId?: string): Promise<{ ids: string[]; scr
 
 async function checkIdsExistInPostgres(ids: string[]): Promise<Set<string>> {
   // Convert string IDs to numbers for PostgreSQL query
-  const numericIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+  const numericIds = ids.map((id) => parseInt(id, 10)).filter((id) => !isNaN(id));
 
   if (numericIds.length === 0) {
     return new Set();
   }
 
-  const result = await pool.query(
-    'SELECT id::text FROM ens_names WHERE id = ANY($1::int[])',
-    [numericIds]
-  );
+  const result = await pool.query('SELECT id::text FROM ens_names WHERE id = ANY($1::int[])', [
+    numericIds,
+  ]);
 
-  return new Set(result.rows.map(row => row.id));
+  return new Set(result.rows.map((row) => row.id));
 }
 
 async function deleteFromES(ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
 
-  const bulkBody = ids.flatMap(id => [
-    { delete: { _index: config.elasticsearch.index, _id: id } }
+  const bulkBody = ids.flatMap((id) => [
+    { delete: { _index: config.elasticsearch.index, _id: id } },
   ]);
 
   const response = await esClient.bulk({
@@ -83,8 +90,8 @@ async function deleteFromES(ids: string[]): Promise<number> {
     refresh: false,
   });
 
-  const deleted = response.items.filter((item: any) =>
-    item.delete?.status === 200 || item.delete?.status === 404
+  const deleted = response.items.filter(
+    (item: any) => item.delete?.status === 200 || item.delete?.status === 404
   ).length;
 
   return deleted;
@@ -93,7 +100,9 @@ async function deleteFromES(ids: string[]): Promise<number> {
 async function cleanup() {
   console.log('\n========================================');
   console.log('Elasticsearch Orphan Cleanup');
-  console.log(isDryRun ? '(DRY RUN - no changes will be made)' : '(LIVE RUN - will delete orphans)');
+  console.log(
+    isDryRun ? '(DRY RUN - no changes will be made)' : '(LIVE RUN - will delete orphans)'
+  );
   console.log('========================================\n');
 
   const startTime = Date.now();
@@ -125,7 +134,7 @@ async function cleanup() {
 
     // Scroll through all ES documents
     while (true) {
-      const { ids, scrollId: newScrollId, total } = await getESDocumentIds(scrollId || undefined);
+      const { ids, scrollId: newScrollId } = await getESDocumentIds(scrollId || undefined);
 
       if (ids.length === 0) {
         break;
@@ -149,7 +158,9 @@ async function cleanup() {
 
       processedFromES += ids.length;
       const percentage = ((processedFromES / esCount) * 100).toFixed(1);
-      process.stdout.write(`\r[${percentage}%] Scanned ${processedFromES.toLocaleString()}/${esCount.toLocaleString()} - Found ${orphansFound.toLocaleString()} orphans`);
+      process.stdout.write(
+        `\r[${percentage}%] Scanned ${processedFromES.toLocaleString()}/${esCount.toLocaleString()} - Found ${orphansFound.toLocaleString()} orphans`
+      );
 
       // Delete orphans in batches as we go (to avoid memory issues)
       if (!isDryRun && orphanIds.length >= DELETE_BATCH_SIZE) {

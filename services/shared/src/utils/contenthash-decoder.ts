@@ -1,9 +1,9 @@
 import { decode, getCodec } from '@ensdomains/content-hash';
 
 export interface ContenthashRecord {
-  protocol: string;  // 'ipfs', 'ipns', 'swarm', 'onion', 'onion3', 'skynet', 'arweave'
-  value: string;     // Decoded value (e.g., IPFS CID)
-  raw?: string;      // Optional: raw hex bytes
+  protocol: string; // 'ipfs', 'ipns', 'swarm', 'onion', 'onion3', 'skynet', 'arweave'
+  value: string; // Decoded value (e.g., IPFS CID)
+  raw?: string; // Optional: raw hex bytes
 }
 
 /**
@@ -38,7 +38,7 @@ export function decodeContenthash(rawBytes: string | null | undefined): Contenth
       value: decoded,
       raw: rawBytes,
     };
-  } catch (error) {
+  } catch {
     // Silently fail for decode errors - this is expected for unsupported formats
     return null;
   }
@@ -62,7 +62,12 @@ export function processContenthash(
     const lastChange = contenthashChangeds[contenthashChangeds.length - 1];
 
     // If the last change unset the contenthash, return null
-    if (!lastChange.hash || lastChange.hash === '0x' || lastChange.hash === '0x0' || lastChange.hash === '0x00') {
+    if (
+      !lastChange.hash ||
+      lastChange.hash === '0x' ||
+      lastChange.hash === '0x0' ||
+      lastChange.hash === '0x00'
+    ) {
       return null;
     }
 

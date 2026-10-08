@@ -14,67 +14,19 @@
  *   npm run resync:fast
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, hasEmoji } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  closeAllConnections,
+  hasEmoji,
+} from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
 
 const BATCH_SIZE = 200; // Small batches to avoid ES timeouts
 const CONCURRENT_BATCHES = 10; // Parallel batches with staggered starts
-
-interface ENSNameRow {
-  id: number;
-  name: string;
-  token_id: string;
-  owner_address: string;
-  expiry_date: string | null;
-  registration_date: string | null;
-  clubs: string[] | null;
-  last_sale_date: string | null;
-  last_sale_price: string | null;
-  last_sale_currency: string | null;
-  last_sale_price_usd: number | null;
-  listing_price: string | null;
-  listing_status: string | null;
-  listing_created_at: string | null;
-  active_offers_count: number;
-  highest_offer_wei: string | null;
-}
-
-function enrichENSNameData(data: ENSNameRow) {
-  const name = data.name || '';
-  const expirationState = calculateExpirationState(data.expiry_date);
-  const saleHistoryState = calculateSaleHistoryState(data.last_sale_date);
-
-  return {
-    name,
-    token_id: data.token_id,
-    owner: data.owner_address,
-    price: data.listing_price ? parseFloat(data.listing_price) : null,
-    expiry_date: data.expiry_date,
-    registration_date: data.registration_date,
-    character_count: name.replace('.eth', '').length,
-    has_numbers: /\d/.test(name),
-    has_emoji: hasEmoji(name),
-    status: data.listing_status || 'unlisted',
-    tags: generateTags(name),
-    clubs: data.clubs || [],
-    last_sale_price: data.last_sale_price ? parseFloat(data.last_sale_price) : null,
-    last_sale_currency: data.last_sale_currency,
-    last_sale_price_usd: data.last_sale_price_usd,
-    listing_created_at: data.listing_created_at,
-    active_offers_count: data.active_offers_count || 0,
-    highest_offer: data.highest_offer_wei ? parseFloat(data.highest_offer_wei) : null,
-    is_expired: expirationState.isExpired,
-    is_grace_period: expirationState.isGracePeriod,
-    is_premium_period: expirationState.isPremiumPeriod,
-    days_until_expiry: expirationState.daysUntilExpiry,
-    premium_amount_eth: expirationState.premiumAmountEth,
-    last_sale_date: saleHistoryState.lastSaleDate,
-    has_sales: saleHistoryState.hasSales,
-    days_since_last_sale: saleHistoryState.daysSinceLastSale,
-  };
-}
 
 function generateTags(name: string): string[] {
   const tags: string[] = [];
@@ -90,88 +42,6 @@ function generateTags(name: string): string[] {
   }
 
   return tags;
-}
-
-function calculateExpirationState(expiryDate: string | null) {
-  if (!expiryDate) {
-    return {
-      isExpired: false,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry: 999999,
-      premiumAmountEth: null,
-    };
-  }
-
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
-  const daysUntilExpiry = -daysSinceExpiry;
-
-  if (daysSinceExpiry < 0) {
-    return {
-      isExpired: false,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
-  }
-
-  if (daysSinceExpiry <= 90) {
-    return {
-      isExpired: true,
-      isGracePeriod: true,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
-  }
-
-  const daysIntoPremium = daysSinceExpiry - 90;
-  if (daysIntoPremium <= 21) {
-    const initialPremiumUSD = 100000000;
-    const ethPriceUSD = 2000;
-    const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
-    const k = Math.log(10000) / 21;
-    const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-
-    return {
-      isExpired: true,
-      isGracePeriod: false,
-      isPremiumPeriod: true,
-      daysUntilExpiry,
-      premiumAmountEth,
-    };
-  }
-
-  return {
-    isExpired: true,
-    isGracePeriod: false,
-    isPremiumPeriod: false,
-    daysUntilExpiry,
-    premiumAmountEth: null,
-  };
-}
-
-function calculateSaleHistoryState(lastSaleDate: string | null) {
-  if (!lastSaleDate) {
-    return {
-      lastSaleDate: null,
-      hasSales: false,
-      daysSinceLastSale: null,
-    };
-  }
-
-  const now = new Date();
-  const saleDate = new Date(lastSaleDate);
-  const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
-
-  return {
-    lastSaleDate,
-    hasSales: true,
-    daysSinceLastSale,
-  };
 }
 
 async function processBatch(offset: number, batchSize: number, totalRows: number): Promise<number> {
@@ -238,12 +108,17 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
 
   if (response.errors) {
     const errors = response.items?.filter((item: any) => item.index?.error);
-    console.error(`Batch had ${errors?.length || 0} errors. First error:`, errors?.[0]?.index?.error);
+    console.error(
+      `Batch had ${errors?.length || 0} errors. First error:`,
+      errors?.[0]?.index?.error
+    );
   }
 
   const endRange = Math.min(offset + result.rows.length, totalRows);
   const percentage = ((endRange / totalRows) * 100).toFixed(1);
-  console.log(`[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`);
+  console.log(
+    `[${percentage}%] Indexed ${offset + 1}-${endRange} of ${totalRows.toLocaleString()}`
+  );
 
   return result.rows.length;
 }
@@ -267,17 +142,19 @@ async function fastResync() {
 
     // Disable refresh for speed
     console.log('Optimizing index settings for bulk import...');
-    await esClient.indices.putSettings({
-      index: config.elasticsearch.index,
-      body: {
-        index: {
-          refresh_interval: '-1', // Disable auto-refresh
-          number_of_replicas: 0,   // Disable replicas during import
+    await esClient.indices
+      .putSettings({
+        index: config.elasticsearch.index,
+        body: {
+          index: {
+            refresh_interval: '-1', // Disable auto-refresh
+            number_of_replicas: 0, // Disable replicas during import
+          },
         },
-      },
-    }).catch(() => {
-      console.log('Note: Could not adjust settings (index might not exist yet)');
-    });
+      })
+      .catch(() => {
+        console.log('Note: Could not adjust settings (index might not exist yet)');
+      });
 
     console.log(`Batch size: ${BATCH_SIZE.toLocaleString()}`);
     console.log(`Concurrent batches: ${CONCURRENT_BATCHES}\n`);
@@ -307,7 +184,7 @@ async function fastResync() {
 
       // Small delay between batch groups
       if (offset < totalRows) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
@@ -318,7 +195,7 @@ async function fastResync() {
       body: {
         index: {
           refresh_interval: '1s', // Restore default
-          number_of_replicas: 1,   // Restore replicas
+          number_of_replicas: 1, // Restore replicas
         },
       },
     });

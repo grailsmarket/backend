@@ -26,7 +26,14 @@
  *   npx tsx src/scripts/resync-elasticsearch-v2.ts --from 500000 # Start from specific ID
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  closeAllConnections,
+  isEthOrWeth,
+  hasEmoji,
+} from '../../../shared/src';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -103,7 +110,13 @@ function generateTags(name: string): string[] {
 
 function calculateExpirationState(expiryDate: string | null) {
   if (!expiryDate) {
-    return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry: 999999, premiumAmountEth: null };
+    return {
+      isExpired: false,
+      isGracePeriod: false,
+      isPremiumPeriod: false,
+      daysUntilExpiry: 999999,
+      premiumAmountEth: null,
+    };
   }
 
   const now = new Date();
@@ -112,11 +125,23 @@ function calculateExpirationState(expiryDate: string | null) {
   const daysUntilExpiry = -daysSinceExpiry;
 
   if (daysSinceExpiry < 0) {
-    return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
+    return {
+      isExpired: false,
+      isGracePeriod: false,
+      isPremiumPeriod: false,
+      daysUntilExpiry,
+      premiumAmountEth: null,
+    };
   }
 
   if (daysSinceExpiry <= 90) {
-    return { isExpired: true, isGracePeriod: true, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
+    return {
+      isExpired: true,
+      isGracePeriod: true,
+      isPremiumPeriod: false,
+      daysUntilExpiry,
+      premiumAmountEth: null,
+    };
   }
 
   const daysIntoPremium = daysSinceExpiry - 90;
@@ -126,10 +151,22 @@ function calculateExpirationState(expiryDate: string | null) {
     const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
     const k = Math.log(10000) / 21;
     const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-    return { isExpired: true, isGracePeriod: false, isPremiumPeriod: true, daysUntilExpiry, premiumAmountEth };
+    return {
+      isExpired: true,
+      isGracePeriod: false,
+      isPremiumPeriod: true,
+      daysUntilExpiry,
+      premiumAmountEth,
+    };
   }
 
-  return { isExpired: true, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
+  return {
+    isExpired: true,
+    isGracePeriod: false,
+    isPremiumPeriod: false,
+    daysUntilExpiry,
+    premiumAmountEth: null,
+  };
 }
 
 function calculateSaleHistoryState(lastSaleDate: string | null) {
@@ -138,17 +175,27 @@ function calculateSaleHistoryState(lastSaleDate: string | null) {
   }
   const now = new Date();
   const saleDate = new Date(lastSaleDate);
-  const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+  const daysSinceLastSale = Math.floor(
+    (now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
   return { lastSaleDate, hasSales: true, daysSinceLastSale };
 }
 
-function calculatePriceUsd(priceWei: string | null, currencyAddress: string | null, ethPriceUsd: number): number | null {
+function calculatePriceUsd(
+  priceWei: string | null,
+  currencyAddress: string | null,
+  ethPriceUsd: number
+): number | null {
   if (!priceWei) return null;
   const normalizedCurrency = (currencyAddress || '').toLowerCase();
   const priceNum = safeParsePrice(priceWei);
   if (priceNum === null) return null;
 
-  if (isEthOrWeth(normalizedCurrency) || normalizedCurrency === '' || normalizedCurrency === '0x0000000000000000000000000000000000000000') {
+  if (
+    isEthOrWeth(normalizedCurrency) ||
+    normalizedCurrency === '' ||
+    normalizedCurrency === '0x0000000000000000000000000000000000000000'
+  ) {
     return (priceNum / Math.pow(10, ETH_DECIMALS)) * ethPriceUsd;
   } else if (normalizedCurrency === USDC_ADDRESS) {
     return priceNum / Math.pow(10, USDC_DECIMALS);
@@ -251,12 +298,18 @@ function loadCheckpoint(): Checkpoint | null {
     if (fs.existsSync(CHECKPOINT_FILE)) {
       return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf-8'));
     }
-  } catch {}
+  } catch {
+    // Unreadable or corrupt checkpoint: treat as no checkpoint
+  }
   return null;
 }
 
 function clearCheckpoint() {
-  try { if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE); } catch {}
+  try {
+    if (fs.existsSync(CHECKPOINT_FILE)) fs.unlinkSync(CHECKPOINT_FILE);
+  } catch {
+    /* best-effort: a leftover checkpoint file is harmless */
+  }
 }
 
 // --- Enrichment ---
@@ -266,12 +319,12 @@ function enrichRow(
   listings: Map<number, ListingData>,
   offers: Map<number, OfferData>,
   googleMetrics: Map<string, GoogleMetricsData>,
-  ethPriceUsd: number,
+  ethPriceUsd: number
 ) {
   const name = row.name || '';
   const listing = listings.get(row.id);
   const offerData = offers.get(row.id);
-  const labelName = (row.label_name || name.replace('.eth', '') || '');
+  const labelName = row.label_name || name.replace('.eth', '') || '';
   const gm = googleMetrics.get(labelName);
 
   const listingPrice = listing?.price_wei || null;
@@ -302,7 +355,11 @@ function enrichRow(
     clubs: row.clubs || [],
     last_sale_price: safeParsePrice(row.last_sale_price),
     last_sale_currency: row.last_sale_currency,
-    last_sale_price_usd: calculatePriceUsd(row.last_sale_price, row.last_sale_currency, ethPriceUsd),
+    last_sale_price_usd: calculatePriceUsd(
+      row.last_sale_price,
+      row.last_sale_currency,
+      ethPriceUsd
+    ),
     listing_created_at: listingCreatedAt,
     listing_expires_at: listingExpiresAt,
     active_offers_count: offerData?.count || 0,
@@ -335,15 +392,19 @@ async function indexBatch(bulkBody: any[]): Promise<void> {
 
       if (response.errors) {
         const errors = response.items?.filter((item: any) => item.index?.error);
-        console.warn(`  Batch had ${errors?.length || 0} ES errors. First: ${JSON.stringify(errors?.[0]?.index?.error)}`);
+        console.warn(
+          `  Batch had ${errors?.length || 0} ES errors. First: ${JSON.stringify(errors?.[0]?.index?.error)}`
+        );
       }
       return;
     } catch (error: any) {
       lastError = error;
       if (attempt < MAX_RETRIES) {
         const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(`  ES bulk failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.warn(
+          `  ES bulk failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -369,7 +430,9 @@ async function main() {
     if (checkpoint) {
       startFromId = checkpoint.lastId;
       resumedProcessed = checkpoint.processed;
-      console.log(`Resuming from checkpoint: id > ${startFromId} (${resumedProcessed.toLocaleString()} already done)\n`);
+      console.log(
+        `Resuming from checkpoint: id > ${startFromId} (${resumedProcessed.toLocaleString()} already done)\n`
+      );
     } else {
       console.log('No checkpoint found, starting from beginning\n');
     }
@@ -387,8 +450,14 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\n\nShutting down gracefully...');
-    saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
-    console.log(`Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`);
+    saveCheckpoint({
+      lastId: currentLastId,
+      processed: currentProcessed,
+      startedAt: new Date(startTime).toISOString(),
+    });
+    console.log(
+      `Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`
+    );
     console.log('Run with --resume to continue.\n');
 
     // Restore index settings before exit
@@ -398,7 +467,9 @@ async function main() {
         body: { index: { refresh_interval: '1s', number_of_replicas: 1 } },
       });
       await esClient.indices.refresh({ index: config.elasticsearch.index });
-    } catch {}
+    } catch {
+      // Best-effort restore during shutdown; still close connections and exit
+    }
 
     await closeAllConnections();
     process.exit(0);
@@ -415,7 +486,10 @@ async function main() {
     // Get counts
     const countResult = await pool.query('SELECT COUNT(*) as total FROM ens_names');
     const totalRows = parseInt(countResult.rows[0].total);
-    const remainingResult = await pool.query('SELECT COUNT(*) as total FROM ens_names WHERE id > $1', [startFromId]);
+    const remainingResult = await pool.query(
+      'SELECT COUNT(*) as total FROM ens_names WHERE id > $1',
+      [startFromId]
+    );
     const remainingRows = parseInt(remainingResult.rows[0].total);
 
     console.log(`Total ENS names: ${totalRows.toLocaleString()}`);
@@ -435,10 +509,12 @@ async function main() {
 
     // Optimize ES for bulk import
     console.log('\nDisabling refresh for bulk import...');
-    await esClient.indices.putSettings({
-      index: config.elasticsearch.index,
-      body: { index: { refresh_interval: '-1', number_of_replicas: 0 } },
-    }).catch(() => console.log('  Could not adjust settings (index might not exist yet)'));
+    await esClient.indices
+      .putSettings({
+        index: config.elasticsearch.index,
+        body: { index: { refresh_interval: '-1', number_of_replicas: 0 } },
+      })
+      .catch(() => console.log('  Could not adjust settings (index might not exist yet)'));
 
     // Phase 2: Stream and index
     console.log(`\n--- Indexing (batch size: ${BATCH_SIZE.toLocaleString()}) ---\n`);
@@ -449,7 +525,7 @@ async function main() {
     while (!shuttingDown) {
       const result = await pool.query(
         'SELECT * FROM ens_names WHERE id > $1 ORDER BY id ASC LIMIT $2',
-        [currentLastId, BATCH_SIZE],
+        [currentLastId, BATCH_SIZE]
       );
 
       if (result.rows.length === 0) break;
@@ -481,13 +557,17 @@ async function main() {
 
       console.log(
         `[${pct}%] ${currentProcessed.toLocaleString()} indexed | ` +
-        `${Math.round(rate).toLocaleString()} docs/s | ` +
-        `ETA ${etaMin}m${etaSec}s`
+          `${Math.round(rate).toLocaleString()} docs/s | ` +
+          `ETA ${etaMin}m${etaSec}s`
       );
 
       // Periodic checkpoint
       if (batchCount % CHECKPOINT_INTERVAL === 0) {
-        saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
+        saveCheckpoint({
+          lastId: currentLastId,
+          processed: currentProcessed,
+          startedAt: new Date(startTime).toISOString(),
+        });
       }
     }
 
@@ -518,9 +598,15 @@ async function main() {
     await closeAllConnections();
     process.exit(0);
   } catch (error) {
-    saveCheckpoint({ lastId: currentLastId, processed: currentProcessed, startedAt: new Date(startTime).toISOString() });
+    saveCheckpoint({
+      lastId: currentLastId,
+      processed: currentProcessed,
+      startedAt: new Date(startTime).toISOString(),
+    });
     console.error('\nResync failed:', error);
-    console.error(`Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`);
+    console.error(
+      `Checkpoint saved (last_id: ${currentLastId}, processed: ${currentProcessed.toLocaleString()})`
+    );
     console.error('Run with --resume to continue from where it left off.\n');
     await closeAllConnections();
     process.exit(1);

@@ -239,7 +239,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const sale of result.data.results) {
-        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k');
+        const hasMatchingClub = sale.clubs?.some((c) => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -251,7 +251,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const sale of result.data.results) {
-        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k');
+        const hasMatchingClub = sale.clubs?.some((c) => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -263,7 +263,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const sale of result.data.results) {
-        const hasMatchingClub = sale.clubs?.some(c => c === '999' || c === '10k' || c === '100k');
+        const hasMatchingClub = sale.clubs?.some((c) => c === '999' || c === '10k' || c === '100k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -502,7 +502,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const listing of result.data.results) {
-        const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k');
+        const hasMatchingClub = listing.clubs?.some((c) => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -514,7 +514,9 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const listing of result.data.results) {
-        const hasMatchingClub = listing.clubs?.some(c => c === '999' || c === '10k' || c === '100k');
+        const hasMatchingClub = listing.clubs?.some(
+          (c) => c === '999' || c === '10k' || c === '100k'
+        );
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -765,7 +767,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const offer of result.data.results) {
-        const hasMatchingClub = offer.clubs?.some(c => c === '999' || c === '10k');
+        const hasMatchingClub = offer.clubs?.some((c) => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
       }
     });
@@ -777,7 +779,7 @@ describe('Analytics Endpoints', () => {
 
       expect(result.success).toBe(true);
       for (const offer of result.data.results) {
-        const hasMatchingClub = offer.clubs?.some(c => c === '999' || c === '10k');
+        const hasMatchingClub = offer.clubs?.some((c) => c === '999' || c === '10k');
         expect(hasMatchingClub).toBe(true);
       }
     });

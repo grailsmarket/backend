@@ -22,7 +22,15 @@
  *   npx tsx src/scripts/backfill-metadata.ts --batch-size=200 --rate-limit=1000
  */
 
-import { getPostgresPool, closeAllConnections, config, processAddressRecords, type AddressRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker } from '../../../shared/src';
+import {
+  getPostgresPool,
+  closeAllConnections,
+  config,
+  processAddressRecords,
+  type AddressRecord,
+  needsEnsWorkerFallback,
+  fetchTextRecordsFromEnsWorker,
+} from '../../../shared/src';
 
 const pool = getPostgresPool();
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -88,7 +96,7 @@ Examples:
   };
 
   // Parse --batch-size=N
-  const batchSizeArg = args.find(arg => arg.startsWith('--batch-size='));
+  const batchSizeArg = args.find((arg) => arg.startsWith('--batch-size='));
   if (batchSizeArg) {
     const value = parseInt(batchSizeArg.split('=')[1], 10);
     if (!isNaN(value) && value > 0) {
@@ -97,7 +105,7 @@ Examples:
   }
 
   // Parse --rate-limit=N
-  const rateLimitArg = args.find(arg => arg.startsWith('--rate-limit='));
+  const rateLimitArg = args.find((arg) => arg.startsWith('--rate-limit='));
   if (rateLimitArg) {
     const value = parseInt(rateLimitArg.split('=')[1], 10);
     if (!isNaN(value) && value >= 0) {
@@ -156,7 +164,7 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
     headers,
     body: JSON.stringify({
       query,
-      variables: { names: names.map(n => n.toLowerCase()) },
+      variables: { names: names.map((n) => n.toLowerCase()) },
     }),
   });
 
@@ -195,11 +203,19 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
     }
 
     // Fallback to ENS worker if resolver doesn't emit values to The Graph
-    if (needsEnsWorkerFallback(domain.resolver?.address, domain.resolver?.texts, domain.resolver?.textChangeds)) {
+    if (
+      needsEnsWorkerFallback(
+        domain.resolver?.address,
+        domain.resolver?.texts,
+        domain.resolver?.textChangeds
+      )
+    ) {
       try {
         const workerRecords = await fetchTextRecordsFromEnsWorker(domain.name);
         Object.assign(metadata, workerRecords);
-        console.log(`  ENS worker fallback used for ${domain.name}: ${Object.keys(workerRecords).length} text records`);
+        console.log(
+          `  ENS worker fallback used for ${domain.name}: ${Object.keys(workerRecords).length} text records`
+        );
       } catch (error: any) {
         console.log(`  ENS worker fallback failed for ${domain.name}: ${error?.message}`);
       }
@@ -223,7 +239,7 @@ async function fetchMetadataBatchFromGraph(names: string[]): Promise<Map<string,
  * Sleep helper for rate limiting
  */
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -271,7 +287,8 @@ async function main() {
     let lastId = 0;
 
     while (stats.processed < stats.totalNames) {
-      const batchResult = await pool.query(`
+      const batchResult = await pool.query(
+        `
         SELECT id, name, token_id
         FROM ens_names
         WHERE metadata = '{"resolverAddress": "0x0000000000000000000000000000000000000000"}'::jsonb
@@ -279,14 +296,16 @@ async function main() {
           AND id > $1
         ORDER BY id
         LIMIT $2
-      `, [lastId, options.batchSize]);
+      `,
+        [lastId, options.batchSize]
+      );
 
       if (batchResult.rows.length === 0) {
         break;
       }
 
       const rows: NameRow[] = batchResult.rows;
-      const names = rows.map(r => r.name);
+      const names = rows.map((r) => r.name);
       lastId = rows[rows.length - 1].id;
 
       try {
@@ -300,7 +319,7 @@ async function main() {
 
           // Check if we got meaningful data (more than just resolverAddress)
           const metadataKeys = metadata
-            ? Object.keys(metadata).filter(k => k !== 'resolverAddress' && k !== 'chains')
+            ? Object.keys(metadata).filter((k) => k !== 'resolverAddress' && k !== 'chains')
             : [];
           const hasTextRecords = metadataKeys.length > 0;
           const hasAddressRecords = metadata?.chains && metadata.chains.length > 0;
@@ -308,28 +327,36 @@ async function main() {
           if (hasTextRecords || hasAddressRecords) {
             // Has real metadata - update with the fetched data
             if (!options.dryRun) {
-              await pool.query(`
+              await pool.query(
+                `
                 UPDATE ens_names
                 SET metadata = $1,
                     metadata_updated_at = NOW(),
                     updated_at = NOW()
                 WHERE id = $2
-              `, [JSON.stringify(metadata), row.id]);
+              `,
+                [JSON.stringify(metadata), row.id]
+              );
             }
 
             stats.updated++;
             const addressCount = metadata?.chains?.length || 0;
-            console.log(`  ✓ ${row.name} (${metadataKeys.length} text records, ${addressCount} address records)`);
+            console.log(
+              `  ✓ ${row.name} (${metadataKeys.length} text records, ${addressCount} address records)`
+            );
           } else {
             // No data found - clean up by setting metadata to empty object
             if (!options.dryRun) {
-              await pool.query(`
+              await pool.query(
+                `
                 UPDATE ens_names
                 SET metadata = '{}'::jsonb,
                     metadata_updated_at = NOW(),
                     updated_at = NOW()
                 WHERE id = $1
-              `, [row.id]);
+              `,
+                [row.id]
+              );
             }
 
             stats.noDataFound++;
@@ -344,7 +371,9 @@ async function main() {
 
       // Progress update
       const percent = Math.round((stats.processed / stats.totalNames) * 100);
-      console.log(`\nProgress: ${stats.processed}/${stats.totalNames} (${percent}%) - Updated: ${stats.updated}, No data: ${stats.noDataFound}, Errors: ${stats.errors}\n`);
+      console.log(
+        `\nProgress: ${stats.processed}/${stats.totalNames} (${percent}%) - Updated: ${stats.updated}, No data: ${stats.noDataFound}, Errors: ${stats.errors}\n`
+      );
 
       // Rate limiting between batches
       if (options.rateLimit > 0 && stats.processed < stats.totalNames) {

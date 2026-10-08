@@ -18,6 +18,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -54,7 +55,7 @@ function decimalToHex(decimal: string): string {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function processDomain(domain: any): DomainData {
@@ -72,7 +73,7 @@ function processDomain(domain: any): DomainData {
   const ownerAddr = domain.owner?.id?.toLowerCase();
   const isWrapped = ownerAddr === NAME_WRAPPER_ADDRESS;
 
-  let owner: string | null = null;
+  let owner: string | null;
   if (domain.registrant?.id) {
     const registrant = domain.registrant.id.toLowerCase();
     if (registrant === NAME_WRAPPER_ADDRESS) {
@@ -89,9 +90,8 @@ function processDomain(domain: any): DomainData {
   // Check expiry
   let isExpired = false;
   if (domain.expiryDate) {
-    const expiryTimestamp = typeof domain.expiryDate === 'string'
-      ? parseInt(domain.expiryDate)
-      : domain.expiryDate;
+    const expiryTimestamp =
+      typeof domain.expiryDate === 'string' ? parseInt(domain.expiryDate) : domain.expiryDate;
     isExpired = expiryTimestamp * 1000 < Date.now();
   }
 
@@ -295,7 +295,9 @@ async function fixBracketPlaceholderNames(options: {
       const batch = placeholders.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
-      console.log(`\nBatch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`);
+      console.log(
+        `\nBatch ${batchNum} (records ${i + 1}-${Math.min(i + batchSize, placeholders.length)})...`
+      );
 
       // Convert all token_ids to hex for batch lookup
       const tokenIdHexMap = new Map<string, PlaceholderRecord>();
@@ -325,7 +327,9 @@ async function fixBracketPlaceholderNames(options: {
 
       let byLabelhashResults = new Map<string, DomainData>();
       if (unresolvedHexes.length > 0) {
-        console.log(`  ${byIdResults.size} resolved by ID, ${unresolvedHexes.length} falling back to labelhash...`);
+        console.log(
+          `  ${byIdResults.size} resolved by ID, ${unresolvedHexes.length} falling back to labelhash...`
+        );
         byLabelhashResults = await queryGraphByLabelhashes(unresolvedHexes);
       } else {
         console.log(`  All ${byIdResults.size} resolved by ID`);
@@ -339,14 +343,18 @@ async function fixBracketPlaceholderNames(options: {
         const domainData = byIdResults.get(tokenIdHex) || byLabelhashResults.get(tokenIdHex);
 
         if (!domainData || !domainData.name) {
-          console.log(`  ⚠️  ${placeholder.name.substring(0, 20)}... - Not found in Graph (token: ${tokenIdHex.substring(0, 14)}...)`);
+          console.log(
+            `  ⚠️  ${placeholder.name.substring(0, 20)}... - Not found in Graph (token: ${tokenIdHex.substring(0, 14)}...)`
+          );
           skipped++;
           continue;
         }
 
         // The Graph returns [hash].eth when the label preimage is unknown — treat as unresolved
         if (/^\[[0-9a-fA-F]{64}\]\.eth$/.test(domainData.name)) {
-          console.log(`  ⚠️  ${placeholder.name.substring(0, 20)}... - Graph returned unknown label (no preimage)`);
+          console.log(
+            `  ⚠️  ${placeholder.name.substring(0, 20)}... - Graph returned unknown label (no preimage)`
+          );
           skipped++;
           continue;
         }
@@ -359,8 +367,12 @@ async function fixBracketPlaceholderNames(options: {
         }
 
         const correctTokenId = getCorrectTokenId(domainData);
-        const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
-        const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
+        const expiryDate = domainData.expiryDate
+          ? new Date(parseInt(domainData.expiryDate) * 1000)
+          : null;
+        const registrationDate = domainData.registrationDate
+          ? new Date(parseInt(domainData.registrationDate) * 1000)
+          : null;
 
         console.log(`  ✅ ${placeholder.name.substring(0, 20)}... → ${domainData.name}`);
 
@@ -381,7 +393,10 @@ async function fixBracketPlaceholderNames(options: {
             console.log(`     Duplicate found: id=${dup.id}, name=${dup.name}`);
 
             // Current is placeholder, keep whichever has the real name (or the duplicate if it's real)
-            const dupIsPlaceholder = dup.name.startsWith('token-') || dup.name.startsWith('#') || /^\[[0-9a-fA-F]{64}\]\.eth$/.test(dup.name);
+            const dupIsPlaceholder =
+              dup.name.startsWith('token-') ||
+              dup.name.startsWith('#') ||
+              /^\[[0-9a-fA-F]{64}\]\.eth$/.test(dup.name);
             const keepId = dupIsPlaceholder ? placeholder.id : dup.id;
             const deleteId = dupIsPlaceholder ? dup.id : placeholder.id;
 
@@ -392,11 +407,26 @@ async function fixBracketPlaceholderNames(options: {
               await pool.query('SET LOCAL session_replication_role = replica');
 
               // Move FK references from deleted record to kept record
-              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
-              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [keepId, deleteId]);
+              await pool.query('UPDATE listings SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query('UPDATE offers SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query('UPDATE sales SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
+              await pool.query(
+                'UPDATE activity_history SET ens_name_id = $1 WHERE ens_name_id = $2',
+                [keepId, deleteId]
+              );
+              await pool.query('UPDATE watchlist SET ens_name_id = $1 WHERE ens_name_id = $2', [
+                keepId,
+                deleteId,
+              ]);
 
               // Delete the unwanted record
               await pool.query('DELETE FROM ens_names WHERE id = $1', [deleteId]);
@@ -498,7 +528,6 @@ async function fixBracketPlaceholderNames(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `bracket-placeholder-recovery-${timestamp}.json`;
 

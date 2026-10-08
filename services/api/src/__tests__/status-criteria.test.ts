@@ -110,19 +110,6 @@ function analyzeStatuses(results: SearchResult[]): Record<NameStatus, number> {
 }
 
 /**
- * Check if results contain only the expected statuses
- */
-function hasOnlyStatuses(results: SearchResult[], allowedStatuses: NameStatus[]): boolean {
-  for (const result of results) {
-    const status = getNameStatus(result.expiry_date);
-    if (!allowedStatuses.includes(status)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
  * Check which expected statuses are missing from results
  * Used to verify that all expected statuses are actually returned
  */
@@ -131,7 +118,7 @@ function getMissingStatuses(results: SearchResult[], expectedStatuses: NameStatu
   for (const result of results) {
     foundStatuses.add(getNameStatus(result.expiry_date));
   }
-  return expectedStatuses.filter(status => !foundStatuses.has(status));
+  return expectedStatuses.filter((status) => !foundStatuses.has(status));
 }
 
 /**
@@ -141,7 +128,11 @@ function getUnexpectedNames(
   results: SearchResult[],
   allowedStatuses: NameStatus[]
 ): Array<{ name: string; status: NameStatus; expiry_date: string | null | undefined }> {
-  const unexpected: Array<{ name: string; status: NameStatus; expiry_date: string | null | undefined }> = [];
+  const unexpected: Array<{
+    name: string;
+    status: NameStatus;
+    expiry_date: string | null | undefined;
+  }> = [];
   for (const result of results) {
     const status = getNameStatus(result.expiry_date);
     if (!allowedStatuses.includes(status)) {
@@ -152,7 +143,8 @@ function getUnexpectedNames(
 }
 
 // Common filter params used across most endpoints
-const BASE_FILTERS = 'filters[letters]=include&filters[digits]=include&filters[emoji]=include&filters[repeatingChars]=include';
+const BASE_FILTERS =
+  'filters[letters]=include&filters[digits]=include&filters[emoji]=include&filters[repeatingChars]=include';
 
 describe('Status Criteria Tests', () => {
   describe('Page/Tab Status Requirements', () => {
@@ -172,7 +164,9 @@ describe('Status Criteria Tests', () => {
         // (This catches bugs where premium/available are incorrectly filtered out)
         const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
         if (missingStatuses.length > 0) {
-          console.warn(`WARNING: Explore Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn(
+            `WARNING: Explore Names tab is missing these statuses: ${missingStatuses.join(', ')}`
+          );
           console.warn('This could indicate a bug or simply missing test data.');
         }
 
@@ -228,7 +222,9 @@ describe('Status Criteria Tests', () => {
         // Verify that we're actually getting names from all expected statuses
         const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
         if (missingStatuses.length > 0) {
-          console.warn(`WARNING: Categories Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn(
+            `WARNING: Categories Names tab is missing these statuses: ${missingStatuses.join(', ')}`
+          );
           console.warn('This could indicate a bug or simply missing test data.');
         }
 
@@ -273,7 +269,9 @@ describe('Status Criteria Tests', () => {
       it('Individual Category: Names tab should include Registered, Grace, Premium, and Available', async () => {
         // Using prepunks club as example (has many names in different statuses)
         // Use alphabetical sort and larger limit to get better status distribution
-        const { data } = await search(`limit=500&page=1&${BASE_FILTERS}&filters[clubs][]=prepunks&sortBy=alphabetical`);
+        const { data } = await search(
+          `limit=500&page=1&${BASE_FILTERS}&filters[clubs][]=prepunks&sortBy=alphabetical`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -284,7 +282,9 @@ describe('Status Criteria Tests', () => {
         // Verify that we're actually getting names from all expected statuses
         const missingStatuses = getMissingStatuses(data!.results, allowedStatuses);
         if (missingStatuses.length > 0) {
-          console.warn(`WARNING: Individual Category (prepunks) Names tab is missing these statuses: ${missingStatuses.join(', ')}`);
+          console.warn(
+            `WARNING: Individual Category (prepunks) Names tab is missing these statuses: ${missingStatuses.join(', ')}`
+          );
           console.warn('This could indicate a bug or simply missing test data.');
         }
 
@@ -412,7 +412,9 @@ describe('Status Criteria Tests', () => {
       });
 
       it('sortBy=last_sale_price should include all statuses', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=last_sale_price&sortOrder=desc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=last_sale_price&sortOrder=desc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -425,7 +427,9 @@ describe('Status Criteria Tests', () => {
       });
 
       it('sortBy=last_sale_date should include all statuses', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=last_sale_date&sortOrder=desc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=last_sale_date&sortOrder=desc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -438,7 +442,9 @@ describe('Status Criteria Tests', () => {
       });
 
       it('sortBy=watchers_count should include all statuses', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=watchers_count&sortOrder=desc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=watchers_count&sortOrder=desc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -451,7 +457,9 @@ describe('Status Criteria Tests', () => {
       });
 
       it('sortBy=view_count should include all statuses', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=view_count&sortOrder=desc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=view_count&sortOrder=desc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -464,7 +472,9 @@ describe('Status Criteria Tests', () => {
       }, 120000);
 
       it('sortBy=alphabetical should include all statuses', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=alphabetical&sortOrder=asc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=alphabetical&sortOrder=asc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         const allowedStatuses: NameStatus[] = ['registered', 'grace', 'premium', 'available'];
@@ -479,7 +489,9 @@ describe('Status Criteria Tests', () => {
 
     describe('Sorts that should EXCLUDE Premium and Available', () => {
       it('sortBy=expiry_date should include ONLY Registered and Grace (NOT Premium or Available)', async () => {
-        const { data } = await search(`limit=100&page=1&${BASE_FILTERS}&sortBy=expiry_date&sortOrder=asc`);
+        const { data } = await search(
+          `limit=100&page=1&${BASE_FILTERS}&sortBy=expiry_date&sortOrder=asc`
+        );
         expect(data?.results.length).toBeGreaterThan(0);
 
         // Expiry sort should NOT include Premium or Available
@@ -487,7 +499,10 @@ describe('Status Criteria Tests', () => {
         const unexpected = getUnexpectedNames(data!.results, allowedStatuses);
 
         if (unexpected.length > 0) {
-          console.log('VIOLATION: Expiry sort contains Premium/Available names:', unexpected.slice(0, 10));
+          console.log(
+            'VIOLATION: Expiry sort contains Premium/Available names:',
+            unexpected.slice(0, 10)
+          );
         }
 
         expect(unexpected).toEqual([]);
@@ -511,7 +526,10 @@ describe('Status Criteria Tests', () => {
         const unexpected = getUnexpectedNames(data!.results, allowedStatuses);
 
         if (unexpected.length > 0) {
-          console.log('VIOLATION: Price sort contains Premium/Available names:', unexpected.slice(0, 10));
+          console.log(
+            'VIOLATION: Price sort contains Premium/Available names:',
+            unexpected.slice(0, 10)
+          );
         }
 
         expect(unexpected).toEqual([]);

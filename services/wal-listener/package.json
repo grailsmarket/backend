@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "resync": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/resync-elasticsearch.js",
     "resync:fast": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/fast-resync-elasticsearch.js",
     "resync:complete": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/complete-resync-elasticsearch.js",

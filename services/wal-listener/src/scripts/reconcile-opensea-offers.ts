@@ -51,10 +51,14 @@ function parseArgs(): { tokenId?: string; limit: number; days: number } {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchWithRetry(url: string, attempt = 1, allow404 = false): Promise<Response | null> {
+async function fetchWithRetry(
+  url: string,
+  attempt = 1,
+  allow404 = false
+): Promise<Response | null> {
   const response = await fetch(url, {
     headers: {
       'X-API-Key': OPENSEA_API_KEY!,
@@ -64,7 +68,9 @@ async function fetchWithRetry(url: string, attempt = 1, allow404 = false): Promi
 
   if (response.status === 429 && attempt <= MAX_RETRIES) {
     const delay = Math.pow(2, attempt) * 1000;
-    console.log(`  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`);
+    console.log(
+      `  Rate limited (429), retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRIES})...`
+    );
     await sleep(delay);
     return fetchWithRetry(url, attempt + 1, allow404);
   }
@@ -94,7 +100,7 @@ async function fetchOpenSeaAssetName(contract: string, identifier: string): Prom
     if (!response) {
       return null;
     }
-    const data = await response.json() as { nft?: { name?: string } };
+    const data = (await response.json()) as { nft?: { name?: string } };
     return data.nft?.name || null;
   } catch (error: any) {
     console.log(`  [WARN] NFT metadata fetch failed for ${identifier}: ${error.message}`);
@@ -133,7 +139,11 @@ interface OpenSeaOffer {
   status: string;
 }
 
-async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: number): Promise<OpenSeaOffer[]> {
+async function fetchOpenSeaOffers(
+  tokenId?: string,
+  limit = 50,
+  listedAfter?: number
+): Promise<OpenSeaOffer[]> {
   if (!OPENSEA_API_KEY) {
     throw new Error('OPENSEA_API_KEY not configured');
   }
@@ -146,7 +156,7 @@ async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: nu
     if (!response) {
       return [];
     }
-    const data = await response.json() as OpenSeaOffer | Record<string, never>;
+    const data = (await response.json()) as OpenSeaOffer | Record<string, never>;
     return 'order_hash' in data && data.order_hash ? [data as OpenSeaOffer] : [];
   }
 
@@ -164,18 +174,20 @@ async function fetchOpenSeaOffers(tokenId?: string, limit = 50, listedAfter?: nu
 
     console.log(`Fetching page ${page}...`);
     const response = await fetchWithRetry(`${baseUrl}?${params}`);
-    const data = await response!.json() as { offers?: OpenSeaOffer[]; next?: string };
+    const data = (await response!.json()) as { offers?: OpenSeaOffer[]; next?: string };
 
     if (data.offers) {
       // Keep item offers only (criteria offers are collection/trait-wide and
       // don't map to a single name). Apply the --days window client-side —
       // the v2 endpoint has no listed_after filter.
       const itemOffers = data.offers.filter(
-        o => !o.criteria && o.asset?.identifier &&
-          (!listedAfter || o.order_created_at >= listedAfter)
+        (o) =>
+          !o.criteria && o.asset?.identifier && (!listedAfter || o.order_created_at >= listedAfter)
       );
       allOffers.push(...itemOffers);
-      console.log(`  Got ${data.offers.length} offers, kept ${itemOffers.length} item offers in window (total: ${allOffers.length})`);
+      console.log(
+        `  Got ${data.offers.length} offers, kept ${itemOffers.length} item offers in window (total: ${allOffers.length})`
+      );
     }
 
     cursor = data.next;
@@ -194,7 +206,7 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
   console.log(`Looking back: ${days} days\n`);
 
   // Compute listed_after timestamp
-  const listedAfter = Math.floor(Date.now() / 1000) - (days * 86400);
+  const listedAfter = Math.floor(Date.now() / 1000) - days * 86400;
 
   // Fetch offers from OpenSea
   const osOffers = await fetchOpenSeaOffers(tokenId, limit, listedAfter);
@@ -206,9 +218,7 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
   }
 
   // Get order hashes to check against our database
-  const orderHashes = osOffers
-    .filter(o => o.status === 'ACTIVE')
-    .map(o => o.order_hash);
+  const orderHashes = osOffers.filter((o) => o.status === 'ACTIVE').map((o) => o.order_hash);
 
   if (orderHashes.length === 0) {
     console.log('No active offers found.');
@@ -220,11 +230,11 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
     `SELECT order_hash FROM offers WHERE order_hash = ANY($1)`,
     [orderHashes]
   );
-  const existingHashes = new Set(existingResult.rows.map(r => r.order_hash));
+  const existingHashes = new Set(existingResult.rows.map((r) => r.order_hash));
 
   // Find missing offers
   const missingOffers = osOffers.filter(
-    o => o.status === 'ACTIVE' && !existingHashes.has(o.order_hash)
+    (o) => o.status === 'ACTIVE' && !existingHashes.has(o.order_hash)
   );
 
   console.log('=== Results ===\n');
@@ -267,10 +277,9 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
         }
 
         // Look up ens_name_id by token_id
-        let ensNameResult = await pool.query(
-          'SELECT id, name FROM ens_names WHERE token_id = $1',
-          [tokenId]
-        );
+        let ensNameResult = await pool.query('SELECT id, name FROM ens_names WHERE token_id = $1', [
+          tokenId,
+        ]);
 
         if (ensNameResult.rows.length === 0 && offer.asset?.contract) {
           // The order may carry the identity from before a wrapping-state
@@ -284,7 +293,9 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
               [safeNormalize(assetName)]
             );
             if (ensNameResult.rows.length > 0) {
-              console.log(`  [INFO] Resolved ${assetName} via metadata name fallback (token_id mismatch)`);
+              console.log(
+                `  [INFO] Resolved ${assetName} via metadata name fallback (token_id mismatch)`
+              );
             }
           }
         }
@@ -299,7 +310,8 @@ async function reconcileOffers(pool: Pool, tokenId?: string, limit = 50, days = 
         const ensName: string = ensNameResult.rows[0].name;
 
         // Get currency from the offer
-        const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
+        const currencyAddress =
+          offer.protocol_data?.parameters?.offer?.[0]?.token ||
           '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'; // Default to WETH
 
         // Insert the offer

@@ -84,11 +84,9 @@ function generateTestToken(userId: number, address: string): string {
   if (!secret) {
     throw new Error('JWT_SECRET is not configured');
   }
-  return jwt.sign(
-    { sub: userId.toString(), address: address.toLowerCase() },
-    secret,
-    { expiresIn: '24h' }
-  );
+  return jwt.sign({ sub: userId.toString(), address: address.toLowerCase() }, secret, {
+    expiresIn: '24h',
+  });
 }
 
 // Helper to make authenticated search requests
@@ -118,7 +116,8 @@ describe('Watchlist Search API Filters', () => {
       }
     } catch (error) {
       throw new Error(
-        'API server not running. Start with: cd services/api && RATE_LIMIT_MAX=1000 npm run dev'
+        'API server not running. Start with: cd services/api && RATE_LIMIT_MAX=1000 npm run dev',
+        { cause: error }
       );
     }
 
@@ -126,12 +125,15 @@ describe('Watchlist Search API Filters', () => {
     const pool = await getPool();
     try {
       // Create or get test user
-      const userResult = await pool.query(`
+      const userResult = await pool.query(
+        `
         INSERT INTO users (address, created_at, updated_at)
         VALUES ($1, NOW(), NOW())
         ON CONFLICT (address) DO UPDATE SET updated_at = NOW()
         RETURNING id
-      `, [TEST_USER_ADDRESS.toLowerCase()]);
+      `,
+        [TEST_USER_ADDRESS.toLowerCase()]
+      );
       testUserId = userResult.rows[0].id;
 
       // Generate auth token
@@ -158,10 +160,9 @@ describe('Watchlist Search API Filters', () => {
       await pool.query(watchlistQuery, [testUserId]);
 
       // Verify watchlist has items
-      const countResult = await pool.query(
-        'SELECT COUNT(*) FROM watchlist WHERE user_id = $1',
-        [testUserId]
-      );
+      const countResult = await pool.query('SELECT COUNT(*) FROM watchlist WHERE user_id = $1', [
+        testUserId,
+      ]);
       const watchlistCount = parseInt(countResult.rows[0].count);
 
       if (watchlistCount === 0) {
@@ -192,7 +193,7 @@ describe('Watchlist Search API Filters', () => {
   describe('Authentication', () => {
     it('returns 401 without auth token', async () => {
       const response = await fetch(`${API_BASE}/search?limit=1`);
-      const data = await response.json() as { success: boolean };
+      const data = (await response.json()) as { success: boolean };
       expect(response.status).toBe(401);
       expect(data.success).toBe(false);
     });
@@ -226,9 +227,9 @@ describe('Watchlist Search API Filters', () => {
 
       if (page1.data!.pagination.totalPages > 1) {
         // Names should be different between pages
-        const page1Names = page1.data!.results.map(r => r.name);
-        const page2Names = page2.data!.results.map(r => r.name);
-        const overlap = page1Names.filter(n => page2Names.includes(n));
+        const page1Names = page1.data!.results.map((r) => r.name);
+        const page2Names = page2.data!.results.map((r) => r.name);
+        const overlap = page1Names.filter((n) => page2Names.includes(n));
         expect(overlap.length).toBe(0);
       }
     });
@@ -426,7 +427,7 @@ describe('Watchlist Search API Filters', () => {
       }
 
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(l => l.status === 'active');
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing).toBe(true);
       }
     });
@@ -439,7 +440,7 @@ describe('Watchlist Search API Filters', () => {
       }
 
       for (const result of data!.results) {
-        const hasActiveListing = result.listings?.some(l => l.status === 'active');
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing).toBeFalsy();
       }
     });
@@ -450,7 +451,7 @@ describe('Watchlist Search API Filters', () => {
       const { data } = await searchWatchlist('sortBy=alphabetical&sortOrder=asc&limit=20');
       expect(data?.results.length).toBeGreaterThan(1);
 
-      const names = data!.results.map(r => r.name.toLowerCase());
+      const names = data!.results.map((r) => r.name.toLowerCase());
       const sortedNames = [...names].sort();
       expect(names).toEqual(sortedNames);
     });
@@ -459,7 +460,7 @@ describe('Watchlist Search API Filters', () => {
       const { data } = await searchWatchlist('sortBy=alphabetical&sortOrder=desc&limit=20');
       expect(data?.results.length).toBeGreaterThan(1);
 
-      const names = data!.results.map(r => r.name.toLowerCase());
+      const names = data!.results.map((r) => r.name.toLowerCase());
       const sortedNames = [...names].sort().reverse();
       expect(names).toEqual(sortedNames);
     });
@@ -472,8 +473,8 @@ describe('Watchlist Search API Filters', () => {
       }
 
       const dates = data!.results
-        .filter(r => r.expiry_date)
-        .map(r => new Date(r.expiry_date!).getTime());
+        .filter((r) => r.expiry_date)
+        .map((r) => new Date(r.expiry_date!).getTime());
 
       if (dates.length < 2) return;
 
@@ -485,7 +486,9 @@ describe('Watchlist Search API Filters', () => {
 
   describe('Combined Filters', () => {
     it('combines length + letter filters', async () => {
-      const { data } = await searchWatchlist('filters[minLength]=3&filters[maxLength]=5&filters[letters]=only&limit=20');
+      const { data } = await searchWatchlist(
+        'filters[minLength]=3&filters[maxLength]=5&filters[letters]=only&limit=20'
+      );
       if (data?.results.length === 0) {
         console.warn('No watchlist items matching combined filters');
         return;
@@ -500,7 +503,9 @@ describe('Watchlist Search API Filters', () => {
     });
 
     it('combines status + sorting', async () => {
-      const { data } = await searchWatchlist('filters[status]=registered&sortBy=alphabetical&sortOrder=asc&limit=20');
+      const { data } = await searchWatchlist(
+        'filters[status]=registered&sortBy=alphabetical&sortOrder=asc&limit=20'
+      );
       if (data?.results.length === 0) {
         console.warn('No registered watchlist items');
         return;
@@ -516,7 +521,7 @@ describe('Watchlist Search API Filters', () => {
       }
 
       // Verify sorting
-      const names = data!.results.map(r => r.name.toLowerCase());
+      const names = data!.results.map((r) => r.name.toLowerCase());
       const sortedNames = [...names].sort();
       expect(names).toEqual(sortedNames);
     });
@@ -556,7 +561,9 @@ describe('Watchlist Search API Filters', () => {
 
       for (const result of data!.results) {
         // clubs should be empty array, null, or undefined
-        expect(result.clubs === null || result.clubs === undefined || result.clubs.length === 0).toBe(true);
+        expect(
+          result.clubs === null || result.clubs === undefined || result.clubs.length === 0
+        ).toBe(true);
       }
     });
   });

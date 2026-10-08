@@ -124,14 +124,13 @@ async function checkListingDrift() {
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-      const recentDrift = driftRecords.filter(r => new Date(r.listingCreatedAt) > oneHourAgo);
-      const dayOldDrift = driftRecords.filter(r => new Date(r.listingCreatedAt) > oneDayAgo);
+      const recentDrift = driftRecords.filter((r) => new Date(r.listingCreatedAt) > oneHourAgo);
+      const dayOldDrift = driftRecords.filter((r) => new Date(r.listingCreatedAt) > oneDayAgo);
 
       console.log(`Drift from last hour:  ${recentDrift.length}`);
       console.log(`Drift from last 24h:   ${dayOldDrift.length}`);
       console.log(`Drift older than 24h:  ${driftRecords.length - dayOldDrift.length}`);
     }
-
   } catch (error) {
     console.error('Error during analysis:', error);
   } finally {

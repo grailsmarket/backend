@@ -1,4 +1,10 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import {
+  getElasticsearchClient,
+  getPostgresPool,
+  config,
+  isEthOrWeth,
+  hasEmoji,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -124,7 +130,7 @@ export class ElasticsearchSync {
             },
             settings: {
               index: {
-                max_ngram_diff: 8,  // Allow difference of 8 between min and max
+                max_ngram_diff: 8, // Allow difference of 8 between min and max
               },
               analysis: {
                 analyzer: {
@@ -325,7 +331,9 @@ export class ElasticsearchSync {
         }
 
         // Send this batch to Elasticsearch
-        logger.info(`Processing batch: ${result.rows.length} documents (${processed + 1}-${processed + result.rows.length} of ${totalRows})...`);
+        logger.info(
+          `Processing batch: ${result.rows.length} documents (${processed + 1}-${processed + result.rows.length} of ${totalRows})...`
+        );
 
         const response = await this.esClient.bulk({
           body: bulkBody,
@@ -334,7 +342,10 @@ export class ElasticsearchSync {
 
         if (response.errors) {
           const errors = response.items?.filter((item: any) => item.index?.error);
-          logger.error(`Bulk indexing had ${errors?.length || 0} errors:`, JSON.stringify(errors?.slice(0, 5), null, 2));
+          logger.error(
+            `Bulk indexing had ${errors?.length || 0} errors:`,
+            JSON.stringify(errors?.slice(0, 5), null, 2)
+          );
         } else {
           logger.info(`Successfully indexed batch of ${result.rows.length} documents`);
         }
@@ -343,14 +354,17 @@ export class ElasticsearchSync {
         offset += dbBatchSize;
 
         // Delay to allow garbage collection and prevent overwhelming the system
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
 
       logger.info(`Completed bulk indexing of ${processed} ENS names`);
     } catch (error: any) {
       logger.error(`Failed to perform bulk sync: ${error.message || error}`);
       if (error.meta?.body?.error) {
-        logger.error('Elasticsearch error details:', JSON.stringify(error.meta.body.error, null, 2));
+        logger.error(
+          'Elasticsearch error details:',
+          JSON.stringify(error.meta.body.error, null, 2)
+        );
       }
       if (error.stack) {
         logger.error('Stack trace:', error.stack);
@@ -366,7 +380,7 @@ export class ElasticsearchSync {
     const now = Date.now();
 
     // Return cached price if still valid
-    if (this.cachedEthPrice !== null && (now - this.ethPriceCacheTime) < this.ETH_PRICE_CACHE_TTL) {
+    if (this.cachedEthPrice !== null && now - this.ethPriceCacheTime < this.ETH_PRICE_CACHE_TTL) {
       return this.cachedEthPrice;
     }
 
@@ -381,7 +395,7 @@ export class ElasticsearchSync {
         this.ethPriceCacheTime = now;
         return this.cachedEthPrice;
       }
-    } catch (error) {
+    } catch {
       logger.warn('Failed to fetch ETH price from database, using fallback');
     }
 
@@ -395,7 +409,11 @@ export class ElasticsearchSync {
   /**
    * Calculate USD price from wei amount and currency address
    */
-  private calculatePriceUsd(priceWei: string | null, currencyAddress: string | null, ethPriceUsd: number): number | null {
+  private calculatePriceUsd(
+    priceWei: string | null,
+    currencyAddress: string | null,
+    ethPriceUsd: number
+  ): number | null {
     if (!priceWei) return null;
 
     const normalizedCurrency = (currencyAddress || '').toLowerCase();
@@ -403,7 +421,11 @@ export class ElasticsearchSync {
 
     if (priceNum === null) return null;
 
-    if (isEthOrWeth(normalizedCurrency) || normalizedCurrency === '' || normalizedCurrency === '0x0000000000000000000000000000000000000000') {
+    if (
+      isEthOrWeth(normalizedCurrency) ||
+      normalizedCurrency === '' ||
+      normalizedCurrency === '0x0000000000000000000000000000000000000000'
+    ) {
       // ETH or WETH: convert from wei (18 decimals) to ETH, then to USD
       const priceInEth = priceNum / Math.pow(10, ETH_DECIMALS);
       return priceInEth * ethPriceUsd;
@@ -423,7 +445,11 @@ export class ElasticsearchSync {
 
     // Get ETH price for USD conversion
     const ethPriceUsd = await this.getEthPriceUsd();
-    const priceUsd = this.calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
+    const priceUsd = this.calculatePriceUsd(
+      data.listing_price,
+      data.listing_currency_address,
+      ethPriceUsd
+    );
 
     return {
       name,
@@ -443,7 +469,11 @@ export class ElasticsearchSync {
       clubs: data.clubs || [],
       last_sale_price: safeParsePrice(data.last_sale_price),
       last_sale_currency: data.last_sale_currency,
-      last_sale_price_usd: this.calculatePriceUsd(data.last_sale_price, data.last_sale_currency, ethPriceUsd),
+      last_sale_price_usd: this.calculatePriceUsd(
+        data.last_sale_price,
+        data.last_sale_currency,
+        ethPriceUsd
+      ),
       listing_created_at: data.listing_created_at,
       listing_expires_at: data.listing_expires_at,
       active_offers_count: data.active_offers_count || 0,
@@ -583,7 +613,9 @@ export class ElasticsearchSync {
 
     const now = new Date();
     const saleDate = new Date(lastSaleDate);
-    const daysSinceLastSale = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+    const daysSinceLastSale = Math.floor(
+      (now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
 
     return {
       lastSaleDate,

@@ -45,11 +45,11 @@ async function queryGraphByName(names: string[]): Promise<Map<string, GraphDomai
       GRAPH_ENS_SUBGRAPH_URL,
       {
         query,
-        variables: { names }
+        variables: { names },
       },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
+        timeout: 30000,
       }
     );
 
@@ -78,7 +78,9 @@ async function fixNameWrapperOwners() {
   const pool = getPostgresPool();
 
   console.log('=== Name Wrapper Owner Fix Script ===');
-  console.log(`Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`);
+  console.log(
+    `Mode: ${DRY_RUN ? 'DRY RUN (no changes will be made)' : 'LIVE (database will be updated)'}\n`
+  );
 
   // Get count of names with Name Wrapper as owner
   const countResult = await pool.query(
@@ -106,11 +108,13 @@ async function fixNameWrapperOwners() {
       [NAME_WRAPPER_ADDRESS.toLowerCase(), BATCH_SIZE, offset]
     );
 
-    console.log(`Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`);
+    console.log(
+      `Processing batch: ${offset + 1} to ${offset + result.rows.length} of ${totalNames}`
+    );
 
     for (let i = 0; i < result.rows.length; i += GRAPH_BATCH_SIZE) {
       const subBatch = result.rows.slice(i, i + GRAPH_BATCH_SIZE);
-      const names = subBatch.map(row => row.name).filter(name => !name.startsWith('token-'));
+      const names = subBatch.map((row) => row.name).filter((name) => !name.startsWith('token-'));
 
       if (names.length === 0) {
         processed += subBatch.length;
@@ -144,7 +148,9 @@ async function fixNameWrapperOwners() {
           const correctOwner = domain.wrappedOwner?.id || domain.owner.id;
 
           if (correctOwner.toLowerCase() === NAME_WRAPPER_ADDRESS.toLowerCase()) {
-            console.log(`  [SKIP] ${name} - wrappedOwner is still Name Wrapper (likely expired wrapped name)`);
+            console.log(
+              `  [SKIP] ${name} - wrappedOwner is still Name Wrapper (likely expired wrapped name)`
+            );
             processed++;
             continue;
           }
@@ -178,7 +184,6 @@ async function fixNameWrapperOwners() {
 
           updated++;
           processed++;
-
         } catch (error: any) {
           errors++;
           console.error(`  [ERROR] ${name} - ${error.message}`);
@@ -186,11 +191,13 @@ async function fixNameWrapperOwners() {
         }
       }
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     offset += BATCH_SIZE;
-    console.log(`\nProgress: ${processed}/${totalNames} (${Math.round((processed/totalNames)*100)}%)`);
+    console.log(
+      `\nProgress: ${processed}/${totalNames} (${Math.round((processed / totalNames) * 100)}%)`
+    );
     console.log(`Updated: ${updated} | Errors: ${errors} | Not Found: ${notFound}\n`);
   }
 

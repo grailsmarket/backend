@@ -32,12 +32,15 @@ export class PriceFetcher {
       logger.info({ ethPrice }, 'Fetched ETH price from CoinGecko');
 
       // Store in database with timestamp of fetch
-      await this.pool.query(`
+      await this.pool.query(
+        `
         INSERT INTO price_feeds (token_symbol, quote_currency, price, source, timestamp)
         VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (token_symbol, quote_currency, timestamp) DO UPDATE
         SET price = EXCLUDED.price
-      `, ['ETH', 'USD', ethPrice, 'coingecko']);
+      `,
+        ['ETH', 'USD', ethPrice, 'coingecko']
+      );
 
       logger.info({ ethPrice, timestamp: new Date() }, '✅ Stored ETH price in database');
 
@@ -82,14 +85,17 @@ export class PriceFetcher {
    */
   async getEthPriceAtTime(timestamp: Date): Promise<number | null> {
     try {
-      const result = await this.pool.query(`
+      const result = await this.pool.query(
+        `
         SELECT price, timestamp FROM price_feeds
         WHERE token_symbol = 'ETH'
           AND quote_currency = 'USD'
           AND timestamp <= $1
         ORDER BY timestamp DESC
         LIMIT 1
-      `, [timestamp]);
+      `,
+        [timestamp]
+      );
 
       if (result.rows.length === 0) {
         logger.warn({ timestamp }, 'No historical ETH price found for timestamp');
@@ -100,7 +106,10 @@ export class PriceFetcher {
       const price = parseFloat(result.rows[0].price);
       const priceTimestamp = result.rows[0].timestamp;
 
-      logger.debug({ price, timestamp: priceTimestamp, requestedTimestamp: timestamp }, 'Retrieved historical ETH price');
+      logger.debug(
+        { price, timestamp: priceTimestamp, requestedTimestamp: timestamp },
+        'Retrieved historical ETH price'
+      );
 
       return price;
     } catch (error: any) {

@@ -136,7 +136,9 @@ export async function resolveNameDetails(
             expiryDate = new Date(parseInt(domain.registration.expiryDate) * 1000);
           }
 
-          const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : null;
+          const registrationDate = domain.registration?.registrationDate
+            ? new Date(parseInt(domain.registration.registrationDate) * 1000)
+            : null;
 
           // Insert name into database
           const upsertQuery = `

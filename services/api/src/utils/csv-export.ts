@@ -1,5 +1,5 @@
 import { stringify } from 'csv-stringify';
-import type { SearchResult, Listing } from './response-builder';
+import type { SearchResult } from './response-builder';
 import { Pool } from 'pg';
 
 export const MAX_EXPORT_ROWS = 10000;
@@ -34,10 +34,7 @@ interface ExportRow {
  * Fetch export data directly from PostgreSQL (lightweight, fast query)
  * Returns data in the same order as the input names array
  */
-export async function fetchExportData(
-  pool: Pool,
-  names: string[]
-): Promise<ExportRow[]> {
+export async function fetchExportData(pool: Pool, names: string[]): Promise<ExportRow[]> {
   if (names.length === 0) {
     return [];
   }
@@ -70,7 +67,10 @@ export async function fetchExportData(
     GROUP BY en.id
   `;
 
-  const result = await pool.query(query, names.map(n => n.toLowerCase()));
+  const result = await pool.query(
+    query,
+    names.map((n) => n.toLowerCase())
+  );
 
   // Create a map for ordering
   const dataMap = new Map<string, ExportRow>();
@@ -167,13 +167,19 @@ export async function resultsToCSV(results: SearchResult[]): Promise<string> {
 
     for (const result of results) {
       // Get lowest active listing price
-      const activeListings = result.listings?.filter(l => l.status === 'active') || [];
-      const lowestPrice = activeListings.length > 0
-        ? activeListings.reduce((min, l) => {
-            const price = BigInt(l.price || '0');
-            return price < min ? price : min;
-          }, BigInt(activeListings[0].price || '0')).toString()
-        : '';
+      const activeListings = result.listings?.filter((l) => l.status === 'active') || [];
+      const lowestPrice =
+        activeListings.length > 0
+          ? activeListings
+              .reduce(
+                (min, l) => {
+                  const price = BigInt(l.price || '0');
+                  return price < min ? price : min;
+                },
+                BigInt(activeListings[0].price || '0')
+              )
+              .toString()
+          : '';
 
       csvStringifier.write([
         result.id,

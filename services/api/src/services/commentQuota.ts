@@ -63,10 +63,7 @@ export async function getCommentConfig(): Promise<CommentConfig> {
   };
 }
 
-async function computeQuotaCap(
-  address: string,
-  config: CommentConfig
-): Promise<number> {
+async function computeQuotaCap(address: string, config: CommentConfig): Promise<number> {
   const pool = getPostgresPool();
   const lower = address.toLowerCase();
 
@@ -88,7 +85,7 @@ async function computeQuotaCap(
   // Sum ETH + WETH wei → ETH float for the formula. Failures here (RPC down,
   // unknown address) fall back to 0, which means the user still gets the
   // quota_floor — never a hard 0 just because RPC blipped.
-  let ethEquivalent = 0;
+  let ethEquivalent: number;
   try {
     const balances = await fetchBalances(address);
     const ethWei = BigInt(balances.eth.wei);
@@ -106,17 +103,11 @@ async function computeQuotaCap(
     listings * config.quota_listings_weight +
     ethEquivalent * config.quota_eth_weight;
 
-  const clamped = Math.max(
-    config.quota_floor,
-    Math.min(config.quota_cap, Math.floor(raw))
-  );
+  const clamped = Math.max(config.quota_floor, Math.min(config.quota_cap, Math.floor(raw)));
   return clamped;
 }
 
-export async function getQuotaCap(
-  address: string,
-  config: CommentConfig
-): Promise<number> {
+export async function getQuotaCap(address: string, config: CommentConfig): Promise<number> {
   const redis = getRedisClient();
   const key = `comments:quota:${address.toLowerCase()}`;
 
@@ -155,15 +146,9 @@ export async function getQuotaUsed(userId: number): Promise<number> {
   return result.rows[0]?.c ?? 0;
 }
 
-export async function getQuotaSnapshot(
-  userId: number,
-  address: string
-): Promise<QuotaSnapshot> {
+export async function getQuotaSnapshot(userId: number, address: string): Promise<QuotaSnapshot> {
   const config = await getCommentConfig();
-  const [max, used] = await Promise.all([
-    getQuotaCap(address, config),
-    getQuotaUsed(userId),
-  ]);
+  const [max, used] = await Promise.all([getQuotaCap(address, config), getQuotaUsed(userId)]);
 
   // Rolling 24h: "resets" is when the user's oldest in-window comment ages out
   // (or 24h from now if there are none). The frontend uses this to render a

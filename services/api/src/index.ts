@@ -64,9 +64,10 @@ async function start() {
         method: request.method,
         route: request.routeOptions?.url || request.url,
         path: request.url,
-        queryParams: (request.query && Object.keys(request.query as object).length > 0)
-          ? request.query as Record<string, unknown>
-          : null,
+        queryParams:
+          request.query && Object.keys(request.query as object).length > 0
+            ? (request.query as Record<string, unknown>)
+            : null,
       });
     }
     done();
@@ -75,7 +76,7 @@ async function start() {
   try {
     await fastify.listen({
       port: config.api.port,
-      host: config.api.host
+      host: config.api.host,
     });
     console.log(`Server listening on http://${config.api.host}:${config.api.port}`);
 

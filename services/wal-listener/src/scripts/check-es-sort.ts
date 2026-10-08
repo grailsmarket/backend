@@ -16,15 +16,13 @@ async function main() {
         bool: {
           must: [
             { term: { status: 'active' } },
-            { range: { expiry_date: { gt: 'now' } } }  // Not expired: use dynamic date check
-          ]
-        }
+            { range: { expiry_date: { gt: 'now' } } }, // Not expired: use dynamic date check
+          ],
+        },
       },
-      sort: [
-        { price: { order: sortOrder } }
-      ],
-      _source: ['name', 'price']
-    }
+      sort: [{ price: { order: sortOrder } }],
+      _source: ['name', 'price'],
+    },
   });
 
   console.log(`ES results sorted by price ${sortOrder.toUpperCase()}:\n`);
@@ -40,15 +38,18 @@ async function main() {
 
     // Price is already in ETH (scaled_float), no need to divide
     const priceEth = price ? parseFloat(price).toFixed(4) : 'N/A';
-    console.log(`${name.padEnd(25)} Price: ${priceEth.padStart(10)} ETH | Sort value: ${sortValue}`);
+    console.log(
+      `${name.padEnd(25)} Price: ${priceEth.padStart(10)} ETH | Sort value: ${sortValue}`
+    );
   }
 
   // Now let's manually check if the prices are sorted
   console.log('\n\nManual sort check (by actual price field):');
-  const sorted = sortOrder === 'asc'
-    ? [...results].sort((a, b) => parseFloat(a.price) - parseFloat(b.price))
-    : [...results].sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
-  
+  const sorted =
+    sortOrder === 'asc'
+      ? [...results].sort((a, b) => parseFloat(a.price) - parseFloat(b.price))
+      : [...results].sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+
   let correct = true;
   for (let i = 0; i < 10; i++) {
     const actual = results[i];
@@ -59,7 +60,9 @@ async function main() {
 
     if (match === '✗') correct = false;
 
-    console.log(`${match} Position ${i+1}: Got ${actual.name} (${actualEth} ETH), Expected ${expected.name} (${expectedEth} ETH)`);
+    console.log(
+      `${match} Position ${i + 1}: Got ${actual.name} (${actualEth} ETH), Expected ${expected.name} (${expectedEth} ETH)`
+    );
   }
 
   if (!correct) {

@@ -89,9 +89,9 @@ describe('Bulk Filters Search API', () => {
       }
     } catch (error: any) {
       if (error.message?.includes('fetch failed')) {
-        throw new Error(
-          'API server not running. Start with: cd services/api && npm run dev'
-        );
+        throw new Error('API server not running. Start with: cd services/api && npm run dev', {
+          cause: error,
+        });
       }
       throw error;
     }
@@ -202,7 +202,7 @@ describe('Bulk Filters Search API', () => {
 
       // All results should have active listings
       for (const result of data?.results || []) {
-        const hasActiveListing = result.listings?.some(l => l.status === 'active');
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing, `${result.name} should have active listing`).toBe(true);
       }
     });
@@ -215,7 +215,7 @@ describe('Bulk Filters Search API', () => {
 
       // All results should NOT have active listings
       for (const result of data?.results || []) {
-        const hasActiveListing = result.listings?.some(l => l.status === 'active');
+        const hasActiveListing = result.listings?.some((l) => l.status === 'active');
         expect(hasActiveListing, `${result.name} should not have active listing`).toBeFalsy();
       }
     });
@@ -233,10 +233,13 @@ describe('Bulk Filters Search API', () => {
       });
 
       for (const result of data?.results || []) {
-        const listing = result.listings?.find(l => l.status === 'active');
+        const listing = result.listings?.find((l) => l.status === 'active');
         if (listing?.price) {
           const price = BigInt(listing.price);
-          expect(price >= BigInt(minPrice), `${result.name}: price ${price} should be >= ${minPrice}`).toBe(true);
+          expect(
+            price >= BigInt(minPrice),
+            `${result.name}: price ${price} should be >= ${minPrice}`
+          ).toBe(true);
         }
       }
     });
@@ -252,10 +255,13 @@ describe('Bulk Filters Search API', () => {
       });
 
       for (const result of data?.results || []) {
-        const listing = result.listings?.find(l => l.status === 'active');
+        const listing = result.listings?.find((l) => l.status === 'active');
         if (listing?.price) {
           const price = BigInt(listing.price);
-          expect(price <= BigInt(maxPrice), `${result.name}: price ${price} should be <= ${maxPrice}`).toBe(true);
+          expect(
+            price <= BigInt(maxPrice),
+            `${result.name}: price ${price} should be <= ${maxPrice}`
+          ).toBe(true);
         }
       }
     });
@@ -271,7 +277,10 @@ describe('Bulk Filters Search API', () => {
 
       for (const result of data?.results || []) {
         const label = getLabel(result.name);
-        expect(label.length >= minLength, `${result.name}: length ${label.length} should be >= ${minLength}`).toBe(true);
+        expect(
+          label.length >= minLength,
+          `${result.name}: length ${label.length} should be >= ${minLength}`
+        ).toBe(true);
       }
     });
 
@@ -284,7 +293,10 @@ describe('Bulk Filters Search API', () => {
 
       for (const result of data?.results || []) {
         const label = getLabel(result.name);
-        expect(label.length <= maxLength, `${result.name}: length ${label.length} should be <= ${maxLength}`).toBe(true);
+        expect(
+          label.length <= maxLength,
+          `${result.name}: length ${label.length} should be <= ${maxLength}`
+        ).toBe(true);
       }
     });
   });
@@ -308,7 +320,9 @@ describe('Bulk Filters Search API', () => {
       });
 
       for (const result of data?.results || []) {
-        expect(result.clubs && result.clubs.length > 0, `${result.name} should have clubs`).toBe(true);
+        expect(result.clubs && result.clubs.length > 0, `${result.name} should have clubs`).toBe(
+          true
+        );
       }
     });
   });
@@ -369,7 +383,7 @@ describe('Bulk Filters Search API', () => {
         sortOrder: 'asc',
       });
 
-      const names = ascData?.results.map(r => r.name) || [];
+      const names = ascData?.results.map((r) => r.name) || [];
       const sortedNames = [...names].sort();
       expect(names).toEqual(sortedNames);
     });
@@ -381,7 +395,7 @@ describe('Bulk Filters Search API', () => {
         sortOrder: 'desc',
       });
 
-      const names = descData?.results.map(r => r.name) || [];
+      const names = descData?.results.map((r) => r.name) || [];
       const sortedNames = [...names].sort().reverse();
       expect(names).toEqual(sortedNames);
     });
@@ -398,7 +412,10 @@ describe('Bulk Filters Search API', () => {
         const prev = results[i - 1].expiry_date;
         const curr = results[i].expiry_date;
         if (prev && curr) {
-          expect(new Date(prev) <= new Date(curr), `${results[i - 1].name} should expire before ${results[i].name}`).toBe(true);
+          expect(
+            new Date(prev) <= new Date(curr),
+            `${results[i - 1].name} should expire before ${results[i].name}`
+          ).toBe(true);
         }
       }
     });
@@ -416,7 +433,10 @@ describe('Bulk Filters Search API', () => {
 
       for (const result of data?.results || []) {
         const label = getLabel(result.name);
-        expect(label.length >= 5 && label.length <= 10, `${result.name}: length ${label.length} should be between 5-10`).toBe(true);
+        expect(
+          label.length >= 5 && label.length <= 10,
+          `${result.name}: length ${label.length} should be between 5-10`
+        ).toBe(true);
       }
     });
 
@@ -433,7 +453,9 @@ describe('Bulk Filters Search API', () => {
       });
 
       // Filtered should have same or fewer results
-      expect((filtered?.stats.matchedTerms || 0) <= (unfiltered?.stats.matchedTerms || 0)).toBe(true);
+      expect((filtered?.stats.matchedTerms || 0) <= (unfiltered?.stats.matchedTerms || 0)).toBe(
+        true
+      );
     });
   });
 

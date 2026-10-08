@@ -18,8 +18,6 @@
  */
 
 import { getPostgresPool, closeAllConnections, config, hasEmoji } from '../../../shared/src';
-import { logger } from '../utils/logger';
-import { ethers } from 'ethers';
 
 const pool = getPostgresPool();
 
@@ -32,18 +30,6 @@ interface BackfillStats {
   metadataFetched: number;
   metadataFailed: number;
   duplicatesDeleted: number;
-}
-
-interface ENSMetadata {
-  avatar?: string;
-  description?: string;
-  url?: string;
-  twitter?: string;
-  github?: string;
-  email?: string;
-  discord?: string;
-  telegram?: string;
-  resolverAddress?: string;
 }
 
 /**
@@ -61,7 +47,7 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
 
   try {
     // Convert all token IDs to labelhashes with proper padding
-    const labelhashes = tokenIds.map(id => {
+    const labelhashes = tokenIds.map((id) => {
       const hexString = BigInt(id).toString(16).padStart(64, '0');
       return '0x' + hexString;
     });
@@ -90,9 +76,9 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
       headers,
       body: JSON.stringify({
         query,
-        variables: { labelhashes }
+        variables: { labelhashes },
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -106,7 +92,7 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
       return results;
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     if (data.errors) {
       console.log(`    ⚠️  Graph query errors: ${JSON.stringify(data.errors)}`);
@@ -142,7 +128,6 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
     }
 
     return results;
-
   } catch (error: any) {
     clearTimeout(timeoutId);
     console.log(`    ⚠️  Failed to resolve batch: ${error.message}`);
@@ -154,83 +139,12 @@ async function resolveTokenIdsBatch(tokenIds: string[]): Promise<Map<string, str
   }
 }
 
-/**
- * Fetch metadata for multiple names using Enstate bulk API
- * Chunks requests to avoid OOM on large batches
- */
-async function fetchMetadataBatch(
-  names: string[],
-  timeoutMs: number = 10000,
-  chunkSize: number = 10  // Reduced to 10 to minimize memory usage
-): Promise<Map<string, ENSMetadata | null>> {
-  const results = new Map<string, ENSMetadata | null>();
-
-  if (names.length === 0) {
-    return results;
-  }
-
-  // Process in chunks to avoid large JSON responses causing OOM
-  for (let i = 0; i < names.length; i += chunkSize) {
-    const chunk = names.slice(i, i + chunkSize);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      // Build URL with query parameters
-      const params = new URLSearchParams();
-      chunk.forEach(name => {
-        params.append('queries[]', name);
-      });
-
-      const response = await fetch(
-        `https://enstate-prod-us-east-1.up.railway.app/bulk/u?${params.toString()}`,
-        { signal: controller.signal }
-      );
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        console.log(`    ⚠️  Bulk metadata fetch failed: ${response.status}`);
-        continue;
-      }
-
-      const data: any = await response.json();
-
-      // Process each response entry
-      if (data.response && Array.isArray(data.response)) {
-        for (const entry of data.response) {
-          if (entry.type === 'success' && entry.name) {
-            const metadata: ENSMetadata = {};
-
-            // Map Enstate bulk response to our metadata format
-            if (entry.avatar) metadata.avatar = entry.avatar;
-            if (entry.records?.description) metadata.description = entry.records.description;
-            if (entry.records?.url) metadata.url = entry.records.url;
-            if (entry.records?.['com.twitter']) metadata.twitter = entry.records['com.twitter'];
-            if (entry.records?.['com.github']) metadata.github = entry.records['com.github'];
-            if (entry.records?.email) metadata.email = entry.records.email;
-            if (entry.records?.['com.discord']) metadata.discord = entry.records['com.discord'];
-            if (entry.records?.['org.telegram']) metadata.telegram = entry.records['org.telegram'];
-
-            results.set(entry.name, metadata);
-          }
-        }
-      }
-
-      // Small delay between metadata chunks
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      console.log(`    ⚠️  Bulk metadata fetch error: ${error.message}`);
-    }
-  }
-
-  return results;
-}
-
-async function backfillENSNames(batchSize: number = 100, maxLimit?: number, delayMs: number = 1000, skipMetadata: boolean = false) {
+async function backfillENSNames(
+  batchSize: number = 100,
+  maxLimit?: number,
+  delayMs: number = 1000,
+  skipMetadata: boolean = false
+) {
   const stats: BackfillStats = {
     total: 0,
     processed: 0,
@@ -241,8 +155,6 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
     metadataFailed: 0,
     duplicatesDeleted: 0,
   };
-
-
 
   try {
     // Get total count of placeholder names (both standard token-% and nonstandard #%)
@@ -273,17 +185,20 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
       // Fetch a batch of placeholder names using cursor-based pagination (safer than OFFSET)
       // This prevents pagination issues when records are deleted during processing
-      const currentBatchSize = maxLimit ? Math.min(batchSize, maxLimit - stats.processed) : batchSize;
+      const currentBatchSize = maxLimit
+        ? Math.min(batchSize, maxLimit - stats.processed)
+        : batchSize;
 
-      const batchResult: any = lastProcessedId === null
-        ? await pool.query(`
+      const batchResult: any =
+        lastProcessedId === null
+          ? await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
             WHERE name LIKE 'token-%' OR name LIKE '#%'
             ORDER BY id DESC
             LIMIT ${currentBatchSize}
           `)
-        : await pool.query(`
+          : await pool.query(`
             SELECT id, token_id, name
             FROM ens_names
             WHERE (name LIKE 'token-%' OR name LIKE '#%') AND id < ${lastProcessedId}
@@ -331,10 +246,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
                 if (existingName.rows.length > 0) {
                   // Delete duplicate placeholder
-                  await client.query(
-                    'DELETE FROM ens_names WHERE id = $1',
-                    [row.id]
-                  );
+                  await client.query('DELETE FROM ens_names WHERE id = $1', [row.id]);
                   stats.duplicatesDeleted++;
                 } else {
                   // Update the placeholder name
@@ -344,7 +256,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
                   );
                   stats.resolved++;
                 }
-              } catch (error: any) {
+              } catch {
                 stats.failed++;
               }
             } else {
@@ -364,7 +276,6 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
         // Clear the Maps explicitly
         resolvedNames.clear();
-
       } catch (error: any) {
         console.error(`  ✗ Batch failed: ${error.message}`);
         stats.failed += batch.length;
@@ -372,7 +283,9 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
       }
 
       // Progress update (simplified to reduce memory)
-      console.log(`Batch ${batchNumber}: ${stats.processed}/${limitToProcess} | Resolved: ${stats.resolved} | Skipped: ${stats.skipped} | Dupes: ${stats.duplicatesDeleted}`);
+      console.log(
+        `Batch ${batchNumber}: ${stats.processed}/${limitToProcess} | Resolved: ${stats.resolved} | Skipped: ${stats.skipped} | Dupes: ${stats.duplicatesDeleted}`
+      );
 
       // Clear batch array to help GC
       batch.length = 0;
@@ -384,7 +297,7 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 
       // Delay between batches
       if (stats.processed < limitToProcess) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
@@ -402,10 +315,9 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
     console.log('=========================\n');
 
     if (stats.resolved > 0) {
-      console.log('⚠️  Don\'t forget to resync Elasticsearch:');
+      console.log("⚠️  Don't forget to resync Elasticsearch:");
       console.log('   cd ../wal-listener && npm run resync\n');
     }
-
   } catch (error: any) {
     console.error('Error during backfill:', error);
     throw error;
@@ -415,10 +327,10 @@ async function backfillENSNames(batchSize: number = 100, maxLimit?: number, dela
 async function main() {
   const args = process.argv.slice(2);
 
-  let batchSize = 10;  // Very small batches to prevent OOM
+  let batchSize = 10; // Very small batches to prevent OOM
   let maxLimit: number | undefined;
-  let delayMs = 3000;  // Longer delay to allow GC between batches
-  let skipMetadata = true;  // Skip metadata by default due to memory issues
+  let delayMs = 3000; // Longer delay to allow GC between batches
+  let skipMetadata = true; // Skip metadata by default due to memory issues
 
   // Parse command line arguments
   for (let i = 0; i < args.length; i++) {

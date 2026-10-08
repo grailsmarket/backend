@@ -1,20 +1,5 @@
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  getContract,
-  parseUnits,
-  keccak256,
-  encodeAbiParameters,
-  parseAbiParameters
-} from 'viem';
-import { mainnet } from 'viem/chains';
+import { keccak256, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
-
-const publicClient = createPublicClient({
-  chain: mainnet,
-  transport: http(config.blockchain.rpcUrl),
-});
 
 interface CreateOrderParams {
   tokenId: string;
@@ -28,12 +13,15 @@ export async function createSeaportOrder(params: CreateOrderParams): Promise<Sea
   const { tokenId, price, currency, duration, offerer } = params;
 
   const startTime = Math.floor(Date.now() / 1000);
-  const endTime = startTime + (duration * 24 * 60 * 60);
+  const endTime = startTime + duration * 24 * 60 * 60;
 
-  const salt = keccak256(encodeAbiParameters(
-    parseAbiParameters('uint256, address, uint256'),
-    [BigInt(Date.now()), offerer as `0x${string}`, BigInt(tokenId)]
-  ));
+  const salt = keccak256(
+    encodeAbiParameters(parseAbiParameters('uint256, address, uint256'), [
+      BigInt(Date.now()),
+      offerer as `0x${string}`,
+      BigInt(tokenId),
+    ])
+  );
 
   const order: SeaportOrder = {
     offerer,
@@ -49,9 +37,10 @@ export async function createSeaportOrder(params: CreateOrderParams): Promise<Sea
     ],
     consideration: [
       {
-        itemType: currency === '0x0000000000000000000000000000000000000000'
-          ? ItemType.NATIVE
-          : ItemType.ERC20,
+        itemType:
+          currency === '0x0000000000000000000000000000000000000000'
+            ? ItemType.NATIVE
+            : ItemType.ERC20,
         token: currency,
         identifierOrCriteria: '0',
         startAmount: price,
@@ -90,7 +79,7 @@ export async function validateSeaportOrder(order: SeaportOrder): Promise<{
   }
 
   const currentTime = Math.floor(Date.now() / 1000);
-  if (order.startTime > currentTime + (365 * 24 * 60 * 60)) {
+  if (order.startTime > currentTime + 365 * 24 * 60 * 60) {
     errors.push('Start time too far in the future');
   }
 
@@ -98,7 +87,7 @@ export async function validateSeaportOrder(order: SeaportOrder): Promise<{
     errors.push('End time must be after start time');
   }
 
-  if (order.endTime > currentTime + (365 * 24 * 60 * 60)) {
+  if (order.endTime > currentTime + 365 * 24 * 60 * 60) {
     errors.push('End time too far in the future');
   }
 

@@ -23,7 +23,10 @@ export function calculateFee(priceWei: string, basisPoints: number): bigint {
   return (price * BigInt(basisPoints)) / BigInt(10000);
 }
 
-export function validateFeeInOrder(orderData: any, source: string): {
+export function validateFeeInOrder(
+  orderData: any,
+  source: string
+): {
   valid: boolean;
   error?: string;
 } {

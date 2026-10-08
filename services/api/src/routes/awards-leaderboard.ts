@@ -7,10 +7,20 @@ const PROGRAM_START = '2026-04-01T00:00:00Z';
 const SECONDS_PER_YEAR = 31556952; // Program-defined year length
 
 // Find the grails referrer code from the shared config
-const GRAILS_REFERRER = Object.entries(ENS_REFERRER_CODES).find(([, name]) => name === 'grails')![0];
+const GRAILS_REFERRER = Object.entries(ENS_REFERRER_CODES).find(
+  ([, name]) => name === 'grails'
+)![0];
 
 // Valid sort fields
-const VALID_SORT_FIELDS = ['points', 'registration_duration', 'renewal_duration', 'total_duration', 'total_eth_spend', 'base_cost_usd', 'base_cost_eth'] as const;
+const VALID_SORT_FIELDS = [
+  'points',
+  'registration_duration',
+  'renewal_duration',
+  'total_duration',
+  'total_eth_spend',
+  'base_cost_usd',
+  'base_cost_eth',
+] as const;
 
 export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -31,7 +41,9 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
       const offset = (pageNum - 1) * limitNum;
 
       // Sorting
-      const sortBy = VALID_SORT_FIELDS.includes(rawQuery.sortBy as typeof VALID_SORT_FIELDS[number])
+      const sortBy = VALID_SORT_FIELDS.includes(
+        rawQuery.sortBy as (typeof VALID_SORT_FIELDS)[number]
+      )
         ? rawQuery.sortBy
         : 'points';
       const sortOrder = rawQuery.sortOrder === 'asc' ? 'ASC' : 'DESC';
@@ -47,9 +59,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
       const sortColumn = sortColumnMap[sortBy!] || 'total_duration_seconds';
 
       // For points, break ties by total_duration
-      const tiebreaker = sortBy === 'points'
-        ? ', total_duration_seconds DESC'
-        : '';
+      const tiebreaker = sortBy === 'points' ? ', total_duration_seconds DESC' : '';
 
       const dataQuery = `
         WITH registration_rows AS (

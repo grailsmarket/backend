@@ -42,30 +42,30 @@ async function exploreCSV(filePath: string) {
   const fileStream = fs.createReadStream(filePath);
   const rl = readline.createInterface({
     input: fileStream,
-    crlfDelay: Infinity
+    crlfDelay: Infinity,
   });
 
   let headers: string[] = [];
   let rowCount = 0;
-  let sampleRows: string[][] = [];
+  const sampleRows: string[][] = [];
   const MAX_SAMPLES = 100;
   const columnStats: Map<string, ColumnStats> = new Map();
 
   for await (const line of rl) {
     if (rowCount === 0) {
       // Parse headers
-      headers = line.split(',').map(h => h.trim());
+      headers = line.split(',').map((h) => h.trim());
       console.log(`\nColumns found (${headers.length}):`);
       headers.forEach((h, i) => console.log(`  ${i + 1}. ${h}`));
 
       // Initialize column stats
-      headers.forEach(h => {
+      headers.forEach((h) => {
         columnStats.set(h, {
           name: h,
           nullCount: 0,
           emptyCount: 0,
           uniqueValues: new Set(),
-          sampleValues: []
+          sampleValues: [],
         });
       });
     } else {
@@ -128,16 +128,22 @@ async function exploreCSV(filePath: string) {
     'price',
     'currency_address',
     'tx_timestamp',
-    'created_at'
+    'created_at',
   ];
 
   for (const col of criticalColumns) {
     const stat = columnStats.get(col);
     if (stat) {
       console.log(`\n${col}:`);
-      console.log(`  Null values: ${stat.nullCount} (${((stat.nullCount / rowCount) * 100).toFixed(2)}%)`);
-      console.log(`  Empty values: ${stat.emptyCount} (${((stat.emptyCount / rowCount) * 100).toFixed(2)}%)`);
-      console.log(`  Unique values: ${stat.uniqueValues.size > 50 ? '50+' : stat.uniqueValues.size}`);
+      console.log(
+        `  Null values: ${stat.nullCount} (${((stat.nullCount / rowCount) * 100).toFixed(2)}%)`
+      );
+      console.log(
+        `  Empty values: ${stat.emptyCount} (${((stat.emptyCount / rowCount) * 100).toFixed(2)}%)`
+      );
+      console.log(
+        `  Unique values: ${stat.uniqueValues.size > 50 ? '50+' : stat.uniqueValues.size}`
+      );
 
       if (stat.uniqueValues.size <= 20) {
         console.log(`  Values: ${Array.from(stat.uniqueValues).slice(0, 20).join(', ')}`);
@@ -177,13 +183,17 @@ async function exploreCSV(filePath: string) {
     console.log(`\n✓ token_id analysis:`);
     console.log(`  Null: ${tokenIdStat.nullCount}, Empty: ${tokenIdStat.emptyCount}`);
     if (tokenIdStat.nullCount + tokenIdStat.emptyCount > 0) {
-      console.log(`  ⚠️  WARNING: ${tokenIdStat.nullCount + tokenIdStat.emptyCount} rows missing token_id`);
+      console.log(
+        `  ⚠️  WARNING: ${tokenIdStat.nullCount + tokenIdStat.emptyCount} rows missing token_id`
+      );
     }
   }
 
   const txHashStat = columnStats.get('tx_hash');
   if (txHashStat && txHashStat.nullCount + txHashStat.emptyCount > rowCount * 0.1) {
-    console.log(`\n⚠️  WARNING: ${((txHashStat.nullCount + txHashStat.emptyCount) / rowCount * 100).toFixed(1)}% of rows missing tx_hash`);
+    console.log(
+      `\n⚠️  WARNING: ${(((txHashStat.nullCount + txHashStat.emptyCount) / rowCount) * 100).toFixed(1)}% of rows missing tx_hash`
+    );
   }
 
   console.log(`\n✓ File analysis complete!`);
@@ -229,7 +239,7 @@ if (!csvPath) {
   process.exit(1);
 }
 
-exploreCSV(csvPath).catch(error => {
+exploreCSV(csvPath).catch((error) => {
   console.error('Error exploring CSV:', error);
   process.exit(1);
 });

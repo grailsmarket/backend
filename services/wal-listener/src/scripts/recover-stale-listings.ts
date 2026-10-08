@@ -24,7 +24,7 @@ const VERBOSE = process.argv.includes('--verbose');
 
 // Parse --limit argument
 let LIMIT = 0;
-const limitArg = process.argv.find(arg => arg.startsWith('--limit='));
+const limitArg = process.argv.find((arg) => arg.startsWith('--limit='));
 if (limitArg) {
   LIMIT = parseInt(limitArg.split('=')[1]);
 }
@@ -101,8 +101,8 @@ async function findOrderFulfilledBySeller(
         const consideration = args.consideration || [];
 
         // Find the ENS token in the offer
-        const ensItem = offer.find((item: any) =>
-          item.token?.toLowerCase() === ENS_REGISTRAR_ADDRESS.toLowerCase()
+        const ensItem = offer.find(
+          (item: any) => item.token?.toLowerCase() === ENS_REGISTRAR_ADDRESS.toLowerCase()
         );
 
         if (!ensItem) {
@@ -131,7 +131,10 @@ async function findOrderFulfilledBySeller(
     return null;
   } catch (error: any) {
     if (VERBOSE) {
-      console.error(`Error searching for OrderFulfilled for seller ${sellerAddress}:`, error.message);
+      console.error(
+        `Error searching for OrderFulfilled for seller ${sellerAddress}:`,
+        error.message
+      );
     }
     return null;
   }
@@ -177,7 +180,7 @@ async function findOrderFulfilledByHash(
 
       // Add small delay every 10 chunks to avoid rate limiting
       if (chunksSearched % 10 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
@@ -225,7 +228,7 @@ async function recoverStaleListings() {
   `;
 
   const result = await pool.query(query);
-  const staleListings: StaleListingRecord[] = result.rows.map(row => ({
+  const staleListings: StaleListingRecord[] = result.rows.map((row) => ({
     listingId: row.listing_id,
     ensNameId: row.ens_name_id,
     name: row.name,
@@ -247,8 +250,8 @@ async function recoverStaleListings() {
   }
 
   // Count how many have order_hash (can be searched on-chain)
-  const withOrderHash = staleListings.filter(l => l.orderHash).length;
-  const withoutOrderHash = staleListings.filter(l => !l.orderHash).length;
+  const withOrderHash = staleListings.filter((l) => l.orderHash).length;
+  const withoutOrderHash = staleListings.filter((l) => !l.orderHash).length;
   console.log(`  With order_hash (searchable on-chain): ${withOrderHash}`);
   console.log(`  Without order_hash: ${withoutOrderHash}\n`);
 
@@ -257,7 +260,7 @@ async function recoverStaleListings() {
   let salesCreated = 0;
   let linkedToExisting = 0;
   let markedUnfunded = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
   const startTime = Date.now();
 
@@ -291,11 +294,14 @@ async function recoverStaleListings() {
         }
 
         // Check for existing sale by ens_name_id + seller after listing creation
-        const recentSale = await pool.query(`
+        const recentSale = await pool.query(
+          `
           SELECT id, transaction_hash FROM sales
           WHERE ens_name_id = $1 AND seller_address = $2 AND sale_date >= $3
           ORDER BY sale_date DESC LIMIT 1
-        `, [listing.ensNameId, listing.sellerAddress, listing.createdAt]);
+        `,
+          [listing.ensNameId, listing.sellerAddress, listing.createdAt]
+        );
 
         if (recentSale.rows.length > 0) {
           const sale = recentSale.rows[0];
@@ -320,7 +326,9 @@ async function recoverStaleListings() {
         // Try to find the sale on-chain if we have an order_hash
         if (listing.orderHash) {
           if (VERBOSE) {
-            console.log(`[SEARCH] ${listing.name} - searching on-chain for order ${listing.orderHash}...`);
+            console.log(
+              `[SEARCH] ${listing.name} - searching on-chain for order ${listing.orderHash}...`
+            );
           }
 
           const onChainSale = await findOrderFulfilledByHash(
@@ -332,7 +340,9 @@ async function recoverStaleListings() {
           if (onChainSale) {
             // Found the sale on-chain! Create the sale record
             if (VERBOSE) {
-              console.log(`[FOUND] ${listing.name} - tx: ${onChainSale.transactionHash.slice(0, 10)}..., buyer: ${onChainSale.recipient.slice(0, 10)}..., price: ${onChainSale.price}`);
+              console.log(
+                `[FOUND] ${listing.name} - tx: ${onChainSale.transactionHash.slice(0, 10)}..., buyer: ${onChainSale.recipient.slice(0, 10)}..., price: ${onChainSale.price}`
+              );
             }
 
             if (!DRY_RUN) {
@@ -361,7 +371,9 @@ async function recoverStaleListings() {
                 // Could be duplicate - check if sale was created by trigger
                 if (saleError.message?.includes('duplicate') || saleError.code === '23505') {
                   if (VERBOSE) {
-                    console.log(`[DUPLICATE] ${listing.name} - sale already exists (likely from trigger)`);
+                    console.log(
+                      `[DUPLICATE] ${listing.name} - sale already exists (likely from trigger)`
+                    );
                   }
                 } else {
                   throw saleError;
@@ -382,7 +394,6 @@ async function recoverStaleListings() {
         }
         markedUnfunded++;
         processed++;
-
       } catch (error: any) {
         console.error(`[ERROR] ${listing.name}:`, error.message);
         errors++;
@@ -397,9 +408,9 @@ async function recoverStaleListings() {
 
     console.log(
       `Progress: ${processed}/${staleListings.length} | ` +
-      `Sales: ${salesCreated} | Linked: ${linkedToExisting} | ` +
-      `Unfunded: ${markedUnfunded} | Skip: ${skipped} | Err: ${errors} | ` +
-      `ETA: ${Math.round(eta)}s`
+        `Sales: ${salesCreated} | Linked: ${linkedToExisting} | ` +
+        `Unfunded: ${markedUnfunded} | Skip: ${skipped} | Err: ${errors} | ` +
+        `ETA: ${Math.round(eta)}s`
     );
   }
 

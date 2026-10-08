@@ -31,7 +31,9 @@ const RECLAIM_SUBGRAPH_ID = '8zhr2kf1ka6B4sLmuhEzo8gQ7FTjay6DXQrefmRtNb8W';
 
 // Etherscan fallback constants
 // Computed at startup via verifyTopic0(), but hardcoded for Etherscan fallback
-const HASH_REGISTERED_TOPIC0 = keccak256(toBytes('HashRegistered(bytes32,address,uint256,uint256)'));
+const HASH_REGISTERED_TOPIC0 = keccak256(
+  toBytes('HashRegistered(bytes32,address,uint256,uint256)')
+);
 const FROM_BLOCK = 3648534;
 const TO_BLOCK = 9380471;
 
@@ -61,10 +63,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-
-async function querySubgraphForDeeds(
-  addresses: string[],
-): Promise<Map<string, SubgraphDeed[]>> {
+async function querySubgraphForDeeds(addresses: string[]): Promise<Map<string, SubgraphDeed[]>> {
   const apiKey = config.theGraph.apiKey;
   if (!apiKey) {
     throw new Error('THE_GRAPH_API_KEY not configured');
@@ -137,7 +136,7 @@ async function queryEtherscanForDeeds(address: string): Promise<string[]> {
 
 async function getDeedAddressFromRegistrar(
   client: ReturnType<typeof createPublicClient>,
-  nameHash: string,
+  nameHash: string
 ): Promise<string | null> {
   try {
     const result = await client.readContract({
@@ -148,10 +147,7 @@ async function getDeedAddressFromRegistrar(
     });
     // result: [mode, deedAddress, registrationDate, value, highestBid]
     const deedAddress = (result as unknown as any[])[1] as string;
-    if (
-      deedAddress &&
-      deedAddress !== '0x0000000000000000000000000000000000000000'
-    ) {
+    if (deedAddress && deedAddress !== '0x0000000000000000000000000000000000000000') {
       return deedAddress;
     }
     return null;
@@ -214,12 +210,10 @@ async function checkUnclaimedDeposits(options: {
       const batchNum = Math.floor(i / batchSize) + 1;
       const totalBatches = Math.ceil(addresses.length / batchSize);
 
-      console.log(
-        `Processing batch ${batchNum}/${totalBatches} (${batch.length} addresses)...`,
-      );
+      console.log(`Processing batch ${batchNum}/${totalBatches} (${batch.length} addresses)...`);
 
       // Map of address -> deed addresses to verify
-      let addressDeedMap = new Map<string, string[]>();
+      const addressDeedMap = new Map<string, string[]>();
 
       if (!useEtherscanFallback) {
         // Try subgraph first
@@ -229,13 +223,13 @@ async function checkUnclaimedDeposits(options: {
           for (const [addr, deeds] of subgraphResults.entries()) {
             addressDeedMap.set(
               addr,
-              deeds.map((d) => d.id),
+              deeds.map((d) => d.id)
             );
           }
 
           if (verbose) {
             console.log(
-              `  Subgraph returned deeds for ${subgraphResults.size}/${batch.length} addresses`,
+              `  Subgraph returned deeds for ${subgraphResults.size}/${batch.length} addresses`
             );
           }
         } catch (error: any) {
@@ -253,10 +247,7 @@ async function checkUnclaimedDeposits(options: {
             if (nameHashes.length > 0) {
               const deedAddresses: string[] = [];
               for (const nameHash of nameHashes) {
-                const deedAddr = await getDeedAddressFromRegistrar(
-                  client,
-                  nameHash,
-                );
+                const deedAddr = await getDeedAddressFromRegistrar(client, nameHash);
                 if (deedAddr) {
                   deedAddresses.push(deedAddr);
                 }
@@ -267,7 +258,7 @@ async function checkUnclaimedDeposits(options: {
               }
             }
             await sleep(200); // Rate limit Etherscan
-          } catch (error: any) {
+          } catch {
             // Retry up to 3 times with exponential backoff
             let retried = false;
             for (let attempt = 1; attempt <= 3; attempt++) {
@@ -277,10 +268,7 @@ async function checkUnclaimedDeposits(options: {
                 if (nameHashes.length > 0) {
                   const deedAddresses: string[] = [];
                   for (const nameHash of nameHashes) {
-                    const deedAddr = await getDeedAddressFromRegistrar(
-                      client,
-                      nameHash,
-                    );
+                    const deedAddr = await getDeedAddressFromRegistrar(client, nameHash);
                     if (deedAddr) {
                       deedAddresses.push(deedAddr);
                     }
@@ -297,9 +285,7 @@ async function checkUnclaimedDeposits(options: {
               }
             }
             if (!retried) {
-              console.warn(
-                `  Failed to query Etherscan for ${addr} after 3 retries`,
-              );
+              console.warn(`  Failed to query Etherscan for ${addr} after 3 retries`);
             }
           }
         }
@@ -334,9 +320,7 @@ async function checkUnclaimedDeposits(options: {
             }
           } catch (error: any) {
             if (verbose) {
-              console.warn(
-                `  Error checking balance for deed ${deedAddr}: ${error.message}`,
-              );
+              console.warn(`  Error checking balance for deed ${deedAddr}: ${error.message}`);
             }
             // Retry once after delay
             await sleep(5000);
@@ -352,19 +336,14 @@ async function checkUnclaimedDeposits(options: {
                 });
               }
             } catch {
-              console.warn(
-                `  Failed to check balance for deed ${deedAddr} (skipping)`,
-              );
+              console.warn(`  Failed to check balance for deed ${deedAddr} (skipping)`);
             }
           }
           await sleep(50); // Small delay between RPC calls
         }
 
         if (unclaimed.length > 0) {
-          const userTotalWei = unclaimed.reduce(
-            (sum, d) => sum + d.balanceWei,
-            0n,
-          );
+          const userTotalWei = unclaimed.reduce((sum, d) => sum + d.balanceWei, 0n);
           const userResult: UserResult = {
             address: addr,
             deeds: unclaimed,
@@ -377,12 +356,10 @@ async function checkUnclaimedDeposits(options: {
           totalUnclaimedWei += userTotalWei;
 
           console.log(
-            `  ${addr}: ${unclaimed.length} unclaimed deed(s), ${formatEther(userTotalWei)} ETH`,
+            `  ${addr}: ${unclaimed.length} unclaimed deed(s), ${formatEther(userTotalWei)} ETH`
           );
         } else if (verbose) {
-          console.log(
-            `  ${addr}: ${deedAddresses.length} deed(s) found but all claimed`,
-          );
+          console.log(`  ${addr}: ${deedAddresses.length} deed(s) found but all claimed`);
         }
       }
 
@@ -401,18 +378,11 @@ async function checkUnclaimedDeposits(options: {
     console.log(`Total unclaimed ETH: ${totalUnclaimedEth} ETH\n`);
 
     if (results.length > 0) {
-      console.log(
-        'Address                                    | Deeds | Unclaimed ETH',
-      );
-      console.log(
-        '-------------------------------------------|-------|-------------',
-      );
-      for (const r of results.sort(
-        (a, b) =>
-          Number(b.totalUnclaimedWei - a.totalUnclaimedWei),
-      )) {
+      console.log('Address                                    | Deeds | Unclaimed ETH');
+      console.log('-------------------------------------------|-------|-------------');
+      for (const r of results.sort((a, b) => Number(b.totalUnclaimedWei - a.totalUnclaimedWei))) {
         console.log(
-          `${r.address.padEnd(42)} | ${String(r.deeds.length).padStart(5)} | ${r.totalUnclaimedEth}`,
+          `${r.address.padEnd(42)} | ${String(r.deeds.length).padStart(5)} | ${r.totalUnclaimedEth}`
         );
       }
       console.log('');

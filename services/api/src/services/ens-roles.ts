@@ -7,7 +7,10 @@ const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 // In-memory cache with TTL (5 minutes)
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const rolesCache = new Map<string, { data: EnsRoles; timestamp: number }>();
-const manageableNamesCache = new Map<string, { allNames: ManageableNameSummary[]; total: number; timestamp: number }>();
+const manageableNamesCache = new Map<
+  string,
+  { allNames: ManageableNameSummary[]; total: number; timestamp: number }
+>();
 
 /**
  * ENS Name Wrapper fuse flags
@@ -138,10 +141,10 @@ async function querySubgraph<T>(query: string, variables: Record<string, unknown
     throw new Error(`Subgraph request failed: ${response.status} ${response.statusText}`);
   }
 
-  const json = await response.json() as GraphResponse;
+  const json = (await response.json()) as GraphResponse;
 
   if (json.errors) {
-    throw new Error(`Subgraph query error: ${json.errors.map(e => e.message).join(', ')}`);
+    throw new Error(`Subgraph query error: ${json.errors.map((e) => e.message).join(', ')}`);
   }
 
   return json as T;
@@ -195,7 +198,8 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
   // 1. The registrant is the NameWrapper contract (for 2LDs like name.eth), OR
   // 2. wrappedDomain exists (for subnames like sub.name.eth), OR
   // 3. domain.owner is NameWrapper AND wrappedOwner exists
-  const registrant = domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
+  const registrant =
+    domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
   const domainOwner = domain.owner?.id?.toLowerCase();
   const hasWrappedDomain = domain.wrappedDomain !== null;
   const hasWrappedOwner = domain.wrappedOwner !== null;
@@ -206,12 +210,15 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
     (domainOwner === NAME_WRAPPER_ADDRESS && hasWrappedOwner);
 
   // Determine owner and manager based on wrapped state
-  let owner: string | null = null;
-  let manager: string | null = null;
+  let owner: string | null;
+  let manager: string | null;
 
   if (isWrapped) {
     // For wrapped names: owner = wrappedOwner, manager = owner (same as wrappedOwner)
-    owner = domain.wrappedOwner?.id?.toLowerCase() || domain.wrappedDomain?.owner?.id?.toLowerCase() || null;
+    owner =
+      domain.wrappedOwner?.id?.toLowerCase() ||
+      domain.wrappedDomain?.owner?.id?.toLowerCase() ||
+      null;
     manager = owner; // For wrapped names, manager and owner are the same
   } else {
     // For unwrapped names: owner = registrant, manager = domain.owner

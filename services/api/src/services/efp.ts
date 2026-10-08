@@ -69,8 +69,7 @@ async function fetchFollowingPage(
   deadline: number
 ): Promise<EfpFollowingRecord[]> {
   const url =
-    `${config.efp.apiBaseUrl}/users/${address}/following` +
-    `?limit=${PAGE_LIMIT}&offset=${offset}`;
+    `${config.efp.apiBaseUrl}/users/${address}/following` + `?limit=${PAGE_LIMIT}&offset=${offset}`;
   try {
     const response = await fetch(url, {
       headers: { Accept: 'application/json' },

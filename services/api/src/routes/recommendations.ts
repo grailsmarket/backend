@@ -26,10 +26,9 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     const userId = request.user ? parseInt(request.user.sub) : undefined;
 
     // First, get the ens_name_id for the target name
-    const nameResult = await pool.query(
-      'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
-      [query.name]
-    );
+    const nameResult = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [
+      query.name,
+    ]);
 
     if (nameResult.rows.length === 0) {
       return reply.status(404).send({
@@ -47,10 +46,10 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     const targetNameId = nameResult.rows[0].id;
 
     // Use the helper function to get also-viewed names
-    const result = await pool.query(
-      'SELECT * FROM get_collectors_also_viewed($1, $2)',
-      [targetNameId, query.limit]
-    );
+    const result = await pool.query('SELECT * FROM get_collectors_also_viewed($1, $2)', [
+      targetNameId,
+      query.limit,
+    ]);
 
     if (result.rows.length === 0) {
       return reply.send({
@@ -61,7 +60,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
             type: 'also-viewed',
             target_name: query.name,
             limit: query.limit,
-          }
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -71,19 +70,19 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     }
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add recommendation metrics
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         recommendation_metrics: {
           type: 'also-viewed',
           also_viewed_count: parseInt(metrics?.also_viewed_count || '0'),
           shared_viewers_count: metrics?.shared_viewers?.length || 0,
-        }
+        },
       };
     });
 
@@ -95,7 +94,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
           type: 'also-viewed',
           target_name: query.name,
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -116,10 +115,10 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     const userId = parseInt(request.user!.sub);
 
     // Use the helper function to get similar names
-    const result = await pool.query(
-      'SELECT * FROM get_similar_to_watchlist($1, $2)',
-      [userId, query.limit]
-    );
+    const result = await pool.query('SELECT * FROM get_similar_to_watchlist($1, $2)', [
+      userId,
+      query.limit,
+    ]);
 
     if (result.rows.length === 0) {
       return reply.send({
@@ -129,7 +128,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
           meta: {
             type: 'similar-to-watchlist',
             limit: query.limit,
-          }
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -139,19 +138,19 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     }
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add recommendation metrics
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         recommendation_metrics: {
           type: 'similar-to-watchlist',
           similarity_score: parseInt(metrics?.similarity_score || '0'),
           common_watchers: parseInt(metrics?.common_watchers || '0'),
-        }
+        },
       };
     });
 
@@ -162,7 +161,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
         meta: {
           type: 'similar-to-watchlist',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -183,10 +182,10 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     const userId = parseInt(request.user!.sub);
 
     // Use the helper function to get recommendations
-    const result = await pool.query(
-      'SELECT * FROM get_recommendations_by_votes($1, $2)',
-      [userId, query.limit]
-    );
+    const result = await pool.query('SELECT * FROM get_recommendations_by_votes($1, $2)', [
+      userId,
+      query.limit,
+    ]);
 
     if (result.rows.length === 0) {
       return reply.send({
@@ -196,7 +195,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
           meta: {
             type: 'based-on-votes',
             limit: query.limit,
-          }
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -206,19 +205,19 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     }
 
     // Enrich with full name data
-    const names = result.rows.map(row => row.name);
+    const names = result.rows.map((row) => row.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add recommendation metrics
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const metrics = result.rows.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const metrics = result.rows.find((r) => r.name === name.name);
       return {
         ...name,
         recommendation_metrics: {
           type: 'based-on-votes',
           recommendation_score: parseInt(metrics?.recommendation_score || '0'),
           similar_voters: parseInt(metrics?.similar_voters || '0'),
-        }
+        },
       };
     });
 
@@ -229,7 +228,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
         meta: {
           type: 'based-on-votes',
           limit: query.limit,
-        }
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),
@@ -259,16 +258,16 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     const combinedScores = new Map<number, { name: string; score: number }>();
 
     // Add watchlist recommendations (weight: 3x)
-    watchlistRecs.rows.forEach(row => {
+    watchlistRecs.rows.forEach((row) => {
       const score = parseInt(row.similarity_score) * 3;
       combinedScores.set(row.ens_name_id, {
         name: row.name,
-        score: score
+        score: score,
       });
     });
 
     // Add vote recommendations (weight: 2x)
-    voteRecs.rows.forEach(row => {
+    voteRecs.rows.forEach((row) => {
       const score = parseInt(row.recommendation_score) * 2;
       const existing = combinedScores.get(row.ens_name_id);
       if (existing) {
@@ -276,7 +275,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
       } else {
         combinedScores.set(row.ens_name_id, {
           name: row.name,
-          score: score
+          score: score,
         });
       }
     });
@@ -294,7 +293,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
           meta: {
             type: 'for-you',
             limit: query.limit,
-          }
+          },
         },
         meta: {
           timestamp: new Date().toISOString(),
@@ -304,18 +303,18 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
     }
 
     // Enrich with full name data
-    const names = sortedRecs.map(rec => rec.name);
+    const names = sortedRecs.map((rec) => rec.name);
     const enrichedResults = await buildSearchResults(names, userId);
 
     // Add recommendation metrics
-    const resultsWithMetrics = enrichedResults.map(name => {
-      const rec = sortedRecs.find(r => r.name === name.name);
+    const resultsWithMetrics = enrichedResults.map((name) => {
+      const rec = sortedRecs.find((r) => r.name === name.name);
       return {
         ...name,
         recommendation_metrics: {
           type: 'for-you',
           personalized_score: rec?.score || 0,
-        }
+        },
       };
     });
 
@@ -329,8 +328,8 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
           score_weights: {
             watchlist_similarity: 3,
             vote_similarity: 2,
-          }
-        }
+          },
+        },
       },
       meta: {
         timestamp: new Date().toISOString(),

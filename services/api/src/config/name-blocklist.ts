@@ -6,6 +6,4 @@
  * Example: 'somename.eth'
  * Matching is case-insensitive.
  */
-export const REGISTRATION_NAME_BLOCKLIST: string[] = [
-  'nigger.eth'
-];
+export const REGISTRATION_NAME_BLOCKLIST: string[] = ['nigger.eth'];

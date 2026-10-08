@@ -17,7 +17,7 @@
  *   npx tsx src/scripts/import-missing-club-names.ts --all
  */
 
-import { getPostgresPool, closeAllConnections, config } from '../../../shared/src';
+import { getPostgresPool, closeAllConnections } from '../../../shared/src';
 import { keccak256, toHex, namehash } from 'viem';
 
 const pool = getPostgresPool();
@@ -30,7 +30,7 @@ function generateNamesFromPattern(pattern: string): string[] {
   switch (pattern) {
     case '3-digits':
     case '3-digit':
-    case '1k':
+    case '1k': {
       // Generate 000.eth through 999.eth
       const threeDigitNames: string[] = [];
       for (let i = 0; i <= 999; i++) {
@@ -38,10 +38,11 @@ function generateNamesFromPattern(pattern: string): string[] {
         threeDigitNames.push(`${paddedNumber}.eth`);
       }
       return threeDigitNames;
+    }
 
     case '4-digits':
     case '4-digit':
-    case '10k':
+    case '10k': {
       // Generate 0000.eth through 9999.eth
       const fourDigitNames: string[] = [];
       for (let i = 0; i <= 9999; i++) {
@@ -49,6 +50,7 @@ function generateNamesFromPattern(pattern: string): string[] {
         fourDigitNames.push(`${paddedNumber}.eth`);
       }
       return fourDigitNames;
+    }
 
     default:
       throw new Error(`Unknown pattern: ${pattern}. Supported patterns: 3-digits, 4-digits`);
@@ -56,23 +58,19 @@ function generateNamesFromPattern(pattern: string): string[] {
 }
 
 async function getClubMembers(clubName: string): Promise<string[]> {
-  const result = await pool.query(
-    'SELECT ens_name FROM club_memberships WHERE club_name = $1',
-    [clubName]
-  );
-  return result.rows.map(row => row.ens_name);
+  const result = await pool.query('SELECT ens_name FROM club_memberships WHERE club_name = $1', [
+    clubName,
+  ]);
+  return result.rows.map((row) => row.ens_name);
 }
 
 async function getMissingNames(names: string[]): Promise<string[]> {
   if (names.length === 0) return [];
 
-  const result = await pool.query(
-    'SELECT name FROM ens_names WHERE name = ANY($1)',
-    [names]
-  );
+  const result = await pool.query('SELECT name FROM ens_names WHERE name = ANY($1)', [names]);
 
-  const existingNames = new Set(result.rows.map(row => row.name));
-  return names.filter(name => !existingNames.has(name));
+  const existingNames = new Set(result.rows.map((row) => row.name));
+  return names.filter((name) => !existingNames.has(name));
 }
 
 function calculateTokenId(ensName: string): string {
@@ -130,7 +128,7 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
       }),
     });
 
-    const result = await response.json() as GraphQLResponse;
+    const result = (await response.json()) as GraphQLResponse;
 
     if (result.errors) {
       console.log(`    Graph error for ${name}: ${JSON.stringify(result.errors)}`);
@@ -158,7 +156,7 @@ async function fetchOwnerFromGraph(name: string): Promise<string | null> {
   }
 }
 
-async function importMissingNames(names: string[], clubName?: string) {
+async function importMissingNames(names: string[], _clubName?: string) {
   console.log(`\nImporting ${names.length} missing ENS names...`);
   console.log('Fetching ownership data from The Graph ENS subgraph...\n');
 
@@ -178,7 +176,9 @@ async function importMissingNames(names: string[], clubName?: string) {
       // Fetch owner from The Graph (use normalized name)
       const ownerAddress = await fetchOwnerFromGraph(normalizedName);
 
-      console.log(`DEBUG: ${name} -> ${normalizedName} - ownerAddress = ${ownerAddress}, type = ${typeof ownerAddress}, truthy = ${!!ownerAddress}`);
+      console.log(
+        `DEBUG: ${name} -> ${normalizedName} - ownerAddress = ${ownerAddress}, type = ${typeof ownerAddress}, truthy = ${!!ownerAddress}`
+      );
 
       if (!ownerAddress) {
         console.log(`  ⊘ ${name} - Not registered (skipping)`);
@@ -198,7 +198,9 @@ async function importMissingNames(names: string[], clubName?: string) {
         if (existingCheck.rows.length > 0) {
           // Record exists with this token_id but wrong name - UPDATE it
           const existingName = existingCheck.rows[0].name;
-          console.log(`     Found existing record with name '${existingName}' - updating to '${normalizedName}'`);
+          console.log(
+            `     Found existing record with name '${existingName}' - updating to '${normalizedName}'`
+          );
 
           const result = await pool.query(
             `UPDATE ens_names SET
@@ -224,7 +226,9 @@ async function importMissingNames(names: string[], clubName?: string) {
 
           if (result.rowCount && result.rowCount > 0) {
             imported++;
-            console.log(`  ✓ ${name} - Updated from '${existingName}' to '${normalizedName}' - Owner: ${ownerAddress.slice(0, 8)}...`);
+            console.log(
+              `  ✓ ${name} - Updated from '${existingName}' to '${normalizedName}' - Owner: ${ownerAddress.slice(0, 8)}...`
+            );
           }
         } else {
           // No existing record - INSERT new one
@@ -258,13 +262,15 @@ async function importMissingNames(names: string[], clubName?: string) {
 
           if (result.rowCount && result.rowCount > 0) {
             imported++;
-            console.log(`  ✓ ${name} - Inserted as '${normalizedName}' - Owner: ${ownerAddress.slice(0, 8)}...`);
+            console.log(
+              `  ✓ ${name} - Inserted as '${normalizedName}' - Owner: ${ownerAddress.slice(0, 8)}...`
+            );
           }
         }
 
         // Add delay to avoid rate limiting The Graph
         if ((i + 1) % 5 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       } catch (insertError: any) {
         console.error(`     ✗ ERROR for ${name}: ${insertError.message}`);
@@ -327,10 +333,8 @@ async function main() {
       description = `club: ${clubName}`;
     } else if (args.includes('--all')) {
       // Get all club memberships
-      const result = await pool.query(
-        'SELECT DISTINCT ens_name FROM club_memberships'
-      );
-      namesToCheck = result.rows.map(row => row.ens_name);
+      const result = await pool.query('SELECT DISTINCT ens_name FROM club_memberships');
+      namesToCheck = result.rows.map((row) => row.ens_name);
       description = 'all clubs';
     } else {
       console.error('Usage:');
@@ -348,13 +352,19 @@ async function main() {
       console.log('\n✓ All names already exist in ens_names table. No import needed.');
     } else {
       console.log(`\nFound ${missingNames.length} missing names that need to be imported.`);
-      console.log('Missing names:', missingNames.slice(0, 10).join(', '), missingNames.length > 10 ? '...' : '');
+      console.log(
+        'Missing names:',
+        missingNames.slice(0, 10).join(', '),
+        missingNames.length > 10 ? '...' : ''
+      );
 
       await importMissingNames(missingNames);
 
       console.log('\n✓ Import complete!');
-      console.log('⚠️  Don\'t forget to:');
-      console.log('  1. Run club triggers to sync clubs array: UPDATE ens_names SET updated_at = NOW() WHERE name = ANY($1)');
+      console.log("⚠️  Don't forget to:");
+      console.log(
+        '  1. Run club triggers to sync clubs array: UPDATE ens_names SET updated_at = NOW() WHERE name = ANY($1)'
+      );
       console.log('  2. Resync to Elasticsearch: npx tsx src/scripts/resync-elasticsearch.ts');
     }
 

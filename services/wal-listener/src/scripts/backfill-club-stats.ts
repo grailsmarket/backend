@@ -83,7 +83,9 @@ async function main() {
     if (clubs.length > 0) {
       console.log('Top 10 clubs by member count:');
       clubs.slice(0, 10).forEach((club, index) => {
-        console.log(`  ${(index + 1).toString().padStart(2)}. ${club.name.padEnd(20)} - ${club.member_count} members`);
+        console.log(
+          `  ${(index + 1).toString().padStart(2)}. ${club.name.padEnd(20)} - ${club.member_count} members`
+        );
       });
       console.log();
     }
@@ -91,7 +93,6 @@ async function main() {
     console.log('Jobs have been queued for processing.');
     console.log('Monitor worker logs to track progress.');
     console.log('Statistics will be calculated asynchronously.\n');
-
   } catch (error) {
     console.error('\n✗ Backfill failed with error:', error);
     process.exit(1);

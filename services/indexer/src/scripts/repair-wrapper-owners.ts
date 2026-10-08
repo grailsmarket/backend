@@ -154,7 +154,7 @@ async function main() {
     }
 
     // Rate limit RPC calls
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
   }
 
   console.log();
@@ -171,7 +171,7 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Failed:', err);
   process.exit(1);
 });

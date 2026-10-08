@@ -129,7 +129,7 @@ ai_recommendations (
 ## Quick Start
 
 ### Prerequisites
-- Node.js 20+
+- Node.js 20.19+ or 22.13+
 - PostgreSQL 14+ with LISTEN/NOTIFY support
 - Elasticsearch 8.x
 - Ethereum RPC endpoint (Alchemy/Infura)
@@ -305,6 +305,13 @@ npm test
 
 # API tests
 cd services/api && npm run test
+```
+
+### Linting & Formatting
+```bash
+npm run lint          # ESLint (root eslint.config.mjs, flat config)
+npm run format        # Prettier (root .prettierrc.json)
+npm run format:check
 ```
 
 ### Deployment

@@ -1,5 +1,12 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize, isPlaceholderName } from '../../../shared/src';
+import {
+  config,
+  getPostgresPool,
+  createSale,
+  isEthOrWeth,
+  safeNormalize,
+  isPlaceholderName,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
@@ -14,13 +21,6 @@ interface PhoenixMessage {
   event: string;
   payload: any;
   ref: number;
-}
-
-interface OpenSeaEvent {
-  event_type: string;
-  payload: any;
-  sent_at: string;
-  event_timestamp: number;
 }
 
 export class OpenSeaStreamListener {
@@ -188,7 +188,11 @@ export class OpenSeaStreamListener {
           logger.error('Phoenix error:', message.payload);
         } else if (message.event === 'phx_close') {
           logger.warn('Phoenix channel closed:', message.topic);
-        } else if (typeof message.topic === 'string' && message.topic.startsWith('collection:') && message.event !== 'phx_reply') {
+        } else if (
+          typeof message.topic === 'string' &&
+          message.topic.startsWith('collection:') &&
+          message.event !== 'phx_reply'
+        ) {
           // Filter out high-volume events we don't act on, early, so they can't flood the
           // stream and block important events like transfers:
           //  - item_metadata_updated: bulk metadata refreshes
@@ -201,13 +205,16 @@ export class OpenSeaStreamListener {
 
           // This is an actual OpenSea event
           logger.info(`Received OpenSea event: ${message.event} for topic: ${message.topic}`);
-          this.handlePhoenixEvent(message).catch(err => {
-            logger.error({
-              event: message.event,
-              error: err?.message || String(err),
-              stack: err?.stack,
-              code: err?.code,
-            }, `Error handling OpenSea event ${message.event}`);
+          this.handlePhoenixEvent(message).catch((err) => {
+            logger.error(
+              {
+                event: message.event,
+                error: err?.message || String(err),
+                stack: err?.stack,
+                code: err?.code,
+              },
+              `Error handling OpenSea event ${message.event}`
+            );
           });
         } else {
           // Catch-all for unrecognized messages — including frames with no topic,
@@ -390,10 +397,10 @@ export class OpenSeaStreamListener {
       logger.info('Processing item_listed event:', {
         item: eventData.item?.nft_id,
         price: eventData.base_price,
-        maker: eventData.maker?.address
+        maker: eventData.maker?.address,
       });
 
-      const { item, base_price, payment_token, maker, listing_date, expiration_date, order_hash } = eventData;
+      const { item, base_price, payment_token, maker, expiration_date, order_hash } = eventData;
 
       if (!item?.nft_id || !maker?.address) {
         logger.error('Missing required fields in item_listed payload:', {
@@ -401,17 +408,20 @@ export class OpenSeaStreamListener {
           hasNftId: !!item?.nft_id,
           hasMaker: !!maker,
           hasMakerAddress: !!maker?.address,
-          actualPayload: JSON.stringify(eventData, null, 2).substring(0, 500)
+          actualPayload: JSON.stringify(eventData, null, 2).substring(0, 500),
         });
         return;
       }
 
       // Validate order_hash - required for proper upsert logic
       if (!order_hash) {
-        logger.error('Missing order_hash in item_listed payload - cannot process listing without it:', {
-          item: item?.nft_id,
-          maker: maker?.address,
-        });
+        logger.error(
+          'Missing order_hash in item_listed payload - cannot process listing without it:',
+          {
+            item: item?.nft_id,
+            maker: maker?.address,
+          }
+        );
         return;
       }
 
@@ -438,19 +448,19 @@ export class OpenSeaStreamListener {
         nameToStore = null;
       }
       let expiryDate: Date | null = null;
-      let resolvedOwner: string | null = null;
       let registrationDate: Date | null = null;
       let creationDate: Date | null = null;
       let textRecords: Record<string, string> = {};
       let correctTokenId = tokenId; // Default to OpenSea's token_id
-      let isNormalizedRegistration = true; // Assume normalized unless proven otherwise
 
       // Always resolve via The Graph to verify the registration
       const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
-          logger.warn(`Skipping listing for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}, Seller: ${maker.address}`);
+          logger.warn(
+            `Skipping listing for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}, Seller: ${maker.address}`
+          );
           // Skip this listing - it's trying to impersonate a legitimate name
           return;
         }
@@ -458,22 +468,31 @@ export class OpenSeaStreamListener {
         nameToStore = resolvedData.name;
         correctTokenId = resolvedData.correctTokenId;
         expiryDate = resolvedData.expiryDate;
-        resolvedOwner = resolvedData.ownerAddress;
         registrationDate = resolvedData.registrationDate;
         creationDate = resolvedData.creationDate;
         textRecords = resolvedData.textRecords;
-        isNormalizedRegistration = resolvedData.isNormalized;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
       } else if (!nameToStore || !nameToStore.endsWith('.eth')) {
         // Couldn't resolve and no valid name from metadata - use placeholder
         nameToStore = `token-${tokenId}`;
       }
 
-      logger.info(`Storing ENS name: ${nameToStore} for token ID: ${tokenId} (corrected: ${correctTokenId})`);
+      logger.info(
+        `Storing ENS name: ${nameToStore} for token ID: ${tokenId} (corrected: ${correctTokenId})`
+      );
 
       // Use maker address as the owner (they are listing their own item)
       const ownerAddress = maker.address.toLowerCase();
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords, creationDate);
+      const ensNameId = await this.upsertEnsName(
+        correctTokenId,
+        nameToStore,
+        ownerAddress,
+        false,
+        expiryDate,
+        registrationDate,
+        textRecords,
+        creationDate
+      );
 
       // Create or update listing
       // First, cancel any existing active OpenSea listings for this ENS name and seller
@@ -493,7 +512,7 @@ export class OpenSeaStreamListener {
       await this.pool.query(cancelExistingQuery, [
         ensNameId,
         maker.address.toLowerCase(),
-        order_hash
+        order_hash,
       ]);
 
       // Now insert the new listing (using order_hash + source as the unique constraint)
@@ -524,7 +543,9 @@ export class OpenSeaStreamListener {
         try {
           if (typeof expiration_date === 'number') {
             // Unix timestamp - multiply by 1000 if it's in seconds
-            expiresAt = new Date(expiration_date > 10000000000 ? expiration_date : expiration_date * 1000);
+            expiresAt = new Date(
+              expiration_date > 10000000000 ? expiration_date : expiration_date * 1000
+            );
           } else if (typeof expiration_date === 'string') {
             // ISO date string
             expiresAt = new Date(expiration_date);
@@ -534,7 +555,7 @@ export class OpenSeaStreamListener {
             logger.warn(`Invalid expiration date: ${expiration_date}`);
             expiresAt = null;
           }
-        } catch (err) {
+        } catch {
           logger.warn(`Failed to parse expiration date: ${expiration_date}`);
           expiresAt = null;
         }
@@ -583,20 +604,33 @@ export class OpenSeaStreamListener {
         const isExpired = expiryDate && new Date(expiryDate) < new Date();
 
         if (clubs.length > 0 && base_price && !isPlaceholder && !isSubname && !isExpired) {
-          const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
-            clubNames: clubs,
-            eventType: 'create',
-            listingPrice: base_price,
-          }, 'item_listed');
+          const published = await safePublishJob(
+            QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE,
+            {
+              clubNames: clubs,
+              eventType: 'create',
+              listingPrice: base_price,
+            },
+            'item_listed'
+          );
 
           if (published) {
-            logger.info({ ensNameId, clubs, listingPrice: base_price }, 'Published club floor price update (OpenSea listing)');
+            logger.info(
+              { ensNameId, clubs, listingPrice: base_price },
+              'Published club floor price update (OpenSea listing)'
+            );
           }
         } else if (clubs.length > 0 && (isPlaceholder || isSubname || isExpired)) {
-          logger.debug({ ensNameId, name, isPlaceholder, isSubname, isExpired }, 'Skipping floor price update for invalid name');
+          logger.debug(
+            { ensNameId, name, isPlaceholder, isSubname, isExpired },
+            'Skipping floor price update for invalid name'
+          );
         }
       } catch (queueError: any) {
-        logger.error({ error: queueError.message, ensNameId }, 'Failed to publish club floor price update');
+        logger.error(
+          { error: queueError.message, ensNameId },
+          'Failed to publish club floor price update'
+        );
       }
     } catch (error: any) {
       logger.error(`Failed to handle item_listed: ${error.message}`);
@@ -648,7 +682,9 @@ export class OpenSeaStreamListener {
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
-          logger.warn(`Skipping sale for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`);
+          logger.warn(
+            `Skipping sale for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`
+          );
           // Skip this sale - it's for a non-normalized name that shouldn't affect legitimate names
           return;
         }
@@ -666,7 +702,9 @@ export class OpenSeaStreamListener {
         nameToStore = `token-${tokenId}`;
       }
 
-      logger.info(`Processing sale for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`);
+      logger.info(
+        `Processing sale for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`
+      );
 
       // First ensure the ENS name exists
       const buyerAddress = taker?.address?.toLowerCase() || null;
@@ -676,28 +714,50 @@ export class OpenSeaStreamListener {
       let ownerAddress = buyerAddress || '0x0000000000000000000000000000000000000000';
 
       // If buyer is Name Wrapper, query the contract for the real owner
-      if (buyerAddress === NAME_WRAPPER_ADDRESS.toLowerCase() && nameToStore && nameToStore.endsWith('.eth') && !nameToStore.startsWith('token-')) {
+      if (
+        buyerAddress === NAME_WRAPPER_ADDRESS.toLowerCase() &&
+        nameToStore &&
+        nameToStore.endsWith('.eth') &&
+        !nameToStore.startsWith('token-')
+      ) {
         const wrappedOwner = await this.resolver.getWrappedNameOwner(nameToStore);
         if (wrappedOwner) {
           ownerAddress = wrappedOwner;
-          logger.info(`Sale to Name Wrapper for ${nameToStore}: got owner from contract: ${ownerAddress}`);
+          logger.info(
+            `Sale to Name Wrapper for ${nameToStore}: got owner from contract: ${ownerAddress}`
+          );
         } else if (resolvedOwner && resolvedOwner !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
           ownerAddress = resolvedOwner;
-          logger.info(`Sale to Name Wrapper for ${nameToStore}: using resolved owner: ${ownerAddress}`);
+          logger.info(
+            `Sale to Name Wrapper for ${nameToStore}: using resolved owner: ${ownerAddress}`
+          );
         } else {
           // Can't determine real owner - use seller as fallback (they still own it until wrapper processes)
           ownerAddress = sellerAddress || ownerAddress;
-          logger.warn(`Sale to Name Wrapper for ${nameToStore}: cannot determine real owner, using seller: ${ownerAddress}`);
+          logger.warn(
+            `Sale to Name Wrapper for ${nameToStore}: cannot determine real owner, using seller: ${ownerAddress}`
+          );
         }
       }
 
       // Final safety check: never store Name Wrapper as owner
       if (ownerAddress === NAME_WRAPPER_ADDRESS.toLowerCase()) {
-        logger.warn(`Refusing to store Name Wrapper as owner for ${nameToStore} sale, using seller`);
+        logger.warn(
+          `Refusing to store Name Wrapper as owner for ${nameToStore} sale, using seller`
+        );
         ownerAddress = sellerAddress || '0x0000000000000000000000000000000000000000';
       }
 
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
+      const ensNameId = await this.upsertEnsName(
+        correctTokenId,
+        nameToStore,
+        ownerAddress,
+        true,
+        expiryDate,
+        registrationDate,
+        textRecords,
+        creationDate
+      );
 
       // Identify the exact order that was fulfilled. The event's order_hash is authoritative —
       // it says which record (listing vs offer) was executed and therefore which marketplace
@@ -731,8 +791,11 @@ export class OpenSeaStreamListener {
 
       // A native-ETH payment can only be a direct listing purchase — Seaport offers are ERC20
       // (WETH), so an ETH-paid sale must never be attributed to an open offer from the buyer.
-      const paymentTokenAddress = (eventData.payment_token?.address || '0x0000000000000000000000000000000000000000').toLowerCase();
-      const isNativeEthPayment = paymentTokenAddress === '0x0000000000000000000000000000000000000000';
+      const paymentTokenAddress = (
+        eventData.payment_token?.address || '0x0000000000000000000000000000000000000000'
+      ).toLowerCase();
+      const isNativeEthPayment =
+        paymentTokenAddress === '0x0000000000000000000000000000000000000000';
 
       if (!listingId && !offerId) {
         // No order-hash match: fall back to heuristics.
@@ -747,10 +810,7 @@ export class OpenSeaStreamListener {
             LIMIT 1
           `;
 
-          const listingResult = await this.pool.query(findListingQuery, [
-            ensNameId,
-            sellerAddress,
-          ]);
+          const listingResult = await this.pool.query(findListingQuery, [ensNameId, sellerAddress]);
 
           if (listingResult.rows.length > 0) {
             listingId = listingResult.rows[0].id;
@@ -768,10 +828,7 @@ export class OpenSeaStreamListener {
             LIMIT 1
           `;
 
-          const offerResult = await this.pool.query(findOfferQuery, [
-            ensNameId,
-            buyerAddress,
-          ]);
+          const offerResult = await this.pool.query(findOfferQuery, [ensNameId, buyerAddress]);
 
           if (offerResult.rows.length > 0) {
             offerId = offerResult.rows[0].id;
@@ -785,8 +842,8 @@ export class OpenSeaStreamListener {
       // (ERC20 payment, no order-hash match), prefer the offer — WETH-denominated trades are
       // almost always offer acceptances.
       const saleSource = offerId
-        ? (offerSource || listingSource || 'opensea')
-        : (listingSource || offerSource || 'opensea');
+        ? offerSource || listingSource || 'opensea'
+        : listingSource || offerSource || 'opensea';
       const txHash = transaction?.hash || `opensea_${Date.now()}`;
       let saleAlreadyExists = false;
 
@@ -805,7 +862,9 @@ export class OpenSeaStreamListener {
           ]);
           if (existingSaleResult.rows.length > 0) {
             saleAlreadyExists = true;
-            logger.info(`Sale already exists for order_hash ${eventData.order_hash} or tx ${txHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation in OpenSea stream`);
+            logger.info(
+              `Sale already exists for order_hash ${eventData.order_hash} or tx ${txHash} (source: ${existingSaleResult.rows[0].source}), skipping sale creation in OpenSea stream`
+            );
           }
         } catch (error: any) {
           logger.error(`Failed to check existing sale: ${error.message}`);
@@ -842,12 +901,17 @@ export class OpenSeaStreamListener {
 
           // Publish club sales stats job if sale has clubs and currency is ETH or WETH
           if (sale?.clubs && Array.isArray(sale.clubs) && sale.clubs.length > 0) {
-            const currencyAddress = eventData.payment_token?.address || '0x0000000000000000000000000000000000000000';
+            const currencyAddress =
+              eventData.payment_token?.address || '0x0000000000000000000000000000000000000000';
             if (isEthOrWeth(currencyAddress)) {
-              const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_SALES_STATS, {
-                clubNames: sale.clubs,
-                salePriceWei: sale_price || '0',
-              }, 'item_sold');
+              const published = await safePublishJob(
+                QUEUE_NAMES.UPDATE_CLUB_SALES_STATS,
+                {
+                  clubNames: sale.clubs,
+                  salePriceWei: sale_price || '0',
+                },
+                'item_sold'
+              );
 
               if (published) {
                 logger.info(`Published club sales stats job for clubs: ${sale.clubs.join(', ')}`);
@@ -885,10 +949,15 @@ export class OpenSeaStreamListener {
         RETURNING id, source
       `;
 
-      const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [ensNameId, orderHash]);
+      const cancelledListings = await this.pool.query(cancelOtherListingsQuery, [
+        ensNameId,
+        orderHash,
+      ]);
 
       if (cancelledListings.rows.length > 0) {
-        logger.info(`Cancelled ${cancelledListings.rows.length} other active listings for ENS after OpenSea sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`);
+        logger.info(
+          `Cancelled ${cancelledListings.rows.length} other active listings for ENS after OpenSea sale (sources: ${cancelledListings.rows.map((r: any) => r.source).join(', ')})`
+        );
       }
 
       // Record transaction
@@ -923,24 +992,33 @@ export class OpenSeaStreamListener {
 
       // Recalculate club floor price since a listing was sold
       try {
-        const clubsResult = await this.pool.query(
-          'SELECT clubs FROM ens_names WHERE id = $1',
-          [ensNameId]
-        );
+        const clubsResult = await this.pool.query('SELECT clubs FROM ens_names WHERE id = $1', [
+          ensNameId,
+        ]);
         const clubs = clubsResult.rows[0]?.clubs || [];
 
         if (clubs.length > 0) {
-          const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
-            clubNames: clubs,
-            eventType: 'delete', // Triggers full recalculation since listing is no longer active
-          }, 'item_sold');
+          const published = await safePublishJob(
+            QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE,
+            {
+              clubNames: clubs,
+              eventType: 'delete', // Triggers full recalculation since listing is no longer active
+            },
+            'item_sold'
+          );
 
           if (published) {
-            logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea sale)');
+            logger.info(
+              { ensNameId, clubs },
+              'Published club floor price recalculation (OpenSea sale)'
+            );
           }
         }
       } catch (queueError: any) {
-        logger.error({ error: queueError.message, ensNameId }, 'Failed to publish club floor price recalculation');
+        logger.error(
+          { error: queueError.message, ensNameId },
+          'Failed to publish club floor price recalculation'
+        );
       }
     } catch (error: any) {
       logger.error(`Failed to handle item_sold: ${error.message}`);
@@ -956,7 +1034,7 @@ export class OpenSeaStreamListener {
       // The payload might be nested
       const eventData = payload.payload || payload;
 
-      const { item, from_account, to_account, transaction } = eventData;
+      const { item, from_account, to_account } = eventData;
       // Check if required fields exist
       if (!item?.nft_id) {
         logger.warn('Missing item.nft_id in transfer event, skipping');
@@ -988,7 +1066,9 @@ export class OpenSeaStreamListener {
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
-          logger.warn(`Skipping transfer for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`);
+          logger.warn(
+            `Skipping transfer for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`
+          );
           // Skip this transfer - it's for a non-normalized name that shouldn't affect legitimate names
           return;
         }
@@ -1005,29 +1085,43 @@ export class OpenSeaStreamListener {
         nameToStore = `token-${tokenId}`;
       }
 
-      logger.info(`Processing transfer for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`);
+      logger.info(
+        `Processing transfer for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`
+      );
 
       // Determine the correct owner to store
       const fromAddress = from_account?.address?.toLowerCase() || '';
-      const isNameWrapperInvolved = newOwner === NAME_WRAPPER_ADDRESS.toLowerCase() ||
-                                     fromAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
+      const isNameWrapperInvolved =
+        newOwner === NAME_WRAPPER_ADDRESS.toLowerCase() ||
+        fromAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
       let ownerAddress = newOwner;
 
       // If Name Wrapper is involved, query the contract directly for the real owner
-      if (isNameWrapperInvolved && nameToStore && nameToStore.endsWith('.eth') && !nameToStore.startsWith('token-')) {
+      if (
+        isNameWrapperInvolved &&
+        nameToStore &&
+        nameToStore.endsWith('.eth') &&
+        !nameToStore.startsWith('token-')
+      ) {
         const wrappedOwner = await this.resolver.getWrappedNameOwner(nameToStore);
         if (wrappedOwner) {
           ownerAddress = wrappedOwner;
-          logger.info(`Name Wrapper transfer for ${nameToStore}: got owner from contract: ${ownerAddress}`);
+          logger.info(
+            `Name Wrapper transfer for ${nameToStore}: got owner from contract: ${ownerAddress}`
+          );
         } else if (newOwner === NAME_WRAPPER_ADDRESS.toLowerCase()) {
           // Wrapping but can't get wrapped owner - use resolved owner from The Graph if available
           if (resolvedOwner && resolvedOwner !== NAME_WRAPPER_ADDRESS.toLowerCase()) {
             ownerAddress = resolvedOwner;
-            logger.info(`Name Wrapper transfer for ${nameToStore}: using resolved owner: ${ownerAddress}`);
+            logger.info(
+              `Name Wrapper transfer for ${nameToStore}: using resolved owner: ${ownerAddress}`
+            );
           } else {
             // Can't determine real owner - skip this transfer to avoid storing Name Wrapper as owner
-            logger.warn(`Name Wrapper transfer for ${nameToStore}: cannot determine real owner, skipping`);
+            logger.warn(
+              `Name Wrapper transfer for ${nameToStore}: cannot determine real owner, skipping`
+            );
             return;
           }
         }
@@ -1040,7 +1134,15 @@ export class OpenSeaStreamListener {
         return;
       }
 
-      await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords);
+      await this.upsertEnsName(
+        correctTokenId,
+        nameToStore,
+        ownerAddress,
+        true,
+        expiryDate,
+        registrationDate,
+        textRecords
+      );
 
       logger.info(`Transfer recorded for token ${tokenId} to ${ownerAddress}`);
     } catch (error: any) {
@@ -1058,7 +1160,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // According to OpenSea docs: item_cancelled has order_hash, not item.nft_id
-      const { order_hash, maker, base_price, payment_token, collection } = eventData;
+      const { order_hash, maker } = eventData;
 
       if (!order_hash) {
         logger.warn('Missing order_hash in cancelled event, skipping');
@@ -1083,10 +1185,7 @@ export class OpenSeaStreamListener {
         RETURNING ens_name_id
       `;
 
-      const result = await this.pool.query(updateQuery, [
-        order_hash,
-        sellerAddress,
-      ]);
+      const result = await this.pool.query(updateQuery, [order_hash, sellerAddress]);
 
       if (result && result.rowCount !== null && result.rowCount > 0) {
         logger.info(`Listing cancelled for order_hash ${order_hash}`);
@@ -1094,24 +1193,33 @@ export class OpenSeaStreamListener {
         // Recalculate club floor price since a listing was cancelled
         const ensNameId = result.rows[0].ens_name_id;
         try {
-          const clubsResult = await this.pool.query(
-            'SELECT clubs FROM ens_names WHERE id = $1',
-            [ensNameId]
-          );
+          const clubsResult = await this.pool.query('SELECT clubs FROM ens_names WHERE id = $1', [
+            ensNameId,
+          ]);
           const clubs = clubsResult.rows[0]?.clubs || [];
 
           if (clubs.length > 0) {
-            const published = await safePublishJob(QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE, {
-              clubNames: clubs,
-              eventType: 'delete', // Triggers full recalculation since listing is no longer active
-            }, 'item_cancelled');
+            const published = await safePublishJob(
+              QUEUE_NAMES.UPDATE_CLUB_FLOOR_PRICE,
+              {
+                clubNames: clubs,
+                eventType: 'delete', // Triggers full recalculation since listing is no longer active
+              },
+              'item_cancelled'
+            );
 
             if (published) {
-              logger.info({ ensNameId, clubs }, 'Published club floor price recalculation (OpenSea cancellation)');
+              logger.info(
+                { ensNameId, clubs },
+                'Published club floor price recalculation (OpenSea cancellation)'
+              );
             }
           }
         } catch (queueError: any) {
-          logger.error({ error: queueError.message, ensNameId }, 'Failed to publish club floor price recalculation');
+          logger.error(
+            { error: queueError.message, ensNameId },
+            'Failed to publish club floor price recalculation'
+          );
         }
       } else {
         logger.debug(`No active listing found for order_hash ${order_hash}`);
@@ -1169,16 +1277,14 @@ export class OpenSeaStreamListener {
 
       if (offerResult.rowCount && offerResult.rowCount > 0) {
         const offerId = offerResult.rows[0].id;
-        await safePublishJob(
-          QUEUE_NAMES.VALIDATE_OFFER_BALANCE,
-          { offerId },
-          'order_invalidate'
-        );
+        await safePublishJob(QUEUE_NAMES.VALIDATE_OFFER_BALANCE, { offerId }, 'order_invalidate');
         logger.info({ orderHash, offerId }, 'order_invalidate: queued offer re-validation');
         return;
       }
 
-      logger.debug(`order_invalidate: no active listing or pending offer for order_hash ${orderHash}`);
+      logger.debug(
+        `order_invalidate: no active listing or pending offer for order_hash ${orderHash}`
+      );
     } catch (error: any) {
       logger.error(`Failed to handle order_invalidate: ${error.message}`);
       logger.debug('Full payload:', JSON.stringify(payload, null, 2));
@@ -1194,7 +1300,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // According to OpenSea docs: item_received_bid uses base_price for the bid amount
-      const { item, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+      const { item, base_price, maker, expiration_date, order_hash, payment_token } = eventData;
 
       // Check required fields - use base_price instead of bid_amount
       if (!item) {
@@ -1241,7 +1347,9 @@ export class OpenSeaStreamListener {
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
-          logger.warn(`Skipping bid for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`);
+          logger.warn(
+            `Skipping bid for non-normalized ENS registration: "${resolvedData.originalName}" (normalized: "${resolvedData.name}"). Token ID: ${tokenId}`
+          );
           // Skip this bid - it's for a non-normalized name that shouldn't affect legitimate names
           return;
         }
@@ -1258,7 +1366,9 @@ export class OpenSeaStreamListener {
         nameToStore = `token-${tokenId}`;
       }
 
-      logger.info(`Processing bid for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`);
+      logger.info(
+        `Processing bid for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`
+      );
 
       // For offers, we should NOT update the owner - only ensure the ENS name exists in the database
       // The owner should only be updated by blockchain Transfer events
@@ -1304,7 +1414,9 @@ export class OpenSeaStreamListener {
             // Found by name - use the existing record
             ensNameId = existingByNameResult.rows[0].id;
             const existingTokenId = existingByNameResult.rows[0].token_id;
-            logger.info(`Found ${nameToStore} by name lookup (existing token_id: ${existingTokenId}, event token_id: ${correctTokenId})`);
+            logger.info(
+              `Found ${nameToStore} by name lookup (existing token_id: ${existingTokenId}, event token_id: ${correctTokenId})`
+            );
 
             // Update metadata if needed (but don't change token_id or owner)
             await this.pool.query(
@@ -1318,7 +1430,8 @@ export class OpenSeaStreamListener {
             );
           } else {
             // Name truly doesn't exist, create it
-            const initialOwner = resolvedOwner?.toLowerCase() || '0x0000000000000000000000000000000000000000';
+            const initialOwner =
+              resolvedOwner?.toLowerCase() || '0x0000000000000000000000000000000000000000';
 
             const insertResult = await this.pool.query(
               `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, created_at, updated_at)
@@ -1333,13 +1446,21 @@ export class OpenSeaStreamListener {
                  metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
                  updated_at = NOW()
                RETURNING id`,
-              [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
+              [
+                correctTokenId,
+                nameToStore,
+                initialOwner,
+                expiryDate,
+                registrationDate,
+                JSON.stringify(textRecords),
+              ]
             );
             ensNameId = insertResult.rows[0].id;
           }
         } else {
           // Placeholder name or couldn't resolve - just try to insert/upsert
-          const initialOwner = resolvedOwner?.toLowerCase() || '0x0000000000000000000000000000000000000000';
+          const initialOwner =
+            resolvedOwner?.toLowerCase() || '0x0000000000000000000000000000000000000000';
 
           const insertResult = await this.pool.query(
             `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, created_at, updated_at)
@@ -1354,7 +1475,14 @@ export class OpenSeaStreamListener {
                metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
                updated_at = NOW()
              RETURNING id`,
-            [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
+            [
+              correctTokenId,
+              nameToStore,
+              initialOwner,
+              expiryDate,
+              registrationDate,
+              JSON.stringify(textRecords),
+            ]
           );
           ensNameId = insertResult.rows[0].id;
         }
@@ -1381,7 +1509,8 @@ export class OpenSeaStreamListener {
       `;
 
       // Parse the currency from the payload - OpenSea provides payment_token info
-      const currencyAddress = payment_token?.address || '0x0000000000000000000000000000000000000000';  // ETH
+      const currencyAddress =
+        payment_token?.address || '0x0000000000000000000000000000000000000000'; // ETH
 
       // Parse expiration date safely
       let expiresAt = null;
@@ -1389,7 +1518,9 @@ export class OpenSeaStreamListener {
         try {
           if (typeof expiration_date === 'number') {
             // Unix timestamp - multiply by 1000 if it's in seconds
-            expiresAt = new Date(expiration_date > 10000000000 ? expiration_date : expiration_date * 1000);
+            expiresAt = new Date(
+              expiration_date > 10000000000 ? expiration_date : expiration_date * 1000
+            );
           } else if (typeof expiration_date === 'string') {
             // ISO date string
             expiresAt = new Date(expiration_date);
@@ -1399,7 +1530,7 @@ export class OpenSeaStreamListener {
             logger.warn(`Invalid expiration date in bid: ${expiration_date}`);
             expiresAt = null;
           }
-        } catch (err) {
+        } catch {
           logger.warn(`Failed to parse bid expiration date: ${expiration_date}`);
           expiresAt = null;
         }
@@ -1408,9 +1539,9 @@ export class OpenSeaStreamListener {
       const offerResult = await this.pool.query(offerQuery + ' RETURNING id', [
         ensNameId,
         bidderAddress.toLowerCase(),
-        base_price,  // Use base_price instead of bid_amount
+        base_price, // Use base_price instead of bid_amount
         currencyAddress,
-        order_hash || null,  // Include order_hash
+        order_hash || null, // Include order_hash
         JSON.stringify(eventData),
         expiresAt,
       ]);
@@ -1419,12 +1550,16 @@ export class OpenSeaStreamListener {
 
       // Publish highest offer update job
       if (offerResult.rows.length > 0 && ensNameId && base_price) {
-        const published = await safePublishJob(QUEUE_NAMES.UPDATE_HIGHEST_OFFER, {
-          ensNameId,
-          offerId: offerResult.rows[0].id,
-          offerAmountWei: base_price,
-          currencyAddress: currencyAddress || '0x0000000000000000000000000000000000000000',
-        }, 'item_received_bid');
+        const published = await safePublishJob(
+          QUEUE_NAMES.UPDATE_HIGHEST_OFFER,
+          {
+            ensNameId,
+            offerId: offerResult.rows[0].id,
+            offerAmountWei: base_price,
+            currencyAddress: currencyAddress || '0x0000000000000000000000000000000000000000',
+          },
+          'item_received_bid'
+        );
 
         if (published) {
           logger.debug(`Published update-highest-offer job for ENS name ${ensNameId}`);
@@ -1445,7 +1580,7 @@ export class OpenSeaStreamListener {
       const eventData = payload.payload || payload;
 
       // Collection offers apply to the entire collection, not specific items
-      const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
+      const { collection, base_price, maker } = eventData;
 
       if (!collection?.slug || collection.slug !== 'ens') {
         logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);
@@ -1463,7 +1598,6 @@ export class OpenSeaStreamListener {
       // We can track these separately or just log them for now
       // Since they don't apply to a specific ENS name, we might want a separate table
       // For now, let's just log them
-
     } catch (error: any) {
       logger.error(`Failed to handle collection_offer: ${error.message}`);
       logger.debug('Full payload:', JSON.stringify(payload, null, 2));
@@ -1495,11 +1629,15 @@ export class OpenSeaStreamListener {
 
     // Don't try to catch up if we were disconnected for too long
     if (disconnectDuration > this.CATCHUP_WINDOW_MS) {
-      logger.warn(`Disconnected for ${Math.round(disconnectDuration / 1000)}s, exceeds catch-up window. Some events may have been missed.`);
+      logger.warn(
+        `Disconnected for ${Math.round(disconnectDuration / 1000)}s, exceeds catch-up window. Some events may have been missed.`
+      );
       return;
     }
 
-    logger.info(`Catching up on events missed during ${Math.round(disconnectDuration / 1000)}s disconnection...`);
+    logger.info(
+      `Catching up on events missed during ${Math.round(disconnectDuration / 1000)}s disconnection...`
+    );
 
     try {
       // Query OpenSea API for recent ENS listings
@@ -1507,18 +1645,20 @@ export class OpenSeaStreamListener {
         'https://api.opensea.io/api/v2/listings/collection/ens/all?limit=50',
         {
           headers: {
-            'Accept': 'application/json',
+            Accept: 'application/json',
             'X-API-KEY': config.opensea.apiKey!,
           },
         }
       );
 
       if (!response.ok) {
-        logger.error(`Failed to fetch recent listings from OpenSea: ${response.status} ${response.statusText}`);
+        logger.error(
+          `Failed to fetch recent listings from OpenSea: ${response.status} ${response.statusText}`
+        );
         return;
       }
 
-      const data = await response.json() as { listings?: any[] };
+      const data = (await response.json()) as { listings?: any[] };
       const listings = data.listings || [];
 
       logger.info(`Fetched ${listings.length} recent listings from OpenSea API for catch-up`);
@@ -1610,7 +1750,8 @@ export class OpenSeaStreamListener {
 
     try {
       // Use INSERT ... ON CONFLICT to avoid race conditions
-      const upsertQuery = includeTransferDate ? `
+      const upsertQuery = includeTransferDate
+        ? `
         INSERT INTO ens_names (token_id, name, owner_address, last_transfer_date, expiry_date, registration_date, creation_date, metadata, created_at, updated_at)
         VALUES ($1, $2, $3, NOW(), $4, $5, $7, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
@@ -1626,7 +1767,8 @@ export class OpenSeaStreamListener {
           metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
           updated_at = NOW()
         RETURNING id
-      ` : `
+      `
+        : `
         INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, creation_date, metadata, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $7, $6, NOW(), NOW())
         ON CONFLICT (token_id) DO UPDATE SET
@@ -1650,17 +1792,20 @@ export class OpenSeaStreamListener {
         expiryDate,
         registrationDate,
         JSON.stringify(textRecords),
-        creationDate
+        creationDate,
       ]);
       return result.rows[0].id;
     } catch (error: any) {
       // If we get a unique constraint violation on name, it means the name already exists
       // with a different token_id. This could be a data inconsistency issue.
       if (error.code === '23505' && error.constraint === 'ens_names_real_name_unique') {
-        logger.warn(`ENS name "${name}" already exists with different token_id. Updating existing record.`);
+        logger.warn(
+          `ENS name "${name}" already exists with different token_id. Updating existing record.`
+        );
 
         // Update the existing record by name - this ensures ownership gets updated
-        const updateQuery = includeTransferDate ? `
+        const updateQuery = includeTransferDate
+          ? `
           UPDATE ens_names SET
             owner_address = $2,
             last_transfer_date = NOW(),
@@ -1671,7 +1816,8 @@ export class OpenSeaStreamListener {
             updated_at = NOW()
           WHERE name = $1
           RETURNING id
-        ` : `
+        `
+          : `
           UPDATE ens_names SET
             owner_address = $2,
             expiry_date = COALESCE($3, expiry_date),
@@ -1689,7 +1835,7 @@ export class OpenSeaStreamListener {
           expiryDate,
           registrationDate,
           JSON.stringify(textRecords),
-          creationDate
+          creationDate,
         ]);
 
         if (updateResult.rows.length > 0) {

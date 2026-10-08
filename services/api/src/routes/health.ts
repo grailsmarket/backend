@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient } from '../../../shared/src';
 
 export async function healthRoutes(fastify: FastifyInstance) {
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', async (_request, _reply) => {
     return {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -32,7 +32,7 @@ export async function healthRoutes(fastify: FastifyInstance) {
       request.log.error({ error }, 'Elasticsearch health check failed');
     }
 
-    const allHealthy = Object.values(checks).every(check => check);
+    const allHealthy = Object.values(checks).every((check) => check);
 
     return reply.status(allHealthy ? 200 : 503).send({
       status: allHealthy ? 'ready' : 'not ready',

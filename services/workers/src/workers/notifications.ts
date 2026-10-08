@@ -31,7 +31,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
       teamConcurrency: 2,
     },
     async (job) => {
-      const { type, userId, email, recipientAddress, ensNameId, metadata, transactionHash } = job.data;
+      const { type, userId, email, recipientAddress, ensNameId, metadata } = job.data;
 
       logger.info({ type, userId, ensNameId }, 'Processing notification');
 
@@ -39,10 +39,7 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
 
       try {
         // Get ENS name details
-        const ensResult = await pool.query(
-          'SELECT name FROM ens_names WHERE id = $1',
-          [ensNameId]
-        );
+        const ensResult = await pool.query('SELECT name FROM ens_names WHERE id = $1', [ensNameId]);
 
         if (ensResult.rows.length === 0) {
           logger.warn({ ensNameId }, 'ENS name not found for notification');
@@ -111,7 +108,13 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
                 const lastNotificationPrice = existingNotification.rows[0].metadata?.priceWei;
                 if (lastNotificationPrice && lastNotificationPrice !== metadata.priceWei) {
                   logger.info(
-                    { userId, type, ensNameId, oldPrice: lastNotificationPrice, newPrice: metadata.priceWei },
+                    {
+                      userId,
+                      type,
+                      ensNameId,
+                      oldPrice: lastNotificationPrice,
+                      newPrice: metadata.priceWei,
+                    },
                     'Price changed since last notification, allowing duplicate'
                   );
                 } else {
@@ -252,9 +255,15 @@ export async function registerNotificationWorker(boss: PgBoss): Promise<void> {
             [userId, type, ensNameId, JSON.stringify(metadata || {})]
           );
 
-          logger.info({ userId, type, ensNameId, email: recipientEmail }, 'Notification sent and logged');
+          logger.info(
+            { userId, type, ensNameId, email: recipientEmail },
+            'Notification sent and logged'
+          );
         } else {
-          logger.info({ type, ensNameId, email: recipientEmail }, 'Notification sent (no user record)');
+          logger.info(
+            { type, ensNameId, email: recipientEmail },
+            'Notification sent (no user record)'
+          );
         }
       } catch (error) {
         logger.error({ error, type, userId, ensNameId }, 'Error sending notification');

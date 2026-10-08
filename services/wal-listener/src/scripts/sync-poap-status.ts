@@ -50,7 +50,7 @@ function parseArgs(): { dryRun: boolean; checkAll: boolean; verbose: boolean; ba
   const verbose = args.includes('--verbose');
 
   let batchSize = 50;
-  const batchArg = args.find(arg => arg.startsWith('--batch-size='));
+  const batchArg = args.find((arg) => arg.startsWith('--batch-size='));
   if (batchArg) {
     const parsed = parseInt(batchArg.split('=')[1], 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -105,7 +105,7 @@ async function checkClaimStatus(secret: string, verbose: boolean): Promise<Claim
       {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
       }
     );
@@ -117,7 +117,9 @@ async function checkClaimStatus(secret: string, verbose: boolean): Promise<Claim
 
     if (!response.ok) {
       if (verbose) {
-        console.log(`  Warning: POAP API returned ${response.status} for secret ${secret.slice(0, 8)}...`);
+        console.log(
+          `  Warning: POAP API returned ${response.status} for secret ${secret.slice(0, 8)}...`
+        );
       }
       return null;
     }
@@ -177,7 +179,9 @@ async function syncPoapStatus(): Promise<void> {
     const secret = extractClaimSecret(poapLink.link);
     if (!secret) {
       if (verbose) {
-        console.log(`\n  Warning: Could not extract secret from link ID ${poapLink.id}: ${poapLink.link}`);
+        console.log(
+          `\n  Warning: Could not extract secret from link ID ${poapLink.id}: ${poapLink.link}`
+        );
       }
       errorsCount++;
       continue;
@@ -204,7 +208,7 @@ async function syncPoapStatus(): Promise<void> {
     }
 
     // Delay between API calls
-    await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
   }
 
   console.log('\n');

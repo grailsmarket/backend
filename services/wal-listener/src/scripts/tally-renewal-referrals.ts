@@ -29,7 +29,8 @@ import { config } from '../../../shared/src';
 
 // Contract addresses
 const EVENT_EMITTER_CONTRACT = '0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a' as const;
-const OUR_REFERRAL_CODE = '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
+const OUR_REFERRAL_CODE =
+  '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d' as const;
 
 // RenewalReferred event ABI
 const RENEWAL_REFERRED_EVENT = parseAbiItem(
@@ -113,7 +114,9 @@ async function fetchRenewalEvents(
         }
       }
 
-      console.log(`    Found ${logs.length} total events, ${events.length} with our referral code so far`);
+      console.log(
+        `    Found ${logs.length} total events, ${events.length} with our referral code so far`
+      );
     } catch (error: any) {
       console.error(`    Error fetching batch: ${error.message}`);
       // Retry with smaller batch on failure
@@ -122,7 +125,8 @@ async function fetchRenewalEvents(
         const smallerBatch = 1000n;
         let retryBlock = currentBlock;
         while (retryBlock <= endBlock) {
-          const retryEnd = retryBlock + smallerBatch > endBlock ? endBlock : retryBlock + smallerBatch;
+          const retryEnd =
+            retryBlock + smallerBatch > endBlock ? endBlock : retryBlock + smallerBatch;
           try {
             const logs = await client.getLogs({
               address: EVENT_EMITTER_CONTRACT,
@@ -180,14 +184,16 @@ async function getBlockTimestamps(
         try {
           const block = await client.getBlock({ blockNumber });
           timestamps.set(blockNumber, Number(block.timestamp));
-        } catch (error) {
+        } catch {
           console.error(`  Failed to get timestamp for block ${blockNumber}`);
         }
       })
     );
 
     if ((i + 10) % 100 === 0) {
-      console.log(`  Processed ${Math.min(i + 10, blockNumbers.length)}/${blockNumbers.length} blocks`);
+      console.log(
+        `  Processed ${Math.min(i + 10, blockNumbers.length)}/${blockNumbers.length} blocks`
+      );
     }
   }
 
@@ -247,8 +253,13 @@ function formatDuration(seconds: bigint): string {
   return parts.join(' ') || '0d';
 }
 
-function writeDetailedCsv(events: RenewalEvent[], timestamps: Map<bigint, number>, outputPath: string): void {
-  const header = 'transaction_hash,block_number,timestamp,user_address,label,duration_seconds,duration_formatted,cost_wei,cost_eth\n';
+function writeDetailedCsv(
+  events: RenewalEvent[],
+  timestamps: Map<bigint, number>,
+  outputPath: string
+): void {
+  const header =
+    'transaction_hash,block_number,timestamp,user_address,label,duration_seconds,duration_formatted,cost_wei,cost_eth\n';
 
   const rows = events.map((event) => {
     const timestamp = timestamps.get(event.blockNumber);
@@ -272,7 +283,8 @@ function writeDetailedCsv(events: RenewalEvent[], timestamps: Map<bigint, number
 }
 
 function writeSummaryCsv(tallies: Map<string, UserTally>, outputPath: string): void {
-  const header = 'rank,user_address,tickets,total_duration_years,total_duration_formatted,renewal_count,total_cost_eth,names_renewed\n';
+  const header =
+    'rank,user_address,tickets,total_duration_years,total_duration_formatted,renewal_count,total_cost_eth,names_renewed\n';
 
   // Sort by tickets (descending), then by total duration
   const sorted = [...tallies.values()].sort((a, b) => {
@@ -399,7 +411,9 @@ async function main() {
     return Number(b.totalDurationSeconds - a.totalDurationSeconds);
   });
 
-  console.log('Rank | Address                                      | Tickets | Duration   | Renewals');
+  console.log(
+    'Rank | Address                                      | Tickets | Duration   | Renewals'
+  );
   console.log('-'.repeat(100));
 
   sorted.slice(0, 10).forEach((tally, index) => {
@@ -424,7 +438,9 @@ async function main() {
   sorted.slice(0, 3).forEach((tally, index) => {
     const prize = index === 0 ? '$500' : index === 1 ? '$300' : '$200';
     console.log(`  ${index + 1}. ${tally.address}`);
-    console.log(`     Tickets: ${tally.tickets} | Duration: ${formatDuration(tally.totalDurationSeconds)} | Prize: ${prize}`);
+    console.log(
+      `     Tickets: ${tally.tickets} | Duration: ${formatDuration(tally.totalDurationSeconds)} | Prize: ${prize}`
+    );
   });
 
   console.log('\nDone!');

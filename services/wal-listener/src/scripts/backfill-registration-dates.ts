@@ -14,6 +14,7 @@
  */
 
 import { getPostgresPool } from '../../../shared/src';
+import * as fs from 'fs';
 
 const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 
@@ -97,7 +98,7 @@ async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, Dom
 
 // Sleep helper for rate limiting
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function backfillRegistrationDates(options: {
@@ -169,7 +170,9 @@ async function backfillRegistrationDates(options: {
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize);
 
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, records.length)})...`);
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1} (records ${i + 1}-${Math.min(i + batchSize, records.length)})...`
+      );
 
       // Collect names for this batch
       const nameMap = new Map<string, EnsRecord>();
@@ -190,8 +193,12 @@ async function backfillRegistrationDates(options: {
         const domainData = domainDataMap.get(nameLower);
 
         if (domainData) {
-          const expiryDate = domainData.expiryDate ? new Date(parseInt(domainData.expiryDate) * 1000) : null;
-          const registrationDate = domainData.registrationDate ? new Date(parseInt(domainData.registrationDate) * 1000) : null;
+          const expiryDate = domainData.expiryDate
+            ? new Date(parseInt(domainData.expiryDate) * 1000)
+            : null;
+          const registrationDate = domainData.registrationDate
+            ? new Date(parseInt(domainData.registrationDate) * 1000)
+            : null;
 
           console.log(`  ✅ ${record.name}`);
           if (expiryDate) {
@@ -209,11 +216,7 @@ async function backfillRegistrationDates(options: {
                  SET expiry_date = COALESCE($1, expiry_date),
                      registration_date = COALESCE($2, registration_date)
                  WHERE id = $3`,
-                [
-                  expiryDate,
-                  registrationDate,
-                  record.id
-                ]
+                [expiryDate, registrationDate, record.id]
               );
               updated++;
             } catch (updateError: any) {
@@ -251,7 +254,6 @@ async function backfillRegistrationDates(options: {
     }
 
     // Export results
-    const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const outputFile = `registration-dates-backfill-${timestamp}.json`;
 
@@ -275,7 +277,6 @@ async function backfillRegistrationDates(options: {
 
     fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
     console.log(`Results exported to: ${outputFile}\n`);
-
   } catch (error: any) {
     console.error('\n❌ Error:', error.message);
     console.error(error.stack);

@@ -17,7 +17,10 @@ export interface AddressRecord {
  * @param rawAddr - The raw address bytes as hex string (e.g., "0x1234...")
  * @returns AddressRecord or null if decoding fails
  */
-export function decodeAddressRecord(coinType: string | number, rawAddr: string): AddressRecord | null {
+export function decodeAddressRecord(
+  coinType: string | number,
+  rawAddr: string
+): AddressRecord | null {
   try {
     const coinTypeNum = typeof coinType === 'string' ? parseInt(coinType, 10) : coinType;
 
@@ -72,7 +75,7 @@ export function decodeAddressRecord(coinType: string | number, rawAddr: string):
       chainName,
       address,
     };
-  } catch (error) {
+  } catch {
     // Silently fail for decode errors - this is expected for unsupported coin types
     return null;
   }
