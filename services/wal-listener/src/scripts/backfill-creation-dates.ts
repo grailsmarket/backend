@@ -16,7 +16,7 @@
 
 import { getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 
 // Query The Graph for multiple domains by names in a single batch
 async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, number>> {

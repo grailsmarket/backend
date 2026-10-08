@@ -2,7 +2,7 @@ import { getPostgresPool } from '../../../shared/src';
 import axios from 'axios';
 
 // Configuration
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'; // ENS Name Wrapper contract
 const BATCH_SIZE = 100; // Process names in batches from DB
 const GRAPH_BATCH_SIZE = 20; // Query Graph 20 names at a time

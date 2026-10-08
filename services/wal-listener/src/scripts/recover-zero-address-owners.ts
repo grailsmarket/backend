@@ -15,7 +15,7 @@
 
 import { getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
