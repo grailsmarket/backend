@@ -86,7 +86,7 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
     ensTokenAddress: null,
     multicall3Address: '0xcA11bde05977b3631167028862bE2a173976CA11',
     openseaConduitAddress: '0x1E0049783F008A0085193E00003D00cd54003c71',
-    marketplaceConduitAddress: null, // not deployed on Sepolia yet
+    marketplaceConduitAddress: '0x73E9cD721a79C208E2F944910c27196307a2a05D', // same conduit key as mainnet
     legacyPublicResolverAddress: null,
     ensSubgraphUrl: 'https://api.studio.thegraph.com/query/49574/enssepolia/version/latest',
     ensWorkerUrl: null,
