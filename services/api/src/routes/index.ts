@@ -44,11 +44,14 @@ import { blocksRoutes } from './blocks';
 import { commentsRoutes } from './comments';
 import { feedRoutes } from './feed';
 import { valuationsRoutes } from './valuations';
+import { pushRoutes, userPushSubscriptionRoutes } from './push';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
   fastify.register(authRoutes, { prefix: '/api/v1/auth' });
+  fastify.register(userPushSubscriptionRoutes, { prefix: '/api/v1/users/me/push-subscriptions' });
   fastify.register(usersRoutes, { prefix: '/api/v1/users' });
+  fastify.register(pushRoutes, { prefix: '/api/v1/push' });
   fastify.register(verificationRoutes, { prefix: '/api/v1/verification' });
   fastify.register(watchlistRoutes, { prefix: '/api/v1/watchlist' });
   fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });

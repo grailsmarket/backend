@@ -1,7 +1,18 @@
 import PgBoss from 'pg-boss';
 import { getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
-import { QUEUE_NAMES, type UpdateOwnershipJob } from '../queue';
+import { QUEUE_NAMES, type SendNotificationJob, type UpdateOwnershipJob } from '../queue';
+
+interface UnfundedListingRow {
+  id: number;
+  seller_address: string;
+  price_wei: string;
+}
+
+interface UserRow {
+  id: number;
+  address: string;
+}
 
 /**
  * Ownership Update Worker
@@ -39,6 +50,7 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
 
       const pool = getPostgresPool();
       const client = await pool.connect();
+      const notificationJobs: SendNotificationJob[] = [];
 
       try {
         await client.query('BEGIN');
@@ -105,7 +117,7 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
           );
 
           // Trigger immediate validation for these listings with singletonKey to prevent duplicates
-          const validationJobs = unfundedListings.rows.map((listing) => ({
+          const validationJobs = unfundedListings.rows.map((listing: UnfundedListingRow) => ({
             name: 'validate-listing-ownership',
             data: { listingId: listing.id },
             singletonKey: `listing-${listing.id}`
@@ -116,9 +128,48 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
             { count: validationJobs.length },
             'Validation jobs queued for unfunded listings'
           );
+
+          const sellerAddresses = Array.from(
+            new Set(unfundedListings.rows.map((listing: UnfundedListingRow) => listing.seller_address.toLowerCase()))
+          );
+          const usersResult = await client.query<UserRow>(
+            'SELECT id, address FROM users WHERE LOWER(address) = ANY($1::text[])',
+            [sellerAddresses]
+          );
+          const usersByAddress = new Map(
+            usersResult.rows.map((user: UserRow) => [user.address.toLowerCase(), user.id])
+          );
+
+          for (const listing of unfundedListings.rows as UnfundedListingRow[]) {
+            const userId = usersByAddress.get(listing.seller_address.toLowerCase());
+            if (userId !== undefined) {
+              notificationJobs.push({
+                type: 'listing-cancelled',
+                userId,
+                ensNameId,
+                metadata: {
+                  listingId: listing.id,
+                  priceWei: listing.price_wei,
+                  reason: 'ownership_lost',
+                  transactionHash,
+                },
+              });
+            }
+          }
         }
 
         await client.query('COMMIT');
+
+        if (notificationJobs.length > 0) {
+          await Promise.all(
+            notificationJobs.map((notificationJob) => boss.send(QUEUE_NAMES.SEND_NOTIFICATION, notificationJob))
+          );
+          logger.info(
+            { count: notificationJobs.length, ensNameId, ensName },
+            'Notification jobs queued for unfunded listings'
+          );
+        }
+
         logger.info({ ensNameId, ensName }, 'Ownership update transaction completed');
       } catch (error) {
         await client.query('ROLLBACK');
