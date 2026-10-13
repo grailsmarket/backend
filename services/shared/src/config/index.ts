@@ -348,6 +348,9 @@ export const ETH_WETH_FILTER = `(currency_address = '${CURRENCY_ADDRESSES.ETH}' 
 // ENS registration referrer codes (bytes32 values, lowercase) → human-readable source names
 export const ENS_REFERRER_CODES: Record<string, string> = {
   '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d': 'grails',
+  // Grails' current referrer (an address Grails controls; used by BulkRegistrationV2). The
+  // code above is the legacy one, kept so historical and still-incoming registrations stay attributed.
+  '0x000000000000000000000000387e4fd48122a6b6fe4717c5351860a43e35c852': 'grails',
   '0x0000000000000000000000001c0ea438837302b4516ac3f380313061ec11760f': 'snipezone',
   '0x000000000000000000000000efce7f86fd1efb0359a91c873e6dee9f98788713': 'enstools',
   '0x0000000000000000000000009531c059098e3d194ff87febb587ab07b30b1306': 'rotki',
