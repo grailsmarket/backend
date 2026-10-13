@@ -73,6 +73,34 @@ export class ENSResolver {
   }
 
   /**
+   * POST to the ENS subgraph, retrying rate limits (429), gateway errors and network
+   * failures with backoff. Callers treat a failed lookup as "name not found" and skip
+   * the event, so a transient error must not surface as a failed response early.
+   * Returns the last response once retries are exhausted.
+   */
+  private async fetchSubgraph(init: RequestInit): Promise<Response> {
+    const maxAttempts = 6;
+    for (let attempt = 1; ; attempt++) {
+      let response: Response | null = null;
+      try {
+        response = await fetch(config.theGraph.ensSubgraphUrl, init);
+        if (![429, 502, 503, 504].includes(response.status) || attempt >= maxAttempts) {
+          return response;
+        }
+      } catch (error) {
+        if (attempt >= maxAttempts) throw error;
+      }
+
+      const retryAfter = Number(response?.headers.get('retry-after'));
+      const delayMs = retryAfter > 0
+        ? Math.min(retryAfter * 1000, 60000)
+        : Math.min(1000 * 2 ** (attempt - 1), 30000) + Math.floor(Math.random() * 500);
+      logger.warn(`Subgraph request failed (${response ? response.status : 'network error'}), retry ${attempt}/${maxAttempts - 1} in ${delayMs}ms`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  /**
    * Query the Name Wrapper contract directly to get the true owner of a wrapped ENS name.
    * This bypasses The Graph and gives us authoritative blockchain data.
    *
@@ -208,7 +236,7 @@ export class ENSResolver {
         }
       `;
 
-      let response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await this.fetchSubgraph({
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -256,7 +284,7 @@ export class ENSResolver {
           }
         `;
 
-        response = await fetch(config.theGraph.ensSubgraphUrl, {
+        response = await this.fetchSubgraph({
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -366,7 +394,7 @@ export class ENSResolver {
         }
       `;
 
-      let response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await this.fetchSubgraph({
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -435,7 +463,7 @@ export class ENSResolver {
           }
         `;
 
-        response = await fetch(config.theGraph.ensSubgraphUrl, {
+        response = await this.fetchSubgraph({
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -659,7 +687,7 @@ export class ENSResolver {
         }
       `;
 
-      let response = await fetch(config.theGraph.ensSubgraphUrl, {
+      let response = await this.fetchSubgraph({
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -742,7 +770,7 @@ export class ENSResolver {
           }
         `;
 
-        response = await fetch(config.theGraph.ensSubgraphUrl, {
+        response = await this.fetchSubgraph({
           method: 'POST',
           headers,
           body: JSON.stringify({
