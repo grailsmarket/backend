@@ -905,7 +905,7 @@ export class OpenSeaStreamListener {
             timestamp
           )
           VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
-          ON CONFLICT (transaction_hash) DO NOTHING
+          ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
         `;
 
         await this.pool.query(txQuery, [

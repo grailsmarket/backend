@@ -1,14 +1,18 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import path from 'path';
-import { getNetworkPreset } from './network';
+import { getNetworkPreset, type EnsV2Preset } from './network';
 
 // Load .env from project root
-// Try multiple possible locations to handle different execution contexts
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
-dotenv.config({ path: path.resolve(__dirname, '../../../../../../.env') });
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-dotenv.config(); // Also try default location
+// Try multiple possible locations to handle different execution contexts.
+// SKIP_DOTENV=true uses only the process environment (e.g. local test runs that
+// must not pick up the root .env).
+if (process.env.SKIP_DOTENV !== 'true') {
+  dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+  dotenv.config({ path: path.resolve(__dirname, '../../../../../../.env') });
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+  dotenv.config(); // Also try default location
+}
 
 const ConfigSchema = z.object({
   database: z.object({
@@ -42,6 +46,15 @@ const ConfigSchema = z.object({
     legacyPublicResolverAddress: z.string().nullable(),
     startBlock: z.number().optional(),
     confirmations: z.number().default(12),
+    ensv2: z.object({
+      ethRegistryAddress: z.string(),
+      ethRegistrarAddress: z.string(),
+      ethRenewerV1Address: z.string(),
+      unlockedMigrationControllerAddress: z.string(),
+      lockedMigrationControllerAddress: z.string(),
+      graveyardAddress: z.string(),
+      startBlock: z.number(),
+    }).nullable(),
   }),
   opensea: z.object({
     enabled: z.boolean(),
@@ -148,6 +161,29 @@ function envNullable(value: string | undefined, fallback: string | null): string
   return value === '' ? null : value;
 }
 
+// ENSv2 contracts: preset, with per-address ENSV2_* env overrides (Sepolia gets
+// redeployed). ENSV2_ENABLED=false turns v2 off; on a chain without a preset, every
+// ENSV2_* var must be set to turn it on.
+function resolveEnsV2(preset: EnsV2Preset | null): EnsV2Preset | null {
+  if (process.env.ENSV2_ENABLED === 'false') return null;
+  const env = process.env;
+  const merged = {
+    ethRegistryAddress: env.ENSV2_ETH_REGISTRY_ADDRESS || preset?.ethRegistryAddress,
+    ethRegistrarAddress: env.ENSV2_ETH_REGISTRAR_ADDRESS || preset?.ethRegistrarAddress,
+    ethRenewerV1Address: env.ENSV2_ETH_RENEWER_V1_ADDRESS || preset?.ethRenewerV1Address,
+    unlockedMigrationControllerAddress: env.ENSV2_UNLOCKED_MIGRATION_CONTROLLER_ADDRESS || preset?.unlockedMigrationControllerAddress,
+    lockedMigrationControllerAddress: env.ENSV2_LOCKED_MIGRATION_CONTROLLER_ADDRESS || preset?.lockedMigrationControllerAddress,
+    graveyardAddress: env.ENSV2_GRAVEYARD_ADDRESS || preset?.graveyardAddress,
+    startBlock: env.ENSV2_START_BLOCK ? parseInt(env.ENSV2_START_BLOCK) : preset?.startBlock,
+  };
+  const missing = Object.entries(merged).filter(([, v]) => v === undefined).map(([k]) => k);
+  if (missing.length === Object.keys(merged).length) return null;
+  if (missing.length > 0) {
+    throw new Error(`Incomplete ENSv2 config, missing: ${missing.join(', ')}`);
+  }
+  return merged as EnsV2Preset;
+}
+
 const rawConfig = {
   database: {
     url: process.env.DATABASE_URL,
@@ -176,6 +212,7 @@ const rawConfig = {
     legacyPublicResolverAddress: network.legacyPublicResolverAddress,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
     confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
+    ensv2: resolveEnsV2(network.ensv2),
   },
   opensea: {
     enabled: process.env.OPENSEA_ENABLED !== undefined

@@ -1,5 +1,18 @@
 import { mainnet, sepolia, type Chain } from 'viem/chains';
 
+// ENSv2 contracts (registry + registrar + migration). Null on chains where ENSv2
+// isn't deployed; the v2 indexer and v1 migration handling are skipped there.
+export interface EnsV2Preset {
+  ethRegistryAddress: string;
+  ethRegistrarAddress: string;
+  ethRenewerV1Address: string;
+  unlockedMigrationControllerAddress: string;
+  lockedMigrationControllerAddress: string;
+  graveyardAddress: string;
+  // ETHRegistry deployment block; the v2 indexer starts here
+  startBlock: number;
+}
+
 // Per-chain defaults. Selected by CHAIN_ID; every value can still be overridden
 // by its env var in config/index.ts. A null address means "not deployed on this
 // chain" and the features that depend on it are skipped.
@@ -31,6 +44,7 @@ export interface NetworkPreset {
   features: {
     unclaimedDeposits: boolean;
   };
+  ensv2: EnsV2Preset | null;
 }
 
 export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
@@ -63,6 +77,8 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
     features: {
       unclaimedDeposits: true,
     },
+    // No verified mainnet ENSv2 deployment yet
+    ensv2: null,
   },
   // Sepolia addresses from ensdomains/ens-contracts deployments/sepolia and
   // docs.ens.domains/learn/deployments. Registry, BaseRegistrar, Seaport,
@@ -99,6 +115,18 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
     },
     features: {
       unclaimedDeposits: false,
+    },
+    // 2026-10-01 redeploy (contracts-v2 post-audit-2, deployments/sepolia). Sepolia is
+    // redeployed periodically; re-check docs.ens.domains/learn/deployments and override
+    // with the ENSV2_* env vars rather than trusting these after a redeploy.
+    ensv2: {
+      ethRegistryAddress: '0xd4ebcbbdf463c9c45784603db0ddd499bc44a8b4',
+      ethRegistrarAddress: '0xf633e7fc17e2bbe0d0965d18ec1821dcb754a3d3',
+      ethRenewerV1Address: '0xf2ece44980778966b8a0fccb3a9e339440f6e045',
+      unlockedMigrationControllerAddress: '0x2a35b94df22cc7354570be2284655e2cdc0e64a2',
+      lockedMigrationControllerAddress: '0x6029a063d69b09d23c52a754a90e4fe43adac3a8',
+      graveyardAddress: '0xb58a90a39d13cce1d0e192b5da5c47640855b04d',
+      startBlock: 11820399,
     },
   },
 };

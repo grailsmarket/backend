@@ -89,6 +89,19 @@ export class ENSIndexer {
   private currentBlock = 0n;
   private readonly batchSize = 100; // Reduced for better RPC compatibility
   private readonly confirmations = BigInt(config.blockchain.confirmations);
+  // ENSv2 migration moves v1 tokens to a migration controller and on to the Graveyard, and the
+  // Graveyard re-registers expired, never-migrated v1 names to itself. None of these are
+  // ownership changes: the migrated name's owner comes from the v2 ETHRegistry LabelRegistered
+  // event (EnsV2Indexer). Empty when ENSv2 isn't configured for this chain.
+  private readonly ensv2MigrationAddresses = new Set(
+    config.blockchain.ensv2
+      ? [
+          config.blockchain.ensv2.unlockedMigrationControllerAddress,
+          config.blockchain.ensv2.lockedMigrationControllerAddress,
+          config.blockchain.ensv2.graveyardAddress,
+        ].map(a => a.toLowerCase())
+      : []
+  );
 
   constructor() {
     this.client = createPublicClient({
@@ -335,6 +348,11 @@ export class ENSIndexer {
       return;
     }
 
+    if (this.isEnsV2MigrationMove(from, to)) {
+      logger.debug(`Name Wrapper transfer of token ${tokenIdStr} ${from} -> ${to} is part of an ENSv2 migration, skipping`);
+      return;
+    }
+
     logger.info(`Name Wrapper transfer: token ${tokenIdStr} from ${from} to ${to}`);
 
     let ensNameId: number | null = null;
@@ -467,7 +485,7 @@ export class ENSIndexer {
         SELECT id, $2, $3, $4, $5, 'transfer', $6
         FROM ens_names
         WHERE name = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
       // Use the resolved name to find the record
@@ -814,7 +832,7 @@ export class ENSIndexer {
         const insertResult = await this.pool.query(
           `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, has_numbers, has_emoji)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (name) DO UPDATE SET
+           ON CONFLICT (name) WHERE name NOT LIKE 'token-%' AND name NOT LIKE '#%' AND name NOT LIKE '[%].eth' DO UPDATE SET
              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
              updated_at = NOW()
            RETURNING id`,
@@ -991,7 +1009,7 @@ export class ENSIndexer {
         const insertResult = await this.pool.query(
           `INSERT INTO ens_names (token_id, name, owner_address, has_numbers, has_emoji)
            VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (name) DO UPDATE SET
+           ON CONFLICT (name) WHERE name NOT LIKE 'token-%' AND name NOT LIKE '#%' AND name NOT LIKE '[%].eth' DO UPDATE SET
              updated_at = NOW()
            RETURNING id`,
           [tokenIdStr, fullName, renewerAddress, attributes.has_numbers, attributes.has_emoji]
@@ -1185,9 +1203,18 @@ export class ENSIndexer {
     }
   }
 
+  private isEnsV2MigrationMove(...addresses: string[]): boolean {
+    return addresses.some(a => this.ensv2MigrationAddresses.has(a.toLowerCase()));
+  }
+
   private async handleTransfer(args: any, log: Log) {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+
+    if (this.isEnsV2MigrationMove(from, to)) {
+      logger.debug(`Transfer of token ${tokenIdStr} ${from} -> ${to} is part of an ENSv2 migration, skipping`);
+      return;
+    }
     const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
     const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
@@ -1441,7 +1468,7 @@ export class ENSIndexer {
         SELECT id, $2, $3, $4, $5, 'transfer', $6
         FROM ens_names
         WHERE token_id = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
       await this.pool.query(txQuery, [
@@ -1465,6 +1492,11 @@ export class ENSIndexer {
   private async handleNameRegistered(args: any, log: Log) {
     const { id: tokenId, owner, expires } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+
+    if (this.isEnsV2MigrationMove(owner)) {
+      logger.debug(`NameRegistered of token ${tokenIdStr} to ${owner} is a Graveyard re-registration, skipping`);
+      return;
+    }
     const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
     // Set defaults outside try block so they're available for transaction logging
@@ -1775,7 +1807,7 @@ export class ENSIndexer {
       )
       SELECT id, $2, $3, $4, $4, 'registration', $5
       FROM ens_names WHERE token_id = $1
-      ON CONFLICT (transaction_hash) DO NOTHING
+      ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
     `;
 
     try {
@@ -1859,7 +1891,7 @@ export class ENSIndexer {
         )
         SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
         FROM ens_names WHERE name = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `
       : `
         INSERT INTO transactions (
@@ -1868,7 +1900,7 @@ export class ENSIndexer {
         )
         SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
         FROM ens_names WHERE token_id = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
     await this.pool.query(txQuery, [

@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents, isEnsV2Name, fetchNameRecordsOnChain } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
@@ -44,6 +44,12 @@ export interface ENSMetadata {
  */
 export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
   try {
+    // ENSv2 names aren't in the v1 subgraph; resolve on-chain via the UniversalResolver
+    if (await isEnsV2Name(name)) {
+      const { resolverAddress, textRecords } = await fetchNameRecordsOnChain(name);
+      return { resolverAddress: resolverAddress || ethers.ZeroAddress, ...textRecords };
+    }
+
     const query = `
       query GetDomain($name: String!) {
         domains(where: { name: $name }) {

@@ -1,5 +1,6 @@
 import { config, getPostgresPool, closeAllConnections } from '../../shared/src';
 import { ENSIndexer } from './indexers/ens-indexer';
+import { EnsV2Indexer } from './indexers/ensv2-indexer';
 import { SeaportIndexer } from './indexers/seaport-indexer';
 import { OpenSeaStreamListener } from './services/opensea-stream';
 import { logger } from './utils/logger';
@@ -43,6 +44,7 @@ async function start() {
   }
 
   const ensIndexer = new ENSIndexer();
+  const ensV2Indexer = config.blockchain.ensv2 ? new EnsV2Indexer() : null;
   const seaportIndexer = new SeaportIndexer();
   const openSeaStream = new OpenSeaStreamListener();
 
@@ -50,6 +52,11 @@ async function start() {
     logger.info('Starting ENS indexer...');
     await ensIndexer.start();
     logger.info('ENS indexer started successfully');
+
+    if (ensV2Indexer) {
+      await ensV2Indexer.start();
+      logger.info('ENSv2 indexer started successfully');
+    }
 
     logger.info('Starting Seaport indexer...');
     await seaportIndexer.start();
@@ -73,6 +80,7 @@ async function start() {
   process.on('SIGINT', async () => {
     logger.info('Received SIGINT, shutting down gracefully...');
     await ensIndexer.stop();
+    await ensV2Indexer?.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
     await closeQueueClient();
@@ -83,6 +91,7 @@ async function start() {
   process.on('SIGTERM', async () => {
     logger.info('Received SIGTERM, shutting down gracefully...');
     await ensIndexer.stop();
+    await ensV2Indexer?.stop();
     await seaportIndexer.stop();
     await openSeaStream.stop();
     await closeQueueClient();
