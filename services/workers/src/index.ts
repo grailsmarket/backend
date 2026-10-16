@@ -3,6 +3,7 @@ import { registerExpiryWorker, registerBatchExpiryWorker } from './workers/expir
 import { registerEnsSyncWorker, registerDailyEnsSyncScheduler, registerMetadataBackfillScheduler } from './workers/ens-sync';
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
+import { registerInvalidateOrdersWorker } from './workers/invalidate-orders';
 import { registerNotificationWorker } from './workers/notifications';
 import { registerAdminBroadcastWorker } from './workers/admin-broadcast';
 import { registerPriceSyncWorker } from './workers/price-sync';
@@ -21,7 +22,7 @@ import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-ba
 import { registerGlobalChatRetentionWorker } from './workers/global-chat-retention';
 import { registerExpireChatImagesWorker } from './workers/expire-chat-images';
 import { logger } from './utils/logger';
-import { closeAllConnections } from '../../shared/src';
+import { closeAllConnections, config } from '../../shared/src';
 
 async function start() {
   logger.info('Starting Grails worker service...');
@@ -40,6 +41,7 @@ async function start() {
     await registerMetadataBackfillScheduler(boss);
     await registerBatchNameResolutionWorker(boss);
     await registerOwnershipWorker(boss);
+    await registerInvalidateOrdersWorker(boss);
     await registerNotificationWorker(boss);
     await registerAdminBroadcastWorker(boss);
     await registerPriceSyncWorker(boss);
@@ -55,8 +57,10 @@ async function start() {
     await boss.work('refresh-analytics', refreshAnalytics);
     await scheduleAnalyticsRefresh(boss);
 
-    // Register OpenSea reconciliation worker
-    await registerReconcileOpenseaWorker(boss);
+    // Register OpenSea reconciliation worker (OpenSea has no testnet support)
+    if (config.opensea.enabled) {
+      await registerReconcileOpenseaWorker(boss);
+    }
 
     // Register ENS Vision reconciliation worker
     await registerReconcileVisionWorker(boss);

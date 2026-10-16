@@ -12,7 +12,7 @@ import { getNameRoles, type EnsRoles } from '../services/ens-roles';
 import type { SearchResult } from '../utils/response-builder';
 
 // ENS Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 // Name Wrapper ABI - just the ownerOf function we need
 const NAME_WRAPPER_ABI = [
@@ -312,7 +312,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
               .query(
                 // offer_amount_wei is VARCHAR(78); cast to numeric so the
                 // top-N sort is by value, not lexicographic ("9..." vs "10...").
-                `SELECT o.*, e.name, e.token_id
+                `SELECT o.*, e.name, e.token_id, e.ens_version AS version
                    FROM offers o
                    JOIN ens_names e ON o.ens_name_id = e.id
                   WHERE o.ens_name_id = $1 AND o.status = $2

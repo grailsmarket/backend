@@ -1,7 +1,6 @@
-import { getPostgresPool, config } from '../../../shared/src';
+import { viemChain, getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
 
 export type ActivityEventType =
   | 'listed'
@@ -36,7 +35,7 @@ interface ActivityHistoryParams {
 export class ActivityHistoryService {
   private pool = getPostgresPool();
   private client = createPublicClient({
-    chain: mainnet,
+    chain: viemChain,
     transport: http(config.blockchain.rpcUrl),
   });
 
@@ -50,7 +49,7 @@ export class ActivityHistoryService {
       actor_address,
       counterparty_address,
       platform,
-      chain_id = 1,
+      chain_id = config.blockchain.chainId,
       price_wei,
       currency_address,
       transaction_hash,
@@ -179,7 +178,7 @@ export class ActivityHistoryService {
       buyer_address,
       seller_address,
       platform,
-      chain_id = 1,
+      chain_id = config.blockchain.chainId,
       price_wei,
       currency_address,
       transaction_hash,

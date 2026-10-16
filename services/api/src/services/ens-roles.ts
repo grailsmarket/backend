@@ -1,8 +1,8 @@
 import { config } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
-// Name Wrapper contract address (mainnet)
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+// Name Wrapper contract address
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 // In-memory cache with TTL (5 minutes)
 const CACHE_TTL_MS = 5 * 60 * 1000;

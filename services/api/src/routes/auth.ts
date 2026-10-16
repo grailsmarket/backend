@@ -3,12 +3,11 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { SiweMessage, SiweError } from 'siwe';
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
-import { getPostgresPool, config, type APIResponse } from '../../../shared/src';
+import { viemChain, getPostgresPool, config, type APIResponse } from '../../../shared/src';
 import { generateToken, requireAuth } from '../middleware/auth';
 
 const publicClient = createPublicClient({
-  chain: mainnet,
+  chain: viemChain,
   transport: http(config.blockchain.rpcUrl),
 });
 

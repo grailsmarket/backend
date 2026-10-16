@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, getElasticsearchClient, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, getElasticsearchClient, config, type APIResponse } from '../../../shared/src';
 import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
@@ -120,6 +120,8 @@ function createNotFoundResult(name: string): SearchResult {
     id: 0,
     name: normalizedName,
     token_id: '',
+    version: config.blockchain.ensv2 ? 2 : 1,
+    token_contract: null,
     owner: '',
     expiry_date: null,
     registration_date: null,

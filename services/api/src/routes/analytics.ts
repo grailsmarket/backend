@@ -621,6 +621,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             r.id,
             en.name,
+            en.ens_version AS version,
             r.registrant_address,
             en.owner_address,
             r.base_cost_wei,
@@ -685,6 +686,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           results: dataResult.rows.map(row => ({
             id: row.id,
             name: row.name,
+            version: row.version,
             registrant_address: row.registrant_address,
             owner_address: row.owner_address,
             base_cost_wei: row.base_cost_wei,
@@ -858,6 +860,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             s.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM sales s
@@ -980,6 +983,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             l.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM listings l
@@ -1102,6 +1106,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             o.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM offers o

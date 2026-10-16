@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { checkOrderForName } from '../services/ensv2-orders';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -48,6 +49,20 @@ export async function offersRoutes(fastify: FastifyInstance) {
       });
     }
 
+    // ENSv2 names: the order must trade the current ETHRegistry token
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'offer',
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
     const query = `
       WITH inserted_offer AS (
         INSERT INTO offers (
@@ -61,7 +76,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
         ) VALUES ($1, $2, $3, $4, $5, 'pending', $6)
         RETURNING *
       )
-      SELECT io.*, e.name, e.token_id
+      SELECT io.*, e.name, e.token_id, e.ens_version AS version
       FROM inserted_offer io
       JOIN ens_names e ON io.ens_name_id = e.id
     `;
@@ -165,7 +180,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const ensNameId = nameResult.rows[0].id;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE o.ens_name_id = $1
@@ -223,7 +238,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
 
     const query = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE o.id = $1
@@ -366,7 +381,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
         WHERE id = $${paramCount}
         RETURNING *
       )
-      SELECT uo.*, e.name, e.token_id
+      SELECT uo.*, e.name, e.token_id, e.ens_version AS version
       FROM updated_offer uo
       JOIN ens_names e ON uo.ens_name_id = e.id
     `;
@@ -442,7 +457,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE LOWER(o.buyer_address) = LOWER($1)
@@ -502,7 +517,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE LOWER(e.owner_address) = LOWER($1)

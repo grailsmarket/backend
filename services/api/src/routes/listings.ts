@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { checkOrderForName } from '../services/ensv2-orders';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -268,6 +269,21 @@ export async function listingsRoutes(fastify: FastifyInstance) {
           code: 'FORBIDDEN',
           message: 'Seller address does not match authenticated user',
         },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // ENSv2 names: the order must trade the current ETHRegistry token and the name must be transferable
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'listing',
+      seller: body.sellerAddress,
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
         meta: { timestamp: new Date().toISOString() },
       });
     }

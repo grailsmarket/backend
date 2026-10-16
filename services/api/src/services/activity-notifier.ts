@@ -75,6 +75,7 @@ export class ActivityNotifier {
         `SELECT
           ah.*,
           en.name,
+          en.ens_version AS version,
           en.token_id,
           en.clubs
         FROM activity_history ah

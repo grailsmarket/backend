@@ -2,7 +2,7 @@ import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji 
 import { logger } from '../utils/logger';
 
 // Currency constants
-const USDC_ADDRESS = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+const USDC_ADDRESS = config.blockchain.usdcAddress.toLowerCase();
 const ETH_DECIMALS = 18;
 const USDC_DECIMALS = 6;
 

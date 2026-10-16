@@ -1,13 +1,18 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import path from 'path';
+import { getNetworkPreset, type EnsV2Preset } from './network';
 
 // Load .env from project root
-// Try multiple possible locations to handle different execution contexts
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
-dotenv.config({ path: path.resolve(__dirname, '../../../../../../.env') });
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-dotenv.config(); // Also try default location
+// Try multiple possible locations to handle different execution contexts.
+// SKIP_DOTENV=true uses only the process environment (e.g. local test runs that
+// must not pick up the root .env).
+if (process.env.SKIP_DOTENV !== 'true') {
+  dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+  dotenv.config({ path: path.resolve(__dirname, '../../../../../../.env') });
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+  dotenv.config(); // Also try default location
+}
 
 const ConfigSchema = z.object({
   database: z.object({
@@ -22,28 +27,50 @@ const ConfigSchema = z.object({
     url: z.string().default('http://localhost:9200'),
     index: z.string().default('ens_names'),
   }),
+  // Chain-specific defaults come from the network preset (see ./network.ts)
   blockchain: z.object({
     rpcUrl: z.string(),
-    chainId: z.number().default(1),
-    ensRegistrarAddress: z.string().default('0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85'),
-    ensControllerAddresses: z.array(z.string()).default([
-      '0x253553366Da8546fC250F225fe3d25d0C782303b', // Original controller (deployed May 2022)
-      '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2 (newer)
-    ]),
-    ensNameWrapperAddress: z.string().default('0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401'),
-    ensBulkRenewalEventEmitter: z.string().default('0xf55575bde5953ee4272d5ce7cdd924c74d8fa81a'),
-    seaportAddress: z.string().default('0x0000000000000068F116a894984e2DB1123eB395'),
+    chainId: z.number(),
+    ensRegistrarAddress: z.string(),
+    ensControllerAddresses: z.array(z.string()),
+    ensNameWrapperAddress: z.string(),
+    ensBulkRenewalEventEmitter: z.string().nullable(),
+    seaportAddress: z.string(),
+    seaportStartBlock: z.number(),
+    wethAddress: z.string(),
+    usdcAddress: z.string(),
+    ensTokenAddress: z.string().nullable(),
+    multicall3Address: z.string(),
+    openseaConduitAddress: z.string(),
+    marketplaceConduitAddress: z.string().nullable(),
+    legacyPublicResolverAddress: z.string().nullable(),
     startBlock: z.number().optional(),
     confirmations: z.number().default(12),
+    ensv2: z.object({
+      ethRegistryAddress: z.string(),
+      ethRegistrarAddress: z.string(),
+      ethRenewerV1Address: z.string(),
+      unlockedMigrationControllerAddress: z.string(),
+      lockedMigrationControllerAddress: z.string(),
+      graveyardAddress: z.string(),
+      startBlock: z.number(),
+    }).nullable(),
   }),
   opensea: z.object({
+    enabled: z.boolean(),
     apiKey: z.string().optional(),
+    apiBaseUrl: z.string(),
+    chainSlug: z.string(),
+    collectionSlug: z.string(),
     streamUrl: z.string().default('wss://stream.openseabeta.com/socket/websocket'),
   }),
+  features: z.object({
+    unclaimedDeposits: z.boolean(),
+  }),
   theGraph: z.object({
-    ensSubgraphUrl: z.string().default('https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH'),
+    ensSubgraphUrl: z.string(),
     apiKey: z.string().optional(),
-    ensWorkerUrl: z.string().default('https://ens.ethfollow.xyz'),
+    ensWorkerUrl: z.string().nullable(),
   }),
   api: z.object({
     port: z.number().default(3000),
@@ -125,6 +152,38 @@ const ConfigSchema = z.object({
   }),
 });
 
+const chainId = parseInt(process.env.CHAIN_ID || '1');
+const network = getNetworkPreset(chainId);
+
+// Env override for a nullable preset address: unset → preset, empty string → null
+function envNullable(value: string | undefined, fallback: string | null): string | null {
+  if (value === undefined) return fallback;
+  return value === '' ? null : value;
+}
+
+// ENSv2 contracts: preset, with per-address ENSV2_* env overrides (Sepolia gets
+// redeployed). ENSV2_ENABLED=false turns v2 off; on a chain without a preset, every
+// ENSV2_* var must be set to turn it on.
+function resolveEnsV2(preset: EnsV2Preset | null): EnsV2Preset | null {
+  if (process.env.ENSV2_ENABLED === 'false') return null;
+  const env = process.env;
+  const merged = {
+    ethRegistryAddress: env.ENSV2_ETH_REGISTRY_ADDRESS || preset?.ethRegistryAddress,
+    ethRegistrarAddress: env.ENSV2_ETH_REGISTRAR_ADDRESS || preset?.ethRegistrarAddress,
+    ethRenewerV1Address: env.ENSV2_ETH_RENEWER_V1_ADDRESS || preset?.ethRenewerV1Address,
+    unlockedMigrationControllerAddress: env.ENSV2_UNLOCKED_MIGRATION_CONTROLLER_ADDRESS || preset?.unlockedMigrationControllerAddress,
+    lockedMigrationControllerAddress: env.ENSV2_LOCKED_MIGRATION_CONTROLLER_ADDRESS || preset?.lockedMigrationControllerAddress,
+    graveyardAddress: env.ENSV2_GRAVEYARD_ADDRESS || preset?.graveyardAddress,
+    startBlock: env.ENSV2_START_BLOCK ? parseInt(env.ENSV2_START_BLOCK) : preset?.startBlock,
+  };
+  const missing = Object.entries(merged).filter(([, v]) => v === undefined).map(([k]) => k);
+  if (missing.length === Object.keys(merged).length) return null;
+  if (missing.length > 0) {
+    throw new Error(`Incomplete ENSv2 config, missing: ${missing.join(', ')}`);
+  }
+  return merged as EnsV2Preset;
+}
+
 const rawConfig = {
   database: {
     url: process.env.DATABASE_URL,
@@ -137,23 +196,43 @@ const rawConfig = {
   },
   blockchain: {
     rpcUrl: process.env.RPC_URL || '',
-    chainId: parseInt(process.env.CHAIN_ID || '1'),
-    ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS,
-    ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(','),
-    ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS,
-    ensBulkRenewalEventEmitter: process.env.ENS_BULK_RENEWAL_EVENT_EMITTER,
-    seaportAddress: process.env.SEAPORT_ADDRESS,
+    chainId,
+    ensRegistrarAddress: process.env.ENS_REGISTRAR_ADDRESS || network.ensRegistrarAddress,
+    ensControllerAddresses: process.env.ENS_CONTROLLER_ADDRESSES?.split(',') || network.ensControllerAddresses,
+    ensNameWrapperAddress: process.env.ENS_NAME_WRAPPER_ADDRESS || network.ensNameWrapperAddress,
+    ensBulkRenewalEventEmitter: envNullable(process.env.ENS_BULK_RENEWAL_EVENT_EMITTER, network.ensBulkRenewalEventEmitter),
+    seaportAddress: process.env.SEAPORT_ADDRESS || network.seaportAddress,
+    seaportStartBlock: process.env.SEAPORT_START_BLOCK ? parseInt(process.env.SEAPORT_START_BLOCK) : network.seaportStartBlock,
+    wethAddress: process.env.WETH_ADDRESS || network.wethAddress,
+    usdcAddress: process.env.USDC_ADDRESS || network.usdcAddress,
+    ensTokenAddress: envNullable(process.env.ENS_TOKEN_ADDRESS, network.ensTokenAddress),
+    multicall3Address: process.env.MULTICALL3_ADDRESS || network.multicall3Address,
+    openseaConduitAddress: process.env.OPENSEA_CONDUIT_ADDRESS || network.openseaConduitAddress,
+    marketplaceConduitAddress: envNullable(process.env.MARKETPLACE_CONDUIT_ADDRESS, network.marketplaceConduitAddress),
+    legacyPublicResolverAddress: network.legacyPublicResolverAddress,
     startBlock: process.env.START_BLOCK ? parseInt(process.env.START_BLOCK) : undefined,
     confirmations: parseInt(process.env.CONFIRMATIONS || '0'),
+    ensv2: resolveEnsV2(network.ensv2),
   },
   opensea: {
+    enabled: process.env.OPENSEA_ENABLED !== undefined
+      ? process.env.OPENSEA_ENABLED === 'true'
+      : network.opensea.enabled,
     apiKey: process.env.OPENSEA_API_KEY,
+    apiBaseUrl: process.env.OPENSEA_API_BASE_URL || network.opensea.apiBaseUrl,
+    chainSlug: process.env.OPENSEA_CHAIN || network.opensea.chainSlug,
+    collectionSlug: process.env.OPENSEA_COLLECTION_SLUG || network.opensea.collectionSlug,
     streamUrl: process.env.OPENSEA_STREAM_URL,
   },
+  features: {
+    unclaimedDeposits: process.env.UNCLAIMED_DEPOSITS_ENABLED !== undefined
+      ? process.env.UNCLAIMED_DEPOSITS_ENABLED === 'true'
+      : network.features.unclaimedDeposits,
+  },
   theGraph: {
-    ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL,
+    ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL || network.ensSubgraphUrl,
     apiKey: process.env.THE_GRAPH_API_KEY,
-    ensWorkerUrl: process.env.ENS_WORKER_URL,
+    ensWorkerUrl: envNullable(process.env.ENS_WORKER_URL, network.ensWorkerUrl),
   },
   api: {
     port: parseInt(process.env.API_PORT || '3000'),
@@ -241,16 +320,13 @@ const rawConfig = {
 
 export const config = ConfigSchema.parse(rawConfig);
 
+// viem chain definition for the configured network
+export const viemChain = network.chain;
+
 // Currency constants
 export const CURRENCY_ADDRESSES = {
   ETH: '0x0000000000000000000000000000000000000000',
-  WETH: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-} as const;
-
-// ENS Controller addresses (for NameRegistered events with cost data)
-export const ENS_CONTROLLER_ADDRESSES = {
-  ORIGINAL: '0x253553366Da8546fC250F225fe3d25d0C782303b',      // Deployed May 2022
-  CONTROLLER_V2: '0x59e16fccd424cc24e280be16e11bcd56fb0ce547', // ETH Registrar Controller 2
+  WETH: config.blockchain.wethAddress.toLowerCase(),
 } as const;
 
 // Helper to get all ENS controller addresses as array
@@ -272,6 +348,9 @@ export const ETH_WETH_FILTER = `(currency_address = '${CURRENCY_ADDRESSES.ETH}' 
 // ENS registration referrer codes (bytes32 values, lowercase) → human-readable source names
 export const ENS_REFERRER_CODES: Record<string, string> = {
   '0x0000000000000000000000007e491cde0fbf08e51f54c4fb6b9e24afbd18966d': 'grails',
+  // Grails' current referrer (an address Grails controls; used by BulkRegistrationV2). The
+  // code above is the legacy one, kept so historical and still-incoming registrations stay attributed.
+  '0x000000000000000000000000387e4fd48122a6b6fe4717c5351860a43e35c852': 'grails',
   '0x0000000000000000000000001c0ea438837302b4516ac3f380313061ec11760f': 'snipezone',
   '0x000000000000000000000000efce7f86fd1efb0359a91c873e6dee9f98788713': 'enstools',
   '0x0000000000000000000000009531c059098e3d194ff87febb587ab07b30b1306': 'rotki',

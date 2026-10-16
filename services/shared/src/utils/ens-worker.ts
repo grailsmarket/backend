@@ -1,6 +1,5 @@
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
-import { config } from '../config';
+import { viemChain, config } from '../config';
 
 // Common text record keys to try when The Graph keys aren't available
 const COMMON_TEXT_KEYS = [
@@ -10,7 +9,7 @@ const COMMON_TEXT_KEYS = [
   'com.reddit', 'com.linkedin', 'io.keybase', 'xyz.farcaster',
 ];
 
-const BAD_RESOLVER = '0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41';
+const BAD_RESOLVER = config.blockchain.legacyPublicResolverAddress?.toLowerCase() ?? null;
 
 /**
  * Determine if we need to fall back to the ENS worker for text records.
@@ -24,8 +23,13 @@ export function needsEnsWorkerFallback(
   texts: string[] | null | undefined,
   textChangeds: Array<{ key: string; value: string | null }> | null | undefined,
 ): boolean {
+  // No ENS worker for this network
+  if (!config.theGraph.ensWorkerUrl) {
+    return false;
+  }
+
   // Check for the known bad resolver
-  if (resolverAddress && resolverAddress.toLowerCase() === BAD_RESOLVER) {
+  if (BAD_RESOLVER && resolverAddress && resolverAddress.toLowerCase() === BAD_RESOLVER) {
     return true;
   }
 
@@ -95,7 +99,7 @@ export async function fetchTextRecordsOnChain(
   const keys = textKeys && textKeys.length > 0 ? textKeys : COMMON_TEXT_KEYS;
 
   const client = createPublicClient({
-    chain: mainnet,
+    chain: viemChain,
     transport: http(config.blockchain.rpcUrl),
   });
 

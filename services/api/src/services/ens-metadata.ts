@@ -1,4 +1,4 @@
-import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents, isEnsV2Name, fetchNameRecordsOnChain } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
@@ -151,28 +151,22 @@ export async function ensureMetadataFresh(
  * @returns Object with text records and chains array for address records
  */
 async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
+  if (await isEnsV2Name(name)) {
+    return fetchV2MetadataOnChain(name);
+  }
+
   const query = `
     query GetDomain($name: String!) {
       domains(where: { name: $name }) {
         resolver {
           address
           texts
-          textChangeds {
-            key
-            value
-          }
+          ${RESOLVER_EVENTS_FIELDS}
           addr {
             id
           }
           coinTypes
-          multicoinAddrChangeds {
-            coinType
-            addr
-          }
           contentHash
-          contenthashChangeds {
-            hash
-          }
         }
       }
     }
@@ -207,6 +201,7 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
   }
 
   const domain = json.data?.domains?.[0];
+  normalizeResolverEvents(domain?.resolver);
   const metadata: EnsMetadata = {};
 
   // Build metadata object from text records
@@ -261,5 +256,19 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
     metadata.contenthash = contenthash;
   }
 
+  return metadata;
+}
+
+/**
+ * ENSv2 names aren't in the v1 subgraph; resolve text records and the ETH address on-chain
+ * through the UniversalResolver.
+ */
+async function fetchV2MetadataOnChain(name: string): Promise<EnsMetadata> {
+  const { textRecords, addressRecords } = await fetchNameRecordsOnChain(name);
+  const metadata: EnsMetadata = { ...textRecords };
+  const chains = processAddressRecords(addressRecords);
+  if (chains.length > 0) {
+    metadata.chains = chains;
+  }
   return metadata;
 }
