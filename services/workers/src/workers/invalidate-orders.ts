@@ -71,6 +71,7 @@ export async function registerInvalidateOrdersWorker(boss: PgBoss): Promise<void
         await createNotification({
           user_address: listing.seller_address,
           type: 'listing_cancelled',
+          ens_name_id: ensNameId,
           title: 'Listing Cancelled',
           message: `Your listing for ${name.name} can no longer be filled because the name's token changed (${reason}). List it again to sell it.`,
           data: { listing_id: listing.id, name: name.name, reason },
@@ -95,6 +96,7 @@ export async function registerInvalidateOrdersWorker(boss: PgBoss): Promise<void
         await createNotification({
           user_address: offer.buyer_address,
           type: 'offer_cancelled',
+          ens_name_id: ensNameId,
           title: 'Offer Cancelled',
           message: `Your offer on ${name.name} can no longer be accepted because the name's token changed (${reason}). Make a new offer to bid again.`,
           data: { offer_id: offer.id, name: name.name, reason },

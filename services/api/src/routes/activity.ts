@@ -113,6 +113,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
+          en.ens_version AS version,
           en.token_id,
           en.clubs
         FROM activity_history ah
@@ -241,6 +242,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
+          en.ens_version AS version,
           en.token_id,
           en.clubs
         FROM activity_history ah
@@ -490,6 +492,7 @@ export async function activityRoutes(fastify: FastifyInstance) {
           ah.metadata,
           timezone('UTC', ah.created_at) as created_at,
           en.name,
+          en.ens_version AS version,
           en.token_id,
           en.clubs
         FROM activity_history ah

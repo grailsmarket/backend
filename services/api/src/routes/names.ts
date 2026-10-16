@@ -312,7 +312,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
               .query(
                 // offer_amount_wei is VARCHAR(78); cast to numeric so the
                 // top-N sort is by value, not lexicographic ("9..." vs "10...").
-                `SELECT o.*, e.name, e.token_id
+                `SELECT o.*, e.name, e.token_id, e.ens_version AS version
                    FROM offers o
                    JOIN ens_names e ON o.ens_name_id = e.id
                   WHERE o.ens_name_id = $1 AND o.status = $2

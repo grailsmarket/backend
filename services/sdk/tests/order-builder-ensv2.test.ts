@@ -56,10 +56,12 @@ describe('ENSv2 orders', () => {
     const listing = builder.buildListingOrder({ tokenId: V2_TOKEN_ID, ensVersion: 2, priceWei: '1000', offerer: SELLER });
     const listingParams = fulfiller.buildBasicOrderParameters({ parameters: listing, signature: '0x' } as any);
     expect(listingParams.basicOrderType).toBe(BasicOrderType.ETH_TO_ERC1155_FULL_OPEN);
+    expect(listingParams.basicOrderType).toBe(4); // Seaport ETH_TO_ERC1155_FULL_OPEN
     expect(listingParams.offerToken).toBe(ETH_REGISTRY);
 
     const offer = builder.buildOfferOrder({ tokenId: V2_TOKEN_ID, ensVersion: 2, offerAmountWei: '1000', offerer: SELLER });
     const offerParams = fulfiller.buildBasicOrderParameters({ parameters: offer, signature: '0x' } as any);
     expect(offerParams.basicOrderType).toBe(BasicOrderType.ERC1155_TO_ERC20_FULL_OPEN);
+    expect(offerParams.basicOrderType).toBe(20); // Seaport ERC1155_TO_ERC20_FULL_OPEN
   });
 });

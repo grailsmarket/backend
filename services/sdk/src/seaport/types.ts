@@ -113,22 +113,50 @@ export interface BasicOrderParameters {
 }
 
 /**
- * Basic order type enum
- * https://docs.opensea.io/reference/seaport-overview#basic-order-types
+ * Basic order type enum, Seaport's `BasicOrderType`: (route << 2) | orderType, where route is
+ * ETH_TO_ERC721, ETH_TO_ERC1155, ERC20_TO_ERC721, ERC20_TO_ERC1155, ERC721_TO_ERC20,
+ * ERC1155_TO_ERC20 and orderType is FULL_OPEN, PARTIAL_OPEN, FULL_RESTRICTED, PARTIAL_RESTRICTED.
+ * The order type part must match the signed order's `orderType`.
+ * https://github.com/ProjectOpenSea/seaport-types/blob/main/src/lib/ConsiderationEnums.sol
  */
 export enum BasicOrderType {
+  ETH_TO_ERC721_FULL_OPEN = 0,
+  ETH_TO_ERC721_PARTIAL_OPEN = 1,
+  ETH_TO_ERC721_FULL_RESTRICTED = 2,
+  ETH_TO_ERC721_PARTIAL_RESTRICTED = 3,
+  ETH_TO_ERC1155_FULL_OPEN = 4,
+  ETH_TO_ERC1155_PARTIAL_OPEN = 5,
+  ETH_TO_ERC1155_FULL_RESTRICTED = 6,
+  ETH_TO_ERC1155_PARTIAL_RESTRICTED = 7,
+  ERC20_TO_ERC721_FULL_OPEN = 8,
+  ERC20_TO_ERC721_PARTIAL_OPEN = 9,
+  ERC20_TO_ERC721_FULL_RESTRICTED = 10,
+  ERC20_TO_ERC721_PARTIAL_RESTRICTED = 11,
+  ERC20_TO_ERC1155_FULL_OPEN = 12,
+  ERC20_TO_ERC1155_PARTIAL_OPEN = 13,
+  ERC20_TO_ERC1155_FULL_RESTRICTED = 14,
+  ERC20_TO_ERC1155_PARTIAL_RESTRICTED = 15,
+  ERC721_TO_ERC20_FULL_OPEN = 16,
+  ERC721_TO_ERC20_PARTIAL_OPEN = 17,
+  ERC721_TO_ERC20_FULL_RESTRICTED = 18,
+  ERC721_TO_ERC20_PARTIAL_RESTRICTED = 19,
+  ERC1155_TO_ERC20_FULL_OPEN = 20,
+  ERC1155_TO_ERC20_PARTIAL_OPEN = 21,
+  ERC1155_TO_ERC20_FULL_RESTRICTED = 22,
+  ERC1155_TO_ERC20_PARTIAL_RESTRICTED = 23,
+
+  /** @deprecated use ETH_TO_ERC721_FULL_OPEN */
   ETH_TO_ERC721 = 0,
-  ETH_TO_ERC1155 = 1,
-  ETH_TO_ERC721_FULL_OPEN = 2,
-  ETH_TO_ERC1155_FULL_OPEN = 3,
+  /** @deprecated use ETH_TO_ERC1155_FULL_OPEN */
+  ETH_TO_ERC1155 = 4,
+  /** @deprecated use ERC20_TO_ERC721_FULL_OPEN */
   ERC20_TO_ERC721 = 8,
-  ERC20_TO_ERC1155 = 9,
-  ERC20_TO_ERC721_FULL_OPEN = 10,
-  ERC20_TO_ERC1155_FULL_OPEN = 11,
+  /** @deprecated use ERC20_TO_ERC1155_FULL_OPEN */
+  ERC20_TO_ERC1155 = 12,
+  /** @deprecated use ERC721_TO_ERC20_FULL_OPEN */
   ERC721_TO_ERC20 = 16,
-  ERC1155_TO_ERC20 = 17,
-  ERC721_TO_ERC20_FULL_OPEN = 18,
-  ERC1155_TO_ERC20_FULL_OPEN = 19,
+  /** @deprecated use ERC1155_TO_ERC20_FULL_OPEN */
+  ERC1155_TO_ERC20 = 20,
 }
 
 /**
@@ -138,7 +166,7 @@ export interface BuildListingOrderParams {
   /** ENS token ID */
   tokenId: string;
   /**
-   * ENS version of the name (`ens_version` from the API). 2 = an ENSv2 name: the order trades
+   * ENS version of the name (`version` from the API). 2 = an ENSv2 name: the order trades
    * the ETHRegistry ERC1155 token, and `tokenId` must be the name's current `token_id`
    * (it changes when roles on the name change, which invalidates existing orders).
    * Default: 1.
@@ -169,7 +197,7 @@ export interface BuildOfferOrderParams {
   /** ENS token ID */
   tokenId: string;
   /**
-   * ENS version of the name (`ens_version` from the API). 2 = an ENSv2 name: the order trades
+   * ENS version of the name (`version` from the API). 2 = an ENSv2 name: the order trades
    * the ETHRegistry ERC1155 token, and `tokenId` must be the name's current `token_id`
    * (it changes when roles on the name change, which invalidates existing orders).
    * Default: 1.

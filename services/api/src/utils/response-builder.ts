@@ -22,7 +22,7 @@ export interface SearchResult {
   name: string;
   token_id: string;
   // 1 = ENS v1, 2 = ENSv2 (an ERC1155 on token_contract, the ETHRegistry; token_id can change)
-  ens_version: number;
+  version: number;
   token_contract: string | null;
   owner: string | null;
   expiry_date: Date | null;
@@ -194,7 +194,7 @@ export async function buildSearchResults(
       id: row.id,
       name: row.name,
       token_id: row.token_id,
-      ens_version: row.ens_version,
+      version: row.ens_version,
       token_contract: row.token_contract,
       owner: row.owner_address,
       expiry_date: row.expiry_date,
@@ -256,7 +256,7 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     name,
     token_id: '',
     // ENSv2 is live wherever it's configured, so a new registration would be a v2 name
-    ens_version: config.blockchain.ensv2 ? 2 : 1,
+    version: config.blockchain.ensv2 ? 2 : 1,
     token_contract: null,
     owner: null,
     expiry_date: new Date('2020-01-01T00:00:00Z'),

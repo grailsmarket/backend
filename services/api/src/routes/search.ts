@@ -120,7 +120,7 @@ function createNotFoundResult(name: string): SearchResult {
     id: 0,
     name: normalizedName,
     token_id: '',
-    ens_version: config.blockchain.ensv2 ? 2 : 1,
+    version: config.blockchain.ensv2 ? 2 : 1,
     token_contract: null,
     owner: '',
     expiry_date: null,

@@ -345,6 +345,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
           `SELECT c.id,
                   c.ens_name_id,
                   en.name AS name,
+                  en.ens_version AS version,
                   COALESCE(c.body_censored, c.body) AS body,
                   c.created_at,
                   u.address AS author_address,
