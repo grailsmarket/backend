@@ -57,6 +57,20 @@ export class SeaportOrderBuilder {
   }
 
   /**
+   * The ENS NFT item: an ERC721 on the v1 BaseRegistrar, or for ENSv2 names an ERC1155 on
+   * the ETHRegistry.
+   */
+  private nftItem(ensVersion: 1 | 2): { itemType: ItemType; token: string } {
+    if (ensVersion === 2) {
+      if (!this.contracts.ethRegistry) {
+        throw new Error('ENSv2 is not deployed on this chain');
+      }
+      return { itemType: ItemType.ERC1155, token: this.contracts.ethRegistry };
+    }
+    return { itemType: ItemType.ERC721, token: this.contracts.ensRegistrar };
+  }
+
+  /**
    * Build a listing order (seller offers ENS name, wants payment)
    *
    * @param params - Listing order parameters
@@ -78,6 +92,7 @@ export class SeaportOrderBuilder {
   buildListingOrder(params: BuildListingOrderParams): SeaportOrder {
     const {
       tokenId,
+      ensVersion = 1,
       priceWei,
       offerer,
       durationDays = 7,
@@ -98,8 +113,7 @@ export class SeaportOrderBuilder {
     // Build offer (ENS NFT)
     const offer: SeaportOfferItem[] = [
       {
-        itemType: ItemType.ERC721,
-        token: this.contracts.ensRegistrar,
+        ...this.nftItem(ensVersion),
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',
@@ -194,6 +208,7 @@ export class SeaportOrderBuilder {
   buildOfferOrder(params: BuildOfferOrderParams): SeaportOrder {
     const {
       tokenId,
+      ensVersion = 1,
       offerAmountWei,
       offerer,
       durationDays = 7,
@@ -229,8 +244,7 @@ export class SeaportOrderBuilder {
     // Note: The seller's address will be filled in when the offer is accepted
     const consideration: SeaportConsiderationItem[] = [
       {
-        itemType: ItemType.ERC721,
-        token: this.contracts.ensRegistrar,
+        ...this.nftItem(ensVersion),
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',

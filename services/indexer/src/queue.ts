@@ -109,4 +109,6 @@ export const QUEUE_NAMES = {
   // chain (not OpenSea) decides whether a listing/offer is still fulfillable.
   VALIDATE_LISTING_OWNERSHIP: 'validate-listing-ownership',
   VALIDATE_OFFER_BALANCE: 'validate-offer-balance',
+  // ENSv2 name got a new token: cancel orders signed against the old one
+  INVALIDATE_STALE_ORDERS: 'invalidate-stale-orders',
 } as const;

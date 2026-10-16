@@ -282,6 +282,10 @@ export class EnsV2Indexer {
     }
 
     await this.recordTokenId(tokenId, ensNameId, migration ? 'migrated' : 'registered', log);
+    if (existing.rows.length > 0) {
+      // Orders on the name's previous token (v1, or an earlier v2 registration) can't fill
+      await this.publishStaleOrders(ensNameId, migration ? 'migrated' : 'reregistered', log);
+    }
 
     if (migration) {
       await this.insertActivityOnce(ensNameId, 'migrated', {
@@ -527,6 +531,7 @@ export class EnsV2Indexer {
       'UPDATE ens_names SET expiry_date = $2, updated_at = NOW() WHERE id = $1',
       [ensName.id, blockDate]
     );
+    await this.publishStaleOrders(ensName.id, 'unregistered', log);
     logger.info(`ENSv2: ${ensName.name} unregistered`);
   }
 
@@ -557,6 +562,7 @@ export class EnsV2Indexer {
       [ensName.id, newTokenId]
     );
     await this.recordTokenId(newTokenId, ensName.id, 'regenerated', log);
+    await this.publishStaleOrders(ensName.id, 'token_regenerated', log);
     logger.info(`ENSv2: ${ensName.name} token regenerated ${oldTokenId} -> ${newTokenId}`);
   }
 
@@ -685,6 +691,24 @@ export class EnsV2Indexer {
         errorMessage: queueError?.message || String(queueError),
         ensNameId
       }, 'Failed to publish ownership update job');
+    }
+  }
+
+  private async publishStaleOrders(ensNameId: number, reason: string, log: DecodedLog) {
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+      await boss.send(QUEUE_NAMES.INVALIDATE_STALE_ORDERS, {
+        ensNameId,
+        reason,
+        transactionHash: log.transactionHash || '',
+      });
+    } catch (queueError: any) {
+      // Don't fail indexing; listing validation also catches stale orders
+      logger.error({
+        errorMessage: queueError?.message || String(queueError),
+        ensNameId
+      }, 'Failed to publish stale order job');
     }
   }
 

@@ -43,6 +43,10 @@ export interface ENSName {
   name: string;
   label_name?: string;
   token_id: string;
+  /** 1 = ENS v1 (BaseRegistrar/NameWrapper), 2 = ENSv2 ETHRegistry */
+  ens_version?: 1 | 2;
+  /** Contract of token_id for v2 names (the ETHRegistry); null for v1 names */
+  token_contract?: string | null;
   owner: string | null;
   expiry_date: string | null;
   registration_date: string | null;

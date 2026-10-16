@@ -15,7 +15,7 @@ const pool = getPostgresPool();
  * Note: notifications table schema uses user_id (not user_address)
  * For now, we'll store notification data in metadata field
  */
-async function createNotification(params: {
+export async function createNotification(params: {
   user_address: string;
   type: string;
   title: string;
@@ -56,10 +56,43 @@ export async function updateListingStatus(
   validationResult: ValidationResult,
   action?: 'refunded'
 ): Promise<void> {
-  const { isValid, reason, details } = validationResult;
+  const { isValid, reason, details, permanent } = validationResult;
 
   try {
-    if (!isValid && action !== 'refunded') {
+    if (!isValid && permanent) {
+      // The order can never be filled (e.g. its ENSv2 token ID changed): cancel it
+      const updateResult = await pool.query(`
+        UPDATE listings
+        SET status = 'cancelled',
+            unfunded_reason = $2,
+            last_validated_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+          AND status IN ('active', 'unfunded')
+        RETURNING seller_address
+      `, [listingId, reason]);
+
+      if (updateResult.rows.length > 0) {
+        const listing = await pool.query(`
+          SELECT l.seller_address, en.name
+          FROM listings l
+          JOIN ens_names en ON en.id = l.ens_name_id
+          WHERE l.id = $1
+        `, [listingId]);
+
+        if (listing.rows.length > 0) {
+          const { seller_address, name } = listing.rows[0];
+          await createNotification({
+            user_address: seller_address,
+            type: 'listing_cancelled',
+            title: 'Listing Cancelled',
+            message: `Your listing for ${name} can no longer be filled and was cancelled. List it again to sell it.`,
+            data: { listing_id: listingId, name, reason },
+          });
+          console.log(`Listing ${listingId} (${name}) cancelled: ${reason}`);
+        }
+      }
+    } else if (!isValid && action !== 'refunded') {
       // Mark as unfunded
       const updateResult = await pool.query(`
         UPDATE listings

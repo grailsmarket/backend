@@ -8,7 +8,7 @@ import {
   encodeAbiParameters,
   parseAbiParameters
 } from 'viem';
-import { viemChain, config, type SeaportOrder, ItemType, OrderType } from '../../../shared/src';
+import { viemChain, config, type SeaportOrder, ItemType, OrderType, findEnsV2NameByTokenId } from '../../../shared/src';
 
 const publicClient = createPublicClient({
   chain: viemChain,
@@ -24,7 +24,14 @@ interface CreateOrderParams {
 }
 
 export async function createSeaportOrder(params: CreateOrderParams): Promise<SeaportOrder> {
-  const { tokenId, price, currency, duration, offerer } = params;
+  const { price, currency, duration, offerer } = params;
+
+  // ENSv2 names trade as ERC1155 tokens on the ETHRegistry, under their current token ID
+  const v2Name = await findEnsV2NameByTokenId(params.tokenId);
+  const tokenId = v2Name ? v2Name.token_id : params.tokenId;
+  const nftItem = v2Name
+    ? { itemType: ItemType.ERC1155, token: config.blockchain.ensv2!.ethRegistryAddress }
+    : { itemType: ItemType.ERC721, token: config.blockchain.ensRegistrarAddress };
 
   const startTime = Math.floor(Date.now() / 1000);
   const endTime = startTime + (duration * 24 * 60 * 60);
@@ -39,8 +46,7 @@ export async function createSeaportOrder(params: CreateOrderParams): Promise<Sea
     zone: '0x0000000000000000000000000000000000000000',
     offer: [
       {
-        itemType: ItemType.ERC721,
-        token: config.blockchain.ensRegistrarAddress,
+        ...nftItem,
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',

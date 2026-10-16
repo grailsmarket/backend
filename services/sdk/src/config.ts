@@ -54,6 +54,8 @@ export interface ContractAddresses {
   seaport: string;
   /** WETH */
   weth: string;
+  /** ENSv2 ETHRegistry (ERC1155); null where ENSv2 isn't deployed */
+  ethRegistry: string | null;
 }
 
 /**
@@ -67,6 +69,7 @@ export const CONTRACTS_BY_CHAIN: Record<number, ContractAddresses> = {
     nameWrapper: '0xD4416b13d2b3a9AbAe7AcD5D6C2BbDBE25686401',
     seaport: '0x0000000000000068F116a894984e2DB1123eB395',
     weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    ethRegistry: null,
   },
   // Sepolia
   11155111: {
@@ -75,6 +78,8 @@ export const CONTRACTS_BY_CHAIN: Record<number, ContractAddresses> = {
     nameWrapper: '0x0635513f179D50A207757E05759CbD106d7dFcE8',
     seaport: '0x0000000000000068F116a894984e2DB1123eB395',
     weth: '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
+    // 2026-10-01 Sepolia ENSv2 deployment
+    ethRegistry: '0xd4ebcbbdf463c9c45784603db0ddd499bc44a8b4',
   },
 };
 

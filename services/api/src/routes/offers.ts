@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
+import { checkOrderForName } from '../services/ensv2-orders';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -44,6 +45,20 @@ export async function offersRoutes(fastify: FastifyInstance) {
           code: 'INVALID_FEE',
           message: feeValidation.error || 'Invalid marketplace fee',
         },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // ENSv2 names: the order must trade the current ETHRegistry token
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'offer',
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
         meta: { timestamp: new Date().toISOString() },
       });
     }

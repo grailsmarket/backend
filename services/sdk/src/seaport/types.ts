@@ -137,6 +137,13 @@ export enum BasicOrderType {
 export interface BuildListingOrderParams {
   /** ENS token ID */
   tokenId: string;
+  /**
+   * ENS version of the name (`ens_version` from the API). 2 = an ENSv2 name: the order trades
+   * the ETHRegistry ERC1155 token, and `tokenId` must be the name's current `token_id`
+   * (it changes when roles on the name change, which invalidates existing orders).
+   * Default: 1.
+   */
+  ensVersion?: 1 | 2;
   /** Price in wei */
   priceWei: string;
   /** Seller address (offerer) */
@@ -161,6 +168,13 @@ export interface BuildListingOrderParams {
 export interface BuildOfferOrderParams {
   /** ENS token ID */
   tokenId: string;
+  /**
+   * ENS version of the name (`ens_version` from the API). 2 = an ENSv2 name: the order trades
+   * the ETHRegistry ERC1155 token, and `tokenId` must be the name's current `token_id`
+   * (it changes when roles on the name change, which invalidates existing orders).
+   * Default: 1.
+   */
+  ensVersion?: 1 | 2;
   /** Offer amount in wei (WETH) */
   offerAmountWei: string;
   /** Buyer address (offerer) */

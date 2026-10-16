@@ -7,6 +7,9 @@ import { config } from '../../../shared/src';
 export interface ValidationResult {
   isValid: boolean;
   reason?: string;
+  // The order can never be filled again (e.g. an ENSv2 token ID changed): cancel rather
+  // than mark unfunded
+  permanent?: boolean;
   checkedAt: Date;
   details?: {
     currentOwner?: string;
@@ -35,6 +38,8 @@ export interface ListingWithOwner {
   token_id: string;
   current_owner: string;
   status: string;
+  ens_version: number;
+  order_data: any;
 }
 
 export interface OfferWithBalance {

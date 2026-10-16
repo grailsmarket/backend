@@ -3,6 +3,7 @@ import { registerExpiryWorker, registerBatchExpiryWorker } from './workers/expir
 import { registerEnsSyncWorker, registerDailyEnsSyncScheduler, registerMetadataBackfillScheduler } from './workers/ens-sync';
 import { registerBatchNameResolutionWorker } from './workers/name-resolution';
 import { registerOwnershipWorker } from './workers/ownership';
+import { registerInvalidateOrdersWorker } from './workers/invalidate-orders';
 import { registerNotificationWorker } from './workers/notifications';
 import { registerAdminBroadcastWorker } from './workers/admin-broadcast';
 import { registerPriceSyncWorker } from './workers/price-sync';
@@ -40,6 +41,7 @@ async function start() {
     await registerMetadataBackfillScheduler(boss);
     await registerBatchNameResolutionWorker(boss);
     await registerOwnershipWorker(boss);
+    await registerInvalidateOrdersWorker(boss);
     await registerNotificationWorker(boss);
     await registerAdminBroadcastWorker(boss);
     await registerPriceSyncWorker(boss);

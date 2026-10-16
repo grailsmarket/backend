@@ -1,4 +1,4 @@
-import { getPostgresPool, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, config, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
 
 /**
  * Metadata structure for ENS names
@@ -21,6 +21,9 @@ export interface SearchResult {
   id: number;  // ens_names.id - essential for creating offers and fulfilling them
   name: string;
   token_id: string;
+  // 1 = ENS v1, 2 = ENSv2 (an ERC1155 on token_contract, the ETHRegistry; token_id can change)
+  ens_version: number;
+  token_contract: string | null;
   owner: string | null;
   expiry_date: Date | null;
   registration_date: Date | null;
@@ -105,6 +108,8 @@ export async function buildSearchResults(
       en.id,
       en.name,
       en.token_id,
+      en.ens_version,
+      en.token_contract,
       en.owner_address,
       en.expiry_date,
       en.registration_date,
@@ -189,6 +194,8 @@ export async function buildSearchResults(
       id: row.id,
       name: row.name,
       token_id: row.token_id,
+      ens_version: row.ens_version,
+      token_contract: row.token_contract,
       owner: row.owner_address,
       expiry_date: row.expiry_date,
       registration_date: row.registration_date,
@@ -248,6 +255,9 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     id: 0,
     name,
     token_id: '',
+    // ENSv2 is live wherever it's configured, so a new registration would be a v2 name
+    ens_version: config.blockchain.ensv2 ? 2 : 1,
+    token_contract: null,
     owner: null,
     expiry_date: new Date('2020-01-01T00:00:00Z'),
     registration_date: null,

@@ -13,5 +13,6 @@ export * from './services/storage';
 export * from './utils/ens-worker';
 export * from './utils/resolver-events';
 export * from './utils/ensv2-records';
+export * from './utils/ensv2-orders';
 export * from './services/google-ads';
 export * from './services/google-metrics-cache';

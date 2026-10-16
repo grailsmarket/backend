@@ -112,6 +112,13 @@ export interface SendAdminBroadcastJob {
   imageUrl?: string;
 }
 
+export interface InvalidateStaleOrdersJob {
+  ensNameId: number;
+  // migrated | reregistered | token_regenerated | unregistered
+  reason: string;
+  transactionHash?: string;
+}
+
 export interface BackfillGoogleMetricsJob {
   // Scheduled job — no payload needed
 }
@@ -136,4 +143,5 @@ export const QUEUE_NAMES = {
   BACKFILL_GOOGLE_METRICS: 'backfill-google-metrics',
   CLEANUP_GLOBAL_CHAT_MESSAGES: 'cleanup-global-chat-messages',
   EXPIRE_CHAT_IMAGES: 'expire-chat-images',
+  INVALIDATE_STALE_ORDERS: 'invalidate-stale-orders',
 } as const;
