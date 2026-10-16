@@ -20,6 +20,7 @@ const ETH_REGISTRY_READ_ABI = parseAbi([
   'function hasRoles(uint256 anyId, uint256 roleBitmap, address account) view returns (bool)',
   'function isOnlyAssignee(uint256 resource, uint256 roleBitmap, address account) view returns (bool)',
   'function isApprovedForAll(address account, address operator) view returns (bool)',
+  'function isEmancipated() view returns (bool)',
 ]);
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -109,15 +110,18 @@ export type EnsV2TransferCheck =
   | {
       ok: false;
       // token_changed / not_transferable: no order for this token ID can ever fill (cancel).
-      // ownership_lost / expired / not_approved: may recover (unfunded); a renewal or a
-      // transfer back keeps the token ID.
-      reason: 'token_changed' | 'ownership_lost' | 'expired' | 'not_transferable' | 'not_approved';
+      // ownership_lost / expired / not_approved / registry_locked: may recover (unfunded); a
+      // renewal or a transfer back keeps the token ID, and revoking the registry's root roles
+      // emancipates it.
+      reason: 'token_changed' | 'ownership_lost' | 'expired' | 'not_transferable' | 'not_approved' | 'registry_locked';
       detail: string;
     };
 
 /**
  * Whether Seaport can move `tokenId` from `owner` right now, mirroring the registry's
- * transfer rules: the token ID is current and unexpired, `owner` owns it and holds
+ * transfer rules: the registry is emancipated (safe transfers revert with
+ * TransferUnsafeUntilRegistryIsEmancipated while an account holds root roles that override
+ * token owners), the token ID is current and unexpired, `owner` owns it and holds
  * ROLE_CAN_TRANSFER_ADMIN, nobody else holds a role on it (Seaport transfers are "safe"
  * transfers, which revert with TransferUnsafeWithMultipleAssignees), and, when `operator`
  * is given, the owner has approved it (Seaport or the order's conduit).
@@ -140,7 +144,8 @@ export async function checkEnsV2Transferable(params: {
   const read = (functionName: any, args: readonly unknown[]) =>
     client.readContract({ address: registry, abi: ETH_REGISTRY_READ_ABI, functionName, args } as any) as Promise<any>;
 
-  const [currentTokenId, currentOwner, canTransfer, onlyAssignee, approved] = await Promise.all([
+  const [emancipated, currentTokenId, currentOwner, canTransfer, onlyAssignee, approved] = await Promise.all([
+    read('isEmancipated', []) as Promise<boolean>,
     read('getTokenId', [tokenId]) as Promise<bigint>,
     read('ownerOf', [tokenId]) as Promise<string>,
     read('hasRoles', [tokenId, ROLE_CAN_TRANSFER_ADMIN, owner]) as Promise<boolean>,
@@ -159,6 +164,9 @@ export async function checkEnsV2Transferable(params: {
   }
   if (currentOwner.toLowerCase() !== params.owner.toLowerCase()) {
     return { ok: false, reason: 'ownership_lost', detail: `owned by ${currentOwner}` };
+  }
+  if (!emancipated) {
+    return { ok: false, reason: 'registry_locked', detail: 'the ETHRegistry is not emancipated, so it allows no marketplace transfers' };
   }
   if (!canTransfer) {
     return { ok: false, reason: 'not_transferable', detail: 'owner lacks the transfer role (ROLE_CAN_TRANSFER_ADMIN)' };

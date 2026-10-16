@@ -133,6 +133,8 @@ async function checkV2Order(
           return fail(400, 'NAME_EXPIRED', `${name.name} is expired`);
         case 'not_transferable':
           return fail(400, 'NAME_NOT_TRANSFERABLE', `${name.name} can't be listed: ${transfer.detail}`);
+        case 'registry_locked':
+          return fail(400, 'NAME_NOT_TRANSFERABLE', `${name.name} can't be listed: ${transfer.detail}`);
         case 'not_approved':
           return fail(400, 'NOT_APPROVED', `Approve the marketplace first: ${transfer.detail}`);
       }
