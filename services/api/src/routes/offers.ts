@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToOfferRows, getOfferBlockReason } from '../services/compromised-names';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -30,6 +31,19 @@ export async function offersRoutes(fastify: FastifyInstance) {
         error: {
           code: 'FORBIDDEN',
           message: 'Buyer address does not match authenticated user',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // Stolen names: only the original owner / recovery wallets may place offers
+    const blockReason = await getOfferBlockReason(body.ensNameId, body.buyerAddress);
+    if (blockReason) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'NAME_COMPROMISED',
+          message: blockReason,
         },
         meta: { timestamp: new Date().toISOString() },
       });
@@ -141,7 +155,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers by ENS name
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
     const { page = 1, limit = 20, status = 'pending' } = request.query as any;
     const offset = (page - 1) * limit;
@@ -199,7 +213,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,
@@ -219,7 +233,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get single offer by ID
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
@@ -242,6 +256,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
         },
       });
     }
+
+    await applyCompromisedToOfferRows(result.rows, request.user?.address);
 
     const response: APIResponse<Offer> = {
       success: true,
@@ -436,7 +452,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers by buyer address
-  fastify.get('/buyer/:address', async (request, reply) => {
+  fastify.get('/buyer/:address', { preHandler: optionalAuth }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
@@ -476,7 +492,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,
@@ -496,7 +512,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers received by owner address (offers on names they own)
-  fastify.get('/owner/:address', async (request, reply) => {
+  fastify.get('/owner/:address', { preHandler: optionalAuth }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
@@ -537,7 +553,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,

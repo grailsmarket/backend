@@ -1,4 +1,9 @@
 import { getPostgresPool, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
+import {
+  getCompromisedByEnsNameIds,
+  canViewListingOrder,
+  type CompromisedInfo,
+} from '../services/compromised-names';
 
 /**
  * Metadata structure for ENS names
@@ -59,6 +64,9 @@ export interface SearchResult {
 
   // View count field
   view_count: number;
+
+  // Stolen-name flag (null unless the name has an active compromised_names row)
+  compromised: CompromisedInfo | null;
 }
 
 export interface Listing {
@@ -74,13 +82,16 @@ export interface Listing {
   source: string;
   broker_address: string | null;
   broker_fee_bps: number | null;
+  order_data_redacted?: boolean;
 }
 
 /**
  * Builds a consistent search result from ENS names and their listings
  *
  * @param ensNames - Array of ENS name identifiers (either full names or just the name strings)
- * @param userId - Optional user ID to include user's vote in results
+ * @param userId - Optional user ID to include user's vote in results. Also identifies the viewer's
+ *   wallet: on compromised names, listing order_data is only returned to the original owner /
+ *   recovery wallets / the seller (redacted otherwise)
  */
 export async function buildSearchResults(
   ensNames: string[],
@@ -147,6 +158,7 @@ export async function buildSearchResults(
       ${userId
         ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
         : 'NULL as watchlist_record_id,'}
+      ${userId ? `(SELECT address FROM users WHERE id = $${ensNames.length + 1}) as viewer_address,` : ''}
 
       -- Listing fields (aggregated as JSON array)
       COALESCE(
@@ -182,6 +194,7 @@ export async function buildSearchResults(
   }
 
   const result = await pool.query(query, queryParams);
+  const compromisedFlags = await getCompromisedByEnsNameIds(result.rows.map((row) => row.id));
 
   // Transform database results to SearchResult format
   return result.rows.map((row) => {
@@ -214,7 +227,17 @@ export async function buildSearchResults(
       highest_offer_currency: row.highest_offer_currency,
       highest_offer_id: row.highest_offer_id,
       view_count: parseInt(row.view_count) || 0,
+      compromised: compromisedFlags.get(row.id) || null,
     };
+
+    if (result.compromised) {
+      const info = result.compromised;
+      result.listings = result.listings.map((listing) =>
+        canViewListingOrder(info, listing.seller_address, row.viewer_address)
+          ? listing
+          : { ...listing, order_data: null, order_data_redacted: true }
+      );
+    }
 
     // Only include user_vote if userId was provided
     if (userId !== undefined) {
@@ -273,5 +296,6 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     highest_offer_currency: null,
     highest_offer_id: null,
     view_count: 0,
+    compromised: null,
   };
 }

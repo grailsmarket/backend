@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToListingRows } from '../services/compromised-names';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -43,7 +44,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // GET all listings with filtering and pagination
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
     const query = ListListingsQuerySchema.parse(request.query);
     fastify.log.info(`GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`);
     const offset = (query.page - 1) * query.limit;
@@ -142,7 +143,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       }> = {
         success: true,
         data: {
-          listings: dataResult.rows,
+          listings: await applyCompromisedToListingRows(dataResult.rows, request.user?.address),
           pagination: {
             page: query.page,
             limit: query.limit,
@@ -166,7 +167,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET listing by ENS name (returns all active listings for the name)
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
 
     const query = `
@@ -202,7 +203,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse<any> = {
       success: true,
-      data: result.rows,
+      data: await applyCompromisedToListingRows(result.rows, request.user?.address),
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -213,7 +214,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET listing by ID
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
@@ -247,7 +248,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse<any> = {
       success: true,
-      data: result.rows[0],
+      data: (await applyCompromisedToListingRows(result.rows, request.user?.address))[0],
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
