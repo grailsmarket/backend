@@ -1,4 +1,9 @@
 import { getPostgresPool, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
+import {
+  getCompromisedByEnsNameIds,
+  canViewListingOrder,
+  type CompromisedInfo,
+} from '../services/compromised-names';
 
 /**
  * Metadata structure for ENS names
@@ -59,6 +64,9 @@ export interface SearchResult {
 
   // View count field
   view_count: number;
+
+  // Stolen-name flag (null unless the name has an active compromised_names row)
+  compromised: CompromisedInfo | null;
 }
 
 export interface Listing {
@@ -74,6 +82,7 @@ export interface Listing {
   source: string;
   broker_address: string | null;
   broker_fee_bps: number | null;
+  order_data_redacted?: boolean;
 }
 
 /**
@@ -81,10 +90,13 @@ export interface Listing {
  *
  * @param ensNames - Array of ENS name identifiers (either full names or just the name strings)
  * @param userId - Optional user ID to include user's vote in results
+ * @param viewerAddress - Optional authenticated wallet; on compromised names, listing order_data
+ *   is only returned to the original owner / recovery wallets / the seller (redacted otherwise)
  */
 export async function buildSearchResults(
   ensNames: string[],
-  userId?: number
+  userId?: number,
+  viewerAddress?: string
 ): Promise<SearchResult[]> {
   if (ensNames.length === 0) {
     return [];
@@ -182,6 +194,7 @@ export async function buildSearchResults(
   }
 
   const result = await pool.query(query, queryParams);
+  const compromisedFlags = await getCompromisedByEnsNameIds(result.rows.map((row) => row.id));
 
   // Transform database results to SearchResult format
   return result.rows.map((row) => {
@@ -214,7 +227,17 @@ export async function buildSearchResults(
       highest_offer_currency: row.highest_offer_currency,
       highest_offer_id: row.highest_offer_id,
       view_count: parseInt(row.view_count) || 0,
+      compromised: compromisedFlags.get(row.id) || null,
     };
+
+    if (result.compromised) {
+      const info = result.compromised;
+      result.listings = result.listings.map((listing) =>
+        canViewListingOrder(info, listing.seller_address, viewerAddress)
+          ? listing
+          : { ...listing, order_data: null, order_data_redacted: true }
+      );
+    }
 
     // Only include user_vote if userId was provided
     if (userId !== undefined) {
@@ -232,8 +255,12 @@ export async function buildSearchResults(
  * @param name - ENS name to fetch
  * @param userId - Optional user ID to include user's vote
  */
-export async function buildNameResult(name: string, userId?: number): Promise<SearchResult | null> {
-  const results = await buildSearchResults([name], userId);
+export async function buildNameResult(
+  name: string,
+  userId?: number,
+  viewerAddress?: string
+): Promise<SearchResult | null> {
+  const results = await buildSearchResults([name], userId, viewerAddress);
   return results.length > 0 ? results[0] : null;
 }
 
@@ -273,5 +300,6 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     highest_offer_currency: null,
     highest_offer_id: null,
     view_count: 0,
+    compromised: null,
   };
 }

@@ -10,6 +10,7 @@ import { fetchFreshMetadata } from '../services/ens-metadata';
 import { resolveNameDetails } from '../services/name-details';
 import { getNameRoles, type EnsRoles } from '../services/ens-roles';
 import type { SearchResult } from '../utils/response-builder';
+import { applyCompromisedToOfferRows, getCompromisedByEnsNameIds } from '../services/compromised-names';
 
 // ENS Name Wrapper contract address
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
@@ -213,7 +214,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Resolve full name details: DB lookup, The Graph cold-import fallback,
     // and metadata-freshness refresh (shared with the /:name/bundle endpoint)
-    const nameResult = await resolveNameDetails(name, userId);
+    const nameResult = await resolveNameDetails(name, userId, request.user?.address);
 
     if (!nameResult) {
       return reply.status(404).send({
@@ -286,7 +287,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
-      const details = await resolveNameDetails(name, userId);
+      const details = await resolveNameDetails(name, userId, request.user?.address);
 
       if (!details) {
         return reply.status(404).send({
@@ -320,7 +321,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
                   LIMIT $3`,
                 [details.id, query.offersStatus, query.offersLimit]
               )
-              .then((result) => result.rows)
+              .then((result) => applyCompromisedToOfferRows(result.rows, request.user?.address))
               .catch((error) => {
                 fastify.log.error({ error, name }, 'Failed to fetch offers for bundle');
                 return [] as any[];
@@ -686,13 +687,18 @@ export async function namesRoutes(fastify: FastifyInstance) {
       getBestOfferForNFT(nameData.token_id),
     ]);
 
+    // Cached + anonymous: on a compromised name, never expose signed orders here
+    const compromised = (await getCompromisedByEnsNameIds([nameData.id])).get(nameData.id) || null;
+
     const response: APIResponse<ENSName> = {
       success: true,
       data: {
         ...nameData,
-        opensea_listing: openSeaListing,
-        opensea_offer: openSeaOffer,
-      },
+        ...(compromised ? { listing_order_data: null } : {}),
+        opensea_listing: compromised ? null : openSeaListing,
+        opensea_offer: compromised ? null : openSeaOffer,
+        compromised,
+      } as any,
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
