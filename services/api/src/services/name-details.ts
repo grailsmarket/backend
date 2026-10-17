@@ -21,15 +21,13 @@ const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
  *
  * @param name - Full ENS name (e.g., "vitalik.eth")
  * @param userId - Optional authenticated user ID for per-user fields (votes, watchlist)
- * @param viewerAddress - Optional authenticated wallet (unredacts compromised-name listings for allowed wallets)
  */
 export async function resolveNameDetails(
   name: string,
-  userId?: number,
-  viewerAddress?: string
+  userId?: number
 ): Promise<SearchResult | null> {
   // Use buildNameResult helper to get name with vote data
-  let nameResult = await buildNameResult(name, userId, viewerAddress);
+  let nameResult = await buildNameResult(name, userId);
 
   // If name doesn't exist in database, try to fetch from The Graph
   if (!nameResult) {
@@ -177,7 +175,7 @@ export async function resolveNameDetails(
           logger.info({ name, tokenId }, 'Successfully imported name from The Graph');
 
           // Query again to get full data with buildNameResult
-          nameResult = await buildNameResult(name, userId, viewerAddress);
+          nameResult = await buildNameResult(name, userId);
         }
       }
     } catch (error: any) {

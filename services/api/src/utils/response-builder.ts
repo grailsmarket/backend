@@ -89,14 +89,13 @@ export interface Listing {
  * Builds a consistent search result from ENS names and their listings
  *
  * @param ensNames - Array of ENS name identifiers (either full names or just the name strings)
- * @param userId - Optional user ID to include user's vote in results
- * @param viewerAddress - Optional authenticated wallet; on compromised names, listing order_data
- *   is only returned to the original owner / recovery wallets / the seller (redacted otherwise)
+ * @param userId - Optional user ID to include user's vote in results. Also identifies the viewer's
+ *   wallet: on compromised names, listing order_data is only returned to the original owner /
+ *   recovery wallets / the seller (redacted otherwise)
  */
 export async function buildSearchResults(
   ensNames: string[],
-  userId?: number,
-  viewerAddress?: string
+  userId?: number
 ): Promise<SearchResult[]> {
   if (ensNames.length === 0) {
     return [];
@@ -159,6 +158,7 @@ export async function buildSearchResults(
       ${userId
         ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
         : 'NULL as watchlist_record_id,'}
+      ${userId ? `(SELECT address FROM users WHERE id = $${ensNames.length + 1}) as viewer_address,` : ''}
 
       -- Listing fields (aggregated as JSON array)
       COALESCE(
@@ -233,7 +233,7 @@ export async function buildSearchResults(
     if (result.compromised) {
       const info = result.compromised;
       result.listings = result.listings.map((listing) =>
-        canViewListingOrder(info, listing.seller_address, viewerAddress)
+        canViewListingOrder(info, listing.seller_address, row.viewer_address)
           ? listing
           : { ...listing, order_data: null, order_data_redacted: true }
       );
@@ -255,12 +255,8 @@ export async function buildSearchResults(
  * @param name - ENS name to fetch
  * @param userId - Optional user ID to include user's vote
  */
-export async function buildNameResult(
-  name: string,
-  userId?: number,
-  viewerAddress?: string
-): Promise<SearchResult | null> {
-  const results = await buildSearchResults([name], userId, viewerAddress);
+export async function buildNameResult(name: string, userId?: number): Promise<SearchResult | null> {
+  const results = await buildSearchResults([name], userId);
   return results.length > 0 ? results[0] : null;
 }
 

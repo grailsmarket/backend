@@ -214,7 +214,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Resolve full name details: DB lookup, The Graph cold-import fallback,
     // and metadata-freshness refresh (shared with the /:name/bundle endpoint)
-    const nameResult = await resolveNameDetails(name, userId, request.user?.address);
+    const nameResult = await resolveNameDetails(name, userId);
 
     if (!nameResult) {
       return reply.status(404).send({
@@ -287,7 +287,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
-      const details = await resolveNameDetails(name, userId, request.user?.address);
+      const details = await resolveNameDetails(name, userId);
 
       if (!details) {
         return reply.status(404).send({
