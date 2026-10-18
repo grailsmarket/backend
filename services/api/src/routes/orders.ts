@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToListingRows } from '../services/compromised-names';
 
 const CreateOrderSchema = z.object({
   tokenId: z.string(),
@@ -349,7 +350,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
@@ -374,7 +375,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse = {
       success: true,
-      data: result.rows[0],
+      data: (await applyCompromisedToListingRows(result.rows, request.user?.address))[0],
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
