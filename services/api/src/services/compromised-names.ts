@@ -60,8 +60,9 @@ export async function getCompromisedByEnsNameIds(
         info_url: row.info_url,
         malicious_operators: row.malicious_operators || [],
       },
-      original_owner: row.original_owner,
-      allowed_addresses: row.allowed_addresses || [],
+      // Rows can be written by hand (checksummed); compare everything lowercased
+      original_owner: row.original_owner.toLowerCase(),
+      allowed_addresses: (row.allowed_addresses || []).map((a: string) => a.toLowerCase()),
       taken_at: row.taken_at,
     });
   }

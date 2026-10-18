@@ -36,8 +36,8 @@ export async function registerResolveCompromisedNamesWorker(boss: PgBoss) {
              FROM ens_names en
             WHERE cn.status = 'active'
               AND en.id = cn.ens_name_id
-              AND (LOWER(en.owner_address) = cn.original_owner
-                   OR LOWER(en.owner_address) = ANY(cn.allowed_addresses))
+              AND (LOWER(en.owner_address) = LOWER(cn.original_owner)
+                   OR LOWER(en.owner_address) = ANY(SELECT LOWER(a) FROM unnest(cn.allowed_addresses) a))
             RETURNING cn.name`
         );
 
@@ -51,7 +51,7 @@ export async function registerResolveCompromisedNamesWorker(boss: PgBoss) {
                 SELECT 1 FROM registrations r
                  WHERE r.ens_name_id = cn.ens_name_id
                    AND r.registration_date > cn.taken_at
-                   AND LOWER(r.owner_address) IS DISTINCT FROM cn.taken_by
+                   AND LOWER(r.owner_address) IS DISTINCT FROM LOWER(cn.taken_by)
               )
             RETURNING cn.name`
         );

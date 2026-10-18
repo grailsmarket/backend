@@ -80,7 +80,7 @@ export async function compromisedNamesRoutes(fastify: FastifyInstance) {
       if (/^0x[a-f0-9]{40}$/.test(q)) {
         params.push(q);
         conditions.push(
-          `(cn.original_owner = $${params.length} OR cn.taken_by = $${params.length} OR $${params.length} = ANY(cn.allowed_addresses))`
+          `(LOWER(cn.original_owner) = $${params.length} OR LOWER(cn.taken_by) = $${params.length} OR $${params.length} = ANY(SELECT LOWER(a) FROM unnest(cn.allowed_addresses) a))`
         );
       } else {
         params.push(`%${q}%`);
