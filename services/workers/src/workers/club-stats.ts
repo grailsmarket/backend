@@ -223,7 +223,10 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
       WITH club_regs AS (
         SELECT
           r.registration_date,
-          r.total_cost_wei::numeric as cost
+          -- *_wei volume is ETH: only ETH-paid (v1) registrations. ENSv2 registrations are
+          -- paid in stablecoins and counted in the USD volume, which covers every registration.
+          CASE WHEN r.currency_address IS NULL THEN r.total_cost_wei::numeric END as cost,
+          r.total_cost_usd as cost_usd
         FROM registrations r
         JOIN ens_names e ON r.ens_name_id = e.id
         WHERE $1 = ANY(e.clubs)
@@ -238,7 +241,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         COALESCE(SUM(cost), 0) as total_reg_volume,
         COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days'), 0) as reg_volume_1y,
         COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days'), 0) as reg_volume_1mo,
-        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_1w
+        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_1w,
+        COALESCE(SUM(cost_usd), 0) as total_reg_volume_usd,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days'), 0) as reg_volume_usd_1y,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days'), 0) as reg_volume_usd_1mo,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_usd_1w
       FROM club_regs
       `,
       [clubName]
@@ -256,7 +263,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
           total_reg_volume_wei = $5,
           reg_volume_wei_1y = $6,
           reg_volume_wei_1mo = $7,
-          reg_volume_wei_1w = $8
+          reg_volume_wei_1w = $8,
+          total_reg_volume_usd = $10,
+          reg_volume_usd_1y = $11,
+          reg_volume_usd_1mo = $12,
+          reg_volume_usd_1w = $13
       WHERE name = $9
       `,
       [
@@ -268,7 +279,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         row.reg_volume_1y?.toString() || '0',
         row.reg_volume_1mo?.toString() || '0',
         row.reg_volume_1w?.toString() || '0',
-        clubName
+        clubName,
+        row.total_reg_volume_usd?.toString() || '0',
+        row.reg_volume_usd_1y?.toString() || '0',
+        row.reg_volume_usd_1mo?.toString() || '0',
+        row.reg_volume_usd_1w?.toString() || '0',
       ]
     );
 

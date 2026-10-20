@@ -13,6 +13,9 @@ import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
+// How long a sale of a not-yet-indexed ENSv2 token waits for the ENSv2 indexer to catch up
+const ENSV2_SALE_WAIT_MS = parseInt(process.env.ENSV2_SALE_WAIT_MS || '1200000');
+
 // Define Seaport ABI with proper event definitions
 const SEAPORT_ABI = parseAbi([
   'event OrderFulfilled(bytes32 orderHash, address indexed offerer, address indexed zone, address recipient, (uint8 itemType, address token, uint256 identifier, uint256 amount)[] offer, (uint8 itemType, address token, uint256 identifier, uint256 amount, address recipient)[] consideration)',
@@ -377,9 +380,9 @@ export class SeaportIndexer {
         if (isEthRegistryToken(tokenAddress)) {
           // ENSv2: every v2 name is indexed from its registration, so look it up by token ID
           // (current or superseded). The ETHRegistry transfer updates ownership.
-          const v2Name = await findEnsV2NameByTokenId(tokenId);
+          const v2Name = await this.findEnsV2NameForSale(tokenId, log.blockNumber!);
           if (!v2Name) {
-            logger.warn(`Seaport sale of unknown ENSv2 token ${tokenId} in tx ${log.transactionHash}, skipping`);
+            logger.error(`Seaport sale of unknown ENSv2 token ${tokenId} in tx ${log.transactionHash}, skipping`);
             continue;
           }
           ensNameId = v2Name.id;
@@ -611,6 +614,30 @@ export class SeaportIndexer {
 
     if (cancelledOffers.rows.length > 0) {
       logger.info(`Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`);
+    }
+  }
+
+  /**
+   * The ENSv2 name a sold ETHRegistry token belongs to. The v2 indexer runs on its own cursor,
+   * so a name registered, migrated or regenerated just before the sale may not be indexed yet:
+   * wait for the v2 indexer to pass the sale's block rather than lose the sale. Gives up (null)
+   * once the v2 indexer is past the block, which means we don't index that token at all (e.g. a
+   * non-normalized label), or after ENSV2_SALE_WAIT_MS.
+   */
+  private async findEnsV2NameForSale(tokenId: string, blockNumber: bigint) {
+    const registry = config.blockchain.ensv2?.ethRegistryAddress.toLowerCase();
+    const deadline = Date.now() + ENSV2_SALE_WAIT_MS;
+    for (;;) {
+      const name = await findEnsV2NameByTokenId(tokenId);
+      if (name || !registry) return name;
+      const state = await this.pool.query(
+        'SELECT last_processed_block FROM indexer_state WHERE contract_address = $1',
+        [registry]
+      );
+      const v2Block = state.rows.length > 0 ? BigInt(state.rows[0].last_processed_block) : 0n;
+      if (v2Block >= blockNumber || Date.now() > deadline) return null;
+      logger.info(`Seaport sale of ENSv2 token ${tokenId} at block ${blockNumber}: waiting for the ENSv2 indexer (at ${v2Block})`);
+      await new Promise(resolve => setTimeout(resolve, 15000));
     }
   }
 

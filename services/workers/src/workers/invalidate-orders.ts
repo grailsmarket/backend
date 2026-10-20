@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, getOrderNftItem, checkEnsV2OrderItem } from '../../../shared/src';
+import { getPostgresPool, getOrderNftItem, checkEnsV2OrderItem, getEnsV2State } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { QUEUE_NAMES, type InvalidateStaleOrdersJob } from '../queue';
 import { createNotification } from './status-update-handler';
@@ -13,8 +13,8 @@ import { createNotification } from './status-update-handler';
  *
  * Only orders whose NFT item no longer matches the name's CURRENT ETHRegistry token are
  * cancelled, so re-indexing an old block range never cancels a valid order. An unregistered
- * name keeps its last token ID in ens_names, so its listings are re-validated on-chain
- * instead (the registry reports the token as changed).
+ * name keeps its last (now burned) token ID in ens_names, so its current token ID is read
+ * on-chain instead: unregistering bumps the token version, so every existing order is stale.
  */
 export async function registerInvalidateOrdersWorker(boss: PgBoss): Promise<void> {
   await boss.work<InvalidateStaleOrdersJob>(
@@ -33,25 +33,15 @@ export async function registerInvalidateOrdersWorker(boss: PgBoss): Promise<void
         return;
       }
 
-      if (reason === 'unregistered') {
-        const active = await pool.query(
-          `SELECT id FROM listings WHERE ens_name_id = $1 AND status IN ('active', 'unfunded')`,
-          [ensNameId]
-        );
-        if (active.rows.length > 0) {
-          await boss.insert(active.rows.map((l) => ({
-            name: 'validate-listing-ownership',
-            data: { listingId: l.id },
-            singletonKey: `listing-${l.id}`,
-          })));
-        }
-        return;
-      }
+      // Throws (and the job retries) if the chain can't be reached
+      const currentTokenId = reason === 'unregistered'
+        ? (await getEnsV2State(name.token_id)).tokenId
+        : name.token_id;
 
       const isStale = (orderData: any, side: 'listing' | 'offer') => {
         const data = typeof orderData === 'string' ? JSON.parse(orderData) : orderData;
         const params = data?.protocol_data?.parameters ?? data?.parameters ?? data ?? {};
-        return checkEnsV2OrderItem(getOrderNftItem(params, side), name.token_id) !== null;
+        return checkEnsV2OrderItem(getOrderNftItem(params, side), currentTokenId) !== null;
       };
 
       const listings = await pool.query(

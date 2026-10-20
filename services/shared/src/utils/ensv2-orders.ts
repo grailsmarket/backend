@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi } from 'viem';
+import { createPublicClient, http, keccak256, parseAbi, toBytes } from 'viem';
 import { viemChain, config } from '../config';
 import { getPostgresPool } from '../db/client';
 import { ItemType } from '../types';
@@ -21,7 +21,84 @@ const ETH_REGISTRY_READ_ABI = parseAbi([
   'function isOnlyAssignee(uint256 resource, uint256 roleBitmap, address account) view returns (bool)',
   'function isApprovedForAll(address account, address operator) view returns (bool)',
   'function isEmancipated() view returns (bool)',
+  'function getState(uint256 anyId) view returns ((uint8 status, uint64 expiry, address latestOwner, uint256 tokenId, uint256 resource))',
+  'function getResolver(string label) view returns (address)',
 ]);
+
+/** IPermissionedRegistry.Status */
+export const EnsV2Status = { AVAILABLE: 0, RESERVED: 1, REGISTERED: 2 } as const;
+
+function ethRegistry(): `0x${string}` {
+  const registry = config.blockchain.ensv2?.ethRegistryAddress as `0x${string}` | undefined;
+  if (!registry) {
+    throw new Error('ENSv2 is not configured for this chain');
+  }
+  return registry;
+}
+
+function registryClient() {
+  return createPublicClient({ chain: viemChain, transport: http(config.blockchain.rpcUrl) });
+}
+
+/**
+ * The ETHRegistry id of a .eth second-level name: its labelhash, which the registry accepts
+ * anywhere it takes an anyId. Null for anything that isn't a 2LD .eth name.
+ */
+export function ensV2LabelId(name: string): bigint | null {
+  const labels = name.split('.');
+  if (labels.length !== 2 || labels[1] !== 'eth' || !labels[0]) return null;
+  return BigInt(keccak256(toBytes(labels[0])));
+}
+
+/** v1 unwrapped token ID (decimal labelhash) -> the 0x-prefixed labelhash stored in ens_names.labelhash */
+export function labelhashFromV1TokenId(tokenId: string): string | null {
+  try {
+    return '0x' + BigInt(tokenId).toString(16).padStart(64, '0');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The resolver set on the ETHRegistry for a .eth label: where the name's records must be
+ * written (per-account PermissionedResolvers, so never assume a shared one). Zero address
+ * when unset, and the registry masks it to zero once the name is expired.
+ */
+export async function getEnsV2Resolver(label: string): Promise<string> {
+  return (await registryClient().readContract({
+    address: ethRegistry(),
+    abi: ETH_REGISTRY_READ_ABI,
+    functionName: 'getResolver',
+    args: [label],
+  })) as string;
+}
+
+export interface EnsV2State {
+  status: number;
+  expiry: bigint;
+  latestOwner: string;
+  tokenId: string;
+}
+
+/**
+ * A name's live state on the ETHRegistry. anyId can be the labelhash or any token ID the name
+ * ever had (current or superseded), so this is how to get the CURRENT token ID: token IDs
+ * change on role changes, re-registration and unregistration, and the indexer can lag.
+ */
+export async function getEnsV2State(anyId: string | bigint): Promise<EnsV2State> {
+  const state = (await registryClient().readContract({
+    address: ethRegistry(),
+    abi: ETH_REGISTRY_READ_ABI,
+    functionName: 'getState',
+    args: [BigInt(anyId)],
+  })) as { status: number; expiry: bigint; latestOwner: string; tokenId: bigint };
+  return {
+    status: Number(state.status),
+    expiry: state.expiry,
+    latestOwner: state.latestOwner,
+    tokenId: state.tokenId.toString(),
+  };
+}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -131,14 +208,8 @@ export async function checkEnsV2Transferable(params: {
   owner: string;
   operator?: string;
 }): Promise<EnsV2TransferCheck> {
-  const registry = config.blockchain.ensv2?.ethRegistryAddress as `0x${string}` | undefined;
-  if (!registry) {
-    throw new Error('ENSv2 is not configured for this chain');
-  }
-  const client = createPublicClient({
-    chain: viemChain,
-    transport: http(config.blockchain.rpcUrl),
-  });
+  const registry = ethRegistry();
+  const client = registryClient();
   const tokenId = BigInt(params.tokenId);
   const owner = params.owner as `0x${string}`;
   const read = (functionName: any, args: readonly unknown[]) =>

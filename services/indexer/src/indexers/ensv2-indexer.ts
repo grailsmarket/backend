@@ -32,6 +32,7 @@ const ETH_REGISTRAR_EVENTS = parseAbi([
 
 const BASE_REGISTRAR_ABI = parseAbi([
   'function nameExpires(uint256 id) view returns (uint256)',
+  'function ownerOf(uint256 tokenId) view returns (address)',
 ]);
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -453,14 +454,16 @@ export class EnsV2Indexer {
         ensNameId = existing.rows[0].id;
       } else {
         // Never-seen v1 name: create the v1 row (unwrapped labelhash token ID) so the renewal
-        // isn't lost; the v1 indexer and workers fill in owner/metadata.
+        // isn't lost. Anyone can renew a name, so the renewer isn't necessarily the owner:
+        // read the v1 owner at this block.
         const { has_numbers, has_emoji } = this.calculateNameAttributes(name);
+        const owner = (await this.getV1Owner(labelhash, name, log.blockNumber!)) ?? renewer;
         const inserted = await this.pool.query(
           `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, has_numbers, has_emoji)
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (token_id) DO UPDATE SET updated_at = NOW()
            RETURNING id`,
-          [BigInt(labelhash).toString(), name, renewer, newExpiry, has_numbers, has_emoji]
+          [BigInt(labelhash).toString(), name, owner, newExpiry, has_numbers, has_emoji]
         );
         ensNameId = inserted.rows[0].id;
         logger.info(`ENSv2 NameRenewed (renewer v1): ${name} not in ens_names, created v1 record`);
@@ -753,6 +756,32 @@ export class EnsV2Indexer {
       return expires > 0n ? new Date(Number(expires) * 1000) : null;
     } catch (error: any) {
       logger.warn(`Could not read v1 expiry for ${labelhash} at block ${blockNumber}: ${error.shortMessage || error.message}`);
+      return null;
+    }
+  }
+
+  /** v1 owner of an unwrapped or wrapped .eth name at a block (null if it can't be read). */
+  private async getV1Owner(labelhash: `0x${string}`, name: string, blockNumber: bigint): Promise<string | null> {
+    try {
+      const registrant = (await this.client.readContract({
+        address: config.blockchain.ensRegistrarAddress as `0x${string}`,
+        abi: BASE_REGISTRAR_ABI,
+        functionName: 'ownerOf',
+        args: [BigInt(labelhash)],
+        blockNumber,
+      })).toLowerCase();
+      const wrapper = config.blockchain.ensNameWrapperAddress.toLowerCase();
+      if (registrant !== wrapper) return registrant;
+      const wrappedOwner = await this.client.readContract({
+        address: wrapper as `0x${string}`,
+        abi: parseAbi(['function ownerOf(uint256 id) view returns (address)']),
+        functionName: 'ownerOf',
+        args: [BigInt(namehash(name))],
+        blockNumber,
+      });
+      return wrappedOwner === ZERO_ADDRESS ? null : wrappedOwner.toLowerCase();
+    } catch (error: any) {
+      logger.warn(`Could not read v1 owner of ${name} at block ${blockNumber}: ${error.shortMessage || error.message}`);
       return null;
     }
   }
