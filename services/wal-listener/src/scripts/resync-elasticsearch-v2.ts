@@ -26,7 +26,7 @@
  *   npx tsx src/scripts/resync-elasticsearch-v2.ts --from 500000 # Start from specific ID
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, gracePeriodDays, PREMIUM_PERIOD_DAYS } from '../../../shared/src';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -101,7 +101,8 @@ function generateTags(name: string): string[] {
   return tags;
 }
 
-function calculateExpirationState(expiryDate: string | null) {
+function calculateExpirationState(expiryDate: string | null, ensVersion?: number | null) {
+  const graceDays = gracePeriodDays(ensVersion);
   if (!expiryDate) {
     return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry: 999999, premiumAmountEth: null };
   }
@@ -115,12 +116,12 @@ function calculateExpirationState(expiryDate: string | null) {
     return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
   }
 
-  if (daysSinceExpiry <= 90) {
+  if (daysSinceExpiry <= graceDays) {
     return { isExpired: true, isGracePeriod: true, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
   }
 
-  const daysIntoPremium = daysSinceExpiry - 90;
-  if (daysIntoPremium <= 21) {
+  const daysIntoPremium = daysSinceExpiry - graceDays;
+  if (daysIntoPremium <= PREMIUM_PERIOD_DAYS) {
     const initialPremiumUSD = 100000000;
     const ethPriceUSD = 2000;
     const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
@@ -280,13 +281,14 @@ function enrichRow(
   const listingCreatedAt = listing?.created_at || null;
   const listingExpiresAt = listing?.expires_at || null;
 
-  const expirationState = calculateExpirationState(row.expiry_date);
+  const expirationState = calculateExpirationState(row.expiry_date, row.ens_version);
   const saleHistoryState = calculateSaleHistoryState(row.last_sale_date);
   const priceUsd = calculatePriceUsd(listingPrice, listingCurrency, ethPriceUsd);
 
   return {
     name,
     token_id: row.token_id,
+    ens_version: Number(row.ens_version) === 2 ? 2 : 1,
     owner: row.owner_address?.toLowerCase() || null,
     price: safeParsePrice(listingPrice),
     price_usd: priceUsd,

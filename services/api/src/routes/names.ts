@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type ENSName, config } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type ENSName, config, sqlWithinGracePeriod } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { optionalAuth } from '../middleware/auth';
@@ -97,7 +97,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     if (query.owner) {
       whereConditions.push(`LOWER(en.owner_address) = LOWER($${paramCount})`);

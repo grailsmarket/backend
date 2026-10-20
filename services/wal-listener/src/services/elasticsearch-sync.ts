@@ -1,4 +1,4 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, gracePeriodDays, PREMIUM_PERIOD_DAYS } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -104,6 +104,8 @@ export class ElasticsearchSync {
                 highest_offer: {
                   type: 'double',
                 },
+                // 1 = ENS v1 (and unmigrated names), 2 = ENSv2; sets the grace period length
+                ens_version: { type: 'byte' },
                 // Expiration state fields
                 is_expired: { type: 'boolean' },
                 is_grace_period: { type: 'boolean' },
@@ -150,6 +152,21 @@ export class ElasticsearchSync {
         logger.info(`Created Elasticsearch index: ${indexName}`);
       } else {
         logger.info(`Elasticsearch index already exists: ${indexName}`);
+        // Fields added after the index was created. Adding a field is safe on a live index;
+        // skip it if it's already mapped (e.g. by a resync script) so startup never fails here.
+        try {
+          const mapping: any = await this.esClient.indices.getMapping({ index: indexName });
+          const properties = (Object.values(mapping)[0] as any)?.mappings?.properties ?? {};
+          if (!properties.ens_version) {
+            await this.esClient.indices.putMapping({
+              index: indexName,
+              body: { properties: { ens_version: { type: 'byte' } } },
+            });
+            logger.info(`Added ens_version to Elasticsearch mapping for ${indexName}`);
+          }
+        } catch (mappingError) {
+          logger.warn({ err: mappingError }, 'Could not add ens_version to the Elasticsearch mapping');
+        }
       }
     } catch (error) {
       logger.error('Failed to create Elasticsearch index:', error);
@@ -418,7 +435,8 @@ export class ElasticsearchSync {
 
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
-    const expirationState = this.calculateExpirationState(data.expiry_date);
+    const ensVersion = Number(data.ens_version) === 2 ? 2 : 1;
+    const expirationState = this.calculateExpirationState(data.expiry_date, ensVersion);
     const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
     // Get ETH price for USD conversion
@@ -428,6 +446,7 @@ export class ElasticsearchSync {
     return {
       name,
       token_id: data.token_id,
+      ens_version: ensVersion,
       owner: data.owner_address?.toLowerCase() || null,
       price: safeParsePrice(data.listing_price),
       price_usd: priceUsd,
@@ -482,11 +501,11 @@ export class ElasticsearchSync {
 
   /**
    * Calculate expiration state for an ENS name
-   * - Grace Period: 90 days after expiry where owner can renew
+   * - Grace Period: 90 days (v1) or 28 days (ENSv2) after expiry where owner can renew
    * - Premium Period: 21 days after grace period with declining Dutch auction
    * - Premium starts at ~$100M and declines exponentially to $0
    */
-  private calculateExpirationState(expiryDate: string | null): {
+  private calculateExpirationState(expiryDate: string | null, ensVersion: number): {
     isExpired: boolean;
     isGracePeriod: boolean;
     isPremiumPeriod: boolean;
@@ -519,8 +538,9 @@ export class ElasticsearchSync {
       };
     }
 
-    // Grace period: 0-90 days after expiry
-    if (daysSinceExpiry <= 90) {
+    // Grace period
+    const graceDays = gracePeriodDays(ensVersion);
+    if (daysSinceExpiry <= graceDays) {
       return {
         isExpired: true,
         isGracePeriod: true,
@@ -530,9 +550,9 @@ export class ElasticsearchSync {
       };
     }
 
-    // Premium period: 91-111 days after expiry (21 days)
-    const daysIntoPremium = daysSinceExpiry - 90;
-    if (daysIntoPremium <= 21) {
+    // Premium period: the 21 days after grace
+    const daysIntoPremium = daysSinceExpiry - graceDays;
+    if (daysIntoPremium <= PREMIUM_PERIOD_DAYS) {
       // Calculate premium using exponential decay
       // Premium starts at $100,000,000 and decays to $0 over 21 days
       // Using exponential decay: premium = initialPremium * e^(-k * days)

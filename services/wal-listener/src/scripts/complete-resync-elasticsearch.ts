@@ -17,7 +17,7 @@
  *   npm run build && node dist/wal-listener/src/scripts/complete-resync-elasticsearch.js
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, gracePeriodDays, PREMIUM_PERIOD_DAYS } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -41,6 +41,7 @@ interface ENSNameRow {
   token_id: string;
   owner_address: string;
   expiry_date: string | null;
+  ens_version?: number | null;
   registration_date: string | null;
   clubs: string[] | null;
   last_sale_date: string | null;
@@ -71,7 +72,8 @@ function generateTags(name: string): string[] {
   return tags;
 }
 
-function calculateExpirationState(expiryDate: string | null) {
+function calculateExpirationState(expiryDate: string | null, ensVersion?: number | null) {
+  const graceDays = gracePeriodDays(ensVersion);
   if (!expiryDate) {
     return {
       isExpired: false,
@@ -97,7 +99,7 @@ function calculateExpirationState(expiryDate: string | null) {
     };
   }
 
-  if (daysSinceExpiry <= 90) {
+  if (daysSinceExpiry <= graceDays) {
     return {
       isExpired: true,
       isGracePeriod: true,
@@ -107,8 +109,8 @@ function calculateExpirationState(expiryDate: string | null) {
     };
   }
 
-  const daysIntoPremium = daysSinceExpiry - 90;
-  if (daysIntoPremium <= 21) {
+  const daysIntoPremium = daysSinceExpiry - graceDays;
+  if (daysIntoPremium <= PREMIUM_PERIOD_DAYS) {
     const initialPremiumUSD = 100000000;
     const ethPriceUSD = 2000;
     const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
@@ -210,13 +212,14 @@ function calculatePriceUsd(priceWei: string | null, currencyAddress: string | nu
 
 function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
   const name = data.name || '';
-  const expirationState = calculateExpirationState(data.expiry_date);
+  const expirationState = calculateExpirationState(data.expiry_date, data.ens_version);
   const saleHistoryState = calculateSaleHistoryState(data.last_sale_date);
   const priceUsd = calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
 
   return {
     name,
     token_id: data.token_id,
+    ens_version: Number(data.ens_version) === 2 ? 2 : 1,
     owner: data.owner_address,
     price: data.listing_price ? parseFloat(data.listing_price) : null,
     price_usd: priceUsd,
@@ -255,6 +258,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
       en.token_id,
       en.owner_address,
       en.expiry_date,
+      en.ens_version,
       en.registration_date,
       en.clubs,
       en.last_sale_date,
@@ -277,7 +281,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
       LIMIT 1
     ) l ON true
     LEFT JOIN offers o ON o.ens_name_id = en.id
-    GROUP BY en.id, en.name, en.token_id, en.owner_address, en.expiry_date,
+    GROUP BY en.id, en.name, en.token_id, en.owner_address, en.expiry_date, en.ens_version,
              en.registration_date, en.clubs, en.last_sale_date, en.last_sale_price,
              en.last_sale_currency, en.last_sale_price_usd, en.updated_at,
              l.price_wei, l.currency_address, l.status, l.created_at

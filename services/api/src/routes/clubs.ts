@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { getPostgresPool, type APIResponse, getFile, isStorageEnabled } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, getFile, isStorageEnabled, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
 import { searchNames } from '../services/search';
 import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { veryLongCacheHandler, cacheHandler } from '../middleware/cache';
@@ -292,7 +292,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE ${clubFilter}
           AND owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
       `;
 
       // Get paginated holders with deduplicated name counts
@@ -304,7 +304,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE ${clubFilter}
           AND owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
         GROUP BY owner_address
         ORDER BY name_count ${order}, owner_address ASC
         LIMIT $${hasClubFilter ? 2 : 1} OFFSET $${hasClubFilter ? 3 : 2}
@@ -600,7 +600,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE $1 = ANY(clubs)
           AND owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
       `;
 
       // Get paginated holders with name counts
@@ -612,7 +612,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
         FROM ens_names
         WHERE $1 = ANY(clubs)
           AND owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
         GROUP BY owner_address
         ORDER BY name_count ${order}, owner_address ASC
         LIMIT $2 OFFSET $3
@@ -727,11 +727,9 @@ export async function clubsRoutes(fastify: FastifyInstance) {
 
     try {
       // Build the date filter based on status
-      // Premium: expired 90-111 days ago
-      // Available: expired > 111 days ago
-      const dateFilter = status === 'premium'
-        ? `expiry_date <= NOW() - INTERVAL '90 days' AND expiry_date > NOW() - INTERVAL '111 days'`
-        : `expiry_date <= NOW() - INTERVAL '111 days'`;
+      // Premium: the 21 days after the grace period (90 days for v1 names, 28 for ENSv2)
+      // Available: after that
+      const dateFilter = sqlExpiryPhase(status === 'premium' ? 'premium' : 'available', '');
 
       const result = await pool.query(
         `

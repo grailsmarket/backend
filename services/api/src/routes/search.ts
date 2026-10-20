@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, getElasticsearchClient, config, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, getElasticsearchClient, config, type APIResponse, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
 import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
@@ -549,7 +549,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
       let paramCount = 1;
 
       // Determine when to apply the "exclude premium/available" filter (PostgreSQL path)
-      // This filter excludes names expired more than 90 days ago (premium and available statuses)
+      // This filter excludes names past their grace period (premium and available statuses)
       //
       // By default, show ALL statuses (registered, grace, premium, available)
       // Only apply the exclusion filter when:
@@ -572,7 +572,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
         (resolvedOwnerAddress || sortBy === 'expiry_date' || sortBy === 'price' || sortBy === 'listing_date' || sortBy === 'listing_expiry');
 
       if (pgShouldExcludePremiumAvailable) {
-        whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+        whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
       }
 
       // When specific clubs are active, name-pattern filters reference cm.ens_name
@@ -621,17 +621,15 @@ export async function searchRoutes(fastify: FastifyInstance) {
         const buildStatusCondition = (s: string): string | null => {
           switch (s) {
             case 'registered':
-              return `en.expiry_date > NOW()`;
             case 'grace':
-              return `(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`;
             case 'premium':
-              return `(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`;
+              return sqlExpiryPhase(s, 'en');
             case 'available':
               // Unregistered club members are also "available"
               // Names with NULL expiry_date (in ens_names but never registered) are also available
               return hasSpecificClubs
-                ? `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.expiry_date IS NULL OR en.id IS NULL)`
-                : `(en.expiry_date <= NOW() - INTERVAL '111 days' OR en.expiry_date IS NULL)`;
+                ? `(${sqlExpiryPhase('available', 'en')} OR en.expiry_date IS NULL OR en.id IS NULL)`
+                : `(${sqlExpiryPhase('available', 'en')} OR en.expiry_date IS NULL)`;
             default:
               return null;
           }
@@ -1716,10 +1714,9 @@ export async function searchRoutes(fastify: FastifyInstance) {
           const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
           const statusConditions: string[] = [];
           for (const s of statuses) {
-            if (s === 'registered') statusConditions.push(`en.expiry_date > NOW()`);
-            else if (s === 'grace') statusConditions.push(`(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`);
-            else if (s === 'premium') statusConditions.push(`(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`);
-            else if (s === 'available') statusConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+            if (s === 'registered' || s === 'grace' || s === 'premium' || s === 'available') {
+              statusConditions.push(sqlExpiryPhase(s, 'en'));
+            }
           }
           if (statusConditions.length > 0) {
             whereConditions.push(`(${statusConditions.join(' OR ')})`);
