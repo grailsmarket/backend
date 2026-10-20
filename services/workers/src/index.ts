@@ -21,6 +21,7 @@ import { registerPersonaClassificationWorker } from './workers/persona-classific
 import { registerGoogleMetricsBackfillWorker } from './workers/google-metrics-backfill';
 import { registerGlobalChatRetentionWorker } from './workers/global-chat-retention';
 import { registerExpireChatImagesWorker } from './workers/expire-chat-images';
+import { registerResolveCompromisedNamesWorker } from './workers/resolve-compromised-names';
 import { logger } from './utils/logger';
 import { closeAllConnections, config } from '../../shared/src';
 
@@ -81,6 +82,9 @@ async function start() {
     // Register chat retention + image-expiry workers
     await registerGlobalChatRetentionWorker(boss);
     await registerExpireChatImagesWorker(boss);
+
+    // Register compromised (stolen) names resolution worker
+    await registerResolveCompromisedNamesWorker(boss);
 
     logger.info('All workers registered successfully');
     logger.info('Worker service is now processing jobs');

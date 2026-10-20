@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder, config } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 import { checkOrderForTokenId } from '../services/ensv2-orders';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToListingRows } from '../services/compromised-names';
 
 function subgraphHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -380,7 +381,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
@@ -405,7 +406,7 @@ export async function ordersRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse = {
       success: true,
-      data: result.rows[0],
+      data: (await applyCompromisedToListingRows(result.rows, request.user?.address))[0],
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',

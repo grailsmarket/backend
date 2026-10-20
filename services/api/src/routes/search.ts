@@ -147,6 +147,7 @@ function createNotFoundResult(name: string): SearchResult {
     highest_offer_currency: null,
     highest_offer_id: null,
     view_count: 0,
+    compromised: null,
   };
 }
 

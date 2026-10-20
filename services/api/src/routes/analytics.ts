@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { REGISTRATION_NAME_BLOCKLIST } from '../config/name-blocklist';
+import { applyCompromisedToListingRows, applyCompromisedToOfferRows } from '../services/compromised-names';
 
 const TimeRangeSchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d', 'all']).default('7d'),
@@ -1034,7 +1035,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          results: dataResult.rows,
+          results: await applyCompromisedToListingRows(dataResult.rows),
           pagination: {
             page,
             limit,
@@ -1157,7 +1158,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          results: dataResult.rows,
+          results: await applyCompromisedToOfferRows(dataResult.rows),
           pagination: {
             page,
             limit,
