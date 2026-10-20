@@ -19,6 +19,22 @@ export async function isEnsV2Name(name: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+/**
+ * True for the ENSv2 migration controllers and the Graveyard. A v1 token moving to or from
+ * one of these is a migration (or the Graveyard reclaiming an expired name), not a trade or
+ * an ownership change. Always false when ENSv2 isn't configured.
+ */
+export function isEnsV2MigrationAddress(address: string | null | undefined): boolean {
+  const v2 = config.blockchain.ensv2;
+  if (!v2 || !address) return false;
+  const a = address.toLowerCase();
+  return (
+    a === v2.unlockedMigrationControllerAddress.toLowerCase() ||
+    a === v2.lockedMigrationControllerAddress.toLowerCase() ||
+    a === v2.graveyardAddress.toLowerCase()
+  );
+}
+
 export interface OnChainNameRecords {
   resolverAddress: string | null;
   textRecords: Record<string, string>;

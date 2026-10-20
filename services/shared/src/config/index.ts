@@ -53,6 +53,7 @@ const ConfigSchema = z.object({
       unlockedMigrationControllerAddress: z.string(),
       lockedMigrationControllerAddress: z.string(),
       graveyardAddress: z.string(),
+      batchRegistrarAddress: z.string().nullable(),
       startBlock: z.number(),
     }).nullable(),
   }),
@@ -181,7 +182,10 @@ function resolveEnsV2(preset: EnsV2Preset | null): EnsV2Preset | null {
   if (missing.length > 0) {
     throw new Error(`Incomplete ENSv2 config, missing: ${missing.join(', ')}`);
   }
-  return merged as EnsV2Preset;
+  return {
+    ...(merged as EnsV2Preset),
+    batchRegistrarAddress: env.ENSV2_BATCH_REGISTRAR_ADDRESS || preset?.batchRegistrarAddress || null,
+  };
 }
 
 const rawConfig = {

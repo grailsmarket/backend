@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool, safeNormalize, CURRENCY_ADDRESSES } from '../../../shared/src';
+import { config, getPostgresPool, safeNormalize, CURRENCY_ADDRESSES, isEthRegistryToken } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
@@ -149,9 +149,18 @@ async function resolveEnsNameId(
   }
 
   const byName = await pool.query(
-    'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+    'SELECT id, ens_version FROM ens_names WHERE LOWER(name) = LOWER($1)',
     [safeNormalize(name)]
   );
+  if (byName.rows.length > 0 && byName.rows[0].ens_version === 2 && !isEthRegistryToken(asset.contract)) {
+    // The order is on the v1 token of a name that has moved to ENSv2: that token is in the
+    // Graveyard and the order can never fill, so don't attach it to the v2 name.
+    logger.info(
+      { tokenId: asset.identifier, contract: asset.contract, name },
+      'Skipping OpenSea order on the v1 token of an ENSv2 name'
+    );
+    return null;
+  }
   if (byName.rows.length > 0) {
     logger.info(
       { tokenId: asset.identifier, name, ensNameId: byName.rows[0].id },

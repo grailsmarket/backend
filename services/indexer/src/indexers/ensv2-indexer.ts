@@ -58,13 +58,19 @@ export class EnsV2Indexer {
   private pool = getPostgresPool();
   private isRunning = false;
   private currentBlock = 0n;
-  private readonly batchSize = 500;
+  // Block range per getLogs. Halved on errors (premigration packed ~4k reserved-name events
+  // into some 100-block spans, more than some RPCs return in one call) and grown back after
+  // a run of successes.
+  private readonly maxBatchSize = 500;
+  private batchSize = this.maxBatchSize;
+  private successStreak = 0;
   private readonly confirmations = BigInt(config.blockchain.confirmations);
   // Only constructed when config.blockchain.ensv2 is set (see index.ts)
   private readonly v2 = config.blockchain.ensv2!;
   private readonly registry = this.v2.ethRegistryAddress.toLowerCase();
   private readonly registrar = this.v2.ethRegistrarAddress.toLowerCase();
   private readonly renewerV1 = this.v2.ethRenewerV1Address.toLowerCase();
+  private readonly batchRegistrar = this.v2.batchRegistrarAddress?.toLowerCase() ?? null;
   private readonly migrationControllers = new Map([
     [this.v2.unlockedMigrationControllerAddress.toLowerCase(), 'unlocked'],
     [this.v2.lockedMigrationControllerAddress.toLowerCase(), 'locked'],
@@ -114,6 +120,10 @@ export class EnsV2Indexer {
         await this.updateLastProcessedBlock(actualToBlock);
 
         this.currentBlock = actualToBlock + 1n;
+        if (this.batchSize < this.maxBatchSize && ++this.successStreak >= 10) {
+          this.batchSize = Math.min(this.batchSize * 2, this.maxBatchSize);
+          this.successStreak = 0;
+        }
       } catch (error: any) {
         if (isBeyondHeadError(error)) {
           logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
@@ -124,8 +134,15 @@ export class EnsV2Indexer {
           err: error,
           code: error.code,
           details: error.shortMessage || error.details
-        }, `Error in ENSv2 index loop at block ${this.currentBlock}`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        }, `Error in ENSv2 index loop at block ${this.currentBlock} (range ${this.batchSize} blocks)`);
+        this.successStreak = 0;
+        if (this.batchSize > 1) {
+          // Most likely too many logs for one call: retry the same start with a smaller range
+          this.batchSize = Math.max(1, Math.floor(this.batchSize / 2));
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
       }
     }
   }
@@ -190,8 +207,10 @@ export class EnsV2Indexer {
         case 'LabelUnregistered':
           return this.handleLabelUnregistered(args, log);
         case 'ExpiryUpdated':
+          if (this.isPremigration(args)) return;
           return this.handleExpiryUpdated(args);
         case 'ResolverUpdated':
+          if (this.isPremigration(args)) return;
           return this.handleResolverUpdated(args);
         case 'TokenRegenerated':
           return this.handleTokenRegenerated(args, log);
@@ -596,6 +615,16 @@ export class EnsV2Indexer {
   }
 
   /** Name row for a v2 token ID, current or superseded. */
+  /**
+   * Premigration: ENS Labs' BatchRegistrar reserves every live v1 name on v2 (resolver set to
+   * ENSV1Resolver) and re-syncs expiries. A reserved name has no v2 owner and keeps its v1
+   * row, so these events are skipped before any DB lookup; on mainnet there are about a
+   * million of them. LabelReserved itself isn't in our ABI, so it never reaches here.
+   */
+  private isPremigration(args: any): boolean {
+    return !!this.batchRegistrar && (args.sender as string).toLowerCase() === this.batchRegistrar;
+  }
+
   private async findV2Name(tokenId: string): Promise<{ id: number; name: string; labelhash: string | null } | null> {
     const result = await this.pool.query(
       `SELECT id, name, labelhash FROM ens_names

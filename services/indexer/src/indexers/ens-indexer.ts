@@ -8,7 +8,7 @@ import {
   parseAbi,
 } from 'viem';
 import PQueue from 'p-queue';
-import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
+import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize, isEnsV2Name } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
@@ -1207,6 +1207,20 @@ export class ENSIndexer {
     return addresses.some(a => this.ensv2MigrationAddresses.has(a.toLowerCase()));
   }
 
+  /**
+   * A name that has moved to ENSv2 is owned by its ETHRegistry token; its old v1 token no
+   * longer says anything about it. The case that matters is the Graveyard reclaiming an
+   * expired v1 name: BaseRegistrar.register() burns the old token (old owner -> 0x0, or
+   * NameWrapper -> 0x0 if it was wrapped) before minting it to the Graveyard. Only the mint
+   * involves the Graveyard, so the burn reaches the transfer handler, and if the name was
+   * already re-registered on v2 it would overwrite the v2 row's owner and token_id.
+   */
+  private async isNowEnsV2(name: string, tokenIdStr: string): Promise<boolean> {
+    if (!(await isEnsV2Name(name))) return false;
+    logger.info(`Transfer of v1 token ${tokenIdStr}: ${name} is now an ENSv2 name, ignoring`);
+    return true;
+  }
+
   private async handleTransfer(args: any, log: Log) {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
@@ -1241,6 +1255,9 @@ export class ENSIndexer {
         // Require successful resolution for Name Wrapper transfers
         if (!resolvedData || !resolvedData.name) {
           logger.warn(`Could not resolve Name Wrapper transfer from The Graph for token ${tokenIdStr}, skipping Transfer event`);
+          return;
+        }
+        if (await this.isNowEnsV2(resolvedData.name, tokenIdStr)) {
           return;
         }
 
@@ -1338,6 +1355,10 @@ export class ENSIndexer {
             logger.warn(`Could not resolve name for unwrapped transfer token ${tokenIdStr}, skipping Transfer event`);
             return;
           }
+        }
+
+        if (await this.isNowEnsV2(nameToStore, tokenIdStr)) {
+          return;
         }
 
         // For standard transfers, use the 'to' address as owner

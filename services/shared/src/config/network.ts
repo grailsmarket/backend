@@ -9,6 +9,9 @@ export interface EnsV2Preset {
   unlockedMigrationControllerAddress: string;
   lockedMigrationControllerAddress: string;
   graveyardAddress: string;
+  // ENS Labs' premigration contract. Optional: its ResolverUpdated/ExpiryUpdated events on
+  // reserved (unmigrated) names are skipped without a DB lookup when it's set.
+  batchRegistrarAddress?: string | null;
   // ETHRegistry deployment block; the v2 indexer starts here
   startBlock: number;
 }
@@ -126,6 +129,7 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
       unlockedMigrationControllerAddress: '0x2a35b94df22cc7354570be2284655e2cdc0e64a2',
       lockedMigrationControllerAddress: '0x6029a063d69b09d23c52a754a90e4fe43adac3a8',
       graveyardAddress: '0xb58a90a39d13cce1d0e192b5da5c47640855b04d',
+      batchRegistrarAddress: '0x4a4c8b7cdab6b19dc2cdb417cdb53a2ccbaf5322',
       startBlock: 11820399,
     },
   },
