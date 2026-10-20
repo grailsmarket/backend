@@ -1,45 +1,26 @@
 -- Backfill registrations.total_cost_usd and renewals.cost_usd (columns from 0906).
 --
--- Batched with a COMMIT per batch so it doesn't hold locks on the whole table: run it with
--- psql in autocommit mode (NOT inside BEGIN/COMMIT, or the COMMITs error). Safe to re-run;
--- it only touches rows still NULL. ETH rows dated before the first price_feeds entry stay
--- NULL; the counts at the end show how many.
+-- Plain UPDATEs, so it runs in any client (psql, pgAdmin, wrapped in a transaction or not).
+-- Safe to re-run; it only touches rows still NULL. The 0906 triggers don't fire here (they
+-- watch the cost/currency/date columns, not the USD ones) and these tables have no NOTIFY
+-- triggers, so the WAL listener sees nothing. ETH rows dated before the first price_feeds
+-- entry stay NULL; the counts at the end show how many.
 
-DO $$
-DECLARE
-  batch_size CONSTANT INTEGER := 20000;
-  cursor_id INTEGER := 0;
-  max_id INTEGER;
-BEGIN
-  SELECT COALESCE(MAX(id), 0) INTO max_id FROM registrations;
-  WHILE cursor_id < max_id LOOP
-    UPDATE registrations
-    SET total_cost_usd = calculate_usd_value(
-      total_cost_wei,
-      COALESCE(currency_address, '0x0000000000000000000000000000000000000000'),
-      eth_usd_price_at(registration_date)
-    )
-    WHERE id > cursor_id AND id <= cursor_id + batch_size
-      AND total_cost_usd IS NULL;
-    COMMIT;
-    cursor_id := cursor_id + batch_size;
-  END LOOP;
+UPDATE registrations
+SET total_cost_usd = calculate_usd_value(
+  total_cost_wei,
+  COALESCE(currency_address, '0x0000000000000000000000000000000000000000'),
+  eth_usd_price_at(registration_date)
+)
+WHERE total_cost_usd IS NULL;
 
-  cursor_id := 0;
-  SELECT COALESCE(MAX(id), 0) INTO max_id FROM renewals;
-  WHILE cursor_id < max_id LOOP
-    UPDATE renewals
-    SET cost_usd = calculate_usd_value(
-      cost_wei,
-      COALESCE(currency_address, '0x0000000000000000000000000000000000000000'),
-      eth_usd_price_at(renewal_date)
-    )
-    WHERE id > cursor_id AND id <= cursor_id + batch_size
-      AND cost_usd IS NULL;
-    COMMIT;
-    cursor_id := cursor_id + batch_size;
-  END LOOP;
-END $$;
+UPDATE renewals
+SET cost_usd = calculate_usd_value(
+  cost_wei,
+  COALESCE(currency_address, '0x0000000000000000000000000000000000000000'),
+  eth_usd_price_at(renewal_date)
+)
+WHERE cost_usd IS NULL;
 
 SELECT
   'registrations' AS table_name,
