@@ -16,7 +16,7 @@ import axios from 'axios';
  *   node dist/.../find-desynced-wrapped-names-graph.js [--save] [--limit=N] [--verbose] [--name=example.eth]
  */
 
-const GRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 const NAME_WRAPPER = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 // Grace period: 90 days in seconds

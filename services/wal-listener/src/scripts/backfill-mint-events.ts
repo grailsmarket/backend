@@ -24,7 +24,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 const pool = getPostgresPool();
-const GRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 const DB_BATCH_SIZE = 50; // Fetch 50 records from DB at a time
 const DELAY_MS = 2000; // 5 seconds between batches
 const PROGRESS_FILE = path.join(process.cwd(), 'backfill-mint-progress.json');

@@ -9,7 +9,7 @@ import { namehash, labelhash, normalize } from 'viem/ens';
 import { config, getPostgresPool } from '../../../shared/src';
 
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401'.toLowerCase();
-const ENS_SUBGRAPH_URL = config.theGraph?.ensSubgraphUrl || 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const ENS_SUBGRAPH_URL = config.theGraph?.ensSubgraphUrl || 'https://ensnode.on.hotbox.wtf/subgraph';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose');

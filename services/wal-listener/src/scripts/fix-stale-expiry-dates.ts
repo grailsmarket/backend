@@ -15,7 +15,7 @@
 
 import { getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode.on.hotbox.wtf/subgraph';
 
 interface EnsNameRecord {
   id: number;
