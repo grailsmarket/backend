@@ -1,4 +1,4 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -104,6 +104,8 @@ export class ElasticsearchSync {
                 highest_offer: {
                   type: 'double',
                 },
+                // 1 = ENS v1 (and unmigrated names), 2 = ENSv2; sets the grace period length
+                ens_version: { type: 'byte' },
                 // Expiration state fields
                 is_expired: { type: 'boolean' },
                 is_grace_period: { type: 'boolean' },
@@ -150,6 +152,21 @@ export class ElasticsearchSync {
         logger.info(`Created Elasticsearch index: ${indexName}`);
       } else {
         logger.info(`Elasticsearch index already exists: ${indexName}`);
+        // Fields added after the index was created. Adding a field is safe on a live index;
+        // skip it if it's already mapped (e.g. by a resync script) so startup never fails here.
+        try {
+          const mapping: any = await this.esClient.indices.getMapping({ index: indexName });
+          const properties = (Object.values(mapping)[0] as any)?.mappings?.properties ?? {};
+          if (!properties.ens_version) {
+            await this.esClient.indices.putMapping({
+              index: indexName,
+              body: { properties: { ens_version: { type: 'byte' } } },
+            });
+            logger.info(`Added ens_version to Elasticsearch mapping for ${indexName}`);
+          }
+        } catch (mappingError) {
+          logger.warn({ err: mappingError }, 'Could not add ens_version to the Elasticsearch mapping');
+        }
       }
     } catch (error) {
       logger.error('Failed to create Elasticsearch index:', error);
@@ -418,7 +435,8 @@ export class ElasticsearchSync {
 
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
-    const expirationState = this.calculateExpirationState(data.expiry_date);
+    const ensVersion = Number(data.ens_version) === 2 ? 2 : 1;
+    const expirationState = getExpirationState(data.expiry_date, ensVersion);
     const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
     // Get ETH price for USD conversion
@@ -428,6 +446,7 @@ export class ElasticsearchSync {
     return {
       name,
       token_id: data.token_id,
+      ens_version: ensVersion,
       owner: data.owner_address?.toLowerCase() || null,
       price: safeParsePrice(data.listing_price),
       price_usd: priceUsd,
@@ -478,90 +497,6 @@ export class ElasticsearchSync {
     }
 
     return tags;
-  }
-
-  /**
-   * Calculate expiration state for an ENS name
-   * - Grace Period: 90 days after expiry where owner can renew
-   * - Premium Period: 21 days after grace period with declining Dutch auction
-   * - Premium starts at ~$100M and declines exponentially to $0
-   */
-  private calculateExpirationState(expiryDate: string | null): {
-    isExpired: boolean;
-    isGracePeriod: boolean;
-    isPremiumPeriod: boolean;
-    daysUntilExpiry: number;
-    premiumAmountEth: number | null;
-  } {
-    if (!expiryDate) {
-      return {
-        isExpired: false,
-        isGracePeriod: false,
-        isPremiumPeriod: false,
-        daysUntilExpiry: 999999,
-        premiumAmountEth: null,
-      };
-    }
-
-    const now = new Date();
-    const expiry = new Date(expiryDate);
-    const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
-    const daysUntilExpiry = -daysSinceExpiry;
-
-    // Not expired yet
-    if (daysSinceExpiry < 0) {
-      return {
-        isExpired: false,
-        isGracePeriod: false,
-        isPremiumPeriod: false,
-        daysUntilExpiry,
-        premiumAmountEth: null,
-      };
-    }
-
-    // Grace period: 0-90 days after expiry
-    if (daysSinceExpiry <= 90) {
-      return {
-        isExpired: true,
-        isGracePeriod: true,
-        isPremiumPeriod: false,
-        daysUntilExpiry,
-        premiumAmountEth: null,
-      };
-    }
-
-    // Premium period: 91-111 days after expiry (21 days)
-    const daysIntoPremium = daysSinceExpiry - 90;
-    if (daysIntoPremium <= 21) {
-      // Calculate premium using exponential decay
-      // Premium starts at $100,000,000 and decays to $0 over 21 days
-      // Using exponential decay: premium = initialPremium * e^(-k * days)
-      // Where k is chosen so that premium ≈ 0 at day 21
-      const initialPremiumUSD = 100000000; // $100M
-      const ethPriceUSD = 2000; // Approximate ETH price (could be fetched from oracle)
-      const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
-
-      // Decay constant: ln(10000) / 21 ≈ 0.438 (drops to 1/10000th by day 21)
-      const k = Math.log(10000) / 21;
-      const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-
-      return {
-        isExpired: true,
-        isGracePeriod: false,
-        isPremiumPeriod: true,
-        daysUntilExpiry,
-        premiumAmountEth,
-      };
-    }
-
-    // After premium period: fully available for normal registration
-    return {
-      isExpired: true,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
   }
 
   /**

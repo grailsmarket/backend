@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod } from '../../../shared/src';
 import { checkOrderForName } from '../services/ensv2-orders';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
@@ -56,7 +56,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     // Always include status filter, default to active if not specified
     const statusFilter = query.status || 'active';

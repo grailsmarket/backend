@@ -11,6 +11,7 @@
     "resync": "npm run build && node --max-old-space-size=4096 dist/wal-listener/src/scripts/resync-elasticsearch.js",
     "resync:fast": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/fast-resync-elasticsearch.js",
     "resync:complete": "npm run build && node --max-old-space-size=8192 dist/wal-listener/src/scripts/complete-resync-elasticsearch.js",
+    "reindex-ensv2": "npm run build && node dist/wal-listener/src/scripts/reindex-ensv2-names.js",
     "resync:v2": "npx tsx src/scripts/resync-elasticsearch-v2.ts",
     "resync:v2:resume": "npx tsx src/scripts/resync-elasticsearch-v2.ts --resume",
     "resync-out-of-sync": "npx tsx src/scripts/resync-out-of-sync.ts",

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource, sqlWithinGracePeriod } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { REGISTRATION_NAME_BLOCKLIST } from '../config/name-blocklist';
 import { applyCompromisedToListingRows, applyCompromisedToOfferRows } from '../services/compromised-names';
@@ -96,7 +96,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
     const [totalNamesResult, activeListingsResult, activeOffersResult, totalWatchersResult, totalViewsResult, volumeResult, activityResult] = await Promise.all([
       // Individual stats queries (avoids cartesian product from JOINs)
-      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW()`),
+      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR ${sqlWithinGracePeriod('')}`),
       pool.query(`SELECT COUNT(*) as active_listings FROM listings WHERE status = 'active'`),
       pool.query(`SELECT COUNT(*) as active_offers FROM offers WHERE status IN ('pending', 'active')`),
       pool.query(`SELECT COUNT(DISTINCT user_id) as total_watchers FROM watchlist`),

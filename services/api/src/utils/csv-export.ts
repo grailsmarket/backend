@@ -1,6 +1,7 @@
 import { stringify } from 'csv-stringify';
 import type { SearchResult, Listing } from './response-builder';
 import { Pool } from 'pg';
+import { getExpiryPhase, sqlExpiryPhase } from '../../../shared/src';
 
 export const MAX_EXPORT_ROWS = 10000;
 
@@ -60,8 +61,8 @@ export async function fetchExportData(
       CASE
         WHEN en.expiry_date IS NULL THEN 'registered'
         WHEN en.expiry_date > NOW() THEN 'registered'
-        WHEN en.expiry_date > NOW() - INTERVAL '90 days' THEN 'grace'
-        WHEN en.expiry_date > NOW() - INTERVAL '111 days' THEN 'premium'
+        WHEN ${sqlExpiryPhase('grace', 'en')} THEN 'grace'
+        WHEN ${sqlExpiryPhase('premium', 'en')} THEN 'premium'
         ELSE 'available'
       END as status
     FROM ens_names en
@@ -136,18 +137,10 @@ export async function exportRowsToCSV(rows: ExportRow[]): Promise<string> {
 }
 
 /**
- * Compute ENS registration status from expiry date
+ * Compute ENS registration status from expiry date (grace period depends on ENS version)
  */
-export function computeStatus(expiryDate: Date | null): string {
-  if (!expiryDate) return 'registered';
-
-  const now = new Date();
-  const daysSinceExpiry = (now.getTime() - expiryDate.getTime()) / (1000 * 60 * 60 * 24);
-
-  if (daysSinceExpiry < 0) return 'registered';
-  if (daysSinceExpiry <= 90) return 'grace';
-  if (daysSinceExpiry <= 111) return 'premium';
-  return 'available';
+export function computeStatus(expiryDate: Date | null, ensVersion?: number | null): string {
+  return getExpiryPhase(expiryDate, ensVersion) ?? 'registered';
 }
 
 /**
@@ -181,7 +174,7 @@ export async function resultsToCSV(results: SearchResult[]): Promise<string> {
         result.token_id,
         result.owner,
         result.expiry_date ? new Date(result.expiry_date).toISOString() : '',
-        computeStatus(result.expiry_date ? new Date(result.expiry_date) : null),
+        computeStatus(result.expiry_date ? new Date(result.expiry_date) : null, result.version),
         lowestPrice,
         result.registration_date ? new Date(result.registration_date).toISOString() : '',
         Array.isArray(result.clubs) ? result.clubs.join(',') : '',

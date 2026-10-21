@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import { logger } from '../utils/logger';
-import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
+import { getPostgresPool, ETH_WETH_FILTER, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
@@ -307,8 +307,8 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
 /**
  * Recalculate status counts for all clubs
  * - registered_count: Names with expiry_date > NOW() (not expired)
- * - grace_count: Names with expiry_date <= NOW() AND > NOW() - 90 days (in grace period)
- * - premium_count: Names expired 90-111 days ago (in premium auction period)
+ * - grace_count: Names in their grace period (90 days after expiry for v1, 28 for ENSv2)
+ * - premium_count: Names in the 21-day premium period after grace
  * - available_count: Derived as member_count - registered - grace - premium (includes names not in ens_names)
  * - listings_count: Names with active listings
  * This is done as a bulk update for efficiency since all clubs are updated together
@@ -328,12 +328,10 @@ async function recalculateStatusCounts(): Promise<void> {
             WHERE en.expiry_date > NOW()
           ) as registered,
           COUNT(*) FILTER (
-            WHERE en.expiry_date <= NOW()
-              AND en.expiry_date > NOW() - INTERVAL '90 days'
+            WHERE ${sqlExpiryPhase('grace', 'en')}
           ) as grace,
           COUNT(*) FILTER (
-            WHERE en.expiry_date <= NOW() - INTERVAL '90 days'
-              AND en.expiry_date > NOW() - INTERVAL '111 days'
+            WHERE ${sqlExpiryPhase('premium', 'en')}
           ) as premium
         FROM club_memberships cm
         LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
@@ -417,7 +415,7 @@ async function recalculateStatusCounts(): Promise<void> {
           COUNT(DISTINCT owner_address) as holders_count
         FROM ens_names
         WHERE owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
           AND clubs IS NOT NULL
           AND array_length(clubs, 1) > 0
         GROUP BY unnest(clubs)
@@ -438,7 +436,7 @@ async function recalculateStatusCounts(): Promise<void> {
         SELECT DISTINCT unnest(clubs)
         FROM ens_names
         WHERE owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
           AND clubs IS NOT NULL
           AND array_length(clubs, 1) > 0
       )
