@@ -1,4 +1,4 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, gracePeriodDays, PREMIUM_PERIOD_DAYS } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -436,7 +436,7 @@ export class ElasticsearchSync {
   private async enrichENSNameData(data: any) {
     const name = data.name || '';
     const ensVersion = Number(data.ens_version) === 2 ? 2 : 1;
-    const expirationState = this.calculateExpirationState(data.expiry_date, ensVersion);
+    const expirationState = getExpirationState(data.expiry_date, ensVersion);
     const saleHistoryState = this.calculateSaleHistoryState(data.last_sale_date);
 
     // Get ETH price for USD conversion
@@ -497,91 +497,6 @@ export class ElasticsearchSync {
     }
 
     return tags;
-  }
-
-  /**
-   * Calculate expiration state for an ENS name
-   * - Grace Period: 90 days (v1) or 28 days (ENSv2) after expiry where owner can renew
-   * - Premium Period: 21 days after grace period with declining Dutch auction
-   * - Premium starts at ~$100M and declines exponentially to $0
-   */
-  private calculateExpirationState(expiryDate: string | null, ensVersion: number): {
-    isExpired: boolean;
-    isGracePeriod: boolean;
-    isPremiumPeriod: boolean;
-    daysUntilExpiry: number;
-    premiumAmountEth: number | null;
-  } {
-    if (!expiryDate) {
-      return {
-        isExpired: false,
-        isGracePeriod: false,
-        isPremiumPeriod: false,
-        daysUntilExpiry: 999999,
-        premiumAmountEth: null,
-      };
-    }
-
-    const now = new Date();
-    const expiry = new Date(expiryDate);
-    const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
-    const daysUntilExpiry = -daysSinceExpiry;
-
-    // Not expired yet
-    if (daysSinceExpiry < 0) {
-      return {
-        isExpired: false,
-        isGracePeriod: false,
-        isPremiumPeriod: false,
-        daysUntilExpiry,
-        premiumAmountEth: null,
-      };
-    }
-
-    // Grace period
-    const graceDays = gracePeriodDays(ensVersion);
-    if (daysSinceExpiry <= graceDays) {
-      return {
-        isExpired: true,
-        isGracePeriod: true,
-        isPremiumPeriod: false,
-        daysUntilExpiry,
-        premiumAmountEth: null,
-      };
-    }
-
-    // Premium period: the 21 days after grace
-    const daysIntoPremium = daysSinceExpiry - graceDays;
-    if (daysIntoPremium <= PREMIUM_PERIOD_DAYS) {
-      // Calculate premium using exponential decay
-      // Premium starts at $100,000,000 and decays to $0 over 21 days
-      // Using exponential decay: premium = initialPremium * e^(-k * days)
-      // Where k is chosen so that premium ≈ 0 at day 21
-      const initialPremiumUSD = 100000000; // $100M
-      const ethPriceUSD = 2000; // Approximate ETH price (could be fetched from oracle)
-      const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
-
-      // Decay constant: ln(10000) / 21 ≈ 0.438 (drops to 1/10000th by day 21)
-      const k = Math.log(10000) / 21;
-      const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-
-      return {
-        isExpired: true,
-        isGracePeriod: false,
-        isPremiumPeriod: true,
-        daysUntilExpiry,
-        premiumAmountEth,
-      };
-    }
-
-    // After premium period: fully available for normal registration
-    return {
-      isExpired: true,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
   }
 
   /**

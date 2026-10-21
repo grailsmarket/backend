@@ -17,7 +17,7 @@
  *   npm run build && node dist/wal-listener/src/scripts/complete-resync-elasticsearch.js
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, gracePeriodDays, PREMIUM_PERIOD_DAYS } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -70,69 +70,6 @@ function generateTags(name: string): string[] {
   }
 
   return tags;
-}
-
-function calculateExpirationState(expiryDate: string | null, ensVersion?: number | null) {
-  const graceDays = gracePeriodDays(ensVersion);
-  if (!expiryDate) {
-    return {
-      isExpired: false,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry: 999999,
-      premiumAmountEth: null,
-    };
-  }
-
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
-  const daysUntilExpiry = -daysSinceExpiry;
-
-  if (daysSinceExpiry < 0) {
-    return {
-      isExpired: false,
-      isGracePeriod: false,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
-  }
-
-  if (daysSinceExpiry <= graceDays) {
-    return {
-      isExpired: true,
-      isGracePeriod: true,
-      isPremiumPeriod: false,
-      daysUntilExpiry,
-      premiumAmountEth: null,
-    };
-  }
-
-  const daysIntoPremium = daysSinceExpiry - graceDays;
-  if (daysIntoPremium <= PREMIUM_PERIOD_DAYS) {
-    const initialPremiumUSD = 100000000;
-    const ethPriceUSD = 2000;
-    const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
-    const k = Math.log(10000) / 21;
-    const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-
-    return {
-      isExpired: true,
-      isGracePeriod: false,
-      isPremiumPeriod: true,
-      daysUntilExpiry,
-      premiumAmountEth,
-    };
-  }
-
-  return {
-    isExpired: true,
-    isGracePeriod: false,
-    isPremiumPeriod: false,
-    daysUntilExpiry,
-    premiumAmountEth: null,
-  };
 }
 
 function calculateSaleHistoryState(lastSaleDate: string | null) {
@@ -212,7 +149,7 @@ function calculatePriceUsd(priceWei: string | null, currencyAddress: string | nu
 
 function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
   const name = data.name || '';
-  const expirationState = calculateExpirationState(data.expiry_date, data.ens_version);
+  const expirationState = getExpirationState(data.expiry_date, data.ens_version);
   const saleHistoryState = calculateSaleHistoryState(data.last_sale_date);
   const priceUsd = calculatePriceUsd(data.listing_price, data.listing_currency_address, ethPriceUsd);
 

@@ -49,8 +49,57 @@ export function getGracePeriodEnd(
   return new Date(new Date(expiryDate).getTime() + gracePeriodDays(ensVersion) * DAY_MS);
 }
 
+export interface ExpirationState {
+  isExpired: boolean;
+  isGracePeriod: boolean;
+  isPremiumPeriod: boolean;
+  daysUntilExpiry: number;
+  premiumAmountEth: number | null;
+}
+
+/**
+ * Expiration fields stored on Elasticsearch documents. The phase flags come from
+ * getExpiryPhase, so they match the search filters at every boundary.
+ */
+export function getExpirationState(
+  expiryDate: Date | string | null | undefined,
+  ensVersion: number | null | undefined,
+  now: number = Date.now()
+): ExpirationState {
+  const phase = getExpiryPhase(expiryDate, ensVersion, now);
+  if (!phase) {
+    return {
+      isExpired: false,
+      isGracePeriod: false,
+      isPremiumPeriod: false,
+      daysUntilExpiry: 999999,
+      premiumAmountEth: null,
+    };
+  }
+
+  const expiry = new Date(expiryDate as Date | string).getTime();
+  const daysUntilExpiry = -Math.floor((now - expiry) / DAY_MS);
+
+  let premiumAmountEth: number | null = null;
+  if (phase === 'premium') {
+    // Rough estimate: $100M at ~$2000/ETH, decaying to 1/10000th over the premium period.
+    const daysIntoPremium = (now - getGracePeriodEnd(expiryDate as Date | string, ensVersion).getTime()) / DAY_MS;
+    const initialPremiumEth = 100_000_000 / 2000;
+    const k = Math.log(10000) / PREMIUM_PERIOD_DAYS;
+    premiumAmountEth = initialPremiumEth * Math.exp(-k * daysIntoPremium);
+  }
+
+  return {
+    isExpired: phase !== 'registered',
+    isGracePeriod: phase === 'grace',
+    isPremiumPeriod: phase === 'premium',
+    daysUntilExpiry,
+    premiumAmountEth,
+  };
+}
+
 // ---------------------------------------------------------------------------------------
-// SQL. `alias` is the ens_names table alias ('' for none). Conditions on NULL expiry_date
+// SQL.`alias` is the ens_names table alias ('' for none). Conditions on NULL expiry_date
 // are false, so callers keep their own handling of names without an expiry.
 //
 // Each condition starts with a plain expiry_date range covering both versions so Postgres
