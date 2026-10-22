@@ -1,5 +1,21 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "npm-9_x"]
+# nixpkgs has no cached build of a patched Node 24 yet (newest is 24.21.0), so
+# install the official 24.22.1 binary — same version as the Dockerfiles —
+# pinned by checksum. Once a nixpkgs channel ships it, this can go back to
+# nixPkgs = ["nodejs_24"].
+nixPkgs = []
+nixLibs = []
+nixOverlays = []
+cmds = [
+  """curl -fsSL https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz -o /tmp/node.tar.xz \
+  && echo '6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6  /tmp/node.tar.xz' | sha256sum -c - \
+  && mkdir -p /opt/node \
+  && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 \
+  && rm /tmp/node.tar.xz""",
+]
+paths = ["/opt/node/bin"]
+# No app files needed here, so the Node install layer stays cached across deploys.
+onlyIncludeFiles = []
 
 [phases.install]
 cmds = ["npm install --include=dev"]
