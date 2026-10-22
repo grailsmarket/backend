@@ -41,6 +41,7 @@ import { chatsAdminRoutes } from './chats-admin';
 import { chatsGlobalRoutes } from './chats-global';
 import { chatImagesRoutes } from './chat-images';
 import { blocksRoutes } from './blocks';
+import { meResolversRoutes } from './me-resolvers';
 import { commentsRoutes } from './comments';
 import { feedRoutes } from './feed';
 import { valuationsRoutes } from './valuations';
@@ -90,6 +91,7 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(chatImagesRoutes, { prefix: '/api/v1/chats/images' });
   fastify.register(chatsRoutes, { prefix: '/api/v1/chats' });
   fastify.register(blocksRoutes, { prefix: '/api/v1/me/blocks' });
+  fastify.register(meResolversRoutes, { prefix: '/api/v1/me/resolvers' });
   fastify.register(commentsRoutes, { prefix: '/api/v1/comments' });
   fastify.register(valuationsRoutes, { prefix: '/api/v1/valuations' });
   fastify.register(compromisedNamesRoutes, { prefix: '/api/v1/compromised-names' });
