@@ -412,7 +412,9 @@ export class SeaportIndexer {
               END,
               expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
               registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-              metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+              -- Merge the Graph's text records into the stored ones: matching keys are
+              -- overwritten, everything else (chains, contenthash, other keys) is kept
+              metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
               updated_at = NOW()
             RETURNING id
           `;

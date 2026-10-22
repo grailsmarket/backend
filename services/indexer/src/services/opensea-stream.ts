@@ -1333,7 +1333,7 @@ export class OpenSeaStreamListener {
               `UPDATE ens_names SET
                 expiry_date = COALESCE($1, expiry_date),
                 registration_date = COALESCE($2, registration_date),
-                metadata = COALESCE($3, metadata),
+                metadata = COALESCE(metadata, '{}'::jsonb) || COALESCE($3::jsonb, '{}'::jsonb), -- merge: keep chains/contenthash
                 updated_at = NOW()
               WHERE id = $4`,
               [expiryDate, registrationDate, JSON.stringify(textRecords), ensNameId]
@@ -1352,7 +1352,7 @@ export class OpenSeaStreamListener {
                  END,
                  expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
                  registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-                 metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+                 metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
                  updated_at = NOW()
                RETURNING id`,
               [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
@@ -1373,7 +1373,7 @@ export class OpenSeaStreamListener {
                END,
                expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
                registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-               metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+               metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
                updated_at = NOW()
              RETURNING id`,
             [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
@@ -1661,7 +1661,7 @@ export class OpenSeaStreamListener {
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
           creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
-          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+          metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
           updated_at = NOW()
         RETURNING id
       ` : `
@@ -1676,7 +1676,7 @@ export class OpenSeaStreamListener {
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
           creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
-          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+          metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
           updated_at = NOW()
         RETURNING id
       `;
