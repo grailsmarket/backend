@@ -1,7 +1,7 @@
 # Build from the REPO ROOT: docker build -f services/workers/Dockerfile .
 # Services import ../shared/src (workers also ../wal-listener/src) by relative
 # path, so a subdirectory build context cannot work.
-FROM node:20-alpine AS base
+FROM node:24.22.1-alpine3.24 AS base
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
 
@@ -27,7 +27,7 @@ RUN npm run build --workspace=@grails/shared \
  && npx tsc -p services/workers/tsconfig.json --noEmit false --skipLibCheck
 
 # Runtime
-FROM node:20-alpine AS runner
+FROM node:24.22.1-alpine3.24 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
