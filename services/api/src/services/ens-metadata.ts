@@ -1,63 +1,93 @@
-import { getPostgresPool, config, processAddressRecords, type AddressRecord, processContenthash, type ContenthashRecord, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents, isEnsV2Name, fetchNameRecordsOnChain } from '../../../shared/src';
+import { getPostgresPool, config, processAddressRecords, processContenthash, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents, isEnsV2Name, fetchNameRecordsFromWorker, keepCachedRecordsWithoutResolver, type NameRecords } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 const METADATA_TTL_HOURS = 72;
 
-export interface EnsMetadata {
-  [key: string]: string | AddressRecord[] | ContenthashRecord | undefined;
-  chains?: AddressRecord[];
-  contenthash?: ContenthashRecord;
-}
+export type EnsMetadata = NameRecords;
+
+type MetadataSource = 'worker' | 'graph' | 'cache';
 
 interface FreshMetadataResult {
   metadata: EnsMetadata;
-  source: 'graph' | 'worker' | 'cache';
+  source: MetadataSource;
+}
+
+type MetadataLookup =
+  | { found: true; metadata: EnsMetadata; source: 'worker' | 'graph' }
+  | { found: false };
+
+/**
+ * Look up a name's records. The ENS worker (v1, v2 and offchain names) comes first. If it
+ * fails, v1 names fall back to The Graph; v2 names aren't in the v1 subgraph, so the error
+ * is rethrown and callers serve cached metadata. `found: false` means the worker found no
+ * resolver for the name.
+ */
+async function lookupMetadata(name: string, fresh: boolean): Promise<MetadataLookup> {
+  try {
+    const result = await fetchNameRecordsFromWorker(name, { fresh });
+    return result.found ? { found: true, metadata: result.records, source: 'worker' } : { found: false };
+  } catch (error: any) {
+    if (await isEnsV2Name(name)) throw error;
+    logger.warn({ error: error?.message, name }, 'ENS worker lookup failed, falling back to The Graph');
+    return { found: true, metadata: await fetchMetadataFromGraph(name), source: 'graph' };
+  }
 }
 
 /**
- * Always fetch fresh metadata from The Graph, bypassing cache.
+ * Records for a name the worker found no resolver for: the cached records while the name
+ * is in its grace period, otherwise none (see keepCachedRecordsWithoutResolver).
+ */
+async function metadataWithoutResolver(ensNameId: number): Promise<{ metadata: EnsMetadata; keptCache: boolean }> {
+  const result = await getPostgresPool().query(
+    `SELECT metadata, expiry_date, ens_version FROM ens_names WHERE id = $1`,
+    [ensNameId]
+  );
+  const row = result.rows[0];
+  if (row && keepCachedRecordsWithoutResolver(row.expiry_date, row.ens_version)) {
+    return { metadata: row.metadata || {}, keptCache: true };
+  }
+  return { metadata: {}, keptCache: false };
+}
+
+/**
+ * Always fetch fresh metadata, bypassing caches.
  * Database sync happens asynchronously to avoid slowing down the response.
  *
  * @param ensNameId - Database ID of the ENS name
  * @param name - Full ENS name (e.g., "vitalik.eth")
- * @returns Object with metadata from The Graph
  */
 export async function fetchFreshMetadata(
   ensNameId: number,
   name: string
 ): Promise<FreshMetadataResult> {
-  logger.info({ name, ensNameId }, 'Fetching fresh metadata from Graph (bypassing cache)');
+  logger.info({ name, ensNameId }, 'Fetching fresh metadata (bypassing cache)');
 
   try {
-    const metadata = await fetchMetadataFromGraph(name);
+    const lookup = await lookupMetadata(name, true);
+
+    if (!lookup.found) {
+      const { metadata, keptCache } = await metadataWithoutResolver(ensNameId);
+      if (keptCache) {
+        return { metadata, source: 'cache' };
+      }
+      syncMetadataToDatabase(ensNameId, name, metadata).catch((error) => {
+        logger.error({ error, name, ensNameId }, 'Async metadata sync failed');
+      });
+      return { metadata, source: 'worker' };
+    }
 
     // Sync to database asynchronously - fire and forget
-    syncMetadataToDatabase(ensNameId, name, metadata).catch((error) => {
+    syncMetadataToDatabase(ensNameId, name, lookup.metadata).catch((error) => {
       logger.error({ error, name, ensNameId }, 'Async metadata sync failed');
     });
 
-    return { metadata, source: 'graph' };
+    return { metadata: lookup.metadata, source: lookup.source };
   } catch (error: any) {
     logger.error(
-      { error: error?.message, cause: error?.cause?.message || error?.cause, url: config.theGraph.ensSubgraphUrl, name, ensNameId },
-      'Failed to fetch fresh metadata from Graph, trying ENS worker standalone'
+      { error: error?.message, cause: error?.cause?.message || error?.cause, name, ensNameId },
+      'Failed to fetch fresh metadata, serving cached metadata'
     );
 
-    // Graph failed entirely — try ENS worker standalone
-    try {
-      const workerRecords = await fetchTextRecordsFromEnsWorker(name);
-      if (Object.keys(workerRecords).length > 0) {
-        logger.info({ name, keys: Object.keys(workerRecords) }, 'ENS worker standalone fallback succeeded');
-        syncMetadataToDatabase(ensNameId, name, workerRecords).catch((syncError) => {
-          logger.error({ error: syncError, name, ensNameId }, 'Async metadata sync failed (worker fallback)');
-        });
-        return { metadata: workerRecords, source: 'worker' };
-      }
-    } catch (workerError: any) {
-      logger.warn({ error: workerError?.message, name }, 'ENS worker standalone fallback also failed');
-    }
-
-    // Final fallback: cached metadata from the database
     const pool = getPostgresPool();
     const result = await pool.query(
       `SELECT metadata FROM ens_names WHERE id = $1`,
@@ -98,7 +128,7 @@ interface MetadataRefreshResult {
 }
 
 /**
- * Check if metadata needs refresh and fetch from The Graph if stale (>72 hours)
+ * Check if metadata needs refresh and refetch it if stale (>72 hours)
  *
  * @param ensNameId - Database ID of the ENS name
  * @param name - Full ENS name (e.g., "vitalik.eth")
@@ -117,44 +147,55 @@ export async function ensureMetadataFresh(
     return { refreshed: false, metadata: {} };
   }
 
-  logger.info({ name, ensNameId, lastUpdated: currentMetadataUpdatedAt }, 'Metadata stale, fetching from Graph');
+  logger.info({ name, ensNameId, lastUpdated: currentMetadataUpdatedAt }, 'Metadata stale, refetching');
 
   try {
-    const metadata = await fetchMetadataFromGraph(name);
+    const pool = getPostgresPool();
+    const lookup = await lookupMetadata(name, false);
+
+    if (!lookup.found) {
+      const { metadata, keptCache } = await metadataWithoutResolver(ensNameId);
+      if (keptCache) {
+        // Keep the records, but don't look the name up again on every request
+        await pool.query(`UPDATE ens_names SET metadata_updated_at = NOW() WHERE id = $1`, [ensNameId]);
+        return { refreshed: false, metadata: {} };
+      }
+      await pool.query(
+        `UPDATE ens_names SET metadata = $1, metadata_updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(metadata), ensNameId]
+      );
+      return { refreshed: true, metadata };
+    }
 
     // Update database with fresh metadata
-    const pool = getPostgresPool();
     await pool.query(
       `UPDATE ens_names
        SET metadata = $1, metadata_updated_at = NOW()
        WHERE id = $2`,
-      [JSON.stringify(metadata), ensNameId]
+      [JSON.stringify(lookup.metadata), ensNameId]
     );
 
     logger.info(
-      { name, ensNameId, keys: Object.keys(metadata) },
-      'Metadata refreshed from Graph'
+      { name, ensNameId, source: lookup.source, keys: Object.keys(lookup.metadata) },
+      'Metadata refreshed'
     );
 
-    return { refreshed: true, metadata };
+    return { refreshed: true, metadata: lookup.metadata };
   } catch (error) {
-    logger.error({ error, name, ensNameId }, 'Failed to refresh metadata from Graph');
+    logger.error({ error, name, ensNameId }, 'Failed to refresh metadata');
     // Return empty, don't fail the request - serve stale data instead
     return { refreshed: false, metadata: {} };
   }
 }
 
 /**
- * Fetch text records and address records from The Graph ENS subgraph
+ * Fetch text records and address records from The Graph ENS subgraph.
+ * Fallback for v1 names when the ENS worker is unavailable.
  *
  * @param name - Full ENS name (e.g., "vitalik.eth")
  * @returns Object with text records and chains array for address records
  */
 async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
-  if (await isEnsV2Name(name)) {
-    return fetchV2MetadataOnChain(name);
-  }
-
   const query = `
     query GetDomain($name: String!) {
       domains(where: { name: $name }) {
@@ -256,19 +297,5 @@ async function fetchMetadataFromGraph(name: string): Promise<EnsMetadata> {
     metadata.contenthash = contenthash;
   }
 
-  return metadata;
-}
-
-/**
- * ENSv2 names aren't in the v1 subgraph; resolve text records and the ETH address on-chain
- * through the UniversalResolver.
- */
-async function fetchV2MetadataOnChain(name: string): Promise<EnsMetadata> {
-  const { textRecords, addressRecords } = await fetchNameRecordsOnChain(name);
-  const metadata: EnsMetadata = { ...textRecords };
-  const chains = processAddressRecords(addressRecords);
-  if (chains.length > 0) {
-    metadata.chains = chains;
-  }
   return metadata;
 }

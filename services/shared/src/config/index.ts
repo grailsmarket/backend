@@ -71,7 +71,10 @@ const ConfigSchema = z.object({
   theGraph: z.object({
     ensSubgraphUrl: z.string(),
     apiKey: z.string().optional(),
-    ensWorkerUrl: z.string().nullable(),
+  }),
+  ensWorker: z.object({
+    // ENS records worker (ensv2-records); null = none for this chain
+    url: z.string().nullable(),
   }),
   api: z.object({
     port: z.number().default(3000),
@@ -236,7 +239,9 @@ const rawConfig = {
   theGraph: {
     ensSubgraphUrl: process.env.THE_GRAPH_ENS_SUBGRAPH_URL || network.ensSubgraphUrl,
     apiKey: process.env.THE_GRAPH_API_KEY,
-    ensWorkerUrl: envNullable(process.env.ENS_WORKER_URL, network.ensWorkerUrl),
+  },
+  ensWorker: {
+    url: envNullable(process.env.ENS_WORKER_URL, network.ensWorkerUrl),
   },
   api: {
     port: parseInt(process.env.API_PORT || '3000'),

@@ -1,5 +1,6 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool } from '../../../shared/src';
+import { getPostgresPool, keepCachedRecordsWithoutResolver } from '../../../shared/src';
+import { ethers } from 'ethers';
 import { logger } from '../utils/logger';
 import { QUEUE_NAMES, type SyncEnsDataJob } from '../queue';
 import { fetchENSMetadata } from '../services/blockchain';
@@ -30,8 +31,22 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
       const pool = getPostgresPool();
 
       try {
-        // Fetch metadata from The Graph using the ENS name
-        const metadata = await fetchENSMetadata(name);
+        const lookup = await fetchENSMetadata(name);
+
+        if (!lookup.found) {
+          const row = await pool.query(
+            'SELECT expiry_date, ens_version FROM ens_names WHERE id = $1',
+            [ensNameId]
+          );
+          if (row.rows[0] && keepCachedRecordsWithoutResolver(row.rows[0].expiry_date, row.rows[0].ens_version)) {
+            // In its grace period: the records come back on renewal, so keep them
+            await pool.query('UPDATE ens_names SET metadata_updated_at = NOW() WHERE id = $1', [ensNameId]);
+            logger.info({ ensNameId, name }, 'No resolver (grace period), kept cached metadata');
+            return;
+          }
+        }
+
+        const metadata = lookup.found ? lookup.metadata : { resolverAddress: ethers.ZeroAddress };
 
         // Update database
         const result = await pool.query(
@@ -47,7 +62,7 @@ export async function registerEnsSyncWorker(boss: PgBoss): Promise<void> {
 
         if (result.rows.length > 0) {
           logger.info(
-            { ensNameId, name: result.rows[0].name, metadataKeys: Object.keys(metadata) },
+            { ensNameId, name: result.rows[0].name, source: lookup.found ? lookup.source : 'worker', metadataKeys: Object.keys(metadata) },
             'ENS metadata synced successfully'
           );
         } else {

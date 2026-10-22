@@ -370,8 +370,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get metadata for a specific ENS name
-  // Always fetches fresh data from The Graph, database sync happens async
+  // Get metadata (text, address and contenthash records) for a specific ENS name
+  // Always fetches fresh records from the ENS worker, database sync happens async
   fastify.get('/:name/metadata', async (request, reply) => {
     const { name } = request.params as { name: string };
 
@@ -398,7 +398,6 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     const row = result.rows[0];
 
-    // Always fetch fresh metadata from The Graph
     // Database sync happens asynchronously to not slow down the response
     const { metadata, source } = await fetchFreshMetadata(row.id, row.name);
 

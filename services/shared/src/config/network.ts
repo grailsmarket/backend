@@ -36,7 +36,8 @@ export interface NetworkPreset {
   // Resolver whose text records are unreliable via getEnsText (falls back to the ENS worker)
   legacyPublicResolverAddress: string | null;
   ensSubgraphUrl: string;
-  // ENS text-record worker (on-chain resolution fallback); null = none for this chain
+  // ENS records worker (Nomentum-Labs/ensv2-records): resolves v1, v2 and offchain names
+  // through the UniversalResolver. null = none for this chain.
   ensWorkerUrl: string | null;
   opensea: {
     enabled: boolean;
@@ -70,7 +71,7 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
     marketplaceConduitAddress: '0x73E9cD721a79C208E2F944910c27196307a2a05D',
     legacyPublicResolverAddress: '0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41',
     ensSubgraphUrl: 'https://gateway.thegraph.com/api/subgraphs/id/5XqPmWe6gjyrJtFn9cLy237i4cWw2j9HcUJEXsP5qGtH',
-    ensWorkerUrl: 'https://ens.ethfollow.xyz',
+    ensWorkerUrl: 'https://mainnet-api-prod-ensv2.on.hotbox.wtf',
     opensea: {
       enabled: true,
       apiBaseUrl: 'https://api.opensea.io/api/v2',
@@ -108,7 +109,7 @@ export const NETWORK_PRESETS: Record<number, NetworkPreset> = {
     marketplaceConduitAddress: '0x73E9cD721a79C208E2F944910c27196307a2a05D', // same conduit key as mainnet
     legacyPublicResolverAddress: null,
     ensSubgraphUrl: 'https://api.studio.thegraph.com/query/49574/enssepolia/version/latest',
-    ensWorkerUrl: null,
+    ensWorkerUrl: 'https://sepolia-api-prod-ensv2.on.hotbox.wtf',
     opensea: {
       // OpenSea dropped testnet support (July 2025)
       enabled: false,
