@@ -1,7 +1,7 @@
 import { getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { buildNameResult, type SearchResult } from '../utils/response-builder';
-import { ensureMetadataFresh } from './ens-metadata';
+import { ensureMetadataFresh, fetchFreshMetadata } from './ens-metadata';
 
 const pool = getPostgresPool();
 
@@ -16,16 +16,19 @@ const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase
  *  2. If not in the database, cold-import it from The Graph (upsert into ens_names)
  *     and re-run buildNameResult. Records aren't imported from The Graph.
  *  3. If found, ensure metadata is fresh (refetches from the ENS worker when stale or,
- *     for a cold import, never fetched).
+ *     for a cold import, never fetched). With `freshMetadata`, always refetches,
+ *     bypassing caches, the same way `GET /api/v1/names/:name/metadata` does.
  *
  * Returns `null` when the name cannot be resolved at all - callers own the 404.
  *
  * @param name - Full ENS name (e.g., "vitalik.eth")
  * @param userId - Optional authenticated user ID for per-user fields (votes, watchlist)
+ * @param options.freshMetadata - Always fetch fresh records instead of only when stale
  */
 export async function resolveNameDetails(
   name: string,
-  userId?: number
+  userId?: number,
+  options: { freshMetadata?: boolean } = {}
 ): Promise<SearchResult | null> {
   // Use buildNameResult helper to get name with vote data
   let nameResult = await buildNameResult(name, userId);
@@ -146,6 +149,18 @@ export async function resolveNameDetails(
 
   if (!nameResult) {
     return null;
+  }
+
+  if (options.freshMetadata) {
+    // Always refetch (bypassing caches). The DB sync runs in the background.
+    // On a worker failure this returns the cached records, so only bump the
+    // timestamp when the records came from a live lookup.
+    const { metadata, source } = await fetchFreshMetadata(nameResult.id, nameResult.name);
+    nameResult.metadata = metadata;
+    if (source !== 'cache') {
+      nameResult.metadata_updated_at = new Date();
+    }
+    return nameResult;
   }
 
   // Check if metadata needs refresh (synchronous - refetches if stale)

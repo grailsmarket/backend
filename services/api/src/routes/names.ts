@@ -260,10 +260,12 @@ export async function namesRoutes(fastify: FastifyInstance) {
    * calling GET /names/:name, GET /offers/name/:name, and
    * GET /ens-roles/names/:name/roles individually.
    *
+   * Metadata is always fetched fresh from the ENS worker (bypassing caches),
+   * the same way GET /:name/metadata does, so details.metadata is current.
+   *
    * Not cached (mirrors GET /:name): optionalAuth produces per-user detail
-   * fields, the handler tracks views, and metadata freshness must run per
-   * request. Downstream load is absorbed by getNameRoles' in-memory cache and
-   * the metadata DB TTL.
+   * fields, the handler tracks views, and the metadata fetch must run per
+   * request. Roles load is absorbed by getNameRoles' in-memory cache.
    */
   fastify.get('/:name/bundle', { preHandler: optionalAuth }, async (request, reply) => {
     try {
@@ -287,7 +289,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
-      const details = await resolveNameDetails(name, userId);
+      // Always fetches fresh metadata, same as GET /:name/metadata.
+      const details = await resolveNameDetails(name, userId, { freshMetadata: true });
 
       if (!details) {
         return reply.status(404).send({

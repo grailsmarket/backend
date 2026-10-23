@@ -91,7 +91,7 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/names` | Optional | List ENS names with pagination |
 | GET | `/names/search` | Optional | Search ENS names with Elasticsearch |
 | GET | `/names/:name` | Optional | Get specific ENS name details (tracks views) |
-| GET | `/names/:name/bundle` | Optional | FE bundle: name details + offers + roles in one response (tracks views) |
+| GET | `/names/:name/bundle` | Optional | FE bundle: name details + offers + roles in one response (tracks views; always fetches fresh metadata, like `/names/:name/metadata`) |
 
 ### Listings
 | Method | Path | Auth | Description |
