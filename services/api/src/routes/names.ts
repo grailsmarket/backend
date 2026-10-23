@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type ENSName, config } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type ENSName, config, sqlWithinGracePeriod } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { optionalAuth } from '../middleware/auth';
@@ -13,7 +13,7 @@ import type { SearchResult } from '../utils/response-builder';
 import { applyCompromisedToOfferRows, getCompromisedByEnsNameIds } from '../services/compromised-names';
 
 // ENS Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 // Name Wrapper ABI - just the ownerOf function we need
 const NAME_WRAPPER_ABI = [
@@ -97,7 +97,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     if (query.owner) {
       whereConditions.push(`LOWER(en.owner_address) = LOWER($${paramCount})`);
@@ -260,10 +260,12 @@ export async function namesRoutes(fastify: FastifyInstance) {
    * calling GET /names/:name, GET /offers/name/:name, and
    * GET /ens-roles/names/:name/roles individually.
    *
+   * Metadata is always fetched fresh from the ENS worker (bypassing caches),
+   * the same way GET /:name/metadata does, so details.metadata is current.
+   *
    * Not cached (mirrors GET /:name): optionalAuth produces per-user detail
-   * fields, the handler tracks views, and metadata freshness must run per
-   * request. Downstream load is absorbed by getNameRoles' in-memory cache and
-   * the metadata DB TTL.
+   * fields, the handler tracks views, and the metadata fetch must run per
+   * request. Roles load is absorbed by getNameRoles' in-memory cache.
    */
   fastify.get('/:name/bundle', { preHandler: optionalAuth }, async (request, reply) => {
     try {
@@ -287,7 +289,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
-      const details = await resolveNameDetails(name, userId);
+      // Always fetches fresh metadata, same as GET /:name/metadata.
+      const details = await resolveNameDetails(name, userId, { freshMetadata: true });
 
       if (!details) {
         return reply.status(404).send({
@@ -313,7 +316,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
               .query(
                 // offer_amount_wei is VARCHAR(78); cast to numeric so the
                 // top-N sort is by value, not lexicographic ("9..." vs "10...").
-                `SELECT o.*, e.name, e.token_id
+                `SELECT o.*, e.name, e.token_id, e.ens_version AS version
                    FROM offers o
                    JOIN ens_names e ON o.ens_name_id = e.id
                   WHERE o.ens_name_id = $1 AND o.status = $2
@@ -370,8 +373,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get metadata for a specific ENS name
-  // Always fetches fresh data from The Graph, database sync happens async
+  // Get metadata (text, address and contenthash records) for a specific ENS name
+  // Always fetches fresh records from the ENS worker, database sync happens async
   fastify.get('/:name/metadata', async (request, reply) => {
     const { name } = request.params as { name: string };
 
@@ -398,7 +401,6 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     const row = result.rows[0];
 
-    // Always fetch fresh metadata from The Graph
     // Database sync happens asynchronously to not slow down the response
     const { metadata, source } = await fetchFreshMetadata(row.id, row.name);
 

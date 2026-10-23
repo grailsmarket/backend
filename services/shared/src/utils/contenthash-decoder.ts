@@ -72,3 +72,28 @@ export function processContenthash(
   // Fall back to direct contentHash field if no changes array
   return decodeContenthash(fallbackContentHash);
 }
+
+// URI schemes the ENS worker uses for each contenthash codec
+const CONTENTHASH_SCHEMES: Record<string, string> = {
+  'ipfs://': 'ipfs',
+  'ipns://': 'ipns',
+  'bzz://': 'swarm',
+  'ar://': 'arweave',
+  'onion://': 'onion',
+  'onion3://': 'onion3',
+  'sia://': 'skynet',
+};
+
+/**
+ * Parse a contenthash URI from the ENS worker (e.g. "ipfs://bafy…") into a ContenthashRecord.
+ * The worker doesn't return the raw bytes, so `raw` is left unset.
+ */
+export function contenthashFromUri(uri: string | null | undefined): ContenthashRecord | null {
+  if (!uri) return null;
+  for (const [scheme, protocol] of Object.entries(CONTENTHASH_SCHEMES)) {
+    if (uri.startsWith(scheme) && uri.length > scheme.length) {
+      return { protocol, value: uri.slice(scheme.length) };
+    }
+  }
+  return null;
+}

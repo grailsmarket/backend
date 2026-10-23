@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { QUEUE_NAMES, type UpdateOwnershipJob } from '../queue';
 
@@ -23,7 +23,7 @@ export async function registerOwnershipWorker(boss: PgBoss): Promise<void> {
       const { ensNameId, newOwner, blockNumber, transactionHash } = job.data;
 
       // Defense-in-depth: never set Name Wrapper contract as owner
-      const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+      const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
       if (newOwner.toLowerCase() === NAME_WRAPPER_ADDRESS) {
         logger.warn(
           { ensNameId, newOwner, blockNumber, transactionHash },

@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool, safeNormalize } from '../../../shared/src';
+import { config, getPostgresPool, safeNormalize, CURRENCY_ADDRESSES, isEthRegistryToken } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
@@ -102,7 +102,7 @@ async function fetchOpenSeaAssetName(contract: string, identifier: string): Prom
 
   try {
     const response = await fetch(
-      `https://api.opensea.io/api/v2/chain/ethereum/contract/${contract}/nfts/${identifier}`,
+      `${config.opensea.apiBaseUrl}/chain/${config.opensea.chainSlug}/contract/${contract}/nfts/${identifier}`,
       {
         headers: {
           'X-API-Key': OPENSEA_API_KEY,
@@ -149,9 +149,18 @@ async function resolveEnsNameId(
   }
 
   const byName = await pool.query(
-    'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+    'SELECT id, ens_version FROM ens_names WHERE LOWER(name) = LOWER($1)',
     [safeNormalize(name)]
   );
+  if (byName.rows.length > 0 && byName.rows[0].ens_version === 2 && !isEthRegistryToken(asset.contract)) {
+    // The order is on the v1 token of a name that has moved to ENSv2: that token is in the
+    // Graveyard and the order can never fill, so don't attach it to the v2 name.
+    logger.info(
+      { tokenId: asset.identifier, contract: asset.contract, name },
+      'Skipping OpenSea order on the v1 token of an ENSv2 name'
+    );
+    return null;
+  }
   if (byName.rows.length > 0) {
     logger.info(
       { tokenId: asset.identifier, name, ensNameId: byName.rows[0].id },
@@ -208,7 +217,7 @@ async function fetchOpenSeaOffers(maxPages = MAX_PAGES): Promise<OpenSeaOffer[]>
   let cursor: string | null = null;
 
   for (let page = 0; page < maxPages; page++) {
-    let url = `https://api.opensea.io/api/v2/offers/collection/ens/all?limit=${RECONCILE_LIMIT}`;
+    let url = `${config.opensea.apiBaseUrl}/offers/collection/${config.opensea.collectionSlug}/all?limit=${RECONCILE_LIMIT}`;
     if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
 
     const response = await fetch(url, {
@@ -249,7 +258,7 @@ async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: O
   let pagesFetched = 0;
 
   for (let page = 0; page < maxPages; page++) {
-    let url = `https://api.opensea.io/api/v2/listings/collection/ens/all?limit=${RECONCILE_LIMIT}`;
+    let url = `${config.opensea.apiBaseUrl}/listings/collection/${config.opensea.collectionSlug}/all?limit=${RECONCILE_LIMIT}`;
     if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
 
     const response = await fetch(url, {
@@ -316,7 +325,7 @@ async function reconcileOffers(pool: Pool) {
       }
 
       const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
-        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+        CURRENCY_ADDRESSES.WETH;
 
       await pool.query(
         `INSERT INTO offers (

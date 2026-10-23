@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, getElasticsearchClient } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, getElasticsearchClient, sqlExpiryPhase } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { buildSearchResults } from '../utils/response-builder';
 import { buildESQuery } from '../utils/elasticsearch-filters';
@@ -1514,16 +1514,10 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         if (filters.status && filters.status !== 'all') {
           switch (filters.status) {
             case 'registered':
-              whereConditions.push(`en.expiry_date > NOW()`);
-              break;
             case 'grace':
-              whereConditions.push(`(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`);
-              break;
             case 'premium':
-              whereConditions.push(`(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`);
-              break;
             case 'available':
-              whereConditions.push(`en.expiry_date <= NOW() - INTERVAL '111 days'`);
+              whereConditions.push(sqlExpiryPhase(filters.status, 'en'));
               break;
           }
         }
@@ -1541,14 +1535,14 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
         if (filters.isGracePeriod !== undefined) {
           const wantGracePeriod = filters.isGracePeriod === 'true' || filters.isGracePeriod === true;
           if (wantGracePeriod) {
-            whereConditions.push(`(en.expiry_date <= NOW() AND en.expiry_date > NOW() - INTERVAL '90 days')`);
+            whereConditions.push(sqlExpiryPhase('grace', 'en'));
           }
         }
 
         if (filters.isPremiumPeriod !== undefined) {
           const wantPremiumPeriod = filters.isPremiumPeriod === 'true' || filters.isPremiumPeriod === true;
           if (wantPremiumPeriod) {
-            whereConditions.push(`(en.expiry_date <= NOW() - INTERVAL '90 days' AND en.expiry_date > NOW() - INTERVAL '111 days')`);
+            whereConditions.push(sqlExpiryPhase('premium', 'en'));
           }
         }
 

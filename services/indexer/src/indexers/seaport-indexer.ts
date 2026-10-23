@@ -6,13 +6,15 @@ import {
   type PublicClient,
   parseAbi,
 } from 'viem';
-import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, createSale } from '../../../shared/src';
+import { viemChain, config, getPostgresPool, createSale, isEthRegistryToken, findEnsV2NameByTokenId } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
+
+// How long a sale of a not-yet-indexed ENSv2 token waits for the ENSv2 indexer to catch up
+const ENSV2_SALE_WAIT_MS = parseInt(process.env.ENSV2_SALE_WAIT_MS || '1200000');
 
 // Define Seaport ABI with proper event definitions
 const SEAPORT_ABI = parseAbi([
@@ -40,7 +42,7 @@ export class SeaportIndexer {
 
   constructor() {
     this.client = createPublicClient({
-      chain: mainnet,
+      chain: viemChain,
       transport: http(config.blockchain.rpcUrl),
     });
     this.queue = new PQueue({ concurrency: 5 });
@@ -54,7 +56,7 @@ export class SeaportIndexer {
     const lastBlock = await this.getLastProcessedBlock();
     const startBlock = lastBlock > 0
       ? BigInt(lastBlock) + 1n
-      : BigInt(config.blockchain.startBlock || 19000000); // Seaport deployed later
+      : BigInt(config.blockchain.startBlock || config.blockchain.seaportStartBlock);
 
     this.currentBlock = startBlock;
     logger.info(`Starting Seaport indexer from block ${this.currentBlock}`);
@@ -236,8 +238,9 @@ export class SeaportIndexer {
     const ensRegistrar = config.blockchain.ensRegistrarAddress.toLowerCase();
     const ensNameWrapper = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
+    // ENSv2 names trade as ERC1155 tokens on the ETHRegistry
     const isENSToken = (token: string) =>
-      token.toLowerCase() === ensRegistrar || token.toLowerCase() === ensNameWrapper;
+      token.toLowerCase() === ensRegistrar || token.toLowerCase() === ensNameWrapper || isEthRegistryToken(token);
 
     const ensInOffer = offer && offer.some((item: any) =>
       item.token && isENSToken(item.token)
@@ -371,45 +374,62 @@ export class SeaportIndexer {
       }
 
       try {
-        // Try to resolve the actual ENS name
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
-        const nameToStore = resolvedData?.name || `token-${tokenId}`;
-        const expiryDate = resolvedData?.expiryDate || null;
-        const resolvedOwner = resolvedData?.ownerAddress || null;
-        const registrationDate = resolvedData?.registrationDate || null;
-        const textRecords = resolvedData?.textRecords || {};
+        let ensNameId: number;
+        let nameToStore: string;
 
-        // Use resolved owner if available, otherwise use buyer (new owner after sale)
-        const ownerAddress = (resolvedOwner || buyerAddress).toLowerCase();
+        if (isEthRegistryToken(tokenAddress)) {
+          // ENSv2: every v2 name is indexed from its registration, so look it up by token ID
+          // (current or superseded). The ETHRegistry transfer updates ownership.
+          const v2Name = await this.findEnsV2NameForSale(tokenId, log.blockNumber!);
+          if (!v2Name) {
+            logger.error(`Seaport sale of unknown ENSv2 token ${tokenId} in tx ${log.transactionHash}, skipping`);
+            continue;
+          }
+          ensNameId = v2Name.id;
+          nameToStore = v2Name.name;
+        } else {
+          // Try to resolve the actual ENS name
+          const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+          nameToStore = resolvedData?.name || `token-${tokenId}`;
+          const expiryDate = resolvedData?.expiryDate || null;
+          const resolvedOwner = resolvedData?.ownerAddress || null;
+          const registrationDate = resolvedData?.registrationDate || null;
+          const textRecords = resolvedData?.textRecords || {};
 
-        // First ensure the ENS name exists in the database
-        const upsertQuery = `
-          INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, NOW())
-          ON CONFLICT (token_id) DO UPDATE
-          SET
-            owner_address = EXCLUDED.owner_address,
-            name = CASE
-              WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
-              ELSE ens_names.name
-            END,
-            expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
-            registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-            metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
-            updated_at = NOW()
-          RETURNING id
-        `;
+          // Use resolved owner if available, otherwise use buyer (new owner after sale)
+          const ownerAddress = (resolvedOwner || buyerAddress).toLowerCase();
 
-        const nameResult = await this.pool.query(upsertQuery, [
-          tokenId,
-          nameToStore,
-          ownerAddress,
-          expiryDate,
-          registrationDate,
-          JSON.stringify(textRecords)
-        ]);
+          // First ensure the ENS name exists in the database
+          const upsertQuery = `
+            INSERT INTO ens_names (token_id, name, owner_address, expiry_date, registration_date, metadata, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            ON CONFLICT (token_id) DO UPDATE
+            SET
+              owner_address = EXCLUDED.owner_address,
+              name = CASE
+                WHEN ens_names.name LIKE 'token-%' THEN EXCLUDED.name
+                ELSE ens_names.name
+              END,
+              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
+              registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
+              -- Merge the Graph's text records into the stored ones: matching keys are
+              -- overwritten, everything else (chains, contenthash, other keys) is kept
+              metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+              updated_at = NOW()
+            RETURNING id
+          `;
 
-        const ensNameId = nameResult.rows[0].id;
+          const nameResult = await this.pool.query(upsertQuery, [
+            tokenId,
+            nameToStore,
+            ownerAddress,
+            expiryDate,
+            registrationDate,
+            JSON.stringify(textRecords)
+          ]);
+
+          ensNameId = nameResult.rows[0].id;
+        }
 
         // Fallback: if order_hash didn't match an offer, try by ens_name_id + buyer_address.
         // Only valid for genuine offer acceptances (ENS in consideration) — a listing purchase
@@ -517,7 +537,7 @@ export class SeaportIndexer {
             transaction_type, timestamp
           )
           VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
-          ON CONFLICT (transaction_hash) DO NOTHING
+          ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
         `;
 
         await this.pool.query(txQuery, [
@@ -534,10 +554,10 @@ export class SeaportIndexer {
         const updateOwnerQuery = `
           UPDATE ens_names
           SET owner_address = $1, last_transfer_date = NOW(), updated_at = NOW()
-          WHERE token_id = $2
+          WHERE id = $2
         `;
 
-        await this.pool.query(updateOwnerQuery, [buyerAddress.toLowerCase(), tokenId]);
+        await this.pool.query(updateOwnerQuery, [buyerAddress.toLowerCase(), ensNameId]);
       } catch (err: any) {
         logger.error(`Failed to process Seaport sale for token ${tokenId}: ${err.message}`);
         throw err; // Re-throw to be caught by outer handler
@@ -596,6 +616,30 @@ export class SeaportIndexer {
 
     if (cancelledOffers.rows.length > 0) {
       logger.info(`Cancelled ${cancelledOffers.rows.length} active offers for ${offererAddress} due to counter increment`);
+    }
+  }
+
+  /**
+   * The ENSv2 name a sold ETHRegistry token belongs to. The v2 indexer runs on its own cursor,
+   * so a name registered, migrated or regenerated just before the sale may not be indexed yet:
+   * wait for the v2 indexer to pass the sale's block rather than lose the sale. Gives up (null)
+   * once the v2 indexer is past the block, which means we don't index that token at all (e.g. a
+   * non-normalized label), or after ENSV2_SALE_WAIT_MS.
+   */
+  private async findEnsV2NameForSale(tokenId: string, blockNumber: bigint) {
+    const registry = config.blockchain.ensv2?.ethRegistryAddress.toLowerCase();
+    const deadline = Date.now() + ENSV2_SALE_WAIT_MS;
+    for (;;) {
+      const name = await findEnsV2NameByTokenId(tokenId);
+      if (name || !registry) return name;
+      const state = await this.pool.query(
+        'SELECT last_processed_block FROM indexer_state WHERE contract_address = $1',
+        [registry]
+      );
+      const v2Block = state.rows.length > 0 ? BigInt(state.rows[0].last_processed_block) : 0n;
+      if (v2Block >= blockNumber || Date.now() > deadline) return null;
+      logger.info(`Seaport sale of ENSv2 token ${tokenId} at block ${blockNumber}: waiting for the ENSv2 indexer (at ${v2Block})`);
+      await new Promise(resolve => setTimeout(resolve, 15000));
     }
   }
 

@@ -1,11 +1,11 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize, isPlaceholderName } from '../../../shared/src';
+import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize, isPlaceholderName, isEnsV2Name, isEnsV2MigrationAddress, isEthRegistryToken } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
 // Name Wrapper contract address - never store this as owner
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 interface PhoenixMessage {
   // OpenSea occasionally sends messages without a topic (e.g. control/keepalive
@@ -281,7 +281,7 @@ export class OpenSeaStreamListener {
 
     // Subscribe to ENS collection events using Phoenix protocol
     const subscriptionMessage = {
-      topic: 'collection:ens',
+      topic: `collection:${config.opensea.collectionSlug}`,
       event: 'phx_join',
       payload: {},
       ref: this.ref++,
@@ -470,6 +470,10 @@ export class OpenSeaStreamListener {
       }
 
       logger.info(`Storing ENS name: ${nameToStore} for token ID: ${tokenId} (corrected: ${correctTokenId})`);
+
+      if (await this.isV1TokenOfEnsV2Name(item.nft_id, nameToStore)) {
+        return;
+      }
 
       // Use maker address as the owner (they are listing their own item)
       const ownerAddress = maker.address.toLowerCase();
@@ -697,6 +701,10 @@ export class OpenSeaStreamListener {
         ownerAddress = sellerAddress || '0x0000000000000000000000000000000000000000';
       }
 
+      if (await this.isV1TokenOfEnsV2Name(item.nft_id, nameToStore)) {
+        return;
+      }
+
       const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
 
       // Identify the exact order that was fulfilled. The event's order_hash is authoritative —
@@ -905,7 +913,7 @@ export class OpenSeaStreamListener {
             timestamp
           )
           VALUES ($1, $2, $3, $4, $5, $6, 'sale', $7)
-          ON CONFLICT (transaction_hash) DO NOTHING
+          ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
         `;
 
         await this.pool.query(txQuery, [
@@ -1009,6 +1017,16 @@ export class OpenSeaStreamListener {
 
       // Determine the correct owner to store
       const fromAddress = from_account?.address?.toLowerCase() || '';
+
+      // ENSv2 migration moves the v1 token to a migration controller and on to the Graveyard;
+      // the name's v2 owner comes from the ETHRegistry (EnsV2Indexer), not from this transfer.
+      if (isEnsV2MigrationAddress(fromAddress) || isEnsV2MigrationAddress(newOwner)) {
+        logger.info(`Skipping transfer of ${nameToStore} ${fromAddress} -> ${newOwner}: ENSv2 migration`);
+        return;
+      }
+      if (await this.isV1TokenOfEnsV2Name(item.nft_id, nameToStore)) {
+        return;
+      }
       const isNameWrapperInvolved = newOwner === NAME_WRAPPER_ADDRESS.toLowerCase() ||
                                      fromAddress === NAME_WRAPPER_ADDRESS.toLowerCase();
 
@@ -1260,6 +1278,10 @@ export class OpenSeaStreamListener {
 
       logger.info(`Processing bid for: ${nameToStore} (token ${tokenId}, corrected: ${correctTokenId})`);
 
+      if (await this.isV1TokenOfEnsV2Name(item.nft_id, nameToStore)) {
+        return;
+      }
+
       // For offers, we should NOT update the owner - only ensure the ENS name exists in the database
       // The owner should only be updated by blockchain Transfer events
       let ensNameId: number;
@@ -1311,7 +1333,7 @@ export class OpenSeaStreamListener {
               `UPDATE ens_names SET
                 expiry_date = COALESCE($1, expiry_date),
                 registration_date = COALESCE($2, registration_date),
-                metadata = COALESCE($3, metadata),
+                metadata = COALESCE(metadata, '{}'::jsonb) || COALESCE($3::jsonb, '{}'::jsonb), -- merge: keep chains/contenthash
                 updated_at = NOW()
               WHERE id = $4`,
               [expiryDate, registrationDate, JSON.stringify(textRecords), ensNameId]
@@ -1330,7 +1352,7 @@ export class OpenSeaStreamListener {
                  END,
                  expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
                  registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-                 metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+                 metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
                  updated_at = NOW()
                RETURNING id`,
               [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
@@ -1351,7 +1373,7 @@ export class OpenSeaStreamListener {
                END,
                expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
                registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
-               metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+               metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
                updated_at = NOW()
              RETURNING id`,
             [correctTokenId, nameToStore, initialOwner, expiryDate, registrationDate, JSON.stringify(textRecords)]
@@ -1447,7 +1469,7 @@ export class OpenSeaStreamListener {
       // Collection offers apply to the entire collection, not specific items
       const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
 
-      if (!collection?.slug || collection.slug !== 'ens') {
+      if (!collection?.slug || collection.slug !== config.opensea.collectionSlug) {
         logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);
         return;
       }
@@ -1504,7 +1526,7 @@ export class OpenSeaStreamListener {
     try {
       // Query OpenSea API for recent ENS listings
       const response = await fetch(
-        'https://api.opensea.io/api/v2/listings/collection/ens/all?limit=50',
+        `${config.opensea.apiBaseUrl}/listings/collection/${config.opensea.collectionSlug}/all?limit=50`,
         {
           headers: {
             'Accept': 'application/json',
@@ -1569,7 +1591,7 @@ export class OpenSeaStreamListener {
       // Build the event payload in the same format as stream events
       return {
         item: {
-          nft_id: `ethereum/0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85/${tokenId}`,
+          nft_id: `${config.opensea.chainSlug}/${config.blockchain.ensRegistrarAddress.toLowerCase()}/${tokenId}`,
           metadata: {
             name: listing.protocol_data?.parameters?.offer?.[0]?.token || null,
           },
@@ -1595,6 +1617,22 @@ export class OpenSeaStreamListener {
   /**
    * Upsert ENS name - handles duplicate name and token_id constraints
    */
+  /**
+   * True when an OpenSea event is about the v1 token (BaseRegistrar / NameWrapper) of a name
+   * that has moved to ENSv2. That token now sits in the Graveyard and can never trade again,
+   * and the name's row belongs to the v2 indexer: matching it by name would overwrite the v2
+   * owner, token_id and expiry, or attach unfillable v1 orders to the v2 name.
+   * nft_id looks like "ethereum/<contract>/<tokenId>".
+   */
+  private async isV1TokenOfEnsV2Name(nftId: string, name: string | null): Promise<boolean> {
+    if (!config.blockchain.ensv2 || !name) return false;
+    const contract = nftId.split('/')[1];
+    if (contract && isEthRegistryToken(contract)) return false;
+    if (!(await isEnsV2Name(name))) return false;
+    logger.info(`Skipping OpenSea event for ${nftId}: ${name} is now an ENSv2 name`);
+    return true;
+  }
+
   private async upsertEnsName(
     tokenId: string,
     name: string,
@@ -1623,7 +1661,7 @@ export class OpenSeaStreamListener {
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
           creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
-          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+          metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
           updated_at = NOW()
         RETURNING id
       ` : `
@@ -1638,7 +1676,7 @@ export class OpenSeaStreamListener {
           expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
           registration_date = COALESCE(EXCLUDED.registration_date, ens_names.registration_date),
           creation_date = COALESCE(EXCLUDED.creation_date, ens_names.creation_date),
-          metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
+          metadata = COALESCE(ens_names.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb), -- merge: keep chains/contenthash
           updated_at = NOW()
         RETURNING id
       `;

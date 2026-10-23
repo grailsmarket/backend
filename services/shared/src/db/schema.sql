@@ -567,3 +567,20 @@ CREATE INDEX IF NOT EXISTS idx_compromised_names_ens_name_active
   ON compromised_names(ens_name_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_compromised_names_token_id ON compromised_names(token_id);
 CREATE INDEX IF NOT EXISTS idx_compromised_names_original_owner ON compromised_names(original_owner);
+
+-- ============================================================================
+-- ENSv2 resolver preferences (mirror of migration 0909)
+-- ============================================================================
+
+-- users.preferred_resolver (from 0909)
+-- ALTER TABLE users ADD COLUMN preferred_resolver VARCHAR(42);
+
+CREATE TABLE IF NOT EXISTS resolver_labels (
+  user_id     INTEGER        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  resolver    VARCHAR(42)    NOT NULL,
+  record_id   NUMERIC(78, 0) NOT NULL DEFAULT 0,  -- 0 = the resolver itself
+  label       VARCHAR(64)    NOT NULL,
+  created_at  TIMESTAMP      NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMP      NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, resolver, record_id)
+);

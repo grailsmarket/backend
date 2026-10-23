@@ -1,6 +1,8 @@
-const OPENSEA_API_KEY = process.env.OPENSEA_API_KEY || '';
-const OPENSEA_API_BASE = 'https://api.opensea.io/api/v2';
-const ENS_CONTRACT_ADDRESS = '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85';
+import { config } from '../../../shared/src';
+
+const OPENSEA_API_KEY = config.opensea.apiKey || '';
+const OPENSEA_API_BASE = config.opensea.apiBaseUrl;
+const ENS_CONTRACT_ADDRESS = config.blockchain.ensRegistrarAddress;
 
 export interface OpenSeaListing {
   price: {
@@ -29,6 +31,7 @@ export interface OpenSeaOffer {
 }
 
 export async function getBestListingForNFT(tokenId: string): Promise<OpenSeaListing | null> {
+  if (!config.opensea.enabled) return null;
   try {
     const response = await fetch(
       `${OPENSEA_API_BASE}/listings/collection/${ENS_CONTRACT_ADDRESS}/nfts/${tokenId}/best`,
@@ -57,6 +60,7 @@ export async function getBestListingForNFT(tokenId: string): Promise<OpenSeaList
 }
 
 export async function getBestOfferForNFT(tokenId: string): Promise<OpenSeaOffer | null> {
+  if (!config.opensea.enabled) return null;
   try {
     const response = await fetch(
       `${OPENSEA_API_BASE}/offers/collection/${ENS_CONTRACT_ADDRESS}/nfts/${tokenId}/best`,

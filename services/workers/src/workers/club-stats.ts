@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import { logger } from '../utils/logger';
-import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
+import { getPostgresPool, ETH_WETH_FILTER, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
 
 const pool = getPostgresPool();
 
@@ -223,7 +223,10 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
       WITH club_regs AS (
         SELECT
           r.registration_date,
-          r.total_cost_wei::numeric as cost
+          -- *_wei volume is ETH: only ETH-paid (v1) registrations. ENSv2 registrations are
+          -- paid in stablecoins and counted in the USD volume, which covers every registration.
+          CASE WHEN r.currency_address IS NULL THEN r.total_cost_wei::numeric END as cost,
+          r.total_cost_usd as cost_usd
         FROM registrations r
         JOIN ens_names e ON r.ens_name_id = e.id
         WHERE $1 = ANY(e.clubs)
@@ -238,7 +241,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         COALESCE(SUM(cost), 0) as total_reg_volume,
         COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days'), 0) as reg_volume_1y,
         COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days'), 0) as reg_volume_1mo,
-        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_1w
+        COALESCE(SUM(cost) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_1w,
+        COALESCE(SUM(cost_usd), 0) as total_reg_volume_usd,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '365 days'), 0) as reg_volume_usd_1y,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '30 days'), 0) as reg_volume_usd_1mo,
+        COALESCE(SUM(cost_usd) FILTER (WHERE registration_date > NOW() - INTERVAL '7 days'), 0) as reg_volume_usd_1w
       FROM club_regs
       `,
       [clubName]
@@ -256,7 +263,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
           total_reg_volume_wei = $5,
           reg_volume_wei_1y = $6,
           reg_volume_wei_1mo = $7,
-          reg_volume_wei_1w = $8
+          reg_volume_wei_1w = $8,
+          total_reg_volume_usd = $10,
+          reg_volume_usd_1y = $11,
+          reg_volume_usd_1mo = $12,
+          reg_volume_usd_1w = $13
       WHERE name = $9
       `,
       [
@@ -268,7 +279,11 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
         row.reg_volume_1y?.toString() || '0',
         row.reg_volume_1mo?.toString() || '0',
         row.reg_volume_1w?.toString() || '0',
-        clubName
+        clubName,
+        row.total_reg_volume_usd?.toString() || '0',
+        row.reg_volume_usd_1y?.toString() || '0',
+        row.reg_volume_usd_1mo?.toString() || '0',
+        row.reg_volume_usd_1w?.toString() || '0',
       ]
     );
 
@@ -292,8 +307,8 @@ async function recalculateRegCounts(clubName: string): Promise<void> {
 /**
  * Recalculate status counts for all clubs
  * - registered_count: Names with expiry_date > NOW() (not expired)
- * - grace_count: Names with expiry_date <= NOW() AND > NOW() - 90 days (in grace period)
- * - premium_count: Names expired 90-111 days ago (in premium auction period)
+ * - grace_count: Names in their grace period (90 days after expiry for v1, 28 for ENSv2)
+ * - premium_count: Names in the 21-day premium period after grace
  * - available_count: Derived as member_count - registered - grace - premium (includes names not in ens_names)
  * - listings_count: Names with active listings
  * This is done as a bulk update for efficiency since all clubs are updated together
@@ -313,12 +328,10 @@ async function recalculateStatusCounts(): Promise<void> {
             WHERE en.expiry_date > NOW()
           ) as registered,
           COUNT(*) FILTER (
-            WHERE en.expiry_date <= NOW()
-              AND en.expiry_date > NOW() - INTERVAL '90 days'
+            WHERE ${sqlExpiryPhase('grace', 'en')}
           ) as grace,
           COUNT(*) FILTER (
-            WHERE en.expiry_date <= NOW() - INTERVAL '90 days'
-              AND en.expiry_date > NOW() - INTERVAL '111 days'
+            WHERE ${sqlExpiryPhase('premium', 'en')}
           ) as premium
         FROM club_memberships cm
         LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
@@ -402,7 +415,7 @@ async function recalculateStatusCounts(): Promise<void> {
           COUNT(DISTINCT owner_address) as holders_count
         FROM ens_names
         WHERE owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
           AND clubs IS NOT NULL
           AND array_length(clubs, 1) > 0
         GROUP BY unnest(clubs)
@@ -423,7 +436,7 @@ async function recalculateStatusCounts(): Promise<void> {
         SELECT DISTINCT unnest(clubs)
         FROM ens_names
         WHERE owner_address IS NOT NULL
-          AND expiry_date > NOW() - INTERVAL '90 days'
+          AND ${sqlWithinGracePeriod('')}
           AND clubs IS NOT NULL
           AND array_length(clubs, 1) > 0
       )
