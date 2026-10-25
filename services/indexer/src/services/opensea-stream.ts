@@ -1,11 +1,37 @@
 import WebSocket from 'ws';
-import { config, getPostgresPool, createSale, isEthOrWeth, safeNormalize, isPlaceholderName, isEnsV2Name, isEnsV2MigrationAddress, isEthRegistryToken } from '../../../shared/src';
+import {
+  config,
+  getPostgresPool,
+  createSale,
+  isEthOrWeth,
+  safeNormalize,
+  isPlaceholderName,
+  isEnsV2Name,
+  isEnsV2MigrationAddress,
+  isEthRegistryToken,
+  findEnsV2NameByTokenId,
+  getEnsV2State,
+  getOpenSeaCollectionSlugs,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { ENSResolver } from '../services/ens-resolver';
 import { safePublishJob, QUEUE_NAMES } from '../queue';
 
 // Name Wrapper contract address - never store this as owner
 const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
+
+// How long an OpenSea event on an ENSv2 token waits for EnsV2Indexer to index the name (a name
+// can be listed seconds after it's registered or migrated) before it's dropped
+const ENSV2_STREAM_WAIT_MS = parseInt(process.env.OPENSEA_ENSV2_WAIT_MS || '120000');
+const ENSV2_STREAM_POLL_MS = 5000;
+
+interface EnsV2StreamItem {
+  id: number;
+  name: string;
+  currentTokenId: string;
+  // false when the event's token ID was superseded (TokenRegenerated / re-registration)
+  isCurrentToken: boolean;
+}
 
 interface PhoenixMessage {
   // OpenSea occasionally sends messages without a topic (e.g. control/keepalive
@@ -279,16 +305,17 @@ export class OpenSeaStreamListener {
   private subscribe() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // Subscribe to ENS collection events using Phoenix protocol
-    const subscriptionMessage = {
-      topic: `collection:${config.opensea.collectionSlug}`,
-      event: 'phx_join',
-      payload: {},
-      ref: this.ref++,
-    };
-
-    this.ws.send(JSON.stringify(subscriptionMessage));
-    logger.info('Subscribed to ENS collection events');
+    // Subscribe to each ENS collection's events using Phoenix protocol
+    for (const slug of getOpenSeaCollectionSlugs()) {
+      const subscriptionMessage = {
+        topic: `collection:${slug}`,
+        event: 'phx_join',
+        payload: {},
+        ref: this.ref++,
+      };
+      this.ws.send(JSON.stringify(subscriptionMessage));
+      logger.info(`Subscribed to OpenSea collection ${slug}`);
+    }
   }
 
   private startHeartbeat() {
@@ -430,6 +457,17 @@ export class OpenSeaStreamListener {
 
       logger.info(`Creating listing for token ID: ${tokenId}`);
 
+      // ENSv2 ETHRegistry token: the name comes from the v2 indexer's rows, not The Graph
+      const v2Item = await this.resolveEnsV2Item(item.nft_id, 'item_listed');
+      if (v2Item === 'skip') return;
+      if (v2Item && !v2Item.isCurrentToken) {
+        // The name's token ID changed since this order was made (roles changed or it was
+        // re-registered), so the order can never fill
+        logger.info(`Skipping OpenSea item_listed for ${v2Item.name}: token ${tokenId} is no longer its current ENSv2 token`);
+        return;
+      }
+
+
       // Always resolve the token ID via The Graph to get authoritative data
       // This also detects non-normalized registrations (e.g., "Vitalik.eth" vs "vitalik.eth")
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
@@ -446,7 +484,7 @@ export class OpenSeaStreamListener {
       let isNormalizedRegistration = true; // Assume normalized unless proven otherwise
 
       // Always resolve via The Graph to verify the registration
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+      const resolvedData = v2Item ? null : await this.resolver.resolveTokenIdToNameData(tokenId);
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
@@ -464,6 +502,8 @@ export class OpenSeaStreamListener {
         textRecords = resolvedData.textRecords;
         isNormalizedRegistration = resolvedData.isNormalized;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
+      } else if (v2Item) {
+        nameToStore = v2Item.name;
       } else if (!nameToStore || !nameToStore.endsWith('.eth')) {
         // Couldn't resolve and no valid name from metadata - use placeholder
         nameToStore = `token-${tokenId}`;
@@ -477,7 +517,10 @@ export class OpenSeaStreamListener {
 
       // Use maker address as the owner (they are listing their own item)
       const ownerAddress = maker.address.toLowerCase();
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords, creationDate);
+      // v2 names: owner, expiry and token come from the ETHRegistry (EnsV2Indexer), so don't upsert
+      const ensNameId = v2Item
+        ? v2Item.id
+        : await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, false, expiryDate, registrationDate, textRecords, creationDate);
 
       // Create or update listing
       // First, cancel any existing active OpenSea listings for this ENS name and seller
@@ -634,6 +677,10 @@ export class OpenSeaStreamListener {
 
       const tokenId = item.nft_id.split('/').pop();
 
+      // ENSv2 ETHRegistry token: the name comes from the v2 indexer's rows, not The Graph
+      const v2Item = await this.resolveEnsV2Item(item.nft_id, 'item_sold');
+      if (v2Item === 'skip') return;
+
       // Always resolve via The Graph to verify the registration and detect non-normalized names
       let nameToStore = item.metadata?.name ? safeNormalize(item.metadata.name) : null;
       // Don't trust placeholder names from OpenSea metadata (e.g., "[hash].eth")
@@ -648,7 +695,7 @@ export class OpenSeaStreamListener {
       let correctTokenId = tokenId; // Default to OpenSea's token_id
 
       // Always resolve via The Graph to verify the registration
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+      const resolvedData = v2Item ? null : await this.resolver.resolveTokenIdToNameData(tokenId);
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
@@ -665,6 +712,8 @@ export class OpenSeaStreamListener {
         creationDate = resolvedData.creationDate;
         textRecords = resolvedData.textRecords;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
+      } else if (v2Item) {
+        nameToStore = v2Item.name;
       } else if (!nameToStore || nameToStore.startsWith('#') || !nameToStore.endsWith('.eth')) {
         // Couldn't resolve and no valid name from metadata - use placeholder
         nameToStore = `token-${tokenId}`;
@@ -705,7 +754,10 @@ export class OpenSeaStreamListener {
         return;
       }
 
-      const ensNameId = await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
+      // v2 names: the new owner is recorded by EnsV2Indexer from the ETHRegistry transfer
+      const ensNameId = v2Item
+        ? v2Item.id
+        : await this.upsertEnsName(correctTokenId, nameToStore, ownerAddress, true, expiryDate, registrationDate, textRecords, creationDate);
 
       // Identify the exact order that was fulfilled. The event's order_hash is authoritative —
       // it says which record (listing vs offer) was executed and therefore which marketplace
@@ -977,6 +1029,14 @@ export class OpenSeaStreamListener {
       }
 
       const tokenId = item.nft_id.split('/').pop();
+
+      // ENSv2 ETHRegistry token: EnsV2Indexer records the transfer from the registry's own
+      // TransferSingle/TransferBatch events, which are authoritative
+      const nftContract = item.nft_id.split('/')[1];
+      if (nftContract && isEthRegistryToken(nftContract)) {
+        logger.debug(`Ignoring OpenSea item_transferred for ENSv2 token ${tokenId}: indexed from the ETHRegistry`);
+        return;
+      }
       const newOwner = to_account.address.toLowerCase();
 
       // Always resolve via The Graph to verify the registration and detect non-normalized names
@@ -1229,6 +1289,16 @@ export class OpenSeaStreamListener {
 
       const tokenId = item.nft_id.split('/').pop();
 
+      // ENSv2 ETHRegistry token: the name comes from the v2 indexer's rows, not The Graph
+      const v2Item = await this.resolveEnsV2Item(item.nft_id, 'item_received_bid');
+      if (v2Item === 'skip') return;
+      if (v2Item && !v2Item.isCurrentToken) {
+        // The name's token ID changed since this order was made (roles changed or it was
+        // re-registered), so the order can never fill
+        logger.info(`Skipping OpenSea item_received_bid for ${v2Item.name}: token ${tokenId} is no longer its current ENSv2 token`);
+        return;
+      }
+
       if (!base_price) {
         logger.warn('Missing base_price in bid event, skipping');
         return;
@@ -1255,7 +1325,7 @@ export class OpenSeaStreamListener {
       let correctTokenId = tokenId; // Default to OpenSea's token_id
 
       // Always resolve via The Graph to verify the registration
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenId);
+      const resolvedData = v2Item ? null : await this.resolver.resolveTokenIdToNameData(tokenId);
       if (resolvedData) {
         // Check if this is a non-normalized registration (e.g., "Vitalik.eth" with capital V)
         if (!resolvedData.isNormalized) {
@@ -1271,6 +1341,8 @@ export class OpenSeaStreamListener {
         registrationDate = resolvedData.registrationDate;
         textRecords = resolvedData.textRecords;
         logger.debug(`Resolved token ${tokenId} to correctTokenId: ${correctTokenId}`);
+      } else if (v2Item) {
+        nameToStore = v2Item.name;
       } else if (!nameToStore || nameToStore.startsWith('#') || !nameToStore.endsWith('.eth')) {
         // Couldn't resolve and no valid name from metadata - use placeholder
         nameToStore = `token-${tokenId}`;
@@ -1292,7 +1364,10 @@ export class OpenSeaStreamListener {
         [correctTokenId]
       );
 
-      if (existingNameResult.rows.length > 0) {
+      if (v2Item) {
+        // v2 names are written only by EnsV2Indexer
+        ensNameId = v2Item.id;
+      } else if (existingNameResult.rows.length > 0) {
         // Name exists, use its ID
         ensNameId = existingNameResult.rows[0].id;
 
@@ -1469,7 +1544,7 @@ export class OpenSeaStreamListener {
       // Collection offers apply to the entire collection, not specific items
       const { collection, base_price, maker, created_date, expiration_date, order_hash, payment_token } = eventData;
 
-      if (!collection?.slug || collection.slug !== config.opensea.collectionSlug) {
+      if (!collection?.slug || !getOpenSeaCollectionSlugs().includes(collection.slug)) {
         logger.debug(`Collection offer for non-ENS collection: ${collection?.slug}`);
         return;
       }
@@ -1524,39 +1599,41 @@ export class OpenSeaStreamListener {
     logger.info(`Catching up on events missed during ${Math.round(disconnectDuration / 1000)}s disconnection...`);
 
     try {
-      // Query OpenSea API for recent ENS listings
-      const response = await fetch(
-        `${config.opensea.apiBaseUrl}/listings/collection/${config.opensea.collectionSlug}/all?limit=50`,
-        {
-          headers: {
-            'Accept': 'application/json',
-            'X-API-KEY': config.opensea.apiKey!,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        logger.error(`Failed to fetch recent listings from OpenSea: ${response.status} ${response.statusText}`);
-        return;
-      }
-
-      const data = await response.json() as { listings?: any[] };
-      const listings = data.listings || [];
-
-      logger.info(`Fetched ${listings.length} recent listings from OpenSea API for catch-up`);
-
       let processedCount = 0;
-      for (const listing of listings) {
-        try {
-          // Convert OpenSea API listing format to stream event format
-          const eventPayload = this.convertListingToEventPayload(listing);
-          if (eventPayload) {
-            // The deduplication logic will skip any events we've already processed
-            await this.handleItemListed(eventPayload);
-            processedCount++;
+      for (const slug of getOpenSeaCollectionSlugs()) {
+        // Query OpenSea API for recent ENS listings
+        const response = await fetch(
+          `${config.opensea.apiBaseUrl}/listings/collection/${slug}/all?limit=50`,
+          {
+            headers: {
+              'Accept': 'application/json',
+              'X-API-KEY': config.opensea.apiKey!,
+            },
           }
-        } catch (error: any) {
-          logger.error(`Error processing catch-up listing: ${error.message}`);
+        );
+
+        if (!response.ok) {
+          logger.error(`Failed to fetch recent listings for ${slug} from OpenSea: ${response.status} ${response.statusText}`);
+          continue;
+        }
+
+        const data = await response.json() as { listings?: any[] };
+        const listings = data.listings || [];
+
+        logger.info(`Fetched ${listings.length} recent ${slug} listings from OpenSea API for catch-up`);
+
+        for (const listing of listings) {
+          try {
+            // Convert OpenSea API listing format to stream event format
+            const eventPayload = this.convertListingToEventPayload(listing);
+            if (eventPayload) {
+              // The deduplication logic will skip any events we've already processed
+              await this.handleItemListed(eventPayload);
+              processedCount++;
+            }
+          } catch (error: any) {
+            logger.error(`Error processing catch-up listing: ${error.message}`);
+          }
         }
       }
 
@@ -1591,7 +1668,7 @@ export class OpenSeaStreamListener {
       // Build the event payload in the same format as stream events
       return {
         item: {
-          nft_id: `${config.opensea.chainSlug}/${config.blockchain.ensRegistrarAddress.toLowerCase()}/${tokenId}`,
+          nft_id: `${config.opensea.chainSlug}/${(offerItem.token || config.blockchain.ensRegistrarAddress).toLowerCase()}/${tokenId}`,
           metadata: {
             name: listing.protocol_data?.parameters?.offer?.[0]?.token || null,
           },
@@ -1617,6 +1694,57 @@ export class OpenSeaStreamListener {
   /**
    * Upsert ENS name - handles duplicate name and token_id constraints
    */
+  /**
+   * For an OpenSea event on an ENSv2 ETHRegistry token, the name it belongs to. Returns null
+   * when the token isn't a v2 token (the caller uses the v1 path), or 'skip'.
+   *
+   * v2 tokens can't go down the v1 path: the v1 subgraph doesn't know v2 token IDs, so the
+   * name would fall back to OpenSea's metadata or a token-<id> placeholder, and the upsert by
+   * token ID would create a v1 row or overwrite the v2 owner. EnsV2Indexer owns v2 rows, so
+   * the name is looked up there (current or superseded token ID), waiting a little if it
+   * hasn't been indexed yet.
+   */
+  private async resolveEnsV2Item(nftId: string, event: string): Promise<EnsV2StreamItem | 'skip' | null> {
+    const parts = nftId.split('/');
+    const contract = parts[1];
+    if (!contract || !isEthRegistryToken(contract)) return null;
+    const tokenId = parts[parts.length - 1];
+
+    let found = await this.waitForEnsV2Name(tokenId);
+    if (!found) {
+      // A token ID we never saw (e.g. regenerated while the indexer was behind): ask the
+      // registry for the name's current token and look that up
+      try {
+        const state = await getEnsV2State(tokenId);
+        if (state.tokenId !== '0' && state.tokenId !== tokenId) {
+          found = await findEnsV2NameByTokenId(state.tokenId);
+        }
+      } catch (error: any) {
+        logger.warn(`Could not read ENSv2 state for token ${tokenId}: ${error.shortMessage || error.message}`);
+      }
+    }
+    if (!found) {
+      logger.warn(`Skipping OpenSea ${event} for ENSv2 token ${tokenId}: no ENSv2 name indexed for it`);
+      return 'skip';
+    }
+    return {
+      id: found.id,
+      name: found.name,
+      currentTokenId: found.token_id,
+      isCurrentToken: found.token_id === tokenId,
+    };
+  }
+
+  private async waitForEnsV2Name(tokenId: string) {
+    const deadline = Date.now() + ENSV2_STREAM_WAIT_MS;
+    for (;;) {
+      const found = await findEnsV2NameByTokenId(tokenId);
+      if (found || Date.now() + ENSV2_STREAM_POLL_MS > deadline) return found;
+      logger.info(`OpenSea event on ENSv2 token ${tokenId}: waiting for the ENSv2 indexer`);
+      await new Promise(resolve => setTimeout(resolve, ENSV2_STREAM_POLL_MS));
+    }
+  }
+
   /**
    * True when an OpenSea event is about the v1 token (BaseRegistrar / NameWrapper) of a name
    * that has moved to ENSv2. That token now sits in the Graveyard and can never trade again,

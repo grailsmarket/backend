@@ -63,6 +63,9 @@ const ConfigSchema = z.object({
     apiBaseUrl: z.string(),
     chainSlug: z.string(),
     collectionSlug: z.string(),
+    // Extra collections to follow (comma-separated OPENSEA_EXTRA_COLLECTION_SLUGS), e.g. if
+    // OpenSea lists the ENSv2 ETHRegistry as its own collection instead of adding it to "ens"
+    extraCollectionSlugs: z.array(z.string()),
     streamUrl: z.string().default('wss://stream.openseabeta.com/socket/websocket'),
   }),
   features: z.object({
@@ -229,6 +232,10 @@ const rawConfig = {
     apiBaseUrl: process.env.OPENSEA_API_BASE_URL || network.opensea.apiBaseUrl,
     chainSlug: process.env.OPENSEA_CHAIN || network.opensea.chainSlug,
     collectionSlug: process.env.OPENSEA_COLLECTION_SLUG || network.opensea.collectionSlug,
+    extraCollectionSlugs: (process.env.OPENSEA_EXTRA_COLLECTION_SLUGS || '')
+      .split(',')
+      .map((slug) => slug.trim())
+      .filter(Boolean),
     streamUrl: process.env.OPENSEA_STREAM_URL,
   },
   features: {
@@ -337,6 +344,11 @@ export const CURRENCY_ADDRESSES = {
   ETH: '0x0000000000000000000000000000000000000000',
   WETH: config.blockchain.wethAddress.toLowerCase(),
 } as const;
+
+/** Every OpenSea collection we follow: the main one plus OPENSEA_EXTRA_COLLECTION_SLUGS. */
+export function getOpenSeaCollectionSlugs(): string[] {
+  return [...new Set([config.opensea.collectionSlug, ...config.opensea.extraCollectionSlugs])];
+}
 
 // Helper to get all ENS controller addresses as array
 export function getEnsControllerAddresses(): string[] {
