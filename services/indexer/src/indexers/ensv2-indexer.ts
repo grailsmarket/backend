@@ -11,6 +11,15 @@ import {
 import { config, viemChain, getPostgresPool, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
+import { isTransientError } from '../utils/transient-errors';
+
+// A log whose handler keeps failing for a non-infrastructure reason is retried this many
+// times in place (handlers are idempotent), then recorded and skipped so one bad event can't
+// stop v2 indexing. Infrastructure errors are never skipped.
+const LOG_ATTEMPTS = 3;
+const LOG_RETRY_DELAY_MS = 2000;
+// event_name prefix for skipped logs in blockchain_events (processed = false)
+export const ENSV2_FAILED_EVENT_PREFIX = 'ensv2_failed:';
 
 // ENSv2 ETHRegistry (PermissionedRegistry, ERC1155). Signatures from the deployed ABIs
 // (contracts-v2 post-audit-2, deployments/sepolia).
@@ -149,8 +158,10 @@ export class EnsV2Indexer {
   }
 
   /**
-   * Index one block range. Throws on any handler error so the loop retries the whole range
-   * (handlers are idempotent) instead of advancing past a half-processed range.
+   * Index one block range. A handler that hits an infrastructure error (database or RPC down)
+   * throws, so the loop retries the whole range (handlers are idempotent) instead of advancing
+   * past a half-processed range. A handler that keeps failing for any other reason is recorded
+   * in blockchain_events and skipped (see processLogOrSkip).
    */
   async indexBlockRange(fromBlock: bigint, toBlock: bigint) {
     logger.info(`Indexing ENSv2 events from block ${fromBlock} to ${toBlock}`);
@@ -183,18 +194,72 @@ export class EnsV2Indexer {
     });
 
     for (const log of logs) {
+      await this.processLogOrSkip(log);
+    }
+  }
+
+  private async processLogOrSkip(log: DecodedLog) {
+    for (let attempt = 1; ; attempt++) {
       try {
         await this.processLog(log);
+        return;
       } catch (error: any) {
+        const transient = isTransientError(error);
         logger.error({
           err: error,
           event: log.eventName,
           transactionHash: log.transactionHash,
           logIndex: log.logIndex,
+          attempt,
+          transient,
         }, `Failed to process ENSv2 ${log.eventName} at block ${log.blockNumber}`);
-        throw error;
+
+        // Database/RPC trouble: retry the range until it clears, never skip
+        if (transient) throw error;
+
+        if (attempt < LOG_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, LOG_RETRY_DELAY_MS * attempt));
+          continue;
+        }
+
+        // If this write fails (database down), it throws and the range is retried: a log is
+        // only skipped once it's on record.
+        await this.recordFailedLog(log, error);
+        logger.error({
+          event: log.eventName,
+          transactionHash: log.transactionHash,
+          logIndex: log.logIndex,
+          blockNumber: log.blockNumber?.toString(),
+        }, `ENSv2 event SKIPPED after ${LOG_ATTEMPTS} attempts: ${log.eventName} at block ${log.blockNumber}. ` +
+          `Recorded in blockchain_events; after a fix, replay with ensv2-index-range from block ${log.blockNumber}`);
+        return;
       }
     }
+  }
+
+  private async recordFailedLog(log: DecodedLog, error: any) {
+    const args = JSON.parse(JSON.stringify(log.args ?? {}, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    await this.pool.query(
+      `INSERT INTO blockchain_events (
+         block_number, transaction_hash, log_index, contract_address, event_name, event_data, processed
+       ) VALUES ($1, $2, $3, $4, $5, $6, false)
+       ON CONFLICT (transaction_hash, log_index) DO UPDATE
+         SET event_data = EXCLUDED.event_data, processed = false
+         WHERE blockchain_events.event_name = EXCLUDED.event_name`,
+      [
+        log.blockNumber!.toString(),
+        log.transactionHash,
+        log.logIndex,
+        log.address.toLowerCase(),
+        `${ENSV2_FAILED_EVENT_PREFIX}${log.eventName}`.slice(0, 50),
+        JSON.stringify({
+          args,
+          error: String(error?.message ?? error).slice(0, 2000),
+          error_code: error?.code ?? null,
+          failed_at: new Date().toISOString(),
+        }),
+      ]
+    );
   }
 
   private async processLog(log: DecodedLog) {
