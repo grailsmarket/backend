@@ -21,8 +21,12 @@ export interface NameMetadata {
 export interface NameByToken {
   name: string;
   ens_version: 1 | 2;
-  /** The contract and token id asked for; `is_current` is false for an outdated token id. */
-  token: { contract: string; token_id: string; is_current: boolean };
+  /**
+   * The contract and id asked for. `matched_by` says whether the id matched as a token id or as
+   * the name's namehash; `is_current` is false for a namehash (except on the NameWrapper) or an
+   * outdated token id.
+   */
+  token: { contract: string; token_id: string; matched_by: 'token_id' | 'namehash'; is_current: boolean };
   /** The contract and token id the name trades as now. */
   current_token: { contract: string; token_id: string };
   owner: string;
@@ -87,10 +91,11 @@ export class NamesAPI {
 
   /**
    * Find a name and its records by NFT: v1 BaseRegistrar (labelhash), v1 NameWrapper
-   * (namehash) or ENSv2 ETHRegistry (any version of the token id)
+   * (namehash) or ENSv2 ETHRegistry (any version of the token id). The name's namehash also
+   * works in place of the token id on any of the three.
    *
    * @param contract - Token contract address
-   * @param tokenId - Token id, decimal or 0x hex
+   * @param tokenId - Token id or namehash, decimal or 0x hex
    * @param options - `include: ['avatar']` adds the resolved avatar URL
    * @throws {NotFoundError} if the contract isn't an ENS NFT contract or no name has this token
    */

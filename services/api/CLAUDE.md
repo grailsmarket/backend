@@ -92,7 +92,7 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/names/search` | Optional | Search ENS names with Elasticsearch |
 | GET | `/names/:name` | Optional | Get specific ENS name details (tracks views) |
 | GET | `/names/:name/bundle` | Optional | FE bundle: name details + offers + roles in one response (tracks views; always fetches fresh metadata, like `/names/:name/metadata`) |
-| GET | `/names/by-token/:contract/:tokenId` | No | Name + cached records by NFT: v1 BaseRegistrar (labelhash), NameWrapper (namehash) or ENSv2 ETHRegistry (any token version). `?include=avatar` adds the worker-resolved avatar URL |
+| GET | `/names/by-token/:contract/:tokenId` | No | Name + cached records by NFT: v1 BaseRegistrar (labelhash), NameWrapper (namehash) or ENSv2 ETHRegistry (any token version); the name's namehash also works on any of the three (`token.matched_by`). `?include=avatar` adds the worker-resolved avatar URL |
 
 ### Listings
 | Method | Path | Auth | Description |

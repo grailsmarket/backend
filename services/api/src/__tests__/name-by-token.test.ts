@@ -131,7 +131,7 @@ describe('findNameByToken', () => {
   });
 
   it('v1 BaseRegistrar: labelhash of an unwrapped name', async () => {
-    expect(await findNameByToken(REGISTRAR, lh('alice'))).toMatchObject({ id: 1, name: 'alice.eth' });
+    expect(await findNameByToken(REGISTRAR, lh('alice'))).toEqual({ id: 1, name: 'alice.eth', matchedBy: 'token_id' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -155,7 +155,33 @@ describe('findNameByToken', () => {
     expect(readContractMock.mock.calls[0][0]).toMatchObject({ functionName: 'names', args: [hex(nh('dave.eth'))] });
     readContractMock.mockResolvedValue('0x');
     expect(await findNameByToken(WRAPPER, nh('never-wrapped.eth'))).toBeNull();
+  });
+
+  it('namehash in place of the token id, on each contract', async () => {
+    // wrapped name on the BaseRegistrar: its row holds the namehash, no worker call
+    expect(await findNameByToken(REGISTRAR, nh('bob.eth'))).toEqual({ id: 2, name: 'bob.eth', matchedBy: 'namehash' });
     expect(fetchMock).not.toHaveBeenCalled();
+    // unwrapped and migrated names, through the worker's namehash lookup
+    workerReturns(200, { name: 'alice.eth', labelhash: hex(lh('alice')), status: 'reserved', current: false, matched_by: 'namehash' });
+    expect(await findNameByToken(REGISTRAR, nh('alice.eth'))).toEqual({ id: 1, name: 'alice.eth', matchedBy: 'namehash' });
+    expect(fetchMock.mock.calls[0][0]).toBe(`http://worker.test/v2/token/${REGISTRY}/${nh('alice.eth')}`);
+    workerReturns(200, { name: 'carol.eth', labelhash: hex(lh('carol')), status: 'registered', current: false, matched_by: 'namehash' });
+    expect(await findNameByToken(REGISTRY, nh('carol.eth'))).toEqual({ id: 3, name: 'carol.eth', matchedBy: 'namehash' });
+    // on the NameWrapper the namehash is the token id, even for a name that isn't wrapped now
+    readContractMock.mockResolvedValue('0x');
+    workerReturns(200, { name: 'alice.eth', labelhash: hex(lh('alice')), status: 'reserved', current: false, matched_by: 'namehash' });
+    expect(await findNameByToken(WRAPPER, nh('alice.eth'))).toEqual({ id: 1, name: 'alice.eth', matchedBy: 'token_id' });
+  });
+
+  it('rejects a worker answer that is not exactly the id asked for', async () => {
+    // claims a namehash match, but alice.eth doesn't hash to this id
+    workerReturns(200, { name: 'alice.eth', labelhash: hex(lh('alice')), status: 'reserved', current: false, matched_by: 'namehash' });
+    expect(await findNameByToken(REGISTRY, nh('someone-else.eth'))).toBeNull();
+    expect(await findNameByToken(REGISTRAR, nh('someone-else.eth'))).toBeNull();
+    // a v2 token id match is no answer for a NameWrapper id
+    readContractMock.mockResolvedValue('0x');
+    workerReturns(200, { name: 'alice.eth', labelhash: hex(lh('alice')), status: 'reserved', current: true, matched_by: 'token_id' });
+    expect(await findNameByToken(WRAPPER, v2Id('alice'))).toBeNull();
   });
 
   it('v2 ETHRegistry: current id, an older id, and a reserved label through the worker', async () => {

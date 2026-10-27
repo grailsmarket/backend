@@ -219,7 +219,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
   /**
    * Look up a name by its NFT: v1 BaseRegistrar (labelhash), v1 NameWrapper (namehash) or the
-   * ENSv2 ETHRegistry (any version of the token id). Returns the name's cached records.
+   * ENSv2 ETHRegistry (any version of the token id), or the name's namehash on any of the three.
+   * Returns the name's cached records.
    * `?include=avatar` adds the avatar as the ENS worker resolves it (a fetchable URL).
    */
   fastify.get('/by-token/:contract/:tokenId', { preHandler: cacheHandler }, async (request, reply) => {
@@ -235,7 +236,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
       return fail(404, 'CONTRACT_NOT_SUPPORTED', `${contract} is not an ENS NFT contract on this network`);
     }
 
-    let found: { id: number; name: string } | null;
+    let found: Awaited<ReturnType<typeof findNameByToken>>;
     try {
       found = await findNameByToken(contract, tokenId);
     } catch (error: any) {
@@ -273,7 +274,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
         ens_version: row.ens_version,
         token: {
           ...requested,
-          // False for an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated
+          matched_by: found.matchedBy,
+          // False for a namehash (except on the NameWrapper, where it is the token id), an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated
           is_current: requested.contract === current.contract && requested.token_id === current.token_id,
         },
         current_token: current,

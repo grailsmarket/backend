@@ -181,13 +181,15 @@ Finds a `.eth` name from any of its ENS NFTs and returns its cached records (tex
 | v1 NameWrapper | namehash |
 | ENSv2 ETHRegistry | labelhash with its low 32 bits as a version counter (any version finds the name) |
 
-**Path:** `contract`, `tokenId` (decimal or `0x` hex). Each deployment serves one chain.
+The name's namehash also works in place of the token id, on any of the three contracts.
+
+**Path:** `contract`, `tokenId` (token id or namehash, decimal or `0x` hex). Each deployment serves one chain.
 
 **Query:** `include=avatar` adds `avatar`, a fetchable URL resolved by the ENS worker (not the raw `avatar` record; `null` when unset)
 
-**Returns:** `name`, `ens_version`, `token` (the contract and id asked for, and `is_current`), `current_token` (the contract and id the name trades as now), `owner`, `expiry_date`, `registration_date`, `resolver_address`, `metadata`, `metadata_updated_at`
+**Returns:** `name`, `ens_version`, `token` (the contract and id asked for, `matched_by`: `token_id` or `namehash`, and `is_current`), `current_token` (the contract and id the name trades as now), `owner`, `expiry_date`, `registration_date`, `resolver_address`, `metadata`, `metadata_updated_at`
 
-`token.is_current` is false for an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated to v2.
+`token.is_current` is false for a namehash (except on the NameWrapper, where the namehash is the token id), an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated to v2.
 
 **Errors:** `400 INVALID_CONTRACT` / `INVALID_TOKEN_ID`, `404 CONTRACT_NOT_SUPPORTED` (not an ENS NFT contract on this network) / `TOKEN_NOT_FOUND`, `502 LOOKUP_FAILED` (ENS worker or RPC unreachable)
 

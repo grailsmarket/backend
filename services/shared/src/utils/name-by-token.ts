@@ -1,4 +1,4 @@
-import { createPublicClient, hexToBytes, http, isAddress, labelhash, parseAbi, type Hex } from 'viem';
+import { createPublicClient, hexToBytes, http, isAddress, labelhash, namehash, parseAbi, type Hex } from 'viem';
 import { viemChain, config } from '../config';
 import { getPostgresPool } from '../db/client';
 import { findEnsV2NameByTokenId } from './ensv2-orders';
@@ -11,9 +11,20 @@ import { findEnsV2NameByTokenId } from './ensv2-orders';
  *
  * ens_names.token_id holds a name's current token: the labelhash (unwrapped v1), the namehash
  * (wrapped v1) or the current v2 token id.
+ *
+ * Any of the three also accepts the name's namehash in place of the token id.
  */
 
 export type TokenContractKind = 'v1-registrar' | 'v1-wrapper' | 'v2-registry';
+
+/** How the id asked for matched: as a token id of the contract, or as the name's namehash. */
+export type TokenMatch = 'token_id' | 'namehash';
+
+export interface NameByToken {
+  id: number;
+  name: string;
+  matchedBy: TokenMatch;
+}
 
 const MAX_UINT256 = (1n << 256n) - 1n;
 
@@ -76,12 +87,15 @@ export interface EnsV2TokenLabel {
   token_id: string | null;
   status: string;
   current: boolean;
+  /** Absent from workers older than the namehash lookup */
+  matched_by?: TokenMatch;
 }
 
 /**
  * The label behind an ENSv2 token id, from the ENS worker's registry index. Any version of the
  * token id finds it, and premigration reserved every v1 label, so a v1 labelhash finds its
- * name too. Null when the worker has no such label or no index; throws when it's unreachable.
+ * name too, as does a name's namehash. Null when the worker has no such label or no index;
+ * throws when it's unreachable.
  */
 export async function fetchEnsV2TokenFromWorker(registry: string, tokenId: bigint): Promise<EnsV2TokenLabel | null> {
   if (!config.ensWorker.url) return null;
@@ -114,19 +128,29 @@ async function findByName(name: string): Promise<{ id: number; name: string } | 
 /**
  * The ens_names row for a token on one of the ENS NFT contracts, or null. Tries, in order:
  * the current token id, older v2 token ids, the labelhash of migrated names (v1 BaseRegistrar
- * ids), NameWrapper.names() on chain (NameWrapper ids), then the ENS worker's ETHRegistry index.
+ * ids), NameWrapper.names() on chain (NameWrapper ids), then the ENS worker's ETHRegistry index,
+ * which also finds a name by its namehash.
  */
-export async function findNameByToken(contract: string, tokenId: bigint): Promise<{ id: number; name: string } | null> {
+export async function findNameByToken(contract: string, tokenId: bigint): Promise<NameByToken | null> {
   const kind = tokenContractKind(contract);
   if (!kind) return null;
+  const hex = toUint256Hex(tokenId);
+  const row = await findRowByToken(kind, tokenId, hex);
+  if (!row) return null;
+  // On the NameWrapper the namehash is the token id
+  const matchedBy: TokenMatch = kind !== 'v1-wrapper' && namehash(row.name) === hex ? 'namehash' : 'token_id';
+  return { id: row.id, name: row.name, matchedBy };
+}
+
+async function findRowByToken(kind: TokenContractKind, tokenId: bigint, hex: Hex): Promise<{ id: number; name: string } | null> {
   const pool = getPostgresPool();
   const dec = tokenId.toString();
-  const hex = toUint256Hex(tokenId);
 
   if (kind === 'v2-registry') {
     const row = await findEnsV2NameByTokenId(dec);
     if (row) return { id: row.id, name: row.name };
   } else {
+    // Wrapped v1 names hold their namehash, so this also finds them by namehash on the BaseRegistrar
     const exact = await pool.query('SELECT id, name FROM ens_names WHERE token_id = $1 AND ens_version = 1', [dec]);
     if (exact.rows[0]) return exact.rows[0];
   }
@@ -139,13 +163,18 @@ export async function findNameByToken(contract: string, tokenId: bigint): Promis
 
   if (kind === 'v1-wrapper') {
     const name = await nameFromNameWrapper(tokenId);
-    return name ? findByName(name) : null;
+    if (name) return findByName(name);
   }
 
   const registry = config.blockchain.ensv2?.ethRegistryAddress;
   if (!registry) return null;
   const label = await fetchEnsV2TokenFromWorker(registry, tokenId);
-  // A v1 labelhash must match in full, not just in the bits the v2 lookup keys on
-  if (!label?.name || (kind === 'v1-registrar' && label.labelhash?.toLowerCase() !== hex)) return null;
-  return findByName(label.name);
+  if (!label?.name) return null;
+  // Accept the worker's answer only when it is exactly the id asked for: the name's namehash,
+  // or (BaseRegistrar) its full labelhash, or (ETHRegistry) any version of its token id
+  const asNamehash = namehash(label.name) === hex;
+  const asToken =
+    label.matched_by !== 'namehash' &&
+    (kind === 'v2-registry' || (kind === 'v1-registrar' && label.labelhash?.toLowerCase() === hex));
+  return asNamehash || asToken ? findByName(label.name) : null;
 }
