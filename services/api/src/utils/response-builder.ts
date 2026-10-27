@@ -1,4 +1,7 @@
-import { getPostgresPool, config, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, config, type AddressRecord, type ContenthashRecord, type ExpiryPhase } from '../../../shared/src';
+import { registrationFields } from './registration-fields';
+
+export { registrationFields };
 import {
   getCompromisedByEnsNameIds,
   canViewListingOrder,
@@ -31,6 +34,12 @@ export interface SearchResult {
   token_contract: string | null;
   owner: string | null;
   expiry_date: Date | null;
+  // Registration phase at response time (shared/utils/expiry-phase.ts, the same rule the
+  // status filters use). Null for subnames. grace_ends_at / premium_ends_at are null
+  // when there's no expiry.
+  registration_status: ExpiryPhase | null;
+  grace_ends_at: Date | null;
+  premium_ends_at: Date | null;
   registration_date: Date | null;
   creation_date: Date | null;
   last_sale_date: Date | null;
@@ -71,6 +80,7 @@ export interface SearchResult {
   // Stolen-name flag (null unless the name has an active compromised_names row)
   compromised: CompromisedInfo | null;
 }
+
 
 export interface Listing {
   id: number;
@@ -211,6 +221,7 @@ export async function buildSearchResults(
       token_contract: row.token_contract,
       owner: row.owner_address,
       expiry_date: row.expiry_date,
+      ...registrationFields(row.name, row.expiry_date, row.ens_version),
       registration_date: row.registration_date,
       creation_date: row.creation_date,
       last_sale_date: row.last_sale_date,
@@ -283,6 +294,8 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     token_contract: null,
     owner: null,
     expiry_date: new Date('2020-01-01T00:00:00Z'),
+    // Never registered: available, no phase dates (the 2020 expiry above is a sort placeholder)
+    ...registrationFields(name, null, null),
     registration_date: null,
     creation_date: null,
     last_sale_date: null,

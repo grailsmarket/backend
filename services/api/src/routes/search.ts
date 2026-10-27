@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { getPostgresPool, getElasticsearchClient, config, type APIResponse, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
-import { buildSearchResults, createUnregisteredPlaceholder, type SearchResult } from '../utils/response-builder';
+import { buildSearchResults, createUnregisteredPlaceholder, registrationFields, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
@@ -124,6 +124,7 @@ function createNotFoundResult(name: string): SearchResult {
     token_contract: null,
     owner: '',
     expiry_date: null,
+    ...registrationFields(normalizedName, null, null),
     registration_date: null,
     creation_date: null,
     last_sale_date: null,
