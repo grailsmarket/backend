@@ -26,7 +26,7 @@
  *   npx tsx src/scripts/resync-elasticsearch-v2.ts --from 500000 # Start from specific ID
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -99,37 +99,6 @@ function generateTags(name: string): string[] {
   if (/^[a-z]+$/i.test(cleanName)) tags.push('alphabetic');
   if (hasEmoji(cleanName)) tags.push('emoji');
   return tags;
-}
-
-function calculateExpirationState(expiryDate: string | null) {
-  if (!expiryDate) {
-    return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry: 999999, premiumAmountEth: null };
-  }
-
-  const now = new Date();
-  const expiry = new Date(expiryDate);
-  const daysSinceExpiry = Math.floor((now.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24));
-  const daysUntilExpiry = -daysSinceExpiry;
-
-  if (daysSinceExpiry < 0) {
-    return { isExpired: false, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
-  }
-
-  if (daysSinceExpiry <= 90) {
-    return { isExpired: true, isGracePeriod: true, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
-  }
-
-  const daysIntoPremium = daysSinceExpiry - 90;
-  if (daysIntoPremium <= 21) {
-    const initialPremiumUSD = 100000000;
-    const ethPriceUSD = 2000;
-    const initialPremiumETH = initialPremiumUSD / ethPriceUSD;
-    const k = Math.log(10000) / 21;
-    const premiumAmountEth = initialPremiumETH * Math.exp(-k * daysIntoPremium);
-    return { isExpired: true, isGracePeriod: false, isPremiumPeriod: true, daysUntilExpiry, premiumAmountEth };
-  }
-
-  return { isExpired: true, isGracePeriod: false, isPremiumPeriod: false, daysUntilExpiry, premiumAmountEth: null };
 }
 
 function calculateSaleHistoryState(lastSaleDate: string | null) {
@@ -280,13 +249,14 @@ function enrichRow(
   const listingCreatedAt = listing?.created_at || null;
   const listingExpiresAt = listing?.expires_at || null;
 
-  const expirationState = calculateExpirationState(row.expiry_date);
+  const expirationState = getExpirationState(row.expiry_date, row.ens_version);
   const saleHistoryState = calculateSaleHistoryState(row.last_sale_date);
   const priceUsd = calculatePriceUsd(listingPrice, listingCurrency, ethPriceUsd);
 
   return {
     name,
     token_id: row.token_id,
+    ens_version: Number(row.ens_version) === 2 ? 2 : 1,
     owner: row.owner_address?.toLowerCase() || null,
     price: safeParsePrice(listingPrice),
     price_usd: priceUsd,

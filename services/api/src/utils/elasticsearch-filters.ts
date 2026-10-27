@@ -3,6 +3,8 @@
  * Used by both /search and /watchlist/search endpoints
  */
 
+import { esExpiryPhaseQuery, esWithinGracePeriodQuery } from '../../../shared/src';
+
 export interface ESFilterOptions {
   // Search query
   q?: string;
@@ -170,7 +172,8 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
   });
 
   // Determine when to apply the "exclude premium/available" filter
-  // This filter excludes names expired more than 90 days ago (premium and available statuses)
+  // This filter excludes names past their grace period (premium and available statuses;
+  // 90 days after expiry for v1 names, 28 for ENSv2 names)
   //
   // By default, show ALL statuses (registered, grace, premium, available)
   // Only apply the exclusion filter when:
@@ -201,7 +204,7 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       bool: {
         should: [
           { bool: { must_not: { exists: { field: 'expiry_date' } } } },
-          { range: { expiry_date: { gte: 'now-90d' } } }
+          esWithinGracePeriodQuery()
         ],
         minimum_should_match: 1
       }
@@ -545,13 +548,10 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
       const buildStatusRange = (s: string): any => {
         switch (s) {
           case 'registered':
-            return { range: { expiry_date: { gt: 'now' } } };
           case 'grace':
-            return { range: { expiry_date: { lte: 'now', gt: 'now-90d' } } };
           case 'premium':
-            return { range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } };
           case 'available':
-            return { range: { expiry_date: { lte: 'now-111d' } } };
+            return esExpiryPhaseQuery(s);
           default:
             return null;
         }
@@ -596,17 +596,9 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     const wantGracePeriod = isGracePeriod === 'true' || isGracePeriod === true;
     filter.push({ exists: { field: 'expiry_date' } });
     if (wantGracePeriod) {
-      filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+      filter.push(esExpiryPhaseQuery('grace'));
     } else {
-      filter.push({
-        bool: {
-          should: [
-            { range: { expiry_date: { gt: 'now' } } },
-            { range: { expiry_date: { lte: 'now-90d' } } }
-          ],
-          minimum_should_match: 1
-        }
-      });
+      filter.push({ bool: { must_not: [esExpiryPhaseQuery('grace')] } });
     }
   }
 
@@ -614,17 +606,9 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     const wantPremiumPeriod = isPremiumPeriod === 'true' || isPremiumPeriod === true;
     filter.push({ exists: { field: 'expiry_date' } });
     if (wantPremiumPeriod) {
-      filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+      filter.push(esExpiryPhaseQuery('premium'));
     } else {
-      filter.push({
-        bool: {
-          should: [
-            { range: { expiry_date: { gt: 'now-90d' } } },
-            { range: { expiry_date: { lte: 'now-111d' } } }
-          ],
-          minimum_should_match: 1
-        }
-      });
+      filter.push({ bool: { must_not: [esExpiryPhaseQuery('premium')] } });
     }
   }
 

@@ -16,5 +16,5 @@ export {
   type BulkListingResult,
   type BulkSaveResponse,
 } from './orders.js';
-export { NamesAPI, type NameMetadata } from './names.js';
+export { NamesAPI, type NameMetadata, type NameByToken } from './names.js';
 export { SearchAPI } from './search.js';

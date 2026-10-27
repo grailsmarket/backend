@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod } from '../../../shared/src';
+import { checkOrderForName } from '../services/ensv2-orders';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
 
@@ -55,7 +56,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     // Always include status filter, default to active if not specified
     const statusFilter = query.status || 'active';
@@ -269,6 +270,21 @@ export async function listingsRoutes(fastify: FastifyInstance) {
           code: 'FORBIDDEN',
           message: 'Seller address does not match authenticated user',
         },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // ENSv2 names: the order must trade the current ETHRegistry token and the name must be transferable
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'listing',
+      seller: body.sellerAddress,
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
         meta: { timestamp: new Date().toISOString() },
       });
     }

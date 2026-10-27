@@ -1,5 +1,5 @@
 import PgBoss from 'pg-boss';
-import { getPostgresPool, isEthOrWeth } from '../../../shared/src';
+import { getPostgresPool, isEthOrWeth, CURRENCY_ADDRESSES } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 import { ElasticsearchSync } from '../../../wal-listener/src/services/elasticsearch-sync';
@@ -86,7 +86,7 @@ async function recalculateHighestOffer(data: RecalculateHighestOfferJob): Promis
        FROM offers o
        WHERE o.ens_name_id = $1
          AND o.status = 'pending'
-         AND (o.currency_address = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' OR o.currency_address = '0x0000000000000000000000000000000000000000')
+         AND (o.currency_address = '${CURRENCY_ADDRESSES.WETH}' OR o.currency_address = '0x0000000000000000000000000000000000000000')
          AND (o.expires_at IS NULL OR o.expires_at > NOW())
        ORDER BY o.offer_amount_wei::numeric DESC
        LIMIT 1`,

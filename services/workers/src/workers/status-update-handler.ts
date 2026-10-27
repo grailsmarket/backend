@@ -15,12 +15,13 @@ const pool = getPostgresPool();
  * Note: notifications table schema uses user_id (not user_address)
  * For now, we'll store notification data in metadata field
  */
-async function createNotification(params: {
+export async function createNotification(params: {
   user_address: string;
   type: string;
   title: string;
   message: string;
   data: any;
+  ens_name_id?: number; // links the notification to its name (name, token ID, version)
 }): Promise<void> {
   // Get user_id from users table (if exists)
   const userResult = await pool.query(`
@@ -32,11 +33,12 @@ async function createNotification(params: {
     const userId = userResult.rows[0].id;
 
     await pool.query(`
-      INSERT INTO notifications (user_id, type, metadata, created_at)
-      VALUES ($1, $2, $3, NOW())
+      INSERT INTO notifications (user_id, type, ens_name_id, metadata, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
     `, [
       userId,
       params.type,
+      params.ens_name_id ?? null,
       JSON.stringify({
         title: params.title,
         message: params.message,
@@ -56,10 +58,44 @@ export async function updateListingStatus(
   validationResult: ValidationResult,
   action?: 'refunded'
 ): Promise<void> {
-  const { isValid, reason, details } = validationResult;
+  const { isValid, reason, details, permanent } = validationResult;
 
   try {
-    if (!isValid && action !== 'refunded') {
+    if (!isValid && permanent) {
+      // The order can never be filled (e.g. its ENSv2 token ID changed): cancel it
+      const updateResult = await pool.query(`
+        UPDATE listings
+        SET status = 'cancelled',
+            unfunded_reason = $2,
+            last_validated_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+          AND status IN ('active', 'unfunded')
+        RETURNING seller_address
+      `, [listingId, reason]);
+
+      if (updateResult.rows.length > 0) {
+        const listing = await pool.query(`
+          SELECT l.seller_address, l.ens_name_id, en.name
+          FROM listings l
+          JOIN ens_names en ON en.id = l.ens_name_id
+          WHERE l.id = $1
+        `, [listingId]);
+
+        if (listing.rows.length > 0) {
+          const { seller_address, ens_name_id, name } = listing.rows[0];
+          await createNotification({
+            user_address: seller_address,
+            type: 'listing_cancelled',
+            ens_name_id,
+            title: 'Listing Cancelled',
+            message: `Your listing for ${name} can no longer be filled and was cancelled. List it again to sell it.`,
+            data: { listing_id: listingId, name, reason },
+          });
+          console.log(`Listing ${listingId} (${name}) cancelled: ${reason}`);
+        }
+      }
+    } else if (!isValid && action !== 'refunded') {
       // Mark as unfunded
       const updateResult = await pool.query(`
         UPDATE listings

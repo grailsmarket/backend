@@ -48,34 +48,42 @@ export function decodeAddressRecord(coinType: string | number, rawAddr: string):
     const coder = getCoderByCoinType(coinTypeNum);
 
     // Encode bytes to address string
-    const address = coder.encode(bytes);
-
-    // Determine chain info based on coin type
-    let chainId: number | undefined;
-    let chainName: string;
-
-    // Check if it's an EVM chain (ENSIP-11: coinType >= 0x80000000)
-    if (coinTypeNum >= SLIP44_MSB) {
-      chainId = coinTypeNum - SLIP44_MSB;
-      // Try to get the name from the known map, otherwise use "Unknown Chain"
-      const knownName = coinTypeToNameMap[coinTypeNum.toString() as keyof typeof coinTypeToNameMap];
-      chainName = knownName ? knownName[1] : `EVM Chain ${chainId}`;
-    } else {
-      // SLIP-44 non-EVM chain
-      const knownName = coinTypeToNameMap[coinTypeNum.toString() as keyof typeof coinTypeToNameMap];
-      chainName = knownName ? knownName[1] : `Unknown (${coinTypeNum})`;
-    }
-
-    return {
-      coinType: coinTypeNum,
-      ...(chainId !== undefined && { chainId }),
-      chainName,
-      address,
-    };
+    return addressRecordFromEncoded(coinTypeNum, coder.encode(bytes));
   } catch (error) {
     // Silently fail for decode errors - this is expected for unsupported coin types
     return null;
   }
+}
+
+/**
+ * Build an AddressRecord from an address that is already in its chain's native format
+ * (e.g. from the ENS worker, which returns decoded addresses).
+ */
+export function addressRecordFromEncoded(coinType: number, address: string): AddressRecord | null {
+  // Skip the "Default" EVM address (see decodeAddressRecord)
+  if (coinType === SLIP44_MSB || !address) {
+    return null;
+  }
+
+  let chainId: number | undefined;
+  let chainName: string;
+  const knownName = coinTypeToNameMap[coinType.toString() as keyof typeof coinTypeToNameMap];
+
+  // Check if it's an EVM chain (ENSIP-11: coinType >= 0x80000000)
+  if (coinType >= SLIP44_MSB) {
+    chainId = coinType - SLIP44_MSB;
+    chainName = knownName ? knownName[1] : `EVM Chain ${chainId}`;
+  } else {
+    // SLIP-44 non-EVM chain
+    chainName = knownName ? knownName[1] : `Unknown (${coinType})`;
+  }
+
+  return {
+    coinType,
+    ...(chainId !== undefined && { chainId }),
+    chainName,
+    address,
+  };
 }
 
 /**

@@ -1,12 +1,12 @@
-import { getPostgresPool, config, processAddressRecords } from '../../../shared/src';
+import { getPostgresPool, config } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { buildNameResult, type SearchResult } from '../utils/response-builder';
-import { ensureMetadataFresh, type EnsMetadata } from './ens-metadata';
+import { ensureMetadataFresh, fetchFreshMetadata } from './ens-metadata';
 
 const pool = getPostgresPool();
 
 // ENS Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 /**
  * Resolve full ENS name details for the marketplace.
@@ -14,17 +14,21 @@ const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
  * Mirrors the behavior of `GET /api/v1/names/:name`:
  *  1. Look up the name (with vote/watchlist/listing enrichment) via buildNameResult.
  *  2. If not in the database, cold-import it from The Graph (upsert into ens_names)
- *     and re-run buildNameResult.
- *  3. If found, ensure metadata is fresh (refetches from The Graph when stale).
+ *     and re-run buildNameResult. Records aren't imported from The Graph.
+ *  3. If found, ensure metadata is fresh (refetches from the ENS worker when stale or,
+ *     for a cold import, never fetched). With `freshMetadata`, always refetches,
+ *     bypassing caches, the same way `GET /api/v1/names/:name/metadata` does.
  *
  * Returns `null` when the name cannot be resolved at all - callers own the 404.
  *
  * @param name - Full ENS name (e.g., "vitalik.eth")
  * @param userId - Optional authenticated user ID for per-user fields (votes, watchlist)
+ * @param options.freshMetadata - Always fetch fresh records instead of only when stale
  */
 export async function resolveNameDetails(
   name: string,
-  userId?: number
+  userId?: number,
+  options: { freshMetadata?: boolean } = {}
 ): Promise<SearchResult | null> {
   // Use buildNameResult helper to get name with vote data
   let nameResult = await buildNameResult(name, userId);
@@ -58,20 +62,6 @@ export async function resolveNameDetails(
                   wrappedOwner {
                     id
                   }
-                  resolver {
-                    textChangeds {
-                      key
-                      value
-                    }
-                    addr {
-                      id
-                    }
-                    coinTypes
-                    multicoinAddrChangeds {
-                      coinType
-                      addr
-                    }
-                  }
                   registration {
                     expiryDate
                     registrationDate
@@ -93,30 +83,6 @@ export async function resolveNameDetails(
         const tokenId = domain.labelhash ? BigInt(domain.labelhash).toString() : null;
 
         if (tokenId) {
-          // Process text records - keep the last value for each key
-          // If a record's most recent value is null/empty, it means the user unset it
-          const metadata: EnsMetadata = {};
-          if (domain.resolver?.textChangeds && Array.isArray(domain.resolver.textChangeds)) {
-            for (const record of domain.resolver.textChangeds) {
-              if (record.key) {
-                if (record.value) {
-                  metadata[record.key] = record.value;
-                } else {
-                  // Value is null/empty - record was unset, remove it
-                  delete metadata[record.key];
-                }
-              }
-            }
-          }
-
-          // Process address records (multicoinAddrChangeds)
-          if (domain.resolver?.multicoinAddrChangeds) {
-            const chains = processAddressRecords(domain.resolver.multicoinAddrChangeds);
-            if (chains.length > 0) {
-              metadata.chains = chains;
-            }
-          }
-
           // Get owner address based on registrant
           // If registrant is NameWrapper, use wrappedOwner; otherwise use registrant
           let ownerAddress: string | null = null;
@@ -138,7 +104,8 @@ export async function resolveNameDetails(
 
           const registrationDate = domain.registration?.registrationDate ? new Date(parseInt(domain.registration.registrationDate) * 1000) : null;
 
-          // Insert name into database
+          // Insert name into database. metadata_updated_at stays NULL on insert so
+          // ensureMetadataFresh below fetches the records from the ENS worker.
           const upsertQuery = `
               INSERT INTO ens_names (
                 token_id,
@@ -150,15 +117,13 @@ export async function resolveNameDetails(
                 metadata_updated_at,
                 created_at,
                 updated_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), NOW())
+              ) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, NULL, NOW(), NOW())
               ON CONFLICT (token_id)
               DO UPDATE SET
                 name = EXCLUDED.name,
                 owner_address = EXCLUDED.owner_address,
                 expiry_date = EXCLUDED.expiry_date,
                 registration_date = EXCLUDED.registration_date,
-                metadata = COALESCE(EXCLUDED.metadata, ens_names.metadata),
-                metadata_updated_at = NOW(),
                 updated_at = NOW()
               RETURNING id
             `;
@@ -169,7 +134,6 @@ export async function resolveNameDetails(
             ownerAddress,
             expiryDate,
             registrationDate,
-            JSON.stringify(metadata),
           ]);
 
           logger.info({ name, tokenId }, 'Successfully imported name from The Graph');
@@ -187,7 +151,19 @@ export async function resolveNameDetails(
     return null;
   }
 
-  // Check if metadata needs refresh (synchronous - fetches from Graph if stale)
+  if (options.freshMetadata) {
+    // Always refetch (bypassing caches). The DB sync runs in the background.
+    // On a worker failure this returns the cached records, so only bump the
+    // timestamp when the records came from a live lookup.
+    const { metadata, source } = await fetchFreshMetadata(nameResult.id, nameResult.name);
+    nameResult.metadata = metadata;
+    if (source !== 'cache') {
+      nameResult.metadata_updated_at = new Date();
+    }
+    return nameResult;
+  }
+
+  // Check if metadata needs refresh (synchronous - refetches if stale)
   const { refreshed, metadata: freshMetadata } = await ensureMetadataFresh(
     nameResult.id,
     nameResult.name,
@@ -195,10 +171,9 @@ export async function resolveNameDetails(
   );
 
   if (refreshed) {
-    // Merge fresh metadata into result. metadata can be null (e.g. the
-    // unregistered placeholder); object spread of null is a no-op, but the
-    // explicit ?? {} makes the intent clear.
-    nameResult.metadata = { ...(nameResult.metadata ?? {}), ...freshMetadata };
+    // The refresh replaced the stored records, so replace them here too
+    // (merging would keep records the owner has since removed)
+    nameResult.metadata = freshMetadata;
     nameResult.metadata_updated_at = new Date();
   }
 

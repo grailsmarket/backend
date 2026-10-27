@@ -358,11 +358,12 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           SELECT
             DATE_TRUNC('${timeConfig.truncUnit}', r.registration_date) as date,
             COUNT(*) as count,
-            SUM(r.total_cost_wei::numeric) as total_cost_wei,
-            AVG(r.total_cost_wei::numeric) as avg_cost_wei,
-            SUM(r.base_cost_wei::numeric) as total_base_cost_wei,
-            SUM(r.premium_wei::numeric) as total_premium_wei,
-            COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count
+            SUM(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_cost_wei,
+            AVG(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_cost_wei,
+            SUM(r.base_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_base_cost_wei,
+            SUM(r.premium_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_premium_wei,
+            COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_count,
+            SUM(r.total_cost_usd) as total_cost_usd
           ${fromClause}
           WHERE r.registration_date > NOW() - INTERVAL '${timeConfig.interval}'
           ${hasClubFilter ? clubCondition.condition : ''}
@@ -375,7 +376,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
           COALESCE(rd.avg_cost_wei, 0)::text as avg_cost_wei,
           COALESCE(rd.total_base_cost_wei, 0)::text as total_base_cost_wei,
           COALESCE(rd.total_premium_wei, 0)::text as total_premium_wei,
-          COALESCE(rd.premium_count, 0)::int as premium_count
+          COALESCE(rd.premium_count, 0)::int as premium_count,
+          COALESCE(rd.total_cost_usd, 0)::text as total_cost_usd
         FROM time_series ts
         LEFT JOIN registration_data rd ON ts.date = rd.date
         ORDER BY ts.date ASC`,
@@ -396,6 +398,8 @@ export async function chartsRoutes(fastify: FastifyInstance) {
             total_base_cost_wei: row.total_base_cost_wei,
             total_premium_wei: row.total_premium_wei,
             premium_count: row.premium_count,
+            // *_wei: ETH-paid registrations only; USD: every registration
+            total_cost_usd: row.total_cost_usd,
           })),
         },
         meta: {
