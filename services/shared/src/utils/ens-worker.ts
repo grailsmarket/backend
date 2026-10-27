@@ -223,6 +223,27 @@ export async function fetchNameRecordsFromWorker(
 }
 
 /**
+ * A name's avatar as the ENS worker resolves it: a fetchable https:// or data: URL (NFT and
+ * IPFS avatars resolved), not the raw `avatar` text record. Null when the name has none or no
+ * resolver; throws when the worker is unreachable or not configured.
+ */
+export async function fetchAvatarFromWorker(name: string): Promise<string | null> {
+  if (!config.ensWorker.url) {
+    throw new Error('ENS worker is not configured for this network');
+  }
+  const response = await fetch(`${config.ensWorker.url}/n/${encodeURIComponent(name)}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`ENS worker request failed for ${name}: ${response.status}`);
+  }
+  const json: any = await response.json();
+  return typeof json?.avatar === 'string' && json.avatar !== '' ? json.avatar : null;
+}
+
+/**
  * Whether to keep a name's cached records when the worker finds no resolver for it.
  *
  * ENSv2 registries stop returning a name's resolver as soon as it expires, and an unmigrated

@@ -41,6 +41,7 @@ export {
   type BulkListingResult,
   type BulkSaveResponse,
   type NameMetadata,
+  type NameByToken,
 } from './api/index.js';
 
 // Authentication

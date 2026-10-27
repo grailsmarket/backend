@@ -1,6 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type ENSName, config, sqlWithinGracePeriod } from '../../../shared/src';
+import {
+  getPostgresPool,
+  type APIResponse,
+  type ENSName,
+  config,
+  sqlWithinGracePeriod,
+  parseTokenIdParam,
+  tokenContractKind,
+  findNameByToken,
+  currentTokenOf,
+  fetchAvatarFromWorker,
+} from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { optionalAuth } from '../middleware/auth';
@@ -204,6 +215,78 @@ export async function namesRoutes(fastify: FastifyInstance) {
     };
 
     return reply.send(response);
+  });
+
+  /**
+   * Look up a name by its NFT: v1 BaseRegistrar (labelhash), v1 NameWrapper (namehash) or the
+   * ENSv2 ETHRegistry (any version of the token id). Returns the name's cached records.
+   * `?include=avatar` adds the avatar as the ENS worker resolves it (a fetchable URL).
+   */
+  fastify.get('/by-token/:contract/:tokenId', { preHandler: cacheHandler }, async (request, reply) => {
+    const { contract, tokenId: rawTokenId } = request.params as { contract: string; tokenId: string };
+    const { include } = request.query as { include?: string };
+    const fail = (status: number, code: string, message: string) =>
+      reply.status(status).send({ success: false, error: { code, message }, meta: { timestamp: new Date().toISOString() } });
+
+    if (!ethers.isAddress(contract)) return fail(400, 'INVALID_CONTRACT', `Invalid contract address "${contract}"`);
+    const tokenId = parseTokenIdParam(rawTokenId);
+    if (tokenId === null) return fail(400, 'INVALID_TOKEN_ID', 'tokenId must be a uint256, decimal or 0x hex');
+    if (!tokenContractKind(contract)) {
+      return fail(404, 'CONTRACT_NOT_SUPPORTED', `${contract} is not an ENS NFT contract on this network`);
+    }
+
+    let found: { id: number; name: string } | null;
+    try {
+      found = await findNameByToken(contract, tokenId);
+    } catch (error: any) {
+      fastify.log.error({ error: error?.message, contract, tokenId: tokenId.toString() }, 'Token lookup failed');
+      return fail(502, 'LOOKUP_FAILED', 'Could not look up this token right now');
+    }
+    if (!found) return fail(404, 'TOKEN_NOT_FOUND', `No ENS name found for token ${tokenId} on ${contract}`);
+
+    const result = await pool.query(
+      `SELECT id, name, token_id, token_contract, ens_version, owner_address, expiry_date, registration_date,
+              resolver_address, metadata, metadata_updated_at
+       FROM ens_names WHERE id = $1`,
+      [found.id]
+    );
+    const row = result.rows[0];
+    if (!row) return fail(404, 'TOKEN_NOT_FOUND', `No ENS name found for token ${tokenId} on ${contract}`);
+
+    const current = currentTokenOf(row);
+    const requested = { contract: contract.toLowerCase(), token_id: tokenId.toString() };
+    const includes = new Set((include ?? '').split(',').map((part) => part.trim()).filter(Boolean));
+
+    let avatar: string | null = null;
+    if (includes.has('avatar')) {
+      try {
+        avatar = await fetchAvatarFromWorker(row.name);
+      } catch (error: any) {
+        fastify.log.warn({ error: error?.message, name: row.name }, 'Avatar lookup failed');
+      }
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        name: row.name,
+        ens_version: row.ens_version,
+        token: {
+          ...requested,
+          // False for an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated
+          is_current: requested.contract === current.contract && requested.token_id === current.token_id,
+        },
+        current_token: current,
+        owner: row.owner_address,
+        expiry_date: row.expiry_date,
+        registration_date: row.registration_date,
+        resolver_address: row.resolver_address,
+        metadata: row.metadata ?? {},
+        metadata_updated_at: row.metadata_updated_at,
+        ...(includes.has('avatar') ? { avatar } : {}),
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    });
   });
 
   fastify.get('/:name', { preHandler: optionalAuth }, async (request, reply) => {
