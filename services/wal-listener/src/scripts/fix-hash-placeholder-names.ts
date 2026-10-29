@@ -10,12 +10,12 @@
  *   npx tsx src/scripts/fix-hash-placeholder-names.ts --dry-run
  */
 
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { config, getPostgresPool, closeAllConnections } from '../../../shared/src';
 import axios from 'axios';
 
 const pool = getPostgresPool();
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const DRY_RUN = process.argv.includes('--dry-run');
 
