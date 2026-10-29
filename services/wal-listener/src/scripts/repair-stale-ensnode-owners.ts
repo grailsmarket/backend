@@ -28,6 +28,8 @@
  * Options:
  *   --apply            Write changes (default: dry run)
  *   --from-block N     Only names with activity after this block (default: 26158937)
+ *   --from-time ISO    Same cut-off for rows stored without a block number, e.g. app-reported
+ *                      sales (default: 2026-10-10T02:07:23Z, the timestamp of that block)
  *   --names a.eth,b    Only these names (skips the activity scan)
  *   --any-mismatch     Also fix chain mismatches that don't match the stale ENSNode value
  *   --stale-url URL    The frozen ENSNode (default: Railway prod)
@@ -43,6 +45,7 @@ import * as path from 'path';
 
 const DEFAULT_STALE_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
 const DEFAULT_FROM_BLOCK = 26158937; // last block the Railway ENSNode indexed
+const DEFAULT_FROM_TIME = '2026-10-10T02:07:23Z'; // that block's timestamp
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const MULTICALL_CHUNK = 300;
 const GRAPH_BATCH = 50;
@@ -60,6 +63,8 @@ function argValue(flag: string): string | undefined {
 const APPLY = process.argv.includes('--apply');
 const ANY_MISMATCH = process.argv.includes('--any-mismatch');
 const FROM_BLOCK = parseInt(argValue('--from-block') || String(DEFAULT_FROM_BLOCK), 10);
+// Rows without a block number are matched by time
+const FROM_TIME = new Date(argValue('--from-time') || DEFAULT_FROM_TIME);
 const STALE_URL = argValue('--stale-url') || DEFAULT_STALE_URL;
 const NAMES = argValue('--names')?.split(',').map(n => safeNormalize(n.trim())).filter(Boolean);
 const OUT = argValue('--out')
@@ -115,9 +120,16 @@ async function loadCandidates(): Promise<Candidate[]> {
          en.id IN (SELECT ens_name_id FROM transactions WHERE block_number > $1)
          OR en.id IN (SELECT ens_name_id FROM registrations WHERE block_number > $1)
          OR en.id IN (SELECT ens_name_id FROM sales WHERE block_number > $1)
+         -- Sales reported by the app (POST /fills) are stored with block_number 0, and the
+         -- indexer's own transactions row for the same tx is then dropped as a duplicate,
+         -- so match those rows by time instead
+         OR en.id IN (SELECT ens_name_id FROM transactions
+                      WHERE COALESCE(block_number, 0) = 0 AND timestamp > $2)
+         OR en.id IN (SELECT ens_name_id FROM sales
+                      WHERE COALESCE(block_number, 0) = 0 AND sale_date > $2)
        )
      ORDER BY en.id`,
-    [FROM_BLOCK]
+    [FROM_BLOCK, FROM_TIME]
   );
   return r.rows;
 }
