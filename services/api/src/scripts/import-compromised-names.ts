@@ -104,10 +104,13 @@ async function main() {
     const tokenId = /^\d+$/.test(r.token_id || '') ? r.token_id : null;
     const sheetName = r.name && r.name !== UNKNOWN_NAME ? safeNormalize(r.name) : null;
 
-    // Match by normalized name first (token_id may be a labelhash or a NameWrapper namehash),
-    // then fall back to token_id.
+    // Match by exact normalized name first (token_id may be a labelhash or a NameWrapper namehash),
+    // then fall back to token_id. Never match case-insensitively: ens_names also holds
+    // non-normalized registrations like 'VLAD.eth' that are different tokens from 'vlad.eth'.
     let match = sheetName
-      ? await pool.query(`SELECT id, name, owner_address FROM ens_names WHERE LOWER(name) = $1`, [sheetName])
+      ? await pool.query(`SELECT id, name, owner_address FROM ens_names WHERE name = $1 ORDER BY id LIMIT 1`, [
+          sheetName,
+        ])
       : null;
     if ((!match || match.rows.length === 0) && tokenId) {
       match = await pool.query(`SELECT id, name, owner_address FROM ens_names WHERE token_id = $1`, [tokenId]);

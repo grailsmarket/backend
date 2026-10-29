@@ -156,7 +156,8 @@ export async function compromisedNamesRoutes(fastify: FastifyInstance) {
        )
        SELECT $1, en.id, $2, en.token_id, $3, $4, $5, $6, $7, $8
          FROM (SELECT 1) one
-         LEFT JOIN ens_names en ON LOWER(en.name) = $2
+         -- Exact match only: 'VLAD.eth' is a different (non-normalized) token than 'vlad.eth'
+         LEFT JOIN LATERAL (SELECT id, token_id FROM ens_names WHERE name = $2 ORDER BY id LIMIT 1) en ON TRUE
        ON CONFLICT (name) DO UPDATE SET
          incident_id = EXCLUDED.incident_id,
          original_owner = EXCLUDED.original_owner,

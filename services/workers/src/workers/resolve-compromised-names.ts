@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 
 /**
  * Keeps compromised_names (migration 0895) current:
- *   1. links rows imported before the name existed in ens_names,
+ *   1. links rows imported before the name existed in ens_names (exact name match only),
  *   2. resolves a flag when the name is back with the original owner or a recovery wallet,
  *   3. resolves a flag when the name was registered again after it was taken (it expired past
  *      grace and someone new registered it — ens_names.registration_date is COALESCE'd so we read
@@ -26,8 +26,23 @@ export async function registerResolveCompromisedNamesWorker(boss: PgBoss) {
               SET ens_name_id = en.id, updated_at = NOW()
              FROM ens_names en
             WHERE cn.ens_name_id IS NULL
-              AND LOWER(en.name) = cn.name`
+              AND en.name = cn.name`
         );
+
+        // A flag linked to a row with a different name AND a different token protects nothing
+        // (this is how vlad.eth got linked to 'VLAD.eth'). Name-only or token-only matches are
+        // fine: unknown labels show up as [labelhash], wrapped names carry a namehash token_id.
+        const mislinked = await pool.query(
+          `SELECT cn.id, cn.name, en.name AS linked_name
+             FROM compromised_names cn
+             JOIN ens_names en ON en.id = cn.ens_name_id
+            WHERE cn.status = 'active'
+              AND en.name <> cn.name
+              AND en.token_id IS DISTINCT FROM cn.token_id`
+        );
+        if (mislinked.rows.length > 0) {
+          logger.warn({ mislinked: mislinked.rows }, 'Compromised names linked to the wrong ens_names row');
+        }
 
         const returned = await pool.query(
           `UPDATE compromised_names cn
