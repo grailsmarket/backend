@@ -122,6 +122,24 @@ interface GraphResponse {
 }
 
 /**
+ * Whether a subgraph domain is wrapped right now.
+ *
+ * The subgraph keeps a name's wrappedDomain / wrappedOwner after its NameWrapper record lapses:
+ * a wrapped name that expired and was re-registered unwrapped still has both (no NameUnwrapped
+ * is ever emitted), pointing at the old wrapper owner. So those fields alone don't mean wrapped.
+ * A wrapped name's registry owner is always the NameWrapper, and for a .eth 2LD the NameWrapper
+ * also holds the registrar token (the registrant).
+ */
+export function isCurrentlyWrapped(
+  domain: Pick<GraphDomain, 'owner' | 'registrant'> & { registration?: GraphRegistration | null }
+): boolean {
+  const registrant = domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
+  if (registrant) return registrant === NAME_WRAPPER_ADDRESS;
+  // Subnames have no registrant: wrapped iff the NameWrapper owns the node in the registry
+  return domain.owner?.id?.toLowerCase() === NAME_WRAPPER_ADDRESS;
+}
+
+/**
  * Decode fuse bitmask into permission flags
  */
 export function decodeFuses(fuses: number): FusePermissions {
@@ -286,20 +304,9 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
     return null;
   }
 
-  // Determine if name is wrapped
-  // A name is wrapped if:
-  // 1. The registrant is the NameWrapper contract (for 2LDs like name.eth), OR
-  // 2. wrappedDomain exists (for subnames like sub.name.eth), OR
-  // 3. domain.owner is NameWrapper AND wrappedOwner exists
   const registrant = domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
   const domainOwner = domain.owner?.id?.toLowerCase();
-  const hasWrappedDomain = domain.wrappedDomain !== null;
-  const hasWrappedOwner = domain.wrappedOwner !== null;
-
-  const isWrapped =
-    registrant === NAME_WRAPPER_ADDRESS ||
-    hasWrappedDomain ||
-    (domainOwner === NAME_WRAPPER_ADDRESS && hasWrappedOwner);
+  const isWrapped = isCurrentlyWrapped(domain);
 
   // Determine owner and manager based on wrapped state
   let owner: string | null = null;
@@ -433,6 +440,8 @@ export async function getManageableNames(
       }
       asWrappedOwner: domains(where: { wrappedOwner: $address }, first: 1000) {
         name
+        owner { id }
+        registrant { id }
         wrappedDomain { fuses }
       }
     }
@@ -486,6 +495,8 @@ export async function getManageableNames(
   // Process names where address is owner (wrapped - wrappedOwner)
   for (const domain of result.data?.asWrappedOwner || []) {
     if (shouldExcludeName(domain.name)) continue;
+    // Leftover wrapper data from a lapsed wrap: this address no longer controls the name
+    if (!isCurrentlyWrapped(domain)) continue;
 
     // For wrapped names, owner and manager are the same
     namesMap.set(domain.name, {
