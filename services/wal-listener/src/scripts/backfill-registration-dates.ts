@@ -13,9 +13,9 @@
  *   Then run: node --max-old-space-size=4096 dist/wal-listener/src/scripts/backfill-registration-dates.js [--dry-run] [--limit 1000] [--batch-size 50] [--offset 0]
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 
 interface EnsRecord {
   id: number;

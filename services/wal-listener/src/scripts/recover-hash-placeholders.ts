@@ -14,9 +14,9 @@
  *   Then run: node --max-old-space-size=4096 dist/wal-listener/src/scripts/recover-hash-placeholders.js [--dry-run] [--limit 100] [--batch-size 50] [--offset 0]
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 
 interface PlaceholderRecord {

@@ -23,9 +23,9 @@
  *   --limit N          Max records to process (default: all)
  */
 
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { config, getPostgresPool, closeAllConnections } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const GRACE_PERIOD_SECONDS = 90 * 24 * 60 * 60;
