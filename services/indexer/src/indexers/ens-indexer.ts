@@ -868,7 +868,10 @@ export class ENSIndexer {
               THEN EXCLUDED.duration_seconds
             ELSE renewals.duration_seconds
           END,
-          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
+          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)
+        -- An ENSv2 ETHRenewerV1 renewal also emits this controller event with cost 0. The
+        -- ENSv2 indexer's row has the real cost and payment token, so leave it alone.
+        WHERE renewals.metadata->>'ens_version' IS DISTINCT FROM '2'`,
         [
           ensNameId,
           renewerAddress,
