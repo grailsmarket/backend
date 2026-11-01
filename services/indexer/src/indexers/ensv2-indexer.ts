@@ -198,6 +198,27 @@ export class EnsV2Indexer {
     }
   }
 
+  /**
+   * Re-apply only the NameRenewed events (ETHRegistrar and ETHRenewerV1) in a block range.
+   * These only write renewals, activity and transactions rows (never an existing name's
+   * expiry or owner), so any range can be replayed without rolling back later state.
+   */
+  async replayRenewals(fromBlock: bigint, toBlock: bigint) {
+    this.blockTimes.clear();
+    this.txSenders.clear();
+    const logs = (await this.client.getLogs({
+      address: [this.registrar, this.renewerV1] as `0x${string}`[],
+      event: ETH_REGISTRAR_EVENTS[1],
+      fromBlock,
+      toBlock,
+      strict: true,
+    })) as unknown as DecodedLog[];
+    for (const log of logs) {
+      await this.processLogOrSkip(log);
+    }
+    return logs.length;
+  }
+
   private async processLogOrSkip(log: DecodedLog) {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -555,7 +576,8 @@ export class EnsV2Indexer {
          currency_address = EXCLUDED.currency_address,
          duration_seconds = EXCLUDED.duration_seconds,
          new_expiry_date = EXCLUDED.new_expiry_date,
-         referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
+         referrer = COALESCE(EXCLUDED.referrer, renewals.referrer),
+         metadata = renewals.metadata || EXCLUDED.metadata`,
       [
         ensNameId,
         renewer,
@@ -573,20 +595,48 @@ export class EnsV2Indexer {
     );
 
     const renewalSource = getRegistrationSource(referrer);
-    await this.insertActivityOnce(ensNameId, 'renewal', {
-      actor: renewer,
-      log,
-      createdAt: blockDate,
-      platform: renewalSource || 'blockchain',
-      priceWei: amount,
-      currency,
-      metadata: {
-        source,
-        duration_seconds: durationSeconds,
-        referrer,
-        ...(renewalSource ? { registration_source: renewalSource } : {}),
-      },
-    });
+    const activityMetadata = {
+      source,
+      duration_seconds: durationSeconds,
+      referrer,
+      ...(renewalSource ? { registration_source: renewalSource } : {}),
+    };
+    // A renewal through ETHRenewerV1 also emits the v1 controller's NameRenewed (cost 0, no
+    // referrer) in the same tx, and the v1 indexer may write its activity row first. This
+    // event has the real cost, payment token and referrer, so it overwrites that row.
+    const updated = await this.pool.query(
+      `UPDATE activity_history
+       SET actor_address = $4,
+           platform = $5,
+           price_wei = $6,
+           currency_address = $7,
+           metadata = metadata || $8::jsonb
+       WHERE ens_name_id = $1
+         AND event_type = 'renewal'
+         AND transaction_hash = $2::varchar
+         AND chain_id = $3`,
+      [
+        ensNameId,
+        log.transactionHash,
+        config.blockchain.chainId,
+        renewer,
+        renewalSource || 'blockchain',
+        amount,
+        currency,
+        JSON.stringify(activityMetadata),
+      ]
+    );
+    if (updated.rowCount === 0) {
+      await this.insertActivityOnce(ensNameId, 'renewal', {
+        actor: renewer,
+        log,
+        createdAt: blockDate,
+        platform: renewalSource || 'blockchain',
+        priceWei: amount,
+        currency,
+        metadata: activityMetadata,
+      });
+    }
     await this.insertTransaction(ensNameId, 'renewal', renewer, renewer, log, blockDate);
 
     logger.info(`ENSv2: recorded renewal of ${name} (${source}): ${amount} of ${currency}, expires ${newExpiry.toISOString()}`);

@@ -127,6 +127,9 @@ async function loadCandidates(): Promise<Candidate[]> {
                       WHERE COALESCE(block_number, 0) = 0 AND timestamp > $2)
          OR en.id IN (SELECT ens_name_id FROM sales
                       WHERE COALESCE(block_number, 0) = 0 AND sale_date > $2)
+         -- The indexer stamps last_transfer_date even when its transactions insert is
+         -- missing (seen on bulk transfers that move several names in one tx)
+         OR en.last_transfer_date > $2
        )
      ORDER BY en.id`,
     [FROM_BLOCK, FROM_TIME]
