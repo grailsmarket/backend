@@ -633,6 +633,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             r.id,
             en.name,
             en.ens_version AS version,
+            en.token_id,
             r.registrant_address,
             en.owner_address,
             r.base_cost_wei,
@@ -705,6 +706,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             id: row.id,
             name: row.name,
             version: row.version,
+            // Current tradeable token ID; v2 names need it to load their image
+            token_id: row.token_id,
             registrant_address: row.registrant_address,
             owner_address: row.owner_address,
             base_cost_wei: row.base_cost_wei,
