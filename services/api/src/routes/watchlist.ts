@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, getElasticsearchClient, sqlExpiryPhase } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, getElasticsearchClient, sqlExpiryPhase, ensNameIdForName } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { buildSearchResults } from '../utils/response-builder';
 import { buildESQuery } from '../utils/elasticsearch-filters';
@@ -739,7 +739,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       // Resolve ENS name to ens_name_id
       const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+        `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
         [data.ensName]
       );
 
@@ -1124,7 +1124,7 @@ export async function watchlistRoutes(fastify: FastifyInstance) {
 
       // Look up the ENS name
       const ensResult = await pool.query(
-        'SELECT id, name FROM ens_names WHERE LOWER(name) = LOWER($1)',
+        `SELECT id, name FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
         [name]
       );
 

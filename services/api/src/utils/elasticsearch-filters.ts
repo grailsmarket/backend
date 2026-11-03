@@ -222,6 +222,20 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     }
   });
 
+  // Hide names that aren't in ENSIP-15 normalized form (e.g. "Jesse.eth"). They're real
+  // tokens but unreachable, since normalizing gives a different name. must_not on `false`
+  // (rather than requiring `true`) so docs indexed before the field existed still match.
+  // Kept for owner-filtered queries (a profile shows what the wallet holds; the frontend
+  // flags invalid names) and explicit name lists (watchlist).
+  const hasEnsNamesFilter = !!ensNames && ensNames.length > 0;
+  if (!resolvedOwnerAddress && !hasEnsNamesFilter) {
+    filter.push({
+      bool: {
+        must_not: [{ term: { is_normalized: false } }]
+      }
+    });
+  }
+
   // Restrict to specific ENS names (for watchlist)
   if (ensNames && ensNames.length > 0) {
     filter.push({

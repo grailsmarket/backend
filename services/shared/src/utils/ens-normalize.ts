@@ -88,6 +88,31 @@ export function normalizeEnsName(name: string): NormalizationResult {
   }
 }
 
+// A label we only know by its hash, e.g. "[2815…41].4.motoha.eth"
+const UNKNOWN_LABEL_REGEX = /(^|\.)\[[0-9a-fA-F]{64}\](\.|$)/;
+
+/**
+ * Whether a stored name is already in ENSIP-15 normalized form.
+ *
+ * Names like "Jesse.eth" are real on-chain tokens (the registrar doesn't enforce
+ * normalization), but they're unreachable: normalizing gives "jesse.eth", a different
+ * token. Used for the Elasticsearch `is_normalized` field so search can hide them.
+ *
+ * Returns undefined for placeholders / unknown labels — we can't judge those, and
+ * search already handles them separately.
+ */
+export function isNormalizedName(name: string): boolean | undefined {
+  if (!name || isPlaceholderName(name) || UNKNOWN_LABEL_REGEX.test(name)) {
+    return undefined;
+  }
+
+  try {
+    return normalize(name) === name;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Normalize an ENS name, returning the normalized form or original if invalid/placeholder
  *

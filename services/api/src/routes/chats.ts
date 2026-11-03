@@ -7,6 +7,7 @@ import {
   deleteFile,
   isStorageEnabled,
   type APIResponse,
+  ensNameIdForName,
 } from '../../../shared/src';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import {
@@ -207,7 +208,7 @@ async function resolveRecipientToUserId(
     address = recipient.toLowerCase();
   } else {
     const ensResult = await pool.query(
-      `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+      `SELECT owner_address FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
       [recipient]
     );
     if (ensResult.rows.length === 0) {

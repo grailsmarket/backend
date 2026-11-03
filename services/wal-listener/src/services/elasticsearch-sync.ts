@@ -1,4 +1,4 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, isNormalizedName, getExpirationState } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -87,6 +87,7 @@ export class ElasticsearchSync {
                 character_count: { type: 'integer' },
                 has_numbers: { type: 'boolean' },
                 has_emoji: { type: 'boolean' },
+                is_normalized: { type: 'boolean' },
                 status: { type: 'keyword' },
                 tags: { type: 'keyword' },
                 clubs: { type: 'keyword' },
@@ -164,8 +165,15 @@ export class ElasticsearchSync {
             });
             logger.info(`Added ens_version to Elasticsearch mapping for ${indexName}`);
           }
+          if (!properties.is_normalized) {
+            await this.esClient.indices.putMapping({
+              index: indexName,
+              body: { properties: { is_normalized: { type: 'boolean' } } },
+            });
+            logger.info(`Added is_normalized to Elasticsearch mapping for ${indexName}`);
+          }
         } catch (mappingError) {
-          logger.warn({ err: mappingError }, 'Could not add ens_version to the Elasticsearch mapping');
+          logger.warn({ err: mappingError }, 'Could not add new fields to the Elasticsearch mapping');
         }
       }
     } catch (error) {
@@ -457,6 +465,7 @@ export class ElasticsearchSync {
       character_count: name.replace('.eth', '').length,
       has_numbers: /\d/.test(name),
       has_emoji: hasEmoji(name),
+      is_normalized: isNormalizedName(name),
       status: data.listing_status || 'unlisted',
       tags: this.generateTags(name),
       clubs: data.clubs || [],

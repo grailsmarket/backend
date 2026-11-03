@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool, safeNormalize, CURRENCY_ADDRESSES, isEthRegistryToken, findEnsV2NameByTokenId, getOpenSeaCollectionSlugs } from '../../../shared/src';
+import { config, getPostgresPool, safeNormalize, CURRENCY_ADDRESSES, isEthRegistryToken, findEnsV2NameByTokenId, getOpenSeaCollectionSlugs, ensNameIdForName } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
@@ -164,7 +164,7 @@ async function resolveEnsNameId(
   }
 
   const byName = await pool.query(
-    'SELECT id, ens_version FROM ens_names WHERE LOWER(name) = LOWER($1)',
+    `SELECT id, ens_version FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
     [safeNormalize(name)]
   );
   if (byName.rows.length > 0 && byName.rows[0].ens_version === 2 && !isEthRegistryToken(asset.contract)) {

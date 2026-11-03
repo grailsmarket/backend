@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, getElasticsearchClient, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, getElasticsearchClient, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
 import { buildESFilters, buildESSort } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
@@ -178,7 +178,7 @@ export async function aiSearchRoutes(fastify: FastifyInstance) {
         } else {
           try {
             const resolveResult = await pool.query(
-              `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+              `SELECT owner_address FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
               [owner]
             );
             resolvedOwnerAddress = resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address
@@ -473,7 +473,7 @@ export async function aiRelatedSearchRoutes(fastify: FastifyInstance) {
         } else {
           try {
             const resolveResult = await pool.query(
-              `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+              `SELECT owner_address FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
               [owner]
             );
             resolvedOwnerAddress = resolveResult.rows.length > 0 && resolveResult.rows[0].owner_address

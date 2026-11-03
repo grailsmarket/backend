@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 
 const CastVoteSchema = z.object({
@@ -41,7 +41,7 @@ export async function votesRoutes(fastify: FastifyInstance) {
 
       // Resolve ENS name to ens_name_id
       const ensResult = await pool.query(
-        'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+        `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
         [ensName]
       );
 
@@ -149,7 +149,7 @@ export async function votesRoutes(fastify: FastifyInstance) {
       const nameResult = await pool.query(
         `SELECT id, name, upvotes, downvotes, net_score
          FROM ens_names
-         WHERE LOWER(name) = LOWER($1)`,
+         WHERE id = ${ensNameIdForName('$1')}`,
         [ensName]
       );
 

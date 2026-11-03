@@ -65,6 +65,7 @@ async function createIndex() {
             character_count: { type: 'integer' },
             has_numbers: { type: 'boolean' },
             has_emoji: { type: 'boolean' },
+            is_normalized: { type: 'boolean' },
             status: { type: 'keyword' },
             tags: { type: 'keyword' },
             last_sale_price: {

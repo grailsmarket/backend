@@ -1,4 +1,4 @@
-import { getPostgresPool, config, type AddressRecord, type ContenthashRecord, type ExpiryPhase } from '../../../shared/src';
+import { getPostgresPool, config, safeNormalize, type AddressRecord, type ContenthashRecord, type ExpiryPhase } from '../../../shared/src';
 import { registrationFields } from './registration-fields';
 
 export { registrationFields };
@@ -209,10 +209,11 @@ export async function buildSearchResults(
   }
 
   const result = await pool.query(query, queryParams);
-  const compromisedFlags = await getCompromisedByEnsNameIds(result.rows.map((row) => row.id));
+  const rows = pickRequestedRows(ensNames, result.rows);
+  const compromisedFlags = await getCompromisedByEnsNameIds(rows.map((row) => row.id));
 
   // Transform database results to SearchResult format
-  return result.rows.map((row) => {
+  return rows.map((row) => {
     const result: SearchResult = {
       id: row.id,
       name: row.name,
@@ -264,6 +265,38 @@ export async function buildSearchResults(
 
     return result;
   });
+}
+
+/**
+ * The lookup matches on LOWER(name), so a request for "jesse.eth" also returns the
+ * separate on-chain token "Jesse.eth" (and vice versa). Return one row per requested
+ * name, in request order: the exact match, else the normalized form, else the first hit.
+ */
+function pickRequestedRows<T extends { name: string }>(requested: string[], rows: T[]): T[] {
+  const byLower = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = row.name.toLowerCase();
+    const list = byLower.get(key);
+    if (list) list.push(row);
+    else byLower.set(key, [row]);
+  }
+
+  const picked: T[] = [];
+  const seen = new Set<T>();
+  for (const name of requested) {
+    const candidates = byLower.get(name.toLowerCase());
+    if (!candidates) continue;
+    const normalized = safeNormalize(name);
+    const row =
+      candidates.find((r) => r.name === name) ??
+      candidates.find((r) => r.name === normalized) ??
+      candidates[0];
+    if (!seen.has(row)) {
+      seen.add(row);
+      picked.push(row);
+    }
+  }
+  return picked;
 }
 
 /**
