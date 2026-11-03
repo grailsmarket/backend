@@ -52,6 +52,10 @@ const CONTROLLER_FUNCTION_ABI = parseAbi([
   'function renewAll(string[] names, uint256 duration)',
 ]);
 
+const BASE_REGISTRAR_EXPIRY_ABI = parseAbi([
+  'function nameExpires(uint256 id) view returns (uint256)',
+]);
+
 // Name Wrapper ABI (ERC-1155 for wrapped names)
 const NAME_WRAPPER_ABI = parseAbi([
   'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
@@ -771,6 +775,18 @@ export class ENSIndexer {
     const nameLength = this.countGraphemes(name);
     const fullName = `${name}.eth`;
     const expiryDate = new Date(Number(expires) * 1000);
+
+    // ETHRenewerV1.syncWrapper() calls the wrapped controller's renew with a duration of 0, which
+    // emits NameRenewed with cost 0 and an unchanged expiry. That isn't a renewal, so skip it.
+    // A real ENSv2 renewal of a wrapped name also emits a cost-0 event here, but its expiry has
+    // already moved in the same tx, so it's kept (the ENSv2 indexer fills in the real cost).
+    if (BigInt(cost) === 0n && log.blockNumber) {
+      const labelhash = isV2 ? args.labelhash : args.label;
+      if (await this.isExpiryUnchanged(labelhash, BigInt(expires), log.blockNumber)) {
+        logger.debug(`Controller NameRenewed: ${fullName} cost 0 with unchanged expiry (syncWrapper), skipping (tx ${log.transactionHash})`);
+        return;
+      }
+    }
 
     // Get block timestamp for renewal date
     let renewalDate: Date;
@@ -1856,6 +1872,26 @@ export class ENSIndexer {
         err: error,
         tokenId: correctTokenId
       }, 'Failed to insert registration transaction');
+    }
+  }
+
+  /**
+   * True when a name's BaseRegistrar expiry before this block already equals `expires`, i.e. the
+   * event didn't extend anything. On an RPC error, returns false so the event is still recorded.
+   */
+  private async isExpiryUnchanged(labelhash: unknown, expires: bigint, blockNumber: bigint): Promise<boolean> {
+    try {
+      const before = await this.client.readContract({
+        address: config.blockchain.ensRegistrarAddress as `0x${string}`,
+        abi: BASE_REGISTRAR_EXPIRY_ABI,
+        functionName: 'nameExpires',
+        args: [BigInt(labelhash as string | bigint)],
+        blockNumber: blockNumber - 1n,
+      });
+      return before === expires;
+    } catch (error: any) {
+      logger.warn(`Could not read prior expiry for labelhash ${String(labelhash)}: ${error.message}`);
+      return false;
     }
   }
 
