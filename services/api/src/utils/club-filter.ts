@@ -1,5 +1,14 @@
-export function parseClubsFilter(raw: string | string[] = []): string[] {
-  return [raw].flat().flatMap(club => club.split(',')).map(club => club.trim()).filter(Boolean);
+// 'any' is the pre-multi-select name for 'all'; older clients still send it.
+const LEGACY_ALIASES: Record<string, string> = { any: 'all' };
+
+export function parseClubsFilter(...raw: Array<string | string[] | undefined>): string[] {
+  return raw
+    .flat()
+    .filter((club): club is string => typeof club === 'string')
+    .flatMap(club => club.split(','))
+    .map(club => club.trim())
+    .filter(Boolean)
+    .map(club => LEGACY_ALIASES[club] ?? club);
 }
 
 export function buildClubsCondition(clubs: string[], params: unknown[]): string {

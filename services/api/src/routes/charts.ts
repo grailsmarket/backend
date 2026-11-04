@@ -6,6 +6,8 @@ import { buildClubsCondition, parseClubsFilter } from '../utils/club-filter';
 const ChartQuerySchema = z.object({
   period: z.enum(['1d', '7d', '30d', '1y', 'all']).default('7d'),
   'clubs[]': z.union([z.string(), z.array(z.string())]).optional(),
+  // Legacy single/comma-separated param, kept for clients that haven't moved to clubs[]
+  club: z.string().optional(),
 });
 
 type ChartQuery = z.infer<typeof ChartQuerySchema>;
@@ -43,7 +45,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/sales', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubsFilter(query['clubs[]']);
+    const clubs = parseClubsFilter(query['clubs[]'], query.club);
     const hasClubFilter = clubs.length > 0;
     const params: unknown[] = [];
     const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
@@ -125,7 +127,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/volume', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubsFilter(query['clubs[]']);
+    const clubs = parseClubsFilter(query['clubs[]'], query.club);
     const hasClubFilter = clubs.length > 0;
     const params: unknown[] = [CURRENCY_ADDRESSES.ETH, CURRENCY_ADDRESSES.WETH];
     const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
@@ -208,7 +210,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/listings', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubsFilter(query['clubs[]']);
+    const clubs = parseClubsFilter(query['clubs[]'], query.club);
     const hasClubFilter = clubs.length > 0;
     const params: unknown[] = [];
     const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
@@ -290,7 +292,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/registrations', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubsFilter(query['clubs[]']);
+    const clubs = parseClubsFilter(query['clubs[]'], query.club);
     const hasClubFilter = clubs.length > 0;
     const params: unknown[] = [];
     const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
@@ -381,7 +383,7 @@ export async function chartsRoutes(fastify: FastifyInstance) {
   fastify.get('/offers', async (request, reply) => {
     const query = ChartQuerySchema.parse(request.query);
     const timeConfig = getTimeConfig(query.period);
-    const clubs = parseClubsFilter(query['clubs[]']);
+    const clubs = parseClubsFilter(query['clubs[]'], query.club);
     const hasClubFilter = clubs.length > 0;
     const params: unknown[] = [];
     const clubCondition = hasClubFilter ? `AND ${buildClubsCondition(clubs, params)}` : '';
