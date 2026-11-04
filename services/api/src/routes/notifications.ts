@@ -67,7 +67,8 @@ export async function notificationsRoutes(fastify: FastifyInstance) {
           n.read_at,
           n.created_at,
           en.name as ens_name,
-          en.token_id as ens_token_id
+          en.token_id as ens_token_id,
+          en.ens_version
         FROM notifications n
         LEFT JOIN ens_names en ON n.ens_name_id = en.id
         WHERE ${whereClause}
@@ -84,6 +85,7 @@ export async function notificationsRoutes(fastify: FastifyInstance) {
             type: row.type,
             ensName: row.ens_name,
             ensTokenId: row.ens_token_id,
+            version: row.ens_version ?? 1,
             metadata: row.metadata,
             sentAt: row.sent_at,
             readAt: row.read_at,

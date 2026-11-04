@@ -1,6 +1,6 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool, ensNameIdForName } from '../../../shared/src';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 import { WETH_ADDRESS } from './types';
@@ -201,7 +201,7 @@ async function reconcileVision(pool: Pool, boss: PgBoss): Promise<ReconcileResul
         if (byToken.rows.length > 0) ensNameId = byToken.rows[0].id;
       }
       if (!ensNameId && offer.domainName) {
-        const byName = await pool.query('SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)', [offer.domainName]);
+        const byName = await pool.query(`SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`, [offer.domainName]);
         if (byName.rows.length > 0) ensNameId = byName.rows[0].id;
       }
       if (!ensNameId) {

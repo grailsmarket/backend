@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Listing } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod, ensNameIdForName } from '../../../shared/src';
+import { checkOrderForName } from '../services/ensv2-orders';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToListingRows } from '../services/compromised-names';
 
 const CreateListingSchema = z.object({
   ensNameId: z.number(),
@@ -43,7 +45,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // GET all listings with filtering and pagination
-  fastify.get('/', async (request, reply) => {
+  fastify.get('/', { preHandler: optionalAuth }, async (request, reply) => {
     const query = ListListingsQuerySchema.parse(request.query);
     fastify.log.info(`GET /listings - page=${query.page}, limit=${query.limit}, status=${query.status}`);
     const offset = (query.page - 1) * query.limit;
@@ -54,7 +56,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     // Always include status filter, default to active if not specified
     const statusFilter = query.status || 'active';
@@ -142,7 +144,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
       }> = {
         success: true,
         data: {
-          listings: dataResult.rows,
+          listings: await applyCompromisedToListingRows(dataResult.rows, request.user?.address),
           pagination: {
             page: query.page,
             limit: query.limit,
@@ -166,7 +168,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET listing by ENS name (returns all active listings for the name)
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
 
     const query = `
@@ -180,7 +182,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.last_sale_date
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
-      WHERE LOWER(en.name) = LOWER($1)
+      WHERE en.id = ${ensNameIdForName('$1')}
       AND l.status = 'active'
       ORDER BY l.created_at DESC
     `;
@@ -202,7 +204,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse<any> = {
       success: true,
-      data: result.rows,
+      data: await applyCompromisedToListingRows(result.rows, request.user?.address),
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -213,7 +215,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
   });
 
   // GET listing by ID
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
@@ -247,7 +249,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
 
     const response: APIResponse<any> = {
       success: true,
-      data: result.rows[0],
+      data: (await applyCompromisedToListingRows(result.rows, request.user?.address))[0],
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -268,6 +270,21 @@ export async function listingsRoutes(fastify: FastifyInstance) {
           code: 'FORBIDDEN',
           message: 'Seller address does not match authenticated user',
         },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // ENSv2 names: the order must trade the current ETHRegistry token and the name must be transferable
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'listing',
+      seller: body.sellerAddress,
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
         meta: { timestamp: new Date().toISOString() },
       });
     }

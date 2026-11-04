@@ -6,11 +6,14 @@ import { veryLongCacheHandler } from '../middleware/cache';
 const PROGRAM_START = '2026-04-01T00:00:00Z';
 const SECONDS_PER_YEAR = 31556952; // Program-defined year length
 
-// Find the grails referrer code from the shared config
-const GRAILS_REFERRER = Object.entries(ENS_REFERRER_CODES).find(([, name]) => name === 'grails')![0];
+// Every grails referrer code from the shared config: the legacy one and the current one
+// (used by BulkRegistrationV2 for ENSv2 registrations and renewals)
+const GRAILS_REFERRERS = Object.entries(ENS_REFERRER_CODES)
+  .filter(([, name]) => name === 'grails')
+  .map(([code]) => code);
 
 // Valid sort fields
-const VALID_SORT_FIELDS = ['points', 'registration_duration', 'renewal_duration', 'total_duration', 'total_eth_spend', 'base_cost_usd', 'base_cost_eth'] as const;
+const VALID_SORT_FIELDS = ['points', 'registration_duration', 'renewal_duration', 'total_duration', 'total_eth_spend', 'total_usd_spend', 'base_cost_usd', 'base_cost_eth'] as const;
 
 export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
@@ -39,6 +42,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
       // Map sort field to column in the combined CTE
       const sortColumnMap: Record<string, string> = {
         total_eth_spend: 'total_eth_spend_wei::numeric',
+        total_usd_spend: 'total_usd_spend',
         registration_duration: 'registration_duration_seconds',
         renewal_duration: 'renewal_duration_seconds',
         base_cost_usd: 'base_cost_usd',
@@ -56,7 +60,10 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
           SELECT
             r.registrant_address AS address,
             EXTRACT(EPOCH FROM (r.expiry_date - r.registration_date)) AS duration_seconds,
-            r.total_cost_wei::numeric AS cost_wei,
+            -- ETH spend counts ETH-paid (v1) registrations; v2 ones are paid in stablecoins and
+            -- show up in the USD spend, which covers both
+            CASE WHEN r.currency_address IS NULL THEN r.total_cost_wei::numeric END AS cost_wei,
+            r.total_cost_usd AS cost_usd,
             pf.price AS eth_usd_price
           FROM registrations r
           LEFT JOIN LATERAL (
@@ -65,7 +72,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
               AND timestamp <= r.registration_date
             ORDER BY timestamp DESC LIMIT 1
           ) pf ON true
-          WHERE r.referrer = $1
+          WHERE r.referrer = ANY($1::text[])
             AND r.registration_date >= $2::timestamptz
         ),
         registration_stats AS (
@@ -73,6 +80,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
             address,
             SUM(duration_seconds)::bigint AS total_duration,
             SUM(cost_wei) AS total_cost,
+            SUM(cost_usd) AS total_cost_usd,
             COUNT(*) AS entry_count,
             SUM(duration_seconds / ${SECONDS_PER_YEAR}::numeric * 5 / NULLIF(eth_usd_price, 0)) AS base_cost_eth
           FROM registration_rows
@@ -82,7 +90,8 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
           SELECT
             rn.renewer_address AS address,
             COALESCE(rn.duration_seconds, 0) AS duration_seconds,
-            rn.cost_wei::numeric AS cost_wei,
+            CASE WHEN rn.currency_address IS NULL THEN rn.cost_wei::numeric END AS cost_wei,
+            rn.cost_usd AS cost_usd,
             pf.price AS eth_usd_price
           FROM renewals rn
           LEFT JOIN LATERAL (
@@ -91,7 +100,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
               AND timestamp <= rn.renewal_date
             ORDER BY timestamp DESC LIMIT 1
           ) pf ON true
-          WHERE rn.referrer = $1
+          WHERE rn.referrer = ANY($1::text[])
             AND rn.renewal_date >= $2::timestamptz
         ),
         renewal_stats AS (
@@ -99,6 +108,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
             address,
             SUM(duration_seconds)::bigint AS total_duration,
             SUM(cost_wei) AS total_cost,
+            SUM(cost_usd) AS total_cost_usd,
             COUNT(*) AS entry_count,
             SUM(duration_seconds::numeric / ${SECONDS_PER_YEAR}::numeric * 5 / NULLIF(eth_usd_price, 0)) AS base_cost_eth
           FROM renewal_rows
@@ -112,6 +122,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
             COALESCE(reg.total_duration, 0) + COALESCE(ren.total_duration, 0) AS total_duration_seconds,
             FLOOR((COALESCE(reg.total_duration, 0) + COALESCE(ren.total_duration, 0))::numeric / ${SECONDS_PER_YEAR})::int AS points,
             (COALESCE(reg.total_cost, 0) + COALESCE(ren.total_cost, 0))::text AS total_eth_spend_wei,
+            ROUND(COALESCE(reg.total_cost_usd, 0) + COALESCE(ren.total_cost_usd, 0), 2) AS total_usd_spend,
             COALESCE(reg.entry_count, 0)::int AS registration_count,
             COALESCE(ren.entry_count, 0)::int AS renewal_count,
             ROUND((COALESCE(reg.total_duration, 0) + COALESCE(ren.total_duration, 0))::numeric / ${SECONDS_PER_YEAR} * 5, 2) AS base_cost_usd,
@@ -127,16 +138,16 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
       const countQuery = `
         SELECT COUNT(*) AS total FROM (
           SELECT registrant_address AS address FROM registrations
-          WHERE referrer = $1 AND registration_date >= $2::timestamptz
+          WHERE referrer = ANY($1::text[]) AND registration_date >= $2::timestamptz
           UNION
           SELECT renewer_address AS address FROM renewals
-          WHERE referrer = $1 AND renewal_date >= $2::timestamptz
+          WHERE referrer = ANY($1::text[]) AND renewal_date >= $2::timestamptz
         ) unique_users
       `;
 
       const [dataResult, countResult] = await Promise.all([
-        pool.query(dataQuery, [GRAILS_REFERRER, PROGRAM_START, limitNum, offset]),
-        pool.query(countQuery, [GRAILS_REFERRER, PROGRAM_START]),
+        pool.query(dataQuery, [GRAILS_REFERRERS, PROGRAM_START, limitNum, offset]),
+        pool.query(countQuery, [GRAILS_REFERRERS, PROGRAM_START]),
       ]);
 
       const total = parseInt(countResult.rows[0].total);
@@ -153,6 +164,7 @@ export async function awardsLeaderboardRoutes(fastify: FastifyInstance) {
             total_duration_seconds: Number(row.total_duration_seconds),
             total_duration_years: Number(row.total_duration_seconds) / SECONDS_PER_YEAR,
             total_eth_spend_wei: row.total_eth_spend_wei,
+            total_usd_spend: Number(row.total_usd_spend),
             base_cost_usd: Number(row.base_cost_usd),
             base_cost_eth: Number(row.base_cost_eth),
             registration_count: row.registration_count,

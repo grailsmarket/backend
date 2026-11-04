@@ -12,7 +12,10 @@ export {
   type GrailsClientOptions,
   type TokenStorage,
   MemoryTokenStorage,
+  type ContractAddresses,
   CONTRACTS,
+  CONTRACTS_BY_CHAIN,
+  getContracts,
   DEFAULT_CONFIG,
 } from './config.js';
 
@@ -38,6 +41,7 @@ export {
   type BulkListingResult,
   type BulkSaveResponse,
   type NameMetadata,
+  type NameByToken,
 } from './api/index.js';
 
 // Authentication

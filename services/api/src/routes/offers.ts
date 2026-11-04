@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
-import { requireAuth } from '../middleware/auth';
+import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder, ensNameIdForName } from '../../../shared/src';
+import { checkOrderForName } from '../services/ensv2-orders';
+import { requireAuth, optionalAuth } from '../middleware/auth';
+import { applyCompromisedToOfferRows, getOfferBlockReason } from '../services/compromised-names';
 
 const CreateOfferSchema = z.object({
   ensNameId: z.number(),
@@ -35,6 +37,19 @@ export async function offersRoutes(fastify: FastifyInstance) {
       });
     }
 
+    // Stolen names: only the original owner / recovery wallets may place offers
+    const blockReason = await getOfferBlockReason(body.ensNameId, body.buyerAddress);
+    if (blockReason) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'NAME_COMPROMISED',
+          message: blockReason,
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
     // Validate fee for Grails marketplace offers (offers are always 'grails' source)
     const feeValidation = validateFeeInOrder(body.orderData, 'grails');
     if (!feeValidation.valid) {
@@ -44,6 +59,20 @@ export async function offersRoutes(fastify: FastifyInstance) {
           code: 'INVALID_FEE',
           message: feeValidation.error || 'Invalid marketplace fee',
         },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // ENSv2 names: the order must trade the current ETHRegistry token
+    const ensv2Check = await checkOrderForName({
+      ensNameId: body.ensNameId,
+      orderData: body.orderData,
+      side: 'offer',
+    });
+    if (!ensv2Check.ok) {
+      return reply.status(ensv2Check.status).send({
+        success: false,
+        error: { code: ensv2Check.code, message: ensv2Check.message },
         meta: { timestamp: new Date().toISOString() },
       });
     }
@@ -61,7 +90,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
         ) VALUES ($1, $2, $3, $4, $5, 'pending', $6)
         RETURNING *
       )
-      SELECT io.*, e.name, e.token_id
+      SELECT io.*, e.name, e.token_id, e.ens_version AS version
       FROM inserted_offer io
       JOIN ens_names e ON io.ens_name_id = e.id
     `;
@@ -141,12 +170,12 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers by ENS name
-  fastify.get('/name/:name', async (request, reply) => {
+  fastify.get('/name/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
     const { page = 1, limit = 20, status = 'pending' } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {
@@ -165,7 +194,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const ensNameId = nameResult.rows[0].id;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE o.ens_name_id = $1
@@ -199,7 +228,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,
@@ -219,11 +248,11 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get single offer by ID
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', { preHandler: optionalAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const query = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE o.id = $1
@@ -242,6 +271,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
         },
       });
     }
+
+    await applyCompromisedToOfferRows(result.rows, request.user?.address);
 
     const response: APIResponse<Offer> = {
       success: true,
@@ -366,7 +397,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
         WHERE id = $${paramCount}
         RETURNING *
       )
-      SELECT uo.*, e.name, e.token_id
+      SELECT uo.*, e.name, e.token_id, e.ens_version AS version
       FROM updated_offer uo
       JOIN ens_names e ON uo.ens_name_id = e.id
     `;
@@ -436,13 +467,13 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers by buyer address
-  fastify.get('/buyer/:address', async (request, reply) => {
+  fastify.get('/buyer/:address', { preHandler: optionalAuth }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE LOWER(o.buyer_address) = LOWER($1)
@@ -476,7 +507,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,
@@ -496,13 +527,13 @@ export async function offersRoutes(fastify: FastifyInstance) {
   });
 
   // Get offers received by owner address (offers on names they own)
-  fastify.get('/owner/:address', async (request, reply) => {
+  fastify.get('/owner/:address', { preHandler: optionalAuth }, async (request, reply) => {
     const { address } = request.params as { address: string };
     const { page = 1, limit = 20, status } = request.query as any;
     const offset = (page - 1) * limit;
 
     const offersQuery = `
-      SELECT o.*, e.name, e.token_id
+      SELECT o.*, e.name, e.token_id, e.ens_version AS version
       FROM offers o
       JOIN ens_names e ON o.ens_name_id = e.id
       WHERE LOWER(e.owner_address) = LOWER($1)
@@ -537,7 +568,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const response: APIResponse = {
       success: true,
       data: {
-        offers: offersResult.rows,
+        offers: await applyCompromisedToOfferRows(offersResult.rows, request.user?.address),
         pagination: {
           page,
           limit,

@@ -167,7 +167,7 @@ export interface SearchFilters {
   // Legacy expiration filters
   /** Is expired */
   isExpired?: boolean;
-  /** Is in 90-day grace period */
+  /** Is in grace period (90 days after expiry for v1 names, 28 for ENSv2) */
   isGracePeriod?: boolean;
   /** Is in premium auction period */
   isPremiumPeriod?: boolean;

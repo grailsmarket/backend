@@ -75,10 +75,23 @@ function determineBasicOrderType(params: SeaportOrderParameters): BasicOrderType
     }
   }
 
-  // ERC721 offer (ERC20 for NFT)
+  // ERC1155 listing (ENSv2 names: NFT for ETH/ERC20)
+  if (offerItem.itemType === ItemType.ERC1155) {
+    if (considerationItem.itemType === ItemType.NATIVE) {
+      return BasicOrderType.ETH_TO_ERC1155_FULL_OPEN;
+    }
+    if (considerationItem.itemType === ItemType.ERC20) {
+      return BasicOrderType.ERC20_TO_ERC1155_FULL_OPEN;
+    }
+  }
+
+  // Offer (ERC20 for NFT)
   if (offerItem.itemType === ItemType.ERC20) {
     if (considerationItem.itemType === ItemType.ERC721) {
       return BasicOrderType.ERC721_TO_ERC20_FULL_OPEN;
+    }
+    if (considerationItem.itemType === ItemType.ERC1155) {
+      return BasicOrderType.ERC1155_TO_ERC20_FULL_OPEN;
     }
   }
 

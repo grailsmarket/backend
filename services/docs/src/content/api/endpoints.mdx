@@ -77,6 +77,75 @@ See [Authentication](/api/authentication) for detailed flow documentation.
 
 ---
 
+## My Resolvers (ENSv2)
+
+The signed-in user's ENSv2 PermissionedResolvers and their records ("configurations"), with private custom names and a preferred resolver for new names. Resolver data comes from the ENS worker's `/v2/resolvers` routes and is returned unchanged under `resolver` / `record`. Returns `503 ENS_WORKER_UNAVAILABLE` when the worker can't be reached. `GET /api/v1/auth/me` also returns `preferredResolver`.
+
+<APIEndpoint method="GET" path="/api/v1/me/resolvers" auth={true} description="Resolvers the user holds any role on">
+
+**Query:** `q` (optional): case-insensitive match on the custom name or address
+
+The preferred resolver is listed first; the rest are oldest first. `preferred.hasRoles` is `false` once the user no longer holds a role that can manage the preferred resolver's records.
+
+```json
+{
+  "preferred": { "address": "0x72d3…45b1", "label": "Personal", "hasRoles": true },
+  "total": 2,
+  "resolvers": [
+    { "address": "0x72d3…45b1", "label": "Personal", "isPreferred": true, "resolver": { "record_count": 3, "manages_records": true, "...": "worker fields" } },
+    { "address": "0x8ff0…bfee", "label": null, "isPreferred": false, "resolver": { "...": "worker fields" } }
+  ]
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="PUT" path="/api/v1/me/resolvers/preferred" auth={true} description="Set or clear the preferred resolver">
+
+**Request Body:** `{ "address": "0x…" }`, or `{ "address": null }` to clear. The user must hold a role on the resolver that can manage records (`400 NO_RESOLVER_ROLES` otherwise).
+
+</APIEndpoint>
+
+<APIEndpoint method="PUT" path="/api/v1/me/resolvers/{address}/label" auth={true} description="Name a resolver">
+
+**Request Body:** `{ "label": "Personal" }` (1–64 characters). `404 RESOLVER_NOT_FOUND` if the worker doesn't know the resolver.
+
+</APIEndpoint>
+
+<APIEndpoint method="DELETE" path="/api/v1/me/resolvers/{address}/label" auth={true} description="Remove a resolver's name" />
+
+<APIEndpoint method="GET" path="/api/v1/me/resolvers/{address}/records" auth={true} description="A resolver's records with the user's names for them">
+
+**Query:** `limit` (1–100, default 20), `offset`, `q` (optional)
+
+Without `q`, pages through record ids. With `q`, returns only the records whose custom name contains `q`.
+
+```json
+{
+  "resolver": "0x72d3…45b1",
+  "recordCount": 3,
+  "defaultRecordId": "3",
+  "total": 3,
+  "limit": 20,
+  "offset": 0,
+  "records": [
+    { "recordId": "3", "label": "Default profile", "record": { "is_default": true, "name_count": 5, "records": [], "...": "worker fields" } }
+  ]
+}
+```
+
+</APIEndpoint>
+
+<APIEndpoint method="PUT" path="/api/v1/me/resolvers/{address}/records/{id}/label" auth={true} description="Name a record (configuration)">
+
+**Request Body:** `{ "label": "Default profile" }` (1–64 characters). `404 RECORD_NOT_FOUND` if the id is above the resolver's record count.
+
+</APIEndpoint>
+
+<APIEndpoint method="DELETE" path="/api/v1/me/resolvers/{address}/records/{id}/label" auth={true} description="Remove a record's name" />
+
+---
+
 ## ENS Names
 
 <APIEndpoint method="GET" path="/api/v1/names" description="List ENS names with filtering">
@@ -99,6 +168,34 @@ See [Authentication](/api/authentication) for detailed flow documentation.
 - Active offers count
 - Vote counts (upvotes, downvotes, net score)
 - Recent transactions
+
+</APIEndpoint>
+
+<APIEndpoint method="GET" path="/api/v1/names/by-token/{contract}/{tokenId}" description="Look up a name and its records by NFT">
+
+Finds a `.eth` name from any of its ENS NFTs and returns its cached records (text, addresses, contenthash).
+
+| Contract | Token id |
+|---|---|
+| v1 BaseRegistrar | labelhash |
+| v1 NameWrapper | namehash |
+| ENSv2 ETHRegistry | labelhash with its low 32 bits as a version counter (any version finds the name) |
+
+The name's namehash also works in place of the token id, on any of the three contracts.
+
+**Path:** `contract`, `tokenId` (token id or namehash, decimal or `0x` hex). Each deployment serves one chain.
+
+**Query:** `include=avatar` adds `avatar`, a fetchable URL resolved by the ENS worker (not the raw `avatar` record; `null` when unset)
+
+**Returns:** `name`, `ens_version`, `token` (the contract and id asked for, `matched_by`: `token_id` or `namehash`, and `is_current`), `current_token` (the contract and id the name trades as now), `owner`, `expiry_date`, `registration_date`, `resolver_address`, `metadata`, `metadata_updated_at`
+
+`token.is_current` is false for a namehash (except on the NameWrapper, where the namehash is the token id), an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated to v2.
+
+**Errors:** `400 INVALID_CONTRACT` / `INVALID_TOKEN_ID`, `404 CONTRACT_NOT_SUPPORTED` (not an ENS NFT contract on this network) / `TOKEN_NOT_FOUND`, `502 LOOKUP_FAILED` (ENS worker or RPC unreachable)
+
+```bash
+curl 'https://api.grails.app/api/v1/names/by-token/0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85/79233663829379634837589865448569342784712482819484549289560981379859480642508?include=avatar'
+```
 
 </APIEndpoint>
 

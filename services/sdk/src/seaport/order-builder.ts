@@ -12,9 +12,8 @@ import {
   OrderType,
   ItemType,
 } from './types.js';
+import { type ContractAddresses, getContracts } from '../config.js';
 import {
-  ENS_REGISTRAR_ADDRESS,
-  WETH_ADDRESS,
   ZERO_ADDRESS,
   DEFAULT_CONDUIT_KEY,
   DEFAULT_ZONE,
@@ -48,6 +47,29 @@ function generateSalt(offerer: string, tokenId: string): string {
  * Builds Seaport orders for ENS name listings and offers
  */
 export class SeaportOrderBuilder {
+  private readonly contracts: ContractAddresses;
+
+  /**
+   * @param chainId - Chain to build orders for (default: 1, mainnet)
+   */
+  constructor(chainId: number = 1) {
+    this.contracts = getContracts(chainId);
+  }
+
+  /**
+   * The ENS NFT item: an ERC721 on the v1 BaseRegistrar, or for ENSv2 names an ERC1155 on
+   * the ETHRegistry.
+   */
+  private nftItem(ensVersion: 1 | 2): { itemType: ItemType; token: string } {
+    if (ensVersion === 2) {
+      if (!this.contracts.ethRegistry) {
+        throw new Error('ENSv2 is not deployed on this chain');
+      }
+      return { itemType: ItemType.ERC1155, token: this.contracts.ethRegistry };
+    }
+    return { itemType: ItemType.ERC721, token: this.contracts.ensRegistrar };
+  }
+
   /**
    * Build a listing order (seller offers ENS name, wants payment)
    *
@@ -70,6 +92,7 @@ export class SeaportOrderBuilder {
   buildListingOrder(params: BuildListingOrderParams): SeaportOrder {
     const {
       tokenId,
+      ensVersion = 1,
       priceWei,
       offerer,
       durationDays = 7,
@@ -90,8 +113,7 @@ export class SeaportOrderBuilder {
     // Build offer (ENS NFT)
     const offer: SeaportOfferItem[] = [
       {
-        itemType: ItemType.ERC721,
-        token: ENS_REGISTRAR_ADDRESS,
+        ...this.nftItem(ensVersion),
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',
@@ -186,6 +208,7 @@ export class SeaportOrderBuilder {
   buildOfferOrder(params: BuildOfferOrderParams): SeaportOrder {
     const {
       tokenId,
+      ensVersion = 1,
       offerAmountWei,
       offerer,
       durationDays = 7,
@@ -210,7 +233,7 @@ export class SeaportOrderBuilder {
     const offer: SeaportOfferItem[] = [
       {
         itemType: ItemType.ERC20,
-        token: WETH_ADDRESS,
+        token: this.contracts.weth,
         identifierOrCriteria: '0',
         startAmount: offerAmountWei,
         endAmount: offerAmountWei,
@@ -221,8 +244,7 @@ export class SeaportOrderBuilder {
     // Note: The seller's address will be filled in when the offer is accepted
     const consideration: SeaportConsiderationItem[] = [
       {
-        itemType: ItemType.ERC721,
-        token: ENS_REGISTRAR_ADDRESS,
+        ...this.nftItem(ensVersion),
         identifierOrCriteria: tokenId,
         startAmount: '1',
         endAmount: '1',

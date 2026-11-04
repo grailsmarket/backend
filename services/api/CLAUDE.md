@@ -91,7 +91,8 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/names` | Optional | List ENS names with pagination |
 | GET | `/names/search` | Optional | Search ENS names with Elasticsearch |
 | GET | `/names/:name` | Optional | Get specific ENS name details (tracks views) |
-| GET | `/names/:name/bundle` | Optional | FE bundle: name details + offers + roles in one response (tracks views) |
+| GET | `/names/:name/bundle` | Optional | FE bundle: name details + offers + roles in one response (tracks views; always fetches fresh metadata, like `/names/:name/metadata`) |
+| GET | `/names/by-token/:contract/:tokenId` | No | Name + cached records by NFT: v1 BaseRegistrar (labelhash), NameWrapper (namehash) or ENSv2 ETHRegistry (any token version); the name's namehash also works on any of the three (`token.matched_by`). `?include=avatar` adds the worker-resolved avatar URL |
 
 ### Listings
 | Method | Path | Auth | Description |
@@ -358,6 +359,17 @@ Controls live in `global_chat_config` (admin PATCH above): `images_enabled` is t
 | POST   | `/me/blocks` | Yes | Block a user: `{ user: address \| ens }`. |
 | DELETE | `/me/blocks/:userId` | Yes | Unblock. |
 
+### My Resolvers (ENSv2, Auth Required)
+The caller's PermissionedResolvers from the ENS worker (`config.ensWorker.url`, `/v2/resolvers` routes), with private custom names (`resolver_labels`, record id 0 = the resolver itself) and a preferred resolver for new names (`users.preferred_resolver`). Worker objects are passed through unchanged under `resolver` / `record`. 503 `ENS_WORKER_UNAVAILABLE` when the worker is down or has no index. Code: `src/routes/me-resolvers.ts`, `src/services/resolver-preferences.ts`.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET    | `/me/resolvers?q=` | Yes | Resolvers the caller holds any role on; preferred first; `q` matches label or address. Includes `preferred: { address, label, hasRoles }`. |
+| PUT    | `/me/resolvers/preferred` | Yes | `{ address \| null }`. Must hold a role that can manage records (400 `NO_RESOLVER_ROLES`). Also returned as `preferredResolver` by `GET /auth/me`. |
+| PUT/DELETE | `/me/resolvers/:address/label` | Yes | Name / unname a resolver (`{ label }`, 1–64 chars). |
+| GET    | `/me/resolvers/:address/records?limit=&offset=&q=` | Yes | Records with the caller's labels; with `q`, only records whose label matches. |
+| PUT/DELETE | `/me/resolvers/:address/records/:id/label` | Yes | Name / unname a record ("configuration"). 404 `RECORD_NOT_FOUND` past the record count. |
+
 ### WebSocket Endpoints
 | Path | Description |
 |------|-------------|
@@ -519,6 +531,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `message_blocks` | Per-user message block list (`blocker_user_id`, `blocked_user_id`) |
 | `message_reactions` | Emoji reactions on messages (PK `(message_id, user_id, emoji)`) |
 | `message_attachments` | Image attachments on messages, one row per image (`storage_key`, `chat_id`, `byte_size`, `position`, `created_at`, `expired_at`); drives the 180-day image-expiry worker |
+| `resolver_labels` | Per-user custom names for ENSv2 resolvers (`record_id` 0) and their records (PK `(user_id, resolver, record_id)`) |
 | `global_chat_config` | Single-row global chat config (quota tiers, max length, enabled, `images_enabled`, `message_retention_days`, `image_retention_days`) |
 
 ## Environment Variables

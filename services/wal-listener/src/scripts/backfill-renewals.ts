@@ -40,6 +40,9 @@ const RENEWAL_REFERRED = parseAbi([
   'event RenewalReferred(string label, bytes32 indexed labelHash, uint256 cost, uint256 duration, bytes32 referrer)',
 ]);
 
+if (!config.blockchain.ensBulkRenewalEventEmitter) {
+  throw new Error('ENS_BULK_RENEWAL_EVENT_EMITTER is not configured for this network');
+}
 const EVENT_EMITTER_ADDRESS = config.blockchain.ensBulkRenewalEventEmitter.toLowerCase();
 const CONTROLLER_ADDRESSES = config.blockchain.ensControllerAddresses.map(a => a.toLowerCase());
 

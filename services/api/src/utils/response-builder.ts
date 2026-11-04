@@ -1,4 +1,12 @@
-import { getPostgresPool, type AddressRecord, type ContenthashRecord } from '../../../shared/src';
+import { getPostgresPool, config, safeNormalize, type AddressRecord, type ContenthashRecord, type ExpiryPhase } from '../../../shared/src';
+import { registrationFields } from './registration-fields';
+
+export { registrationFields };
+import {
+  getCompromisedByEnsNameIds,
+  canViewListingOrder,
+  type CompromisedInfo,
+} from '../services/compromised-names';
 
 /**
  * Metadata structure for ENS names
@@ -21,8 +29,17 @@ export interface SearchResult {
   id: number;  // ens_names.id - essential for creating offers and fulfilling them
   name: string;
   token_id: string;
+  // 1 = ENS v1, 2 = ENSv2 (an ERC1155 on token_contract, the ETHRegistry; token_id can change)
+  version: number;
+  token_contract: string | null;
   owner: string | null;
   expiry_date: Date | null;
+  // Registration phase at response time (shared/utils/expiry-phase.ts, the same rule the
+  // status filters use). Null for subnames. grace_ends_at / premium_ends_at are null
+  // when there's no expiry.
+  registration_status: ExpiryPhase | null;
+  grace_ends_at: Date | null;
+  premium_ends_at: Date | null;
   registration_date: Date | null;
   creation_date: Date | null;
   last_sale_date: Date | null;
@@ -59,7 +76,11 @@ export interface SearchResult {
 
   // View count field
   view_count: number;
+
+  // Stolen-name flag (null unless the name has an active compromised_names row)
+  compromised: CompromisedInfo | null;
 }
+
 
 export interface Listing {
   id: number;
@@ -74,13 +95,16 @@ export interface Listing {
   source: string;
   broker_address: string | null;
   broker_fee_bps: number | null;
+  order_data_redacted?: boolean;
 }
 
 /**
  * Builds a consistent search result from ENS names and their listings
  *
  * @param ensNames - Array of ENS name identifiers (either full names or just the name strings)
- * @param userId - Optional user ID to include user's vote in results
+ * @param userId - Optional user ID to include user's vote in results. Also identifies the viewer's
+ *   wallet: on compromised names, listing order_data is only returned to the original owner /
+ *   recovery wallets / the seller (redacted otherwise)
  */
 export async function buildSearchResults(
   ensNames: string[],
@@ -105,6 +129,8 @@ export async function buildSearchResults(
       en.id,
       en.name,
       en.token_id,
+      en.ens_version,
+      en.token_contract,
       en.owner_address,
       en.expiry_date,
       en.registration_date,
@@ -147,6 +173,7 @@ export async function buildSearchResults(
       ${userId
         ? `(SELECT id FROM watchlist WHERE ens_name_id = en.id AND user_id = $${ensNames.length + 1}) as watchlist_record_id,`
         : 'NULL as watchlist_record_id,'}
+      ${userId ? `(SELECT address FROM users WHERE id = $${ensNames.length + 1}) as viewer_address,` : ''}
 
       -- Listing fields (aggregated as JSON array)
       COALESCE(
@@ -182,15 +209,20 @@ export async function buildSearchResults(
   }
 
   const result = await pool.query(query, queryParams);
+  const rows = pickRequestedRows(ensNames, result.rows);
+  const compromisedFlags = await getCompromisedByEnsNameIds(rows.map((row) => row.id));
 
   // Transform database results to SearchResult format
-  return result.rows.map((row) => {
+  return rows.map((row) => {
     const result: SearchResult = {
       id: row.id,
       name: row.name,
       token_id: row.token_id,
+      version: row.ens_version,
+      token_contract: row.token_contract,
       owner: row.owner_address,
       expiry_date: row.expiry_date,
+      ...registrationFields(row.name, row.expiry_date, row.ens_version),
       registration_date: row.registration_date,
       creation_date: row.creation_date,
       last_sale_date: row.last_sale_date,
@@ -214,7 +246,17 @@ export async function buildSearchResults(
       highest_offer_currency: row.highest_offer_currency,
       highest_offer_id: row.highest_offer_id,
       view_count: parseInt(row.view_count) || 0,
+      compromised: compromisedFlags.get(row.id) || null,
     };
+
+    if (result.compromised) {
+      const info = result.compromised;
+      result.listings = result.listings.map((listing) =>
+        canViewListingOrder(info, listing.seller_address, row.viewer_address)
+          ? listing
+          : { ...listing, order_data: null, order_data_redacted: true }
+      );
+    }
 
     // Only include user_vote if userId was provided
     if (userId !== undefined) {
@@ -223,6 +265,38 @@ export async function buildSearchResults(
 
     return result;
   });
+}
+
+/**
+ * The lookup matches on LOWER(name), so a request for "jesse.eth" also returns the
+ * separate on-chain token "Jesse.eth" (and vice versa). Return one row per requested
+ * name, in request order: the exact match, else the normalized form, else the first hit.
+ */
+function pickRequestedRows<T extends { name: string }>(requested: string[], rows: T[]): T[] {
+  const byLower = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = row.name.toLowerCase();
+    const list = byLower.get(key);
+    if (list) list.push(row);
+    else byLower.set(key, [row]);
+  }
+
+  const picked: T[] = [];
+  const seen = new Set<T>();
+  for (const name of requested) {
+    const candidates = byLower.get(name.toLowerCase());
+    if (!candidates) continue;
+    const normalized = safeNormalize(name);
+    const row =
+      candidates.find((r) => r.name === name) ??
+      candidates.find((r) => r.name === normalized) ??
+      candidates[0];
+    if (!seen.has(row)) {
+      seen.add(row);
+      picked.push(row);
+    }
+  }
+  return picked;
 }
 
 /**
@@ -248,8 +322,13 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     id: 0,
     name,
     token_id: '',
+    // ENSv2 is live wherever it's configured, so a new registration would be a v2 name
+    version: config.blockchain.ensv2 ? 2 : 1,
+    token_contract: null,
     owner: null,
     expiry_date: new Date('2020-01-01T00:00:00Z'),
+    // Never registered: available, no phase dates (the 2020 expiry above is a sort placeholder)
+    ...registrationFields(name, null, null),
     registration_date: null,
     creation_date: null,
     last_sale_date: null,
@@ -273,5 +352,6 @@ export function createUnregisteredPlaceholder(name: string, clubs: string[]): Se
     highest_offer_currency: null,
     highest_offer_id: null,
     view_count: 0,
+    compromised: null,
   };
 }

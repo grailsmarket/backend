@@ -7,7 +7,7 @@
  * 2. Inserts missing mint events for ENS names that don't have them
  *
  * Data source: The Graph ENS Subgraph
- * URL: ensnode-api-production-500f.up.railway.app/subgraph
+ * URL: THE_GRAPH_ENS_SUBGRAPH_URL (config.theGraph.ensSubgraphUrl)
  *
  * Usage:
  *   npx tsx src/scripts/backfill-mint-events.ts [--resume] [--dry-run] [--missing-cost-only]
@@ -19,12 +19,12 @@
  *                        for every mint event.
  */
 
-import { getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { config, getPostgresPool, closeAllConnections } from '../../../shared/src';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
 const pool = getPostgresPool();
-const GRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 const DB_BATCH_SIZE = 50; // Fetch 50 records from DB at a time
 const DELAY_MS = 2000; // 5 seconds between batches
 const PROGRESS_FILE = path.join(process.cwd(), 'backfill-mint-progress.json');

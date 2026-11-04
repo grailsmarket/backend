@@ -14,9 +14,9 @@
  *   npx tsx src/scripts/backfill-creation-dates.ts [--dry-run] [--limit 1000000] [--batch-size 200] [--from 0] [--concurrency 3]
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 
 // Query The Graph for multiple domains by names in a single batch
 async function queryGraphForNamesBatch(names: string[]): Promise<Map<string, number>> {

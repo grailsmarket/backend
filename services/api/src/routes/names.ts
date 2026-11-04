@@ -1,6 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type ENSName, config } from '../../../shared/src';
+import {
+  getPostgresPool,
+  type APIResponse,
+  type ENSName,
+  config,
+  sqlWithinGracePeriod,
+  parseTokenIdParam,
+  tokenContractKind,
+  findNameByToken,
+  currentTokenOf,
+  fetchAvatarFromWorker,
+  ensNameIdForName,
+} from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
 import { optionalAuth } from '../middleware/auth';
@@ -10,9 +22,10 @@ import { fetchFreshMetadata } from '../services/ens-metadata';
 import { resolveNameDetails } from '../services/name-details';
 import { getNameRoles, type EnsRoles } from '../services/ens-roles';
 import type { SearchResult } from '../utils/response-builder';
+import { applyCompromisedToOfferRows, getCompromisedByEnsNameIds } from '../services/compromised-names';
 
 // ENS Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 // Name Wrapper ABI - just the ownerOf function we need
 const NAME_WRAPPER_ABI = [
@@ -96,7 +109,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     // Exclude names past grace period (90 days after expiry)
     // Allow: non-expired names, names in grace period, and subnames (no expiry date)
-    whereConditions.push(`(en.expiry_date IS NULL OR en.expiry_date + INTERVAL '90 days' > NOW())`);
+    whereConditions.push(`(en.expiry_date IS NULL OR ${sqlWithinGracePeriod('en')})`);
 
     if (query.owner) {
       whereConditions.push(`LOWER(en.owner_address) = LOWER($${paramCount})`);
@@ -205,6 +218,80 @@ export async function namesRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
+  /**
+   * Look up a name by its NFT: v1 BaseRegistrar (labelhash), v1 NameWrapper (namehash) or the
+   * ENSv2 ETHRegistry (any version of the token id), or the name's namehash on any of the three.
+   * Returns the name's cached records.
+   * `?include=avatar` adds the avatar as the ENS worker resolves it (a fetchable URL).
+   */
+  fastify.get('/by-token/:contract/:tokenId', { preHandler: cacheHandler }, async (request, reply) => {
+    const { contract, tokenId: rawTokenId } = request.params as { contract: string; tokenId: string };
+    const { include } = request.query as { include?: string };
+    const fail = (status: number, code: string, message: string) =>
+      reply.status(status).send({ success: false, error: { code, message }, meta: { timestamp: new Date().toISOString() } });
+
+    if (!ethers.isAddress(contract)) return fail(400, 'INVALID_CONTRACT', `Invalid contract address "${contract}"`);
+    const tokenId = parseTokenIdParam(rawTokenId);
+    if (tokenId === null) return fail(400, 'INVALID_TOKEN_ID', 'tokenId must be a uint256, decimal or 0x hex');
+    if (!tokenContractKind(contract)) {
+      return fail(404, 'CONTRACT_NOT_SUPPORTED', `${contract} is not an ENS NFT contract on this network`);
+    }
+
+    let found: Awaited<ReturnType<typeof findNameByToken>>;
+    try {
+      found = await findNameByToken(contract, tokenId);
+    } catch (error: any) {
+      fastify.log.error({ error: error?.message, contract, tokenId: tokenId.toString() }, 'Token lookup failed');
+      return fail(502, 'LOOKUP_FAILED', 'Could not look up this token right now');
+    }
+    if (!found) return fail(404, 'TOKEN_NOT_FOUND', `No ENS name found for token ${tokenId} on ${contract}`);
+
+    const result = await pool.query(
+      `SELECT id, name, token_id, token_contract, ens_version, owner_address, expiry_date, registration_date,
+              resolver_address, metadata, metadata_updated_at
+       FROM ens_names WHERE id = $1`,
+      [found.id]
+    );
+    const row = result.rows[0];
+    if (!row) return fail(404, 'TOKEN_NOT_FOUND', `No ENS name found for token ${tokenId} on ${contract}`);
+
+    const current = currentTokenOf(row);
+    const requested = { contract: contract.toLowerCase(), token_id: tokenId.toString() };
+    const includes = new Set((include ?? '').split(',').map((part) => part.trim()).filter(Boolean));
+
+    let avatar: string | null = null;
+    if (includes.has('avatar')) {
+      try {
+        avatar = await fetchAvatarFromWorker(row.name);
+      } catch (error: any) {
+        fastify.log.warn({ error: error?.message, name: row.name }, 'Avatar lookup failed');
+      }
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        name: row.name,
+        ens_version: row.ens_version,
+        token: {
+          ...requested,
+          matched_by: found.matchedBy,
+          // False for a namehash (except on the NameWrapper, where it is the token id), an older v2 token id, or a v1 token of a name that has since been wrapped, unwrapped or migrated
+          is_current: requested.contract === current.contract && requested.token_id === current.token_id,
+        },
+        current_token: current,
+        owner: row.owner_address,
+        expiry_date: row.expiry_date,
+        registration_date: row.registration_date,
+        resolver_address: row.resolver_address,
+        metadata: row.metadata ?? {},
+        metadata_updated_at: row.metadata_updated_at,
+        ...(includes.has('avatar') ? { avatar } : {}),
+      },
+      meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+    });
+  });
+
   fastify.get('/:name', { preHandler: optionalAuth }, async (request, reply) => {
     const { name } = request.params as { name: string };
 
@@ -259,10 +346,12 @@ export async function namesRoutes(fastify: FastifyInstance) {
    * calling GET /names/:name, GET /offers/name/:name, and
    * GET /ens-roles/names/:name/roles individually.
    *
+   * Metadata is always fetched fresh from the ENS worker (bypassing caches),
+   * the same way GET /:name/metadata does, so details.metadata is current.
+   *
    * Not cached (mirrors GET /:name): optionalAuth produces per-user detail
-   * fields, the handler tracks views, and metadata freshness must run per
-   * request. Downstream load is absorbed by getNameRoles' in-memory cache and
-   * the metadata DB TTL.
+   * fields, the handler tracks views, and the metadata fetch must run per
+   * request. Roles load is absorbed by getNameRoles' in-memory cache.
    */
   fastify.get('/:name/bundle', { preHandler: optionalAuth }, async (request, reply) => {
     try {
@@ -286,7 +375,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
       // details is authoritative: a 404 here matches the contract of all 3
       // source endpoints. Unexpected errors propagate to the global handler
       // (500), exactly like GET /:name.
-      const details = await resolveNameDetails(name, userId);
+      // Always fetches fresh metadata, same as GET /:name/metadata.
+      const details = await resolveNameDetails(name, userId, { freshMetadata: true });
 
       if (!details) {
         return reply.status(404).send({
@@ -312,7 +402,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
               .query(
                 // offer_amount_wei is VARCHAR(78); cast to numeric so the
                 // top-N sort is by value, not lexicographic ("9..." vs "10...").
-                `SELECT o.*, e.name, e.token_id
+                `SELECT o.*, e.name, e.token_id, e.ens_version AS version
                    FROM offers o
                    JOIN ens_names e ON o.ens_name_id = e.id
                   WHERE o.ens_name_id = $1 AND o.status = $2
@@ -320,7 +410,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
                   LIMIT $3`,
                 [details.id, query.offersStatus, query.offersLimit]
               )
-              .then((result) => result.rows)
+              .then((result) => applyCompromisedToOfferRows(result.rows, request.user?.address))
               .catch((error) => {
                 fastify.log.error({ error, name }, 'Failed to fetch offers for bundle');
                 return [] as any[];
@@ -369,8 +459,8 @@ export async function namesRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get metadata for a specific ENS name
-  // Always fetches fresh data from The Graph, database sync happens async
+  // Get metadata (text, address and contenthash records) for a specific ENS name
+  // Always fetches fresh records from the ENS worker, database sync happens async
   fastify.get('/:name/metadata', async (request, reply) => {
     const { name } = request.params as { name: string };
 
@@ -378,7 +468,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const result = await pool.query(
       `SELECT id, name
        FROM ens_names
-       WHERE LOWER(name) = LOWER($1)`,
+       WHERE id = ${ensNameIdForName('$1')}`,
       [name]
     );
 
@@ -397,7 +487,6 @@ export async function namesRoutes(fastify: FastifyInstance) {
 
     const row = result.rows[0];
 
-    // Always fetch fresh metadata from The Graph
     // Database sync happens asynchronously to not slow down the response
     const { metadata, source } = await fetchFreshMetadata(row.id, row.name);
 
@@ -459,7 +548,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
         ORDER BY created_at DESC
         LIMIT 1
       ) l ON true
-      WHERE LOWER(en.name) = LOWER($1)
+      WHERE en.id = ${ensNameIdForName('$1')}
     `;
 
     let result = await pool.query(query, [name]);
@@ -522,7 +611,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
         if (correctOwner && correctOwner.toLowerCase() !== NAME_WRAPPER_ADDRESS) {
           // Update the owner address in database
           await pool.query(
-            'UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE LOWER(name) = LOWER($2)',
+            `UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE id = ${ensNameIdForName('$2')}`,
             [correctOwner.toLowerCase(), name]
           );
 
@@ -686,13 +775,18 @@ export async function namesRoutes(fastify: FastifyInstance) {
       getBestOfferForNFT(nameData.token_id),
     ]);
 
+    // Cached + anonymous: on a compromised name, never expose signed orders here
+    const compromised = (await getCompromisedByEnsNameIds([nameData.id])).get(nameData.id) || null;
+
     const response: APIResponse<ENSName> = {
       success: true,
       data: {
         ...nameData,
-        opensea_listing: openSeaListing,
-        opensea_offer: openSeaOffer,
-      },
+        ...(compromised ? { listing_order_data: null } : {}),
+        opensea_listing: compromised ? null : openSeaListing,
+        opensea_offer: compromised ? null : openSeaOffer,
+        compromised,
+      } as any,
       meta: {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
@@ -707,7 +801,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20 } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {

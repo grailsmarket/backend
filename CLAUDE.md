@@ -47,7 +47,7 @@ A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates l
 - Monitors ENS Registry and Registrar contracts
 - Tracks ownership, transfers, and expiry dates
 - Maintains historical event data
-- Handles blockchain reorganizations
+- Handles blockchain reorgs
 
 ### 3. WAL Listener Service (`/services/wal-listener`)
 **Purpose**: Real-time database change detection and Elasticsearch synchronization

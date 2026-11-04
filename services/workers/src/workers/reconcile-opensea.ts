@@ -1,6 +1,7 @@
 import PgBoss from 'pg-boss';
 import type { Pool } from 'pg';
-import { config, getPostgresPool, safeNormalize } from '../../../shared/src';
+import { config, getPostgresPool, CURRENCY_ADDRESSES, isEthRegistryToken, findEnsV2NameByTokenId, getOpenSeaCollectionSlugs, ensNameIdForName } from '../../../shared/src';
+import { labelhash, namehash } from 'viem';
 import { QUEUE_NAMES } from '../queue';
 import { logger } from '../utils/logger';
 
@@ -102,7 +103,7 @@ async function fetchOpenSeaAssetName(contract: string, identifier: string): Prom
 
   try {
     const response = await fetch(
-      `https://api.opensea.io/api/v2/chain/ethereum/contract/${contract}/nfts/${identifier}`,
+      `${config.opensea.apiBaseUrl}/chain/${config.opensea.chainSlug}/contract/${contract}/nfts/${identifier}`,
       {
         headers: {
           'X-API-Key': OPENSEA_API_KEY,
@@ -125,6 +126,23 @@ async function fetchOpenSeaAssetName(contract: string, identifier: string): Prom
 }
 
 /**
+ * Whether tokenId is one of the name's v1 token IDs: the registrar's labelhash of the
+ * .eth label, or the NameWrapper's namehash. Hashes the name as stored (no
+ * normalization), since a non-normalized name is its own token.
+ */
+function isV1TokenOfName(name: string, tokenId: string): boolean {
+  let id: bigint;
+  try {
+    id = BigInt(tokenId);
+  } catch {
+    return false;
+  }
+  const label = name.endsWith('.eth') && name.split('.').length === 2 ? name.slice(0, -4) : null;
+  if (label && BigInt(labelhash(label)) === id) return true;
+  return BigInt(namehash(name)) === id;
+}
+
+/**
  * Resolve an OpenSea asset to an ens_names row. Tries the exact token_id
  * first; on a miss — e.g. the order carries the identity from before a
  * wrapping-state change (registrar labelhash vs wrapper namehash) while
@@ -135,6 +153,21 @@ async function resolveEnsNameId(
   pool: Pool,
   asset: { identifier: string; contract: string }
 ): Promise<number | null> {
+  if (isEthRegistryToken(asset.contract)) {
+    // ENSv2: only the name's current token ID can trade; a superseded ID (roles changed,
+    // re-registered) can never fill, so don't attach its order
+    const v2 = await findEnsV2NameByTokenId(asset.identifier);
+    if (!v2) return null;
+    if (v2.token_id !== asset.identifier) {
+      logger.info(
+        { tokenId: asset.identifier, currentTokenId: v2.token_id, name: v2.name },
+        'Skipping OpenSea order on a superseded ENSv2 token ID'
+      );
+      return null;
+    }
+    return v2.id;
+  }
+
   const byToken = await pool.query(
     'SELECT id FROM ens_names WHERE token_id = $1',
     [asset.identifier]
@@ -148,10 +181,30 @@ async function resolveEnsNameId(
     return null;
   }
 
+  // Keep OpenSea's spelling: normalizing would turn "Jesse.eth" (its own token) into
+  // "jesse.eth", a different token, and attach the order to the wrong name.
   const byName = await pool.query(
-    'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
-    [safeNormalize(name)]
+    `SELECT id, name, ens_version FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
+    [name]
   );
+  if (byName.rows.length > 0 && !isV1TokenOfName(byName.rows[0].name, asset.identifier)) {
+    // The fallback is only for the registrar/wrapper ID mismatch, so the matched row
+    // must be the same name under its other v1 token ID.
+    logger.warn(
+      { tokenId: asset.identifier, contract: asset.contract, name, matched: byName.rows[0].name },
+      'Name fallback matched a row whose token IDs differ from the order; skipping'
+    );
+    return null;
+  }
+  if (byName.rows.length > 0 && byName.rows[0].ens_version === 2 && !isEthRegistryToken(asset.contract)) {
+    // The order is on the v1 token of a name that has moved to ENSv2: that token is in the
+    // Graveyard and the order can never fill, so don't attach it to the v2 name.
+    logger.info(
+      { tokenId: asset.identifier, contract: asset.contract, name },
+      'Skipping OpenSea order on the v1 token of an ENSv2 name'
+    );
+    return null;
+  }
   if (byName.rows.length > 0) {
     logger.info(
       { tokenId: asset.identifier, name, ensNameId: byName.rows[0].id },
@@ -207,31 +260,34 @@ async function fetchOpenSeaOffers(maxPages = MAX_PAGES): Promise<OpenSeaOffer[]>
   const allOffers: OpenSeaOffer[] = [];
   let cursor: string | null = null;
 
-  for (let page = 0; page < maxPages; page++) {
-    let url = `https://api.opensea.io/api/v2/offers/collection/ens/all?limit=${RECONCILE_LIMIT}`;
-    if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
+  for (const slug of getOpenSeaCollectionSlugs()) {
+    cursor = null;
+    for (let page = 0; page < maxPages; page++) {
+      let url = `${config.opensea.apiBaseUrl}/offers/collection/${slug}/all?limit=${RECONCILE_LIMIT}`;
+      if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
 
-    const response = await fetch(url, {
-      headers: {
-        'X-API-Key': OPENSEA_API_KEY,
-        'Content-Type': 'application/json',
-      },
-    });
+      const response = await fetch(url, {
+        headers: {
+          'X-API-Key': OPENSEA_API_KEY,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenSea offers API error: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`OpenSea offers API error: ${response.status}`);
+      }
+
+      const data = await response.json() as { offers?: OpenSeaOffer[]; next?: string };
+      // Keep item offers only — criteria offers are collection/trait-wide and
+      // don't map to a single ens_name.
+      allOffers.push(...(data.offers || []).filter(o => !o.criteria && o.asset?.identifier));
+
+      cursor = data.next || null;
+      if (!cursor) break;
+
+      // Rate limit between pages
+      if (page < maxPages - 1) await sleep(300);
     }
-
-    const data = await response.json() as { offers?: OpenSeaOffer[]; next?: string };
-    // Keep item offers only — criteria offers are collection/trait-wide and
-    // don't map to a single ens_name.
-    allOffers.push(...(data.offers || []).filter(o => !o.criteria && o.asset?.identifier));
-
-    cursor = data.next || null;
-    if (!cursor) break;
-
-    // Rate limit between pages
-    if (page < maxPages - 1) await sleep(300);
   }
 
   logger.info({ pages: Math.min(maxPages, allOffers.length > 0 ? Math.ceil(allOffers.length / RECONCILE_LIMIT) : 1), total: allOffers.length }, 'Fetched offers from OpenSea');
@@ -248,30 +304,33 @@ async function fetchOpenSeaListings(maxPages = MAX_PAGES): Promise<{ listings: O
   let cursor: string | null = null;
   let pagesFetched = 0;
 
-  for (let page = 0; page < maxPages; page++) {
-    let url = `https://api.opensea.io/api/v2/listings/collection/ens/all?limit=${RECONCILE_LIMIT}`;
-    if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
+  for (const slug of getOpenSeaCollectionSlugs()) {
+    cursor = null;
+    for (let page = 0; page < maxPages; page++) {
+      let url = `${config.opensea.apiBaseUrl}/listings/collection/${slug}/all?limit=${RECONCILE_LIMIT}`;
+      if (cursor) url += `&next=${encodeURIComponent(cursor)}`;
 
-    const response = await fetch(url, {
-      headers: {
-        'X-API-Key': OPENSEA_API_KEY,
-        'Content-Type': 'application/json',
-      },
-    });
+      const response = await fetch(url, {
+        headers: {
+          'X-API-Key': OPENSEA_API_KEY,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenSea listings API error: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`OpenSea listings API error: ${response.status}`);
+      }
+
+      const data = await response.json() as { listings?: OpenSeaListing[]; next?: string };
+      allListings.push(...(data.listings || []).filter(l => l.asset?.identifier));
+      pagesFetched++;
+
+      cursor = data.next || null;
+      if (!cursor) break;
+
+      // Rate limit between pages
+      if (page < maxPages - 1) await sleep(300);
     }
-
-    const data = await response.json() as { listings?: OpenSeaListing[]; next?: string };
-    allListings.push(...(data.listings || []).filter(l => l.asset?.identifier));
-    pagesFetched++;
-
-    cursor = data.next || null;
-    if (!cursor) break;
-
-    // Rate limit between pages
-    if (page < maxPages - 1) await sleep(300);
   }
 
   logger.info({ pages: pagesFetched, total: allListings.length }, 'Fetched listings from OpenSea');
@@ -316,7 +375,7 @@ async function reconcileOffers(pool: Pool) {
       }
 
       const currencyAddress = offer.protocol_data?.parameters?.offer?.[0]?.token ||
-        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+        CURRENCY_ADDRESSES.WETH;
 
       await pool.query(
         `INSERT INTO offers (

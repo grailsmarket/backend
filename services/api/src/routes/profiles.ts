@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, type APIResponse, config } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, config, ensNameIdForName } from '../../../shared/src';
 import { ethers } from 'ethers';
 import { getQueueClient, QUEUE_NAMES } from '../queue';
 import { getViewerIdentifier } from '../services/name-views';
@@ -10,7 +10,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
   const pool = getPostgresPool();
 
   // ENS Name Wrapper contract address
-  const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+  const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
   // Name Wrapper ABI - just the ownerOf function we need
   const NAME_WRAPPER_ABI = [
@@ -218,7 +218,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
         // Input is an ENS name, find the owner
         const nameQuery = `
           SELECT owner_address, name FROM ens_names
-          WHERE LOWER(name) = LOWER($1)
+          WHERE id = ${ensNameIdForName('$1')}
         `;
         const nameResult = await pool.query(nameQuery, [addressOrName]);
 
@@ -265,7 +265,7 @@ export async function profilesRoutes(fastify: FastifyInstance) {
 
                 // Update database with the correct owner
                 await pool.query(
-                  'UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE LOWER(name) = LOWER($2)',
+                  `UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE id = ${ensNameIdForName('$2')}`,
                   [wrappedOwner, addressOrName]
                 );
 

@@ -15,9 +15,9 @@
  *   Then run: node --max-old-space-size=4096 dist/wal-listener/src/scripts/recover-registrar-owners.js [--dry-run] [--limit 100] [--batch-size 50] [--offset 0]
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool } from '../../../shared/src';
 
-const GRAPH_ENS_SUBGRAPH_URL = 'https://ensnode-api-production-500f.up.railway.app/subgraph';
+const GRAPH_ENS_SUBGRAPH_URL = config.theGraph.ensSubgraphUrl; // THE_GRAPH_ENS_SUBGRAPH_URL
 const ENS_REGISTRAR_ADDRESS = '0x283af0b28c62c092c9727f1ee09c02ca627eb7f5';
 
 interface RegistrarRecord {

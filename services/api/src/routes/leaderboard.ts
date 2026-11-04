@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, ETH_WETH_FILTER } from '../../../shared/src';
+import { getPostgresPool, ETH_WETH_FILTER, sqlWithinGracePeriod, sqlPastGracePeriod } from '../../../shared/src';
 import { leaderboardCacheHandler } from '../middleware/cache';
 
 // Valid sort fields for leaderboard
@@ -50,23 +50,23 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             SELECT DISTINCT owner_address
             FROM ens_names
             WHERE owner_address IS NOT NULL
-              AND expiry_date > NOW() - INTERVAL '90 days'
+              AND ${sqlWithinGracePeriod('')}
               AND clubs && $1::text[]
           ),
           owner_stats AS (
             SELECT
               e.owner_address,
-              COUNT(*) FILTER (WHERE e.expiry_date > NOW() - INTERVAL '90 days') as names_owned,
+              COUNT(*) FILTER (WHERE ${sqlWithinGracePeriod('e')}) as names_owned,
               COUNT(*) FILTER (
-                WHERE e.expiry_date > NOW() - INTERVAL '90 days'
+                WHERE ${sqlWithinGracePeriod('e')}
                   AND e.clubs IS NOT NULL
                   AND array_length(e.clubs, 1) > 0
               ) as names_in_clubs,
-              COUNT(*) FILTER (WHERE e.expiry_date <= NOW() - INTERVAL '90 days') as expired_names
+              COUNT(*) FILTER (WHERE ${sqlPastGracePeriod('e')}) as expired_names
             FROM ens_names e
             INNER JOIN filtered_owners fo ON fo.owner_address = e.owner_address
             GROUP BY e.owner_address
-            HAVING COUNT(*) FILTER (WHERE e.expiry_date > NOW() - INTERVAL '90 days') > 0
+            HAVING COUNT(*) FILTER (WHERE ${sqlWithinGracePeriod('e')}) > 0
           ),
           owner_clubs AS (
             SELECT
@@ -75,7 +75,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
             FROM ens_names e
             INNER JOIN filtered_owners fo ON fo.owner_address = e.owner_address
             CROSS JOIN LATERAL unnest(e.clubs) as club
-            WHERE e.expiry_date > NOW() - INTERVAL '90 days'
+            WHERE ${sqlWithinGracePeriod('e')}
               AND e.clubs IS NOT NULL
             GROUP BY e.owner_address
           ),
@@ -122,17 +122,17 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
           WITH owner_stats AS (
             SELECT
               owner_address,
-              COUNT(*) FILTER (WHERE expiry_date > NOW() - INTERVAL '90 days') as names_owned,
+              COUNT(*) FILTER (WHERE ${sqlWithinGracePeriod('')}) as names_owned,
               COUNT(*) FILTER (
-                WHERE expiry_date > NOW() - INTERVAL '90 days'
+                WHERE ${sqlWithinGracePeriod('')}
                   AND clubs IS NOT NULL
                   AND array_length(clubs, 1) > 0
               ) as names_in_clubs,
-              COUNT(*) FILTER (WHERE expiry_date <= NOW() - INTERVAL '90 days') as expired_names
+              COUNT(*) FILTER (WHERE ${sqlPastGracePeriod('')}) as expired_names
             FROM ens_names
             WHERE owner_address IS NOT NULL
             GROUP BY owner_address
-            HAVING COUNT(*) FILTER (WHERE expiry_date > NOW() - INTERVAL '90 days') > 0
+            HAVING COUNT(*) FILTER (WHERE ${sqlWithinGracePeriod('')}) > 0
           ),
           owner_clubs AS (
             SELECT
@@ -142,7 +142,7 @@ export async function leaderboardRoutes(fastify: FastifyInstance) {
               SELECT owner_address, unnest(clubs) as club
               FROM ens_names
               WHERE owner_address IS NOT NULL
-                AND expiry_date > NOW() - INTERVAL '90 days'
+                AND ${sqlWithinGracePeriod('')}
                 AND clubs IS NOT NULL
                 AND array_length(clubs, 1) > 0
             ) unnested

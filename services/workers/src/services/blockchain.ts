@@ -1,11 +1,11 @@
 import { ethers } from 'ethers';
-import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName } from '../../../shared/src';
+import { config, needsEnsWorkerFallback, fetchTextRecordsFromEnsWorker, fetchTextRecordsOnChain, isPlaceholderName, RESOLVER_EVENTS_FIELDS, normalizeResolverEvents, isEnsV2Name, fetchNameRecordsFromWorker, type NameRecords } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 let provider: ethers.JsonRpcProvider | null = null;
 
 // Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress;
 
 export function getBlockchainProvider(): ethers.JsonRpcProvider {
   if (!provider) {
@@ -32,17 +32,37 @@ const ENS_RESOLVER_ABI = [
   'function addr(bytes32 node) view returns (address)',
 ];
 
-export interface ENSMetadata {
-  [key: string]: string | undefined;
-  resolverAddress?: string;
+export type ENSMetadata = NameRecords & { resolverAddress?: string };
+
+export type ENSMetadataLookup =
+  | { found: true; metadata: ENSMetadata; source: 'worker' | 'graph' }
+  // The ENS worker found no resolver for the name (see keepCachedRecordsWithoutResolver)
+  | { found: false };
+
+/**
+ * Fetch a name's records from the ENS worker (v1, v2 and offchain names). If the worker
+ * fails, v1 names fall back to The Graph; for v2 names the error is rethrown.
+ */
+export async function fetchENSMetadata(name: string): Promise<ENSMetadataLookup> {
+  try {
+    const result = await fetchNameRecordsFromWorker(name);
+    if (!result.found) return { found: false };
+    return {
+      found: true,
+      metadata: { resolverAddress: result.resolverAddress || ethers.ZeroAddress, ...result.records },
+      source: 'worker',
+    };
+  } catch (error: any) {
+    if (await isEnsV2Name(name)) throw error;
+    logger.warn({ error: error?.message, name }, 'ENS worker lookup failed, falling back to The Graph');
+    return { found: true, metadata: await fetchENSMetadataFromGraph(name), source: 'graph' };
+  }
 }
 
 /**
- * Fetch ENS metadata from The Graph
- * Queries the ENS subgraph for text records, which is more reliable than
- * direct blockchain queries since The Graph maintains historical data.
+ * Fetch text records from The Graph ENS subgraph (v1 names only).
  */
-export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
+async function fetchENSMetadataFromGraph(name: string): Promise<ENSMetadata> {
   try {
     const query = `
       query GetDomain($name: String!) {
@@ -50,10 +70,7 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
           resolver {
             address
             texts
-            textChangeds {
-              key
-              value
-            }
+            ${RESOLVER_EVENTS_FIELDS}
           }
         }
       }
@@ -88,6 +105,7 @@ export async function fetchENSMetadata(name: string): Promise<ENSMetadata> {
     }
 
     const domain = json.data?.domains?.[0];
+    normalizeResolverEvents(domain?.resolver);
 
     if (!domain?.resolver) {
       logger.debug({ name }, 'No resolver found in Graph for ENS name');

@@ -5,7 +5,14 @@
  * Uses database as primary source, with 10% on-chain verification for accuracy.
  */
 
-import { getPostgresPool } from '../../../shared/src';
+import {
+  config,
+  getPostgresPool,
+  getOrderNftItem,
+  checkEnsV2OrderItem,
+  checkEnsV2Transferable,
+  getOrderOperator,
+} from '../../../shared/src';
 import { ethers } from 'ethers';
 import {
   type ValidationResult,
@@ -16,7 +23,7 @@ import {
 const pool = getPostgresPool();
 
 // Name Wrapper contract address
-const NAME_WRAPPER_ADDRESS = '0xD4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401';
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress;
 
 // Initialize provider (will be set by environment)
 let provider: ethers.Provider | null = null;
@@ -37,6 +44,8 @@ async function fetchListingWithOwner(listingId: number): Promise<ListingWithOwne
       l.status,
       en.name,
       en.token_id,
+      en.ens_version,
+      l.order_data,
       en.owner_address as current_owner
     FROM listings l
     JOIN ens_names en ON en.id = l.ens_name_id
@@ -123,6 +132,40 @@ async function getENSOwnerFromRPC(tokenId: string): Promise<string | null> {
 }
 
 /**
+ * Validate a listing on an ENSv2 name, always on-chain: the order must reference the name's
+ * current ETHRegistry token, and the registry must allow Seaport to move it from the seller.
+ * A changed token ID or a non-transferable name can never fill again (permanent: cancel);
+ * a lost owner, an expired name or a missing approval may recover (unfunded).
+ */
+async function validateEnsV2Listing(listing: ListingWithOwner): Promise<ValidationResult> {
+  const orderData = typeof listing.order_data === 'string' ? JSON.parse(listing.order_data) : listing.order_data;
+  const params = orderData?.protocol_data?.parameters ?? orderData?.parameters ?? orderData ?? {};
+
+  const itemError = checkEnsV2OrderItem(getOrderNftItem(params, 'listing'), listing.token_id);
+  if (itemError) {
+    return { isValid: false, permanent: true, reason: 'token_changed', checkedAt: new Date() };
+  }
+  const operator = getOrderOperator(params.conduitKey);
+  if (!operator) {
+    return { isValid: false, permanent: true, reason: 'unknown_conduit', checkedAt: new Date() };
+  }
+
+  const transfer = await checkEnsV2Transferable({ tokenId: listing.token_id, owner: listing.seller_address, operator });
+  if (transfer.ok) {
+    return { isValid: true, checkedAt: new Date() };
+  }
+  return {
+    isValid: false,
+    permanent: transfer.reason === 'token_changed' || transfer.reason === 'not_transferable',
+    reason: transfer.reason === 'ownership_lost' ? 'ownership_lost_onchain' : transfer.reason,
+    checkedAt: new Date(),
+    details: transfer.reason === 'ownership_lost'
+      ? { expectedOwner: listing.seller_address, currentOwner: transfer.detail }
+      : undefined,
+  };
+}
+
+/**
  * Validate listing ownership
  */
 export async function validateListingOwnership(listingId: number): Promise<ValidationResult> {
@@ -136,6 +179,11 @@ export async function validateListingOwnership(listingId: number): Promise<Valid
         reason: 'listing_not_found',
         checkedAt: new Date()
       };
+    }
+
+    // ENSv2 names: the registry decides (token ID, transfer roles, approval)
+    if (listing.ens_version === 2) {
+      return await validateEnsV2Listing(listing);
     }
 
     // 2. Check if seller still owns the name (database check)

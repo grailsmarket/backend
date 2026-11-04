@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { expireMessageAttachments } from '../services/chat-images';
 import { broadcastChatDeletedEvent, broadcastGlobalChatDeletedEvent } from './websocket';
@@ -186,7 +186,7 @@ export async function chatsAdminRoutes(fastify: FastifyInstance) {
           address = q.toLowerCase();
         } else if (ENS_RE.test(q)) {
           const ensResult = await pool.query(
-            `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+            `SELECT owner_address FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
             [q]
           );
           if (ensResult.rows.length === 0) {

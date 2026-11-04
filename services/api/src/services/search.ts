@@ -1,4 +1,4 @@
-import { getElasticsearchClient, config } from '../../../shared/src';
+import { getElasticsearchClient, config, esExpiryPhaseQuery } from '../../../shared/src';
 
 interface SearchQuery {
   q: string;
@@ -114,9 +114,9 @@ export async function searchNames(query: SearchQuery) {
     // Expiration filters - use dynamic date calculations instead of stale ES boolean fields
     // ENS expiration states:
     // - Not expired: expiry_date > now
-    // - Expired (grace period): expiry_date <= now AND expiry_date > now - 90 days
-    // - Expired (premium period): expiry_date <= now - 90 days AND expiry_date > now - 111 days
-    // - Fully expired: expiry_date <= now - 111 days
+    // - Grace period: expired, within 90 days of expiry (v1) or 28 days (ENSv2)
+    // - Premium period: the 21 days after grace
+    // - Available: after that (see shared/src/utils/expiry-phase.ts)
     if (query.filters.isExpired !== undefined) {
       filter.push({ exists: { field: 'expiry_date' } });
       if (query.filters.isExpired) {
@@ -131,38 +131,18 @@ export async function searchNames(query: SearchQuery) {
     if (query.filters.isGracePeriod !== undefined) {
       filter.push({ exists: { field: 'expiry_date' } });
       if (query.filters.isGracePeriod) {
-        // In grace period: expired but within 90 days of expiry
-        filter.push({ range: { expiry_date: { lte: 'now', gt: 'now-90d' } } });
+        filter.push(esExpiryPhaseQuery('grace'));
       } else {
-        // Not in grace period: either not expired OR past grace period
-        filter.push({
-          bool: {
-            should: [
-              { range: { expiry_date: { gt: 'now' } } },  // Not expired
-              { range: { expiry_date: { lte: 'now-90d' } } }  // Past grace period
-            ],
-            minimum_should_match: 1
-          }
-        });
+        filter.push({ bool: { must_not: [esExpiryPhaseQuery('grace')] } });
       }
     }
 
     if (query.filters.isPremiumPeriod !== undefined) {
       filter.push({ exists: { field: 'expiry_date' } });
       if (query.filters.isPremiumPeriod) {
-        // In premium period: 90-111 days after expiry (21 day Dutch auction)
-        filter.push({ range: { expiry_date: { lte: 'now-90d', gt: 'now-111d' } } });
+        filter.push(esExpiryPhaseQuery('premium'));
       } else {
-        // Not in premium period: not expired, in grace period, or fully expired
-        filter.push({
-          bool: {
-            should: [
-              { range: { expiry_date: { gt: 'now-90d' } } },  // Not expired or in grace
-              { range: { expiry_date: { lte: 'now-111d' } } }  // Past premium period
-            ],
-            minimum_should_match: 1
-          }
-        });
+        filter.push({ bool: { must_not: [esExpiryPhaseQuery('premium')] } });
       }
     }
 

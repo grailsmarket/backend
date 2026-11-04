@@ -43,8 +43,22 @@ export interface ENSName {
   name: string;
   label_name?: string;
   token_id: string;
+  /** 1 = ENS v1 (BaseRegistrar/NameWrapper), 2 = ENSv2 ETHRegistry */
+  version?: 1 | 2;
+  /** Contract of token_id for v2 names (the ETHRegistry); null for v1 names */
+  token_contract?: string | null;
   owner: string | null;
   expiry_date: string | null;
+  /**
+   * Registration phase when the response was built: registered, grace, premium or available.
+   * Grace is 90 days for v1 names and 28 days for v2 names; premium is the 21 days after.
+   * Null for subnames.
+   */
+  registration_status?: 'registered' | 'grace' | 'premium' | 'available' | null;
+  /** When the grace period ends (the owner can no longer renew). Null without an expiry. */
+  grace_ends_at?: string | null;
+  /** When the premium period ends and the name costs only the base price. Null without an expiry. */
+  premium_ends_at?: string | null;
   registration_date: string | null;
   creation_date: string | null;
   last_sale_date: string | null;

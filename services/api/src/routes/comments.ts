@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { requireAuth, requireAdmin, optionalAuth } from '../middleware/auth';
 import {
   sanitizeCommentBody,
@@ -224,7 +224,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
       const { name, cursor, limit } = ListCommentsQuerySchema.parse(request.query);
 
       const ensResult = await pool.query(
-        `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+        `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
         [name]
       );
       if (ensResult.rows.length === 0) {
@@ -345,6 +345,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
           `SELECT c.id,
                   c.ens_name_id,
                   en.name AS name,
+                  en.ens_version AS version,
                   COALESCE(c.body_censored, c.body) AS body,
                   c.created_at,
                   u.address AS author_address,
@@ -423,7 +424,7 @@ export async function commentsRoutes(fastify: FastifyInstance) {
         }
 
         const ensResult = await pool.query(
-          `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+          `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
           [body.name]
         );
         if (ensResult.rows.length === 0) {

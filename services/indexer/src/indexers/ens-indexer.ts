@@ -7,9 +7,8 @@ import {
   type PublicClient,
   parseAbi,
 } from 'viem';
-import { mainnet } from 'viem/chains';
 import PQueue from 'p-queue';
-import { config, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize } from '../../../shared/src';
+import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize, isEnsV2Name } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
@@ -53,6 +52,10 @@ const CONTROLLER_FUNCTION_ABI = parseAbi([
   'function renewAll(string[] names, uint256 duration)',
 ]);
 
+const BASE_REGISTRAR_EXPIRY_ABI = parseAbi([
+  'function nameExpires(uint256 id) view returns (uint256)',
+]);
+
 // Name Wrapper ABI (ERC-1155 for wrapped names)
 const NAME_WRAPPER_ABI = parseAbi([
   'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
@@ -90,10 +93,23 @@ export class ENSIndexer {
   private currentBlock = 0n;
   private readonly batchSize = 100; // Reduced for better RPC compatibility
   private readonly confirmations = BigInt(config.blockchain.confirmations);
+  // ENSv2 migration moves v1 tokens to a migration controller and on to the Graveyard, and the
+  // Graveyard re-registers expired, never-migrated v1 names to itself. None of these are
+  // ownership changes: the migrated name's owner comes from the v2 ETHRegistry LabelRegistered
+  // event (EnsV2Indexer). Empty when ENSv2 isn't configured for this chain.
+  private readonly ensv2MigrationAddresses = new Set(
+    config.blockchain.ensv2
+      ? [
+          config.blockchain.ensv2.unlockedMigrationControllerAddress,
+          config.blockchain.ensv2.lockedMigrationControllerAddress,
+          config.blockchain.ensv2.graveyardAddress,
+        ].map(a => a.toLowerCase())
+      : []
+  );
 
   constructor() {
     this.client = createPublicClient({
-      chain: mainnet,
+      chain: viemChain,
       transport: http(config.blockchain.rpcUrl),
     });
     this.queue = new PQueue({ concurrency: 5 });
@@ -177,11 +193,13 @@ export class ENSIndexer {
       toBlock,
     });
 
-    const eventEmitterLogs = await this.client.getLogs({
-      address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
-      fromBlock,
-      toBlock,
-    });
+    const eventEmitterLogs = config.blockchain.ensBulkRenewalEventEmitter
+      ? await this.client.getLogs({
+          address: config.blockchain.ensBulkRenewalEventEmitter as `0x${string}`,
+          fromBlock,
+          toBlock,
+        })
+      : [];
 
     // Merge all logs and sort by (blockNumber, logIndex) to preserve Ethereum execution order.
     // Within a renewal transaction, the Base Registrar NameRenewed event fires BEFORE the Controller
@@ -334,6 +352,11 @@ export class ENSIndexer {
       return;
     }
 
+    if (this.isEnsV2MigrationMove(from, to)) {
+      logger.debug(`Name Wrapper transfer of token ${tokenIdStr} ${from} -> ${to} is part of an ENSv2 migration, skipping`);
+      return;
+    }
+
     logger.info(`Name Wrapper transfer: token ${tokenIdStr} from ${from} to ${to}`);
 
     let ensNameId: number | null = null;
@@ -466,7 +489,7 @@ export class ENSIndexer {
         SELECT id, $2, $3, $4, $5, 'transfer', $6
         FROM ens_names
         WHERE name = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
       // Use the resolved name to find the record
@@ -753,6 +776,18 @@ export class ENSIndexer {
     const fullName = `${name}.eth`;
     const expiryDate = new Date(Number(expires) * 1000);
 
+    // ETHRenewerV1.syncWrapper() calls the wrapped controller's renew with a duration of 0, which
+    // emits NameRenewed with cost 0 and an unchanged expiry. That isn't a renewal, so skip it.
+    // A real ENSv2 renewal of a wrapped name also emits a cost-0 event here, but its expiry has
+    // already moved in the same tx, so it's kept (the ENSv2 indexer fills in the real cost).
+    if (BigInt(cost) === 0n && log.blockNumber) {
+      const labelhash = isV2 ? args.labelhash : args.label;
+      if (await this.isExpiryUnchanged(labelhash, BigInt(expires), log.blockNumber)) {
+        logger.debug(`Controller NameRenewed: ${fullName} cost 0 with unchanged expiry (syncWrapper), skipping (tx ${log.transactionHash})`);
+        return;
+      }
+    }
+
     // Get block timestamp for renewal date
     let renewalDate: Date;
     try {
@@ -813,7 +848,7 @@ export class ENSIndexer {
         const insertResult = await this.pool.query(
           `INSERT INTO ens_names (token_id, name, owner_address, expiry_date, has_numbers, has_emoji)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (name) DO UPDATE SET
+           ON CONFLICT (name) WHERE name NOT LIKE 'token-%' AND name NOT LIKE '#%' AND name NOT LIKE '[%].eth' DO UPDATE SET
              expiry_date = COALESCE(EXCLUDED.expiry_date, ens_names.expiry_date),
              updated_at = NOW()
            RETURNING id`,
@@ -849,7 +884,10 @@ export class ENSIndexer {
               THEN EXCLUDED.duration_seconds
             ELSE renewals.duration_seconds
           END,
-          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)`,
+          referrer = COALESCE(EXCLUDED.referrer, renewals.referrer)
+        -- An ENSv2 ETHRenewerV1 renewal also emits this controller event with cost 0. The
+        -- ENSv2 indexer's row has the real cost and payment token, so leave it alone.
+        WHERE renewals.metadata->>'ens_version' IS DISTINCT FROM '2'`,
         [
           ensNameId,
           renewerAddress,
@@ -871,7 +909,7 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, ${config.blockchain.chainId}, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
           WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
@@ -990,7 +1028,7 @@ export class ENSIndexer {
         const insertResult = await this.pool.query(
           `INSERT INTO ens_names (token_id, name, owner_address, has_numbers, has_emoji)
            VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (name) DO UPDATE SET
+           ON CONFLICT (name) WHERE name NOT LIKE 'token-%' AND name NOT LIKE '#%' AND name NOT LIKE '[%].eth' DO UPDATE SET
              updated_at = NOW()
            RETURNING id`,
           [tokenIdStr, fullName, renewerAddress, attributes.has_numbers, attributes.has_emoji]
@@ -1037,7 +1075,7 @@ export class ENSIndexer {
         `INSERT INTO activity_history (
           ens_name_id, event_type, actor_address, platform,
           chain_id, price_wei, transaction_hash, block_number, metadata, created_at
-        ) SELECT $1, 'renewal', $2, $3, 1, $4, $5::varchar, $6, $7, $8
+        ) SELECT $1, 'renewal', $2, $3, ${config.blockchain.chainId}, $4, $5::varchar, $6, $7, $8
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_history
           WHERE ens_name_id = $1 AND event_type = 'renewal' AND transaction_hash = $5::varchar
@@ -1184,11 +1222,34 @@ export class ENSIndexer {
     }
   }
 
+  private isEnsV2MigrationMove(...addresses: string[]): boolean {
+    return addresses.some(a => this.ensv2MigrationAddresses.has(a.toLowerCase()));
+  }
+
+  /**
+   * A name that has moved to ENSv2 is owned by its ETHRegistry token; its old v1 token no
+   * longer says anything about it. The case that matters is the Graveyard reclaiming an
+   * expired v1 name: BaseRegistrar.register() burns the old token (old owner -> 0x0, or
+   * NameWrapper -> 0x0 if it was wrapped) before minting it to the Graveyard. Only the mint
+   * involves the Graveyard, so the burn reaches the transfer handler, and if the name was
+   * already re-registered on v2 it would overwrite the v2 row's owner and token_id.
+   */
+  private async isNowEnsV2(name: string, tokenIdStr: string): Promise<boolean> {
+    if (!(await isEnsV2Name(name))) return false;
+    logger.info(`Transfer of v1 token ${tokenIdStr}: ${name} is now an ENSv2 name, ignoring`);
+    return true;
+  }
+
   private async handleTransfer(args: any, log: Log) {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
+
+    if (this.isEnsV2MigrationMove(from, to)) {
+      logger.debug(`Transfer of token ${tokenIdStr} ${from} -> ${to} is part of an ENSv2 migration, skipping`);
+      return;
+    }
     const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+    const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
     let ensNameId: number | null = null;
     let resolvedOwner: string | null = null;
@@ -1213,6 +1274,9 @@ export class ENSIndexer {
         // Require successful resolution for Name Wrapper transfers
         if (!resolvedData || !resolvedData.name) {
           logger.warn(`Could not resolve Name Wrapper transfer from The Graph for token ${tokenIdStr}, skipping Transfer event`);
+          return;
+        }
+        if (await this.isNowEnsV2(resolvedData.name, tokenIdStr)) {
           return;
         }
 
@@ -1310,6 +1374,10 @@ export class ENSIndexer {
             logger.warn(`Could not resolve name for unwrapped transfer token ${tokenIdStr}, skipping Transfer event`);
             return;
           }
+        }
+
+        if (await this.isNowEnsV2(nameToStore, tokenIdStr)) {
+          return;
         }
 
         // For standard transfers, use the 'to' address as owner
@@ -1440,7 +1508,7 @@ export class ENSIndexer {
         SELECT id, $2, $3, $4, $5, 'transfer', $6
         FROM ens_names
         WHERE token_id = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
       await this.pool.query(txQuery, [
@@ -1464,7 +1532,12 @@ export class ENSIndexer {
   private async handleNameRegistered(args: any, log: Log) {
     const { id: tokenId, owner, expires } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
-    const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+
+    if (this.isEnsV2MigrationMove(owner)) {
+      logger.debug(`NameRegistered of token ${tokenIdStr} to ${owner} is a Graveyard re-registration, skipping`);
+      return;
+    }
+    const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
     // Set defaults outside try block so they're available for transaction logging
     let correctTokenId = tokenIdStr;
@@ -1739,7 +1812,7 @@ export class ENSIndexer {
               'mint',
               actualMinter,
               mintPlatform,
-              1,
+              config.blockchain.chainId,
               log.transactionHash || null,
               log.blockNumber?.toString() || null,
               mintPriceWei,
@@ -1774,7 +1847,7 @@ export class ENSIndexer {
       )
       SELECT id, $2, $3, $4, $4, 'registration', $5
       FROM ens_names WHERE token_id = $1
-      ON CONFLICT (transaction_hash) DO NOTHING
+      ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
     `;
 
     try {
@@ -1799,6 +1872,26 @@ export class ENSIndexer {
         err: error,
         tokenId: correctTokenId
       }, 'Failed to insert registration transaction');
+    }
+  }
+
+  /**
+   * True when a name's BaseRegistrar expiry before this block already equals `expires`, i.e. the
+   * event didn't extend anything. On an RPC error, returns false so the event is still recorded.
+   */
+  private async isExpiryUnchanged(labelhash: unknown, expires: bigint, blockNumber: bigint): Promise<boolean> {
+    try {
+      const before = await this.client.readContract({
+        address: config.blockchain.ensRegistrarAddress as `0x${string}`,
+        abi: BASE_REGISTRAR_EXPIRY_ABI,
+        functionName: 'nameExpires',
+        args: [BigInt(labelhash as string | bigint)],
+        blockNumber: blockNumber - 1n,
+      });
+      return before === expires;
+    } catch (error: any) {
+      logger.warn(`Could not read prior expiry for labelhash ${String(labelhash)}: ${error.message}`);
+      return false;
     }
   }
 
@@ -1858,7 +1951,7 @@ export class ENSIndexer {
         )
         SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
         FROM ens_names WHERE name = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `
       : `
         INSERT INTO transactions (
@@ -1867,7 +1960,7 @@ export class ENSIndexer {
         )
         SELECT id, $2, $3, owner_address, owner_address, 'renewal', $4
         FROM ens_names WHERE token_id = $1
-        ON CONFLICT (transaction_hash) DO NOTHING
+        ON CONFLICT (transaction_hash, ens_name_id) DO NOTHING
       `;
 
     await this.pool.query(txQuery, [

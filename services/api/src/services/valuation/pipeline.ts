@@ -3,6 +3,7 @@ import { normalize } from 'viem/ens';
 import {
   getPostgresPool,
   hasEmoji,
+  isEthOrWeth,
   config as appConfig,
   fetchKeywordMetrics,
   hasRealData,
@@ -830,7 +831,10 @@ function isPremiumRegistration(
 }
 
 function isMintEvent(activity: ValuationActivitySale): activity is ValuationMintEvent {
-  return activity.event_type === 'mint';
+  // Registration costs here are read as ETH wei. ENSv2 registrations are paid in stablecoins
+  // (price_wei and the *_wei metadata are in that token's units), so only ETH-priced mints
+  // (v1: no currency or native ETH) count as registration evidence.
+  return activity.event_type === 'mint' && (!activity.currency_address || isEthOrWeth(activity.currency_address));
 }
 
 function readWei(value: unknown): bigint {

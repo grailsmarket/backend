@@ -1,6 +1,5 @@
 import { createPublicClient, http, formatEther, parseAbi, keccak256, toBytes } from 'viem';
-import { mainnet } from 'viem/chains';
-import { config } from '../../../shared/src';
+import { viemChain, config } from '../../../shared/src';
 
 const OLD_REGISTRAR = '0x6090a6e47849629b7245dfa1ca21d94cd15878ef';
 const RECLAIM_SUBGRAPH_ID = '8zhr2kf1ka6B4sLmuhEzo8gQ7FTjay6DXQrefmRtNb8W';
@@ -118,8 +117,13 @@ async function getDeedAddressFromRegistrar(
 }
 
 export async function fetchUnclaimedDeposits(address: string): Promise<UnclaimedDepositsResult> {
+  // The old (Vickrey) registrar only ever existed on mainnet
+  if (!config.features.unclaimedDeposits) {
+    return { address, deeds: [], totalUnclaimedEth: '0', totalUnclaimedWei: '0' };
+  }
+
   const client = createPublicClient({
-    chain: mainnet,
+    chain: viemChain,
     transport: http(config.blockchain.rpcUrl),
   });
 

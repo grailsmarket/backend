@@ -3,12 +3,11 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { SiweMessage, SiweError } from 'siwe';
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
-import { getPostgresPool, config, type APIResponse } from '../../../shared/src';
+import { viemChain, getPostgresPool, config, type APIResponse } from '../../../shared/src';
 import { generateToken, requireAuth } from '../middleware/auth';
 
 const publicClient = createPublicClient({
-  chain: mainnet,
+  chain: viemChain,
   transport: http(config.blockchain.rpcUrl),
 });
 
@@ -425,6 +424,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           notifyOnListingSold: user.notify_on_listing_sold,
           notifyOnCommentReceived: user.notify_on_comment_received,
           minOfferThreshold: user.min_offer_threshold != null ? parseFloat(user.min_offer_threshold) : null,
+          preferredResolver: user.preferred_resolver ?? null,
           createdAt: user.created_at,
           updatedAt: user.updated_at,
           lastSignIn: user.last_sign_in,

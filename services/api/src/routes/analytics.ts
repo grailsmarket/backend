@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, CURRENCY_ADDRESSES, getRegistrationSource, sqlWithinGracePeriod } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 import { REGISTRATION_NAME_BLOCKLIST } from '../config/name-blocklist';
 import { buildClubsCondition, parseClubsFilter } from '../utils/club-filter';
+import { applyCompromisedToListingRows, applyCompromisedToOfferRows } from '../services/compromised-names';
 
 const TimeRangeSchema = z.object({
   period: z.enum(['24h', '7d', '30d', '90d', 'all']).default('7d'),
@@ -77,7 +78,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
     const [totalNamesResult, activeListingsResult, activeOffersResult, totalWatchersResult, totalViewsResult, volumeResult, activityResult] = await Promise.all([
       // Individual stats queries (avoids cartesian product from JOINs)
-      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR expiry_date + INTERVAL '90 days' > NOW()`),
+      pool.query(`SELECT COUNT(*) as total_names FROM ens_names WHERE expiry_date IS NULL OR ${sqlWithinGracePeriod('')}`),
       pool.query(`SELECT COUNT(*) as active_listings FROM listings WHERE status = 'active'`),
       pool.query(`SELECT COUNT(*) as active_offers FROM offers WHERE status IN ('pending', 'active')`),
       pool.query(`SELECT COUNT(DISTINCT user_id) as total_watchers FROM watchlist`),
@@ -471,7 +472,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
     // Sort column mapping
     const sortColumnMap: Record<string, string> = {
-      cost: 'r.total_cost_wei::numeric',
+      // USD, so ETH (v1) and stablecoin (v2) registrations compare; rows without a USD value
+      // (before price history) sort last
+      cost: 'r.total_cost_usd',
       date: 'r.registration_date',
       length: 'r.name_length',
     };
@@ -520,13 +523,15 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           needsJoin
             ? `SELECT
                 COUNT(*) as registration_count,
-                SUM(r.base_cost_wei::numeric) as total_base_cost_wei,
-                SUM(r.premium_wei::numeric) as total_premium_wei,
-                SUM(r.total_cost_wei::numeric) as total_cost_wei,
-                AVG(r.base_cost_wei::numeric) as avg_base_cost_wei,
-                AVG(r.premium_wei::numeric) as avg_premium_wei,
-                AVG(r.total_cost_wei::numeric) as avg_cost_wei,
+                SUM(r.base_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_base_cost_wei,
+                SUM(r.premium_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_premium_wei,
+                SUM(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_cost_wei,
+                AVG(r.base_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_base_cost_wei,
+                AVG(r.premium_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_premium_wei,
+                AVG(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_cost_wei,
                 COUNT(*) FILTER (WHERE r.premium_wei::numeric > 0) as premium_registrations,
+                SUM(r.total_cost_usd) as total_cost_usd,
+                AVG(r.total_cost_usd) as avg_cost_usd,
                 COUNT(DISTINCT r.registrant_address) as unique_registrants
               FROM registrations r
               JOIN ens_names en ON r.ens_name_id = en.id
@@ -534,13 +539,15 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
               ${summaryFilterClause}`
             : `SELECT
                 COUNT(*) as registration_count,
-                SUM(base_cost_wei::numeric) as total_base_cost_wei,
-                SUM(premium_wei::numeric) as total_premium_wei,
-                SUM(total_cost_wei::numeric) as total_cost_wei,
-                AVG(base_cost_wei::numeric) as avg_base_cost_wei,
-                AVG(premium_wei::numeric) as avg_premium_wei,
-                AVG(total_cost_wei::numeric) as avg_cost_wei,
+                SUM(base_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as total_base_cost_wei,
+                SUM(premium_wei::numeric) FILTER (WHERE currency_address IS NULL) as total_premium_wei,
+                SUM(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as total_cost_wei,
+                AVG(base_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_base_cost_wei,
+                AVG(premium_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_premium_wei,
+                AVG(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_cost_wei,
                 COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_registrations,
+                SUM(total_cost_usd) as total_cost_usd,
+                AVG(total_cost_usd) as avg_cost_usd,
                 COUNT(DISTINCT registrant_address) as unique_registrants
               FROM registrations
               WHERE registration_date > NOW() - INTERVAL '${interval}'`,
@@ -553,10 +560,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             ? `SELECT
                 r.name_length,
                 COUNT(*) as count,
-                SUM(r.total_cost_wei::numeric) as total_cost_wei,
-                AVG(r.total_cost_wei::numeric) as avg_cost_wei,
-                AVG(r.base_cost_wei::numeric) as avg_base_cost_wei,
-                AVG(r.premium_wei::numeric) as avg_premium_wei
+                SUM(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as total_cost_wei,
+                AVG(r.total_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_cost_wei,
+                AVG(r.base_cost_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_base_cost_wei,
+                AVG(r.premium_wei::numeric) FILTER (WHERE r.currency_address IS NULL) as avg_premium_wei,
+                SUM(r.total_cost_usd) as total_cost_usd,
+                AVG(r.total_cost_usd) as avg_cost_usd
               FROM registrations r
               JOIN ens_names en ON r.ens_name_id = en.id
               WHERE r.registration_date > NOW() - INTERVAL '${interval}'
@@ -566,10 +575,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             : `SELECT
                 name_length,
                 COUNT(*) as count,
-                SUM(total_cost_wei::numeric) as total_cost_wei,
-                AVG(total_cost_wei::numeric) as avg_cost_wei,
-                AVG(base_cost_wei::numeric) as avg_base_cost_wei,
-                AVG(premium_wei::numeric) as avg_premium_wei
+                SUM(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as total_cost_wei,
+                AVG(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_cost_wei,
+                AVG(base_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_base_cost_wei,
+                AVG(premium_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_premium_wei,
+                SUM(total_cost_usd) as total_cost_usd,
+                AVG(total_cost_usd) as avg_cost_usd
               FROM registrations
               WHERE registration_date > NOW() - INTERVAL '${interval}'
               GROUP BY name_length
@@ -582,11 +593,15 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             r.id,
             en.name,
+            en.ens_version AS version,
+            en.token_id,
             r.registrant_address,
             en.owner_address,
             r.base_cost_wei,
             r.premium_wei,
             r.total_cost_wei,
+            r.currency_address,
+            r.total_cost_usd,
             r.name_length,
             r.registration_date,
             en.clubs,
@@ -595,7 +610,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           JOIN ens_names en ON r.ens_name_id = en.id
           WHERE r.registration_date > NOW() - INTERVAL '${interval}'
           ${dataFilterClause}
-          ORDER BY ${orderByColumn} ${orderDirection}
+          ORDER BY ${orderByColumn} ${orderDirection} NULLS LAST
           LIMIT $1 OFFSET $2`,
           dataParams
         ),
@@ -634,6 +649,9 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             avg_cost_wei: stats.avg_cost_wei || '0',
             premium_registrations: parseInt(stats.premium_registrations || '0'),
             unique_registrants: parseInt(stats.unique_registrants || '0'),
+            // *_wei figures cover ETH-paid registrations only; USD covers every registration
+            total_cost_usd: stats.total_cost_usd || '0',
+            avg_cost_usd: stats.avg_cost_usd || '0',
           },
           by_length: byLength.map(row => ({
             name_length: row.name_length,
@@ -642,15 +660,23 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             avg_cost_wei: row.avg_cost_wei || '0',
             avg_base_cost_wei: row.avg_base_cost_wei || '0',
             avg_premium_wei: row.avg_premium_wei || '0',
+            total_cost_usd: row.total_cost_usd || '0',
+            avg_cost_usd: row.avg_cost_usd || '0',
           })),
           results: dataResult.rows.map(row => ({
             id: row.id,
             name: row.name,
+            version: row.version,
+            // Current tradeable token ID; v2 names need it to load their image
+            token_id: row.token_id,
             registrant_address: row.registrant_address,
             owner_address: row.owner_address,
             base_cost_wei: row.base_cost_wei,
             premium_wei: row.premium_wei,
             total_cost_wei: row.total_cost_wei,
+            // NULL = paid in ETH (v1); otherwise the ERC20 the *_wei amounts are denominated in
+            currency_address: row.currency_address,
+            total_cost_usd: row.total_cost_usd,
             name_length: row.name_length,
             registration_date: row.registration_date,
             clubs: row.clubs || [],
@@ -708,14 +734,16 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         `SELECT
           name_length,
           COUNT(*) as count,
-          SUM(total_cost_wei::numeric) as total_cost_wei,
-          AVG(total_cost_wei::numeric) as avg_cost_wei,
-          AVG(base_cost_wei::numeric) as avg_base_cost_wei,
-          AVG(premium_wei::numeric) as avg_premium_wei,
-          MIN(total_cost_wei::numeric) as min_cost_wei,
-          MAX(total_cost_wei::numeric) as max_cost_wei,
+          SUM(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as total_cost_wei,
+          AVG(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_cost_wei,
+          AVG(base_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_base_cost_wei,
+          AVG(premium_wei::numeric) FILTER (WHERE currency_address IS NULL) as avg_premium_wei,
+          MIN(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as min_cost_wei,
+          MAX(total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as max_cost_wei,
           COUNT(*) FILTER (WHERE premium_wei::numeric > 0) as premium_count,
-          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_cost_wei::numeric) as median_cost_wei
+          SUM(total_cost_usd) as total_cost_usd,
+          AVG(total_cost_usd) as avg_cost_usd,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_cost_wei::numeric) FILTER (WHERE currency_address IS NULL) as median_cost_wei
         FROM registrations
         WHERE registration_date > NOW() - INTERVAL '${interval}'
         GROUP BY name_length
@@ -737,6 +765,8 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
             max_cost_wei: row.max_cost_wei || '0',
             median_cost_wei: row.median_cost_wei || '0',
             premium_count: parseInt(row.premium_count || '0'),
+            total_cost_usd: row.total_cost_usd || '0',
+            avg_cost_usd: row.avg_cost_usd || '0',
           })),
         },
         meta: {
@@ -806,6 +836,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             s.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM sales s
@@ -915,6 +946,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             l.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM listings l
@@ -941,7 +973,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          results: dataResult.rows,
+          results: await applyCompromisedToListingRows(dataResult.rows),
           pagination: {
             page,
             limit,
@@ -1024,6 +1056,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
           `SELECT
             o.*,
             en.name,
+            en.ens_version AS version,
             en.token_id,
             en.clubs
           FROM offers o
@@ -1050,7 +1083,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       const response: APIResponse = {
         success: true,
         data: {
-          results: dataResult.rows,
+          results: await applyCompromisedToOfferRows(dataResult.rows),
           pagination: {
             page,
             limit,

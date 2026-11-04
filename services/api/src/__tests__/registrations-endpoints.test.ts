@@ -37,6 +37,12 @@ interface RegistrationAnalyticsResponse {
     period: string;
     summary: RegistrationSummary;
     by_length: RegistrationByLength[];
+    results: Array<{
+      id: number;
+      name: string;
+      version: number;
+      token_id: string;
+    }>;
   };
   meta: {
     timestamp: string;
@@ -167,6 +173,18 @@ describe('Registration Endpoints', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.period).toBe('all');
+    });
+
+    it('should include token_id in results (v2 names need it for images)', async () => {
+      const result = await fetchEndpoint<RegistrationAnalyticsResponse>('/analytics/registrations?period=all&limit=5');
+
+      expect(result.success).toBe(true);
+      expect(result.data.results).toBeInstanceOf(Array);
+      for (const registration of result.data.results) {
+        expect(typeof registration.name).toBe('string');
+        expect(typeof registration.token_id).toBe('string');
+        expect(registration.token_id.length).toBeGreaterThan(0);
+      }
     });
 
     it('should return breakdown by name length', async () => {

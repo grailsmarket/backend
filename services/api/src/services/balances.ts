@@ -1,10 +1,10 @@
 import { ethers } from 'ethers';
 import { config } from '../../../shared/src';
 
-const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
-const WETH_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
-const USDC_ADDRESS = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
-const ENS_ADDRESS = '0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72';
+const MULTICALL3_ADDRESS = config.blockchain.multicall3Address;
+const WETH_ADDRESS = config.blockchain.wethAddress;
+const USDC_ADDRESS = config.blockchain.usdcAddress;
+const ENS_ADDRESS = config.blockchain.ensTokenAddress;
 
 const MULTICALL3_ABI = [
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[] returnData)',
@@ -47,8 +47,8 @@ export async function fetchBalances(address: string): Promise<BalancesResult> {
     { target: WETH_ADDRESS, allowFailure: true, callData: encodeBalanceOf(address) },
     // USDC
     { target: USDC_ADDRESS, allowFailure: true, callData: encodeBalanceOf(address) },
-    // ENS
-    { target: ENS_ADDRESS, allowFailure: true, callData: encodeBalanceOf(address) },
+    // ENS token (not deployed on every chain; reported as zero balance)
+    ...(ENS_ADDRESS ? [{ target: ENS_ADDRESS, allowFailure: true, callData: encodeBalanceOf(address) }] : []),
   ];
 
   const results = await multicall.aggregate3.staticCall(calls);
@@ -66,7 +66,7 @@ export async function fetchBalances(address: string): Promise<BalancesResult> {
   const ethWei = parseBalance(results[0]);
   const wethWei = parseBalance(results[1]);
   const usdcWei = parseBalance(results[2]);
-  const ensWei = parseBalance(results[3]);
+  const ensWei = ENS_ADDRESS ? parseBalance(results[3]) : 0n;
 
   return {
     eth: {

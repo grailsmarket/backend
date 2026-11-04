@@ -7,6 +7,7 @@ import {
 } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
 import { requireAuth } from '../middleware/auth';
+import { checkOrderForTokenId } from '../services/ensv2-orders';
 
 const CreateBrokeredListingSchema = z.object({
   token_id: z.string(),
@@ -115,22 +116,46 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Look up the ENS name by token_id - it must already exist in the database
-      const ensQuery = `SELECT id, name FROM ens_names WHERE token_id = $1 LIMIT 1`;
-      const ensResult = await pool.query(ensQuery, [body.token_id]);
-
-      if (ensResult.rows.length === 0) {
-        return reply.status(404).send({
+      // ENSv2 names: the order must trade the name's current ETHRegistry token and be fillable
+      const v2Check = await checkOrderForTokenId({
+        tokenId: body.token_id,
+        orderData: body.order_data,
+        side: 'listing',
+        seller: body.seller_address,
+      });
+      if (v2Check && !v2Check.ok) {
+        return reply.status(v2Check.status).send({
           success: false,
-          error: {
-            code: 'ENS_NAME_NOT_FOUND',
-            message: `ENS name with token_id "${body.token_id}" not found`,
-          },
+          error: { code: v2Check.code, message: v2Check.message },
           meta: { timestamp: new Date().toISOString() },
         });
       }
 
-      const ensNameId = ensResult.rows[0].id;
+      let ensNameId: number;
+      let ensName: string;
+      if (v2Check?.ok && v2Check.ensNameId) {
+        ensNameId = v2Check.ensNameId;
+        const nameResult = await pool.query('SELECT name FROM ens_names WHERE id = $1', [ensNameId]);
+        ensName = nameResult.rows[0].name;
+      } else {
+        // Look up the ENS name by token_id - it must already exist in the database
+        const ensQuery = `SELECT id, name FROM ens_names WHERE token_id = $1 LIMIT 1`;
+        const ensResult = await pool.query(ensQuery, [body.token_id]);
+
+        if (ensResult.rows.length === 0) {
+          return reply.status(404).send({
+            success: false,
+            error: {
+              code: 'ENS_NAME_NOT_FOUND',
+              message: `ENS name with token_id "${body.token_id}" not found`,
+            },
+            meta: { timestamp: new Date().toISOString() },
+          });
+        }
+
+        ensNameId = ensResult.rows[0].id;
+        ensName = ensResult.rows[0].name;
+      }
 
       // Parse order data to get expiry time
       const orderData = JSON.parse(body.order_data);
@@ -202,7 +227,7 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
       // Use ENS name data from the initial query
       const responseData = {
         ...listing,
-        ens_name: ensResult.rows[0].name,
+        ens_name: ensName,
         token_id: body.token_id,
       };
 

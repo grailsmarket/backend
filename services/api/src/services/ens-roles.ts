@@ -1,8 +1,19 @@
-import { config } from '../../../shared/src';
+import { createPublicClient, http } from 'viem';
+import {
+  config,
+  viemChain,
+  getPostgresPool,
+  isEnsV2Name,
+  ensV2LabelId,
+  getEnsV2State,
+  getEnsV2Resolver,
+  checkEnsV2Transferable,
+  EnsV2Status,
+} from '../../../shared/src';
 import { logger } from '../utils/logger';
 
-// Name Wrapper contract address (mainnet)
-const NAME_WRAPPER_ADDRESS = '0xd4416b13d2b3a9abae7acd5d6c2bbdbe25686401';
+// Name Wrapper contract address
+const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
 
 // In-memory cache with TTL (5 minutes)
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -58,6 +69,17 @@ export interface EnsRoles {
   expiryDate: number | null;
   /** Resolver contract address */
   resolver: string | null;
+  /** 1 = ENS v1 (BaseRegistrar / NameWrapper), 2 = ENSv2 ETHRegistry */
+  ensVersion: 1 | 2;
+  /** v2 only: the current ETHRegistry token ID (changes when roles change) */
+  tokenId?: string;
+  /**
+   * v2 only: whether the owner can transfer (and so sell) the name: the owner holds
+   * ROLE_CAN_TRANSFER_ADMIN, nobody else holds a role on it, and the registry is emancipated.
+   */
+  transferable?: boolean;
+  /** v2 only: why the name can't be transferred, when transferable is false */
+  transferBlocker?: string;
 }
 
 /**
@@ -97,6 +119,24 @@ interface GraphResponse {
     asWrappedOwner?: GraphDomain[];
   };
   errors?: Array<{ message: string }>;
+}
+
+/**
+ * Whether a subgraph domain is wrapped right now.
+ *
+ * The subgraph keeps a name's wrappedDomain / wrappedOwner after its NameWrapper record lapses:
+ * a wrapped name that expired and was re-registered unwrapped still has both (no NameUnwrapped
+ * is ever emitted), pointing at the old wrapper owner. So those fields alone don't mean wrapped.
+ * A wrapped name's registry owner is always the NameWrapper, and for a .eth 2LD the NameWrapper
+ * also holds the registrar token (the registrant).
+ */
+export function isCurrentlyWrapped(
+  domain: Pick<GraphDomain, 'owner' | 'registrant'> & { registration?: GraphRegistration | null }
+): boolean {
+  const registrant = domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
+  if (registrant) return registrant === NAME_WRAPPER_ADDRESS;
+  // Subnames have no registrant: wrapped iff the NameWrapper owns the node in the registry
+  return domain.owner?.id?.toLowerCase() === NAME_WRAPPER_ADDRESS;
 }
 
 /**
@@ -147,6 +187,74 @@ async function querySubgraph<T>(query: string, variables: Record<string, unknown
   return json as T;
 }
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * Roles for a name that lives on the ENSv2 ETHRegistry, read on-chain. The v1 subgraph is
+ * wrong for these: a migrated name's v1 registrant is the Graveyard, and a new v2 name isn't
+ * in it at all. Returns null for names that aren't on v2 (including unmigrated names, which
+ * are only reserved on v2 and are still described correctly by v1).
+ *
+ * A name counts as v2 when the registry says REGISTERED, or when we've indexed it as v2
+ * (an expired v2 name reads as AVAILABLE on-chain but must not fall back to v1 data).
+ */
+async function getEnsV2NameRoles(name: string): Promise<EnsRoles | null> {
+  if (!config.blockchain.ensv2) return null;
+  const labelId = ensV2LabelId(name);
+  if (!labelId) return null;
+
+  let state;
+  try {
+    state = await getEnsV2State(labelId);
+  } catch (error: any) {
+    if (await isEnsV2Name(name)) {
+      // Don't serve v1 data for a v2 name
+      throw error;
+    }
+    logger.warn({ name, error: error?.message }, 'ENSv2 state lookup failed, using v1 roles');
+    return null;
+  }
+
+  if (state.status !== EnsV2Status.REGISTERED && !(await isEnsV2Name(name))) {
+    return null;
+  }
+
+  const label = name.slice(0, -'.eth'.length);
+  const owner = state.latestOwner === ZERO_ADDRESS ? null : state.latestOwner.toLowerCase();
+  const client = createPublicClient({ chain: viemChain, transport: http(config.blockchain.rpcUrl) });
+
+  const [resolver, ethAddress, transfer] = await Promise.all([
+    getEnsV2Resolver(label).catch((error) => {
+      logger.warn({ name, error: error?.message }, 'ENSv2 getResolver failed');
+      return null;
+    }),
+    // Through the UniversalResolver, the same path wallets use
+    client.getEnsAddress({ name }).catch(() => null),
+    owner
+      ? checkEnsV2Transferable({ tokenId: state.tokenId, owner }).catch((error) => {
+          logger.warn({ name, error: error?.message }, 'ENSv2 transfer check failed');
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    name,
+    owner,
+    // v2 has no separate registry "manager": record permissions live on the resolver
+    manager: owner,
+    ethAddress: ethAddress ? ethAddress.toLowerCase() : null,
+    isWrapped: false,
+    fuses: null,
+    expiryDate: state.expiry > 0n ? Number(state.expiry) : null,
+    resolver: resolver && resolver !== ZERO_ADDRESS ? resolver.toLowerCase() : null,
+    ensVersion: 2,
+    tokenId: state.tokenId,
+    transferable: transfer ? transfer.ok : undefined,
+    transferBlocker: transfer && !transfer.ok ? transfer.detail : undefined,
+  };
+}
+
 /**
  * Get roles for a specific ENS name
  * Returns owner, manager, and ETH address along with wrapped state and fuses
@@ -159,6 +267,12 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     logger.debug({ name: normalizedName }, 'Returning cached roles');
     return cached.data;
+  }
+
+  const v2Roles = await getEnsV2NameRoles(normalizedName);
+  if (v2Roles) {
+    rolesCache.set(normalizedName, { data: v2Roles, timestamp: Date.now() });
+    return v2Roles;
   }
 
   const query = `
@@ -190,20 +304,9 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
     return null;
   }
 
-  // Determine if name is wrapped
-  // A name is wrapped if:
-  // 1. The registrant is the NameWrapper contract (for 2LDs like name.eth), OR
-  // 2. wrappedDomain exists (for subnames like sub.name.eth), OR
-  // 3. domain.owner is NameWrapper AND wrappedOwner exists
   const registrant = domain.registrant?.id?.toLowerCase() || domain.registration?.registrant?.id?.toLowerCase();
   const domainOwner = domain.owner?.id?.toLowerCase();
-  const hasWrappedDomain = domain.wrappedDomain !== null;
-  const hasWrappedOwner = domain.wrappedOwner !== null;
-
-  const isWrapped =
-    registrant === NAME_WRAPPER_ADDRESS ||
-    hasWrappedDomain ||
-    (domainOwner === NAME_WRAPPER_ADDRESS && hasWrappedOwner);
+  const isWrapped = isCurrentlyWrapped(domain);
 
   // Determine owner and manager based on wrapped state
   let owner: string | null = null;
@@ -249,6 +352,7 @@ export async function getNameRoles(name: string): Promise<EnsRoles | null> {
     fuses,
     expiryDate,
     resolver: domain.resolver?.address || null,
+    ensVersion: 1,
   };
 
   // Cache the result
@@ -264,6 +368,7 @@ export interface ManageableNameSummary {
   name: string;
   role: 'owner' | 'manager' | 'both';
   isWrapped: boolean;
+  ensVersion: 1 | 2;
 }
 
 /**
@@ -335,6 +440,8 @@ export async function getManageableNames(
       }
       asWrappedOwner: domains(where: { wrappedOwner: $address }, first: 1000) {
         name
+        owner { id }
+        registrant { id }
         wrappedDomain { fuses }
       }
     }
@@ -360,6 +467,7 @@ export async function getManageableNames(
         name: domain.name,
         role: isAlsoOwner ? 'both' : 'manager',
         isWrapped: false,
+        ensVersion: 1,
       });
     }
   }
@@ -379,6 +487,7 @@ export async function getManageableNames(
         name: domain.name,
         role: managerAddress === normalizedAddress ? 'both' : 'owner',
         isWrapped: false,
+        ensVersion: 1,
       });
     }
   }
@@ -386,13 +495,29 @@ export async function getManageableNames(
   // Process names where address is owner (wrapped - wrappedOwner)
   for (const domain of result.data?.asWrappedOwner || []) {
     if (shouldExcludeName(domain.name)) continue;
+    // Leftover wrapper data from a lapsed wrap: this address no longer controls the name
+    if (!isCurrentlyWrapped(domain)) continue;
 
     // For wrapped names, owner and manager are the same
     namesMap.set(domain.name, {
       name: domain.name,
       role: 'both', // Always both for wrapped since manager = owner
       isWrapped: true,
+      ensVersion: 1,
     });
+  }
+
+  // ENSv2 names aren't in the v1 subgraph (and a migrated name's v1 entry belongs to the
+  // Graveyard, so it drops out above): add the v2 names this address owns, from the index.
+  if (config.blockchain.ensv2) {
+    const v2Names = await getPostgresPool().query(
+      'SELECT name FROM ens_names WHERE ens_version = 2 AND owner_address = $1',
+      [normalizedAddress]
+    );
+    for (const row of v2Names.rows) {
+      if (shouldExcludeName(row.name)) continue;
+      namesMap.set(row.name, { name: row.name, role: 'both', isWrapped: false, ensVersion: 2 });
+    }
   }
 
   // Convert to array and sort
