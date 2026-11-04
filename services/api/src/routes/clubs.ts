@@ -486,7 +486,7 @@ export async function clubsRoutes(fastify: FastifyInstance) {
       const namesQuery = `
         SELECT cm.ens_name as name, (en.id IS NOT NULL) as is_registered
         FROM club_memberships cm
-        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
+        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) AND en.name = cm.ens_name
         WHERE cm.club_name = $1
           AND cm.ens_name NOT LIKE '%.%.eth'
           AND cm.ens_name NOT LIKE 'token-%'

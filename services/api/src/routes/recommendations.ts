@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { buildSearchResults } from '../utils/response-builder';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 
@@ -27,7 +27,7 @@ export async function recommendationsRoutes(fastify: FastifyInstance) {
 
     // First, get the ens_name_id for the target name
     const nameResult = await pool.query(
-      'SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)',
+      `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
       [query.name]
     );
 

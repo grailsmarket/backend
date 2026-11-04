@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { getPostgresPool, getElasticsearchClient, config, type APIResponse, sqlExpiryPhase, sqlWithinGracePeriod } from '../../../shared/src';
+import { getPostgresPool, getElasticsearchClient, config, type APIResponse, sqlExpiryPhase, sqlWithinGracePeriod, ensNameIdForName } from '../../../shared/src';
 import { buildSearchResults, createUnregisteredPlaceholder, registrationFields, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
+import { getNonNormalizedNames } from '../services/non-normalized-names';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
 import { z } from 'zod';
 
@@ -268,7 +269,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
           const resolveQuery = `
             SELECT owner_address
             FROM ens_names
-            WHERE LOWER(name) = LOWER($1)
+            WHERE id = ${ensNameIdForName('$1')}
           `;
           const resolveResult = await pool.query(resolveQuery, [owner]);
 
@@ -587,6 +588,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Exclude placeholder names (token-* and [hash].eth)
       whereConditions.push(`${nameCol} NOT LIKE 'token-%'`);
       whereConditions.push(`${nameCol} NOT LIKE '[%'`);
+
+      // Hide non-normalized names (e.g. "Jesse.eth"), matching the Elasticsearch path.
+      // Kept for owner-filtered queries so a profile still shows what the wallet holds.
+      if (!resolvedOwnerAddress) {
+        const nonNormalizedNames = await getNonNormalizedNames();
+        if (nonNormalizedNames.length > 0) {
+          whereConditions.push(`NOT (${nameCol} = ANY($${paramCount}::text[]))`);
+          params.push(nonNormalizedNames);
+          paramCount++;
+        }
+      }
 
       // Filter by listing status
       if (listingsOnly) {
@@ -988,8 +1000,8 @@ export async function searchRoutes(fastify: FastifyInstance) {
         ? `LEFT JOIN club_memberships cm_rank ON cm_rank.ens_name = en.name AND cm_rank.club_name = $${rankingParamIndex}`
         : '';
       // Club-based FROM clauses
-      const clubFromBase = `club_memberships cm LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)`;
-      const clubFromWithListings = `club_memberships cm JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) JOIN listings l ON l.ens_name_id = en.id`;
+      const clubFromBase = `club_memberships cm LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) AND en.name = cm.ens_name`;
+      const clubFromWithListings = `club_memberships cm JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) AND en.name = cm.ens_name JOIN listings l ON l.ens_name_id = en.id`;
 
       if (uniqueSellerEnabled && listingsOnly) {
         countQuery = `
@@ -1454,7 +1466,7 @@ export async function searchRoutes(fastify: FastifyInstance) {
             const resolveQuery = `
               SELECT owner_address
               FROM ens_names
-              WHERE LOWER(name) = LOWER($1)
+              WHERE id = ${ensNameIdForName('$1')}
             `;
             const resolveResult = await pool.query(resolveQuery, [filters.owner]);
 

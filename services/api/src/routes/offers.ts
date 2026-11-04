@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder, ensNameIdForName } from '../../../shared/src';
 import { checkOrderForName } from '../services/ensv2-orders';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToOfferRows, getOfferBlockReason } from '../services/compromised-names';
@@ -175,7 +175,7 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20, status = 'pending' } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {

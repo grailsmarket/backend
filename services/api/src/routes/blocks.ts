@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, ensNameIdForName } from '../../../shared/src';
 import { requireAuth } from '../middleware/auth';
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -40,7 +40,7 @@ async function resolveTargetToUserId(
     address = target.toLowerCase();
   } else {
     const ensResult = await pool.query(
-      `SELECT owner_address FROM ens_names WHERE LOWER(name) = LOWER($1)`,
+      `SELECT owner_address FROM ens_names WHERE id = ${ensNameIdForName('$1')}`,
       [target]
     );
     const owner = ensResult.rows[0]?.owner_address as string | null | undefined;

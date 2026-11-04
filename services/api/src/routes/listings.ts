@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod } from '../../../shared/src';
+import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod, ensNameIdForName } from '../../../shared/src';
 import { checkOrderForName } from '../services/ensv2-orders';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
@@ -182,7 +182,7 @@ export async function listingsRoutes(fastify: FastifyInstance) {
         en.last_sale_date
       FROM listings l
       JOIN ens_names en ON l.ens_name_id = en.id
-      WHERE LOWER(en.name) = LOWER($1)
+      WHERE en.id = ${ensNameIdForName('$1')}
       AND l.status = 'active'
       ORDER BY l.created_at DESC
     `;

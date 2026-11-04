@@ -2,6 +2,7 @@ export * from './types';
 export * from './config';
 export * from './constants/chat';
 export * from './db/client';
+export * from './db/name-lookup';
 export { default as migrate } from './db/migrate';
 export * from './services/sales';
 export * from './services/fees';

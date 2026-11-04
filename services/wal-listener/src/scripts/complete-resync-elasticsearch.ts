@@ -17,7 +17,7 @@
  *   npm run build && node dist/wal-listener/src/scripts/complete-resync-elasticsearch.js
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, getExpirationState } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, isNormalizedName, getExpirationState } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -166,6 +166,7 @@ function enrichENSNameData(data: ENSNameRow, ethPriceUsd: number) {
     character_count: name.replace('.eth', '').length,
     has_numbers: /\d/.test(name),
     has_emoji: hasEmoji(name),
+    is_normalized: isNormalizedName(name),
     status: data.listing_status || 'unlisted',
     tags: generateTags(name),
     clubs: data.clubs || [],

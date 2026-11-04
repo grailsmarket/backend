@@ -334,7 +334,7 @@ async function recalculateStatusCounts(): Promise<void> {
             WHERE ${sqlExpiryPhase('premium', 'en')}
           ) as premium
         FROM club_memberships cm
-        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name)
+        LEFT JOIN ens_names en ON LOWER(cm.ens_name) = LOWER(en.name) AND en.name = cm.ens_name
         GROUP BY cm.club_name
       ),
       with_available AS (

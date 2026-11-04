@@ -11,6 +11,7 @@ import {
   findNameByToken,
   currentTokenOf,
   fetchAvatarFromWorker,
+  ensNameIdForName,
 } from '../../../shared/src';
 import { getBestListingForNFT, getBestOfferForNFT } from '../services/opensea';
 import { ethers } from 'ethers';
@@ -467,7 +468,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const result = await pool.query(
       `SELECT id, name
        FROM ens_names
-       WHERE LOWER(name) = LOWER($1)`,
+       WHERE id = ${ensNameIdForName('$1')}`,
       [name]
     );
 
@@ -547,7 +548,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
         ORDER BY created_at DESC
         LIMIT 1
       ) l ON true
-      WHERE LOWER(en.name) = LOWER($1)
+      WHERE en.id = ${ensNameIdForName('$1')}
     `;
 
     let result = await pool.query(query, [name]);
@@ -610,7 +611,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
         if (correctOwner && correctOwner.toLowerCase() !== NAME_WRAPPER_ADDRESS) {
           // Update the owner address in database
           await pool.query(
-            'UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE LOWER(name) = LOWER($2)',
+            `UPDATE ens_names SET owner_address = $1, updated_at = NOW() WHERE id = ${ensNameIdForName('$2')}`,
             [correctOwner.toLowerCase(), name]
           );
 
@@ -800,7 +801,7 @@ export async function namesRoutes(fastify: FastifyInstance) {
     const { page = 1, limit = 20 } = request.query as any;
     const offset = (page - 1) * limit;
 
-    const nameQuery = `SELECT id FROM ens_names WHERE LOWER(name) = LOWER($1)`;
+    const nameQuery = `SELECT id FROM ens_names WHERE id = ${ensNameIdForName('$1')}`;
     const nameResult = await pool.query(nameQuery, [name]);
 
     if (nameResult.rows.length === 0) {
