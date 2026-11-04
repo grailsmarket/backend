@@ -356,6 +356,8 @@ export class WALListener {
       await this.esSync.updateENSNameOffers(ensNameId);
     }
 
+    await this.recalculateHighestOfferIfNeeded(change);
+
     // Track activity history based on operation
     try {
       switch (change.operation) {
@@ -421,6 +423,41 @@ export class WALListener {
       }
     } catch (error) {
       logger.error('Failed to create activity history for offer change:', error);
+    }
+  }
+
+  /**
+   * ens_names.highest_offer_* is a cache of the best pending ETH/WETH offer.
+   * Offers leave (or re-enter) 'pending' from many places — balance validation
+   * (unfunded), seaport cancels, sales, expiry, ENSv2 invalidation — and most of
+   * them don't refresh the cache. Catch every transition here instead.
+   */
+  private async recalculateHighestOfferIfNeeded(change: Change) {
+    const oldStatus = change.oldData?.status;
+    const newStatus = change.data?.status;
+
+    const leftOrEnteredPending =
+      (change.operation === 'UPDATE' &&
+        oldStatus !== newStatus &&
+        (oldStatus === 'pending' || newStatus === 'pending')) ||
+      (change.operation === 'DELETE' && oldStatus === 'pending');
+
+    if (!leftOrEnteredPending) return;
+
+    const ensNameId = change.data?.ens_name_id ?? change.oldData?.ens_name_id;
+    if (!ensNameId) return;
+
+    try {
+      const { getQueueClient, QUEUE_NAMES } = await import('../queue');
+      const boss = await getQueueClient();
+      // singletonKey collapses bursts (e.g. batch validation) into one recalc per name
+      await boss.send(
+        QUEUE_NAMES.RECALCULATE_HIGHEST_OFFER,
+        { ensNameId },
+        { singletonKey: `recalc-highest-offer-${ensNameId}` }
+      );
+    } catch (error) {
+      logger.error(`Failed to queue highest offer recalculation for ENS name ${ensNameId}:`, error);
     }
   }
 
