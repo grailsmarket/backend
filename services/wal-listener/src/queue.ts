@@ -48,4 +48,5 @@ export async function closeQueueClient(): Promise<void> {
 // Queue names (imported from worker service for consistency)
 export const QUEUE_NAMES = {
   SEND_NOTIFICATION: 'send-notification',
+  RECALCULATE_HIGHEST_OFFER: 'recalculate-highest-offer',
 } as const;
