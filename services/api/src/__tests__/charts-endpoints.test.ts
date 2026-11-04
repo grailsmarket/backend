@@ -13,7 +13,6 @@ interface ChartResponse {
   success: boolean;
   data: {
     period: string;
-    club: string | null;
     clubs: string[] | null;
     points: ChartDataPoint[];
   };
@@ -53,7 +52,7 @@ describe('Chart Endpoints', () => {
       expect(result.success).toBe(true);
       expect(result.data).toBeDefined();
       expect(result.data.period).toBe('7d');
-      expect(result.data.club).toBeNull();
+      expect(result.data.clubs).toBeNull();
       expect(result.data.points).toBeInstanceOf(Array);
       expect(result.data.points.length).toBeGreaterThanOrEqual(7);
     });
@@ -91,38 +90,37 @@ describe('Chart Endpoints', () => {
     });
 
     it('should filter by specific club', async () => {
-      const result = await fetchEndpoint('/charts/sales?club=999');
+      const result = await fetchEndpoint('/charts/sales?clubs[]=999');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('999');
+      expect(result.data.clubs).toEqual(['999']);
     });
 
     it('should filter by any club', async () => {
-      const result = await fetchEndpoint('/charts/sales?club=any');
+      const result = await fetchEndpoint('/charts/sales?clubs[]=all');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('any');
+      expect(result.data.clubs).toEqual(['all']);
     });
 
     it('should filter by no club (none)', async () => {
-      const result = await fetchEndpoint('/charts/sales?club=none');
+      const result = await fetchEndpoint('/charts/sales?clubs[]=none');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('none');
+      expect(result.data.clubs).toEqual(['none']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should filter by comma-separated clubs', async () => {
-      const result = await fetchEndpoint('/charts/sales?club=999,10k');
+      const result = await fetchEndpoint('/charts/sales?clubs[]=999,10k');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('999,10k');
       expect(result.data.clubs).toEqual(['999', '10k']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should filter by multiple comma-separated clubs with spaces', async () => {
-      const result = await fetchEndpoint('/charts/sales?club=999,%2010k,%20100k');
+      const result = await fetchEndpoint('/charts/sales?clubs[]=999,%2010k,%20100k');
 
       expect(result.success).toBe(true);
       expect(result.data.clubs).toEqual(['999', '10k', '100k']);
@@ -207,32 +205,31 @@ describe('Chart Endpoints', () => {
     });
 
     it('should filter by specific club', async () => {
-      const result = await fetchEndpoint('/charts/volume?club=10k');
+      const result = await fetchEndpoint('/charts/volume?clubs[]=10k');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('10k');
+      expect(result.data.clubs).toEqual(['10k']);
     });
 
     it('should filter by any club', async () => {
-      const result = await fetchEndpoint('/charts/volume?club=any');
+      const result = await fetchEndpoint('/charts/volume?clubs[]=all');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('any');
+      expect(result.data.clubs).toEqual(['all']);
     });
 
     it('should filter by no club (none)', async () => {
-      const result = await fetchEndpoint('/charts/volume?club=none');
+      const result = await fetchEndpoint('/charts/volume?clubs[]=none');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('none');
+      expect(result.data.clubs).toEqual(['none']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should filter by comma-separated clubs', async () => {
-      const result = await fetchEndpoint('/charts/volume?club=999,10k');
+      const result = await fetchEndpoint('/charts/volume?clubs[]=999,10k');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('999,10k');
       expect(result.data.clubs).toEqual(['999', '10k']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
@@ -279,32 +276,31 @@ describe('Chart Endpoints', () => {
     });
 
     it('should filter by specific club', async () => {
-      const result = await fetchEndpoint('/charts/listings?club=100k');
+      const result = await fetchEndpoint('/charts/listings?clubs[]=100k');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('100k');
+      expect(result.data.clubs).toEqual(['100k']);
     });
 
     it('should filter by any club', async () => {
-      const result = await fetchEndpoint('/charts/listings?club=any');
+      const result = await fetchEndpoint('/charts/listings?clubs[]=all');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('any');
+      expect(result.data.clubs).toEqual(['all']);
     });
 
     it('should filter by no club (none)', async () => {
-      const result = await fetchEndpoint('/charts/listings?club=none');
+      const result = await fetchEndpoint('/charts/listings?clubs[]=none');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('none');
+      expect(result.data.clubs).toEqual(['none']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should filter by comma-separated clubs', async () => {
-      const result = await fetchEndpoint('/charts/listings?club=999,10k,100k');
+      const result = await fetchEndpoint('/charts/listings?clubs[]=999,10k,100k');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('999,10k,100k');
       expect(result.data.clubs).toEqual(['999', '10k', '100k']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
@@ -364,32 +360,31 @@ describe('Chart Endpoints', () => {
     });
 
     it('should filter by specific club', async () => {
-      const result = await fetchEndpoint('/charts/offers?club=999');
+      const result = await fetchEndpoint('/charts/offers?clubs[]=999');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('999');
+      expect(result.data.clubs).toEqual(['999']);
     });
 
     it('should filter by any club', async () => {
-      const result = await fetchEndpoint('/charts/offers?club=any');
+      const result = await fetchEndpoint('/charts/offers?clubs[]=all');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('any');
+      expect(result.data.clubs).toEqual(['all']);
     });
 
     it('should filter by no club (none)', async () => {
-      const result = await fetchEndpoint('/charts/offers?club=none');
+      const result = await fetchEndpoint('/charts/offers?clubs[]=none');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('none');
+      expect(result.data.clubs).toEqual(['none']);
       expect(result.data.points).toBeInstanceOf(Array);
     });
 
     it('should filter by comma-separated clubs', async () => {
-      const result = await fetchEndpoint('/charts/offers?club=10k,prepunk');
+      const result = await fetchEndpoint('/charts/offers?clubs[]=10k,prepunk');
 
       expect(result.success).toBe(true);
-      expect(result.data.club).toBe('10k,prepunk');
       expect(result.data.clubs).toEqual(['10k', 'prepunk']);
       expect(result.data.points).toBeInstanceOf(Array);
     });

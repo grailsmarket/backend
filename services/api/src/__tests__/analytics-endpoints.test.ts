@@ -268,9 +268,9 @@ describe('Analytics Endpoints', () => {
       }
     });
 
-    it('should filter by clubs[]=any (names in at least one club)', async () => {
+    it('should filter by clubs[]=all (names in at least one club)', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<SaleRecord>>(
-        '/analytics/sales?clubs[]=any'
+        '/analytics/sales?clubs[]=all'
       );
 
       expect(result.success).toBe(true);
@@ -291,6 +291,16 @@ describe('Analytics Endpoints', () => {
         const hasNoClubs = !sale.clubs || sale.clubs.length === 0;
         expect(hasNoClubs).toBe(true);
       }
+    });
+
+    it('should combine clubs[]=none with specific clubs as a union', async () => {
+      const [none, club, union] = await Promise.all(
+        ['none', '999', 'none,999'].map((clubs) =>
+          fetchEndpoint<AnalyticsResponse<SaleRecord>>(`/analytics/sales?period=all&clubs[]=${clubs}`)
+        )
+      );
+
+      expect(union.data.pagination.total).toBe(none.data.pagination.total + club.data.pagination.total);
     });
 
     it('should filter by source=opensea', async () => {
@@ -519,9 +529,9 @@ describe('Analytics Endpoints', () => {
       }
     });
 
-    it('should filter by clubs[]=any (names in at least one club)', async () => {
+    it('should filter by clubs[]=all (names in at least one club)', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<ListingRecord>>(
-        '/analytics/listings?clubs[]=any'
+        '/analytics/listings?clubs[]=all'
       );
 
       expect(result.success).toBe(true);
@@ -782,9 +792,9 @@ describe('Analytics Endpoints', () => {
       }
     });
 
-    it('should filter by clubs[]=any (names in at least one club)', async () => {
+    it('should filter by clubs[]=all (names in at least one club)', async () => {
       const result = await fetchEndpoint<AnalyticsResponse<OfferRecord>>(
-        '/analytics/offers?clubs[]=any'
+        '/analytics/offers?clubs[]=all'
       );
 
       expect(result.success).toBe(true);
