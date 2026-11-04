@@ -99,6 +99,11 @@ async function main() {
   }
 
   console.log(`\nUpdated ${updated} docs, ${missing} not in the index, ${errors} errors`);
+
+  // Bulk returns per-doc failures without throwing; those names stay visible in search
+  if (errors > 0) {
+    throw new Error(`${errors} Elasticsearch updates failed; re-run to retry`);
+  }
 }
 
 main()

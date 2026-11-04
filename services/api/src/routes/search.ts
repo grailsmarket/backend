@@ -3,6 +3,7 @@ import { getPostgresPool, getElasticsearchClient, config, type APIResponse, sqlE
 import { buildSearchResults, createUnregisteredPlaceholder, registrationFields, type SearchResult } from '../utils/response-builder';
 import { buildESFilters, buildESSort, calculateMinScore, buildESQuery } from '../utils/elasticsearch-filters';
 import { optionalAuth } from '../middleware/auth';
+import { getNonNormalizedNames } from '../services/non-normalized-names';
 import { fetchExportData, exportRowsToCSV, CSV_HEADERS, MAX_EXPORT_ROWS } from '../utils/csv-export';
 import { z } from 'zod';
 
@@ -587,6 +588,17 @@ export async function searchRoutes(fastify: FastifyInstance) {
       // Exclude placeholder names (token-* and [hash].eth)
       whereConditions.push(`${nameCol} NOT LIKE 'token-%'`);
       whereConditions.push(`${nameCol} NOT LIKE '[%'`);
+
+      // Hide non-normalized names (e.g. "Jesse.eth"), matching the Elasticsearch path.
+      // Kept for owner-filtered queries so a profile still shows what the wallet holds.
+      if (!resolvedOwnerAddress) {
+        const nonNormalizedNames = await getNonNormalizedNames();
+        if (nonNormalizedNames.length > 0) {
+          whereConditions.push(`NOT (${nameCol} = ANY($${paramCount}::text[]))`);
+          params.push(nonNormalizedNames);
+          paramCount++;
+        }
+      }
 
       // Filter by listing status
       if (listingsOnly) {
