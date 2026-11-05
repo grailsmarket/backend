@@ -20,6 +20,7 @@ import { safePublishJob, QUEUE_NAMES } from '../queue';
 // Name Wrapper contract address - never store this as owner
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const NAME_WRAPPER_ADDRESS = config.blockchain.ensNameWrapperAddress.toLowerCase();
+const ENS_REGISTRAR_ADDRESS = config.blockchain.ensRegistrarAddress.toLowerCase();
 
 // How long an OpenSea event on an ENSv2 token waits for EnsV2Indexer to index the name (a name
 // can be listed seconds after it's registered or migrated) before it's dropped
@@ -1049,9 +1050,10 @@ export class OpenSeaStreamListener {
         logger.debug(`Skipping transfer of token ${tokenId} ${fromAddress} -> ${newOwner}: ENSv2 migration`);
         return;
       }
-      // Burns carry no new owner. The ENS indexer handles them from the chain (expiry
-      // re-registrations, Graveyard clears, unwraps).
-      if (newOwner === ZERO_ADDRESS) {
+      // BaseRegistrar burns (expiry re-registrations, Graveyard clears) are handled by the ENS
+      // indexer from the chain. NameWrapper burns are not (the chain handler skips them, and a
+      // wrapped subname has no BaseRegistrar token), so they still clear the owner here.
+      if (newOwner === ZERO_ADDRESS && nftContract?.toLowerCase() === ENS_REGISTRAR_ADDRESS) {
         logger.debug(`Skipping burn of token ${tokenId} from ${fromAddress}: handled by the ENS indexer`);
         return;
       }
