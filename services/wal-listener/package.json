@@ -17,6 +17,8 @@
     "resync-out-of-sync": "npx tsx src/scripts/resync-out-of-sync.ts",
     "backfill-is-normalized": "npm run build && node dist/wal-listener/src/scripts/backfill-is-normalized.js --apply",
     "backfill-is-normalized:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-is-normalized.js",
+    "backfill-character-count": "npm run build && node dist/wal-listener/src/scripts/backfill-character-count.js --apply",
+    "backfill-character-count:dry": "npm run build && node dist/wal-listener/src/scripts/backfill-character-count.js",
     "backfill-attributes": "npx tsx src/scripts/backfill-name-attributes.ts",
     "backfill-club-stats": "npx tsx src/scripts/backfill-club-stats.ts",
     "backfill-highest-offers": "npx tsx src/scripts/backfill-highest-offers.ts",

@@ -1,4 +1,4 @@
-import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, isNormalizedName, getExpirationState } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, isEthOrWeth, hasEmoji, nameCharacterCount, isNormalizedName, getExpirationState } from '../../../shared/src';
 import { logger } from '../utils/logger';
 
 // Currency constants
@@ -462,7 +462,7 @@ export class ElasticsearchSync {
       expiry_date: data.expiry_date,
       registration_date: data.registration_date,
       creation_date: data.creation_date,
-      character_count: name.replace('.eth', '').length,
+      character_count: nameCharacterCount(name),
       has_numbers: /\d/.test(name),
       has_emoji: hasEmoji(name),
       is_normalized: isNormalizedName(name),

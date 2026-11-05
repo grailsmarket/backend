@@ -14,7 +14,7 @@
  *   npm run resync:fast
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, hasEmoji, isNormalizedName, getExpirationState } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, hasEmoji, nameCharacterCount, isNormalizedName, getExpirationState } from '../../../shared/src';
 
 const esClient = getElasticsearchClient();
 const pool = getPostgresPool();
@@ -55,7 +55,7 @@ function enrichENSNameData(data: ENSNameRow) {
     price: data.listing_price ? parseFloat(data.listing_price) : null,
     expiry_date: data.expiry_date,
     registration_date: data.registration_date,
-    character_count: name.replace('.eth', '').length,
+    character_count: nameCharacterCount(name),
     has_numbers: /\d/.test(name),
     has_emoji: hasEmoji(name),
     is_normalized: isNormalizedName(name),
@@ -145,7 +145,7 @@ async function processBatch(offset: number, batchSize: number, totalRows: number
       price: null, // No listing data for new imports
       expiry_date: row.expiry_date,
       registration_date: row.registration_date,
-      character_count: cleanName.length,
+      character_count: nameCharacterCount(name),
       has_numbers: row.has_numbers !== null ? row.has_numbers : /\d/.test(name),
       has_emoji: row.has_emoji !== null ? row.has_emoji : hasEmoji(name),
       is_normalized: isNormalizedName(name),
