@@ -311,23 +311,13 @@ export function buildESFilters(options: ESFilterOptions): { must: any[]; filter:
     filter.push({ range: { highest_offer: range } });
   }
 
-  // Length filters
+  // Length filters: character_count is the label's length in graphemes (see nameCharacterCount),
+  // the same field the character_count sort uses
   if (minLength || maxLength) {
-    const scriptConditions: string[] = [];
-    if (minLength) {
-      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() >= ${parseInt(String(minLength))}`);
-    }
-    if (maxLength) {
-      scriptConditions.push(`doc['name.keyword'].value.replace('.eth', '').length() <= ${parseInt(String(maxLength))}`);
-    }
-    filter.push({
-      script: {
-        script: {
-          source: scriptConditions.join(' && '),
-          lang: 'painless',
-        },
-      },
-    });
+    const range: any = {};
+    if (minLength) range.gte = parseInt(String(minLength));
+    if (maxLength) range.lte = parseInt(String(maxLength));
+    filter.push({ range: { character_count: range } });
   }
 
   // String pattern filters
@@ -758,6 +748,10 @@ export function buildESSort(options: {
       sort.push({ [sortBy]: { order, missing: '_last' } });
     } else if (sortBy === 'alphabetical') {
       sort.push({ 'name.keyword': { order } });
+    } else if (sortBy === 'character_count') {
+      // Thousands of names share each length: tie-break by name so pages don't overlap
+      sort.push({ character_count: { order, missing: '_last' } });
+      sort.push({ 'name.keyword': { order: 'asc' } });
     } else {
       sort.push({ [sortBy]: { order } });
     }

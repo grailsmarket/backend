@@ -26,7 +26,7 @@
  *   npx tsx src/scripts/resync-elasticsearch-v2.ts --from 500000 # Start from specific ID
  */
 
-import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, isNormalizedName, getExpirationState } from '../../../shared/src';
+import { getElasticsearchClient, getPostgresPool, config, closeAllConnections, isEthOrWeth, hasEmoji, nameCharacterCount, isNormalizedName, getExpirationState } from '../../../shared/src';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -264,7 +264,7 @@ function enrichRow(
     expiry_date: row.expiry_date,
     registration_date: row.registration_date,
     creation_date: row.creation_date,
-    character_count: name.replace('.eth', '').length,
+    character_count: nameCharacterCount(name),
     has_numbers: /\d/.test(name),
     has_emoji: hasEmoji(name),
     is_normalized: isNormalizedName(name),

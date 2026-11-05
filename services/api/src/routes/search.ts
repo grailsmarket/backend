@@ -973,8 +973,11 @@ export async function searchRoutes(fastify: FastifyInstance) {
       } else if (sortBy === 'last_sale_date') {
         orderByClause = `ORDER BY en.last_sale_date ${sqlOrder} NULLS LAST`;
       } else if (sortBy === 'character_count') {
-        // Use alias from SELECT clause to avoid DISTINCT conflict
-        orderByClause = `ORDER BY sort_value ${sqlOrder}`;
+        // Use aliases from SELECT clause to avoid DISTINCT conflict. Every query variant selects
+        // the name as `name`; it breaks ties so pages within one length don't overlap.
+        // LENGTH() counts code points, so emoji lengths here can differ from Elasticsearch's
+        // grapheme-based character_count.
+        orderByClause = `ORDER BY sort_value ${sqlOrder}, name ASC`;
       } else if (sortBy === 'clubs_count') {
         // Sort by number of clubs with alphabetical tie-breaker (COLLATE "C" for consistent ASCII ordering)
         orderByClause = `ORDER BY sort_value ${sqlOrder}, name_sort ASC`;

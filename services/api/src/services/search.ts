@@ -218,6 +218,8 @@ export async function searchNames(query: SearchQuery) {
   if (query.sortBy) {
     const sortOrder = query.sortOrder || 'desc';
     sort.push({ [query.sortBy]: { order: sortOrder } });
+    // Many names share each length: tie-break by name so pages don't overlap
+    if (query.sortBy === 'character_count') sort.push({ 'name.keyword': { order: 'asc' } });
   } else {
     sort.push({ listing_created_at: { order: 'desc' } });
   }
