@@ -13,6 +13,10 @@ import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver } from '../services/ens-resolver';
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+// keccak256('Transfer(address,address,uint256)')
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
 // Define ENS ABI with proper event definitions (Base Registrar - ERC-721)
 const ENS_ABI = parseAbi([
   'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
@@ -89,6 +93,7 @@ export class ENSIndexer {
   private pool = getPostgresPool();
   private queue: PQueue;
   private resolver: ENSResolver;
+  private blockCache = new Map<bigint, ReturnType<PublicClient['getBlock']>>();
   private isRunning = false;
   private currentBlock = 0n;
   private readonly batchSize = 100; // Reduced for better RPC compatibility
@@ -173,6 +178,7 @@ export class ENSIndexer {
 
   private async indexBlockRange(fromBlock: bigint, toBlock: bigint) {
     logger.info(`Indexing ENS events from block ${fromBlock} to ${toBlock}`);
+    this.blockCache.clear();
 
     // Fetch logs from all sources
     const registrarLogs = await this.client.getLogs({
@@ -206,8 +212,9 @@ export class ENSIndexer {
     // NameRenewed event (lower logIndex) because the Controller calls the Base Registrar internally.
     // The Controller handler guards against reading an already-updated expiry by decoding the
     // duration from transaction calldata, falling back to treating duration <= 0 as null.
+    const graveyardBurns = this.findGraveyardBurns(registrarLogs);
     const allLogs: { log: Log; source: 'registrar' | 'nameWrapper' | 'controller' | 'eventEmitter' }[] = [
-      ...registrarLogs.map(log => ({ log, source: 'registrar' as const })),
+      ...registrarLogs.filter(log => !graveyardBurns.logs.has(log)).map(log => ({ log, source: 'registrar' as const })),
       ...nameWrapperLogs.map(log => ({ log, source: 'nameWrapper' as const })),
       ...controllerLogs.map(log => ({ log, source: 'controller' as const })),
       ...eventEmitterLogs.map(log => ({ log, source: 'eventEmitter' as const })),
@@ -242,6 +249,72 @@ export class ENSIndexer {
     }
 
     await this.queue.onIdle();
+
+    // A Graveyard clear is the last thing that happens to a v1 token, so apply it after the
+    // rest of the batch: an earlier transfer of the same token must not overwrite it.
+    await this.applyGraveyardBurns(graveyardBurns.tokenIds);
+  }
+
+  /**
+   * The ENSv2 Graveyard reclaims expired, never-migrated v1 names in bulk (160 per tx). For each
+   * one, BaseRegistrar.register() burns the old token (old owner -> 0x0) and mints it to the
+   * Graveyard. Through the transfer handler each burn costs several queries, a pg-boss job and
+   * an RPC call, and a wave of tens of thousands stalls the indexer for many hours. Find the
+   * burns whose token is minted to the Graveyard in the same tx so they can be applied in one
+   * statement. Wrapped burns (NameWrapper -> 0x0) keep the per-event path: their row is keyed
+   * by namehash, which needs the name.
+   */
+  private findGraveyardBurns(registrarLogs: Log[]): { logs: Set<Log>; tokenIds: string[] } {
+    const logs = new Set<Log>();
+    const graveyard = config.blockchain.ensv2?.graveyardAddress?.toLowerCase();
+    if (!graveyard) return { logs, tokenIds: [] };
+
+    const topicAddress = (topic: string | undefined) => (topic ? `0x${topic.slice(26)}`.toLowerCase() : '');
+    const isTransfer = (log: Log) => log.topics[0]?.toLowerCase() === TRANSFER_TOPIC && log.topics.length === 4;
+    const key = (log: Log) => `${log.transactionHash}:${log.topics[3]}`;
+
+    const graveyardMints = new Set<string>();
+    for (const log of registrarLogs) {
+      if (isTransfer(log) && topicAddress(log.topics[1]) === ZERO_ADDRESS && topicAddress(log.topics[2]) === graveyard) {
+        graveyardMints.add(key(log));
+      }
+    }
+    if (graveyardMints.size === 0) return { logs, tokenIds: [] };
+
+    const wrapper = config.blockchain.ensNameWrapperAddress.toLowerCase();
+    const tokenIds = new Set<string>();
+    for (const log of registrarLogs) {
+      if (!isTransfer(log) || topicAddress(log.topics[2]) !== ZERO_ADDRESS) continue;
+      if (topicAddress(log.topics[1]) === wrapper || !graveyardMints.has(key(log))) continue;
+      logs.add(log);
+      tokenIds.add(BigInt(log.topics[3]!).toString());
+    }
+    return { logs, tokenIds: [...tokenIds] };
+  }
+
+  /** Graveyard-cleared names no longer have a v1 owner. ENSv2 rows are left alone. */
+  private async applyGraveyardBurns(tokenIds: string[]) {
+    if (tokenIds.length === 0) return;
+    const result = await this.pool.query(
+      `UPDATE ens_names
+       SET owner_address = $2, last_transfer_date = NOW(), updated_at = NOW()
+       WHERE token_id = ANY($1::varchar[])
+         AND ens_version = 1
+         AND owner_address IS DISTINCT FROM $2`,
+      [tokenIds, ZERO_ADDRESS]
+    );
+    logger.info(`Graveyard cleared ${tokenIds.length} v1 names (${result.rowCount} rows updated)`);
+  }
+
+  /** Blocks are fetched once per batch: a batch can hold thousands of events in a few blocks. */
+  private getBlockCached(blockNumber: bigint) {
+    let block = this.blockCache.get(blockNumber);
+    if (!block) {
+      block = this.client.getBlock({ blockNumber });
+      block.catch(() => this.blockCache.delete(blockNumber));
+      this.blockCache.set(blockNumber, block);
+    }
+    return block;
   }
 
   private async processLog(log: Log) {
@@ -479,7 +552,7 @@ export class ENSIndexer {
 
     // Record the transfer transaction
     try {
-      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      const block = await this.getBlockCached(log.blockNumber!);
 
       const txQuery = `
         INSERT INTO transactions (
@@ -630,7 +703,7 @@ export class ENSIndexer {
     // Get block timestamp for registration date
     let registrationDate: Date;
     try {
-      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      const block = await this.getBlockCached(log.blockNumber!);
       registrationDate = new Date(Number(block.timestamp) * 1000);
     } catch (blockError: any) {
       logger.warn(`Could not fetch block for registration date, using current time: ${blockError.message}`);
@@ -791,7 +864,7 @@ export class ENSIndexer {
     // Get block timestamp for renewal date
     let renewalDate: Date;
     try {
-      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      const block = await this.getBlockCached(log.blockNumber!);
       renewalDate = new Date(Number(block.timestamp) * 1000);
     } catch (blockError: any) {
       logger.warn(`Could not fetch block for renewal date, using current time: ${blockError.message}`);
@@ -988,7 +1061,7 @@ export class ENSIndexer {
       // Get block timestamp for renewal date
       let renewalDate: Date;
       try {
-        const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+        const block = await this.getBlockCached(log.blockNumber!);
         renewalDate = new Date(Number(block.timestamp) * 1000);
       } catch (blockError: any) {
         logger.warn(`Could not fetch block for RenewalReferred date, using current time: ${blockError.message}`);
@@ -1498,7 +1571,7 @@ export class ENSIndexer {
     }
 
     try {
-      const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+      const block = await this.getBlockCached(log.blockNumber!);
 
       const txQuery = `
         INSERT INTO transactions (
@@ -1856,7 +1929,7 @@ export class ENSIndexer {
       if (registrationDate) {
         timestamp = registrationDate;
       } else {
-        const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+        const block = await this.getBlockCached(log.blockNumber!);
         timestamp = new Date(Number(block.timestamp) * 1000);
       }
 
@@ -1941,7 +2014,7 @@ export class ENSIndexer {
     }
 
     // Record the renewal transaction
-    const block = await this.client.getBlock({ blockNumber: log.blockNumber! });
+    const block = await this.getBlockCached(log.blockNumber!);
 
     const txQuery = nameForTx
       ? `
