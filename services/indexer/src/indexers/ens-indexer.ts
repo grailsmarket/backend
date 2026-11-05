@@ -96,7 +96,12 @@ export class ENSIndexer {
   private blockCache = new Map<bigint, ReturnType<PublicClient['getBlock']>>();
   private isRunning = false;
   private currentBlock = 0n;
-  private readonly batchSize = 100; // Reduced for better RPC compatibility
+  // Block range per getLogs. Halved on errors (Graveyard clears pack 20k+ BaseRegistrar logs
+  // into some 100-block spans, more than the RPC returns in one call) and grown back after a
+  // run of successes.
+  private readonly maxBatchSize = 100;
+  private batchSize = this.maxBatchSize;
+  private successStreak = 0;
   private readonly confirmations = BigInt(config.blockchain.confirmations);
   // ENSv2 migration moves v1 tokens to a migration controller and on to the Graveyard, and the
   // Graveyard re-registers expired, never-migrated v1 names to itself. None of these are
@@ -160,6 +165,10 @@ export class ENSIndexer {
         await this.updateLastProcessedBlock(actualToBlock);
 
         this.currentBlock = actualToBlock + 1n;
+        if (this.batchSize < this.maxBatchSize && ++this.successStreak >= 10) {
+          this.batchSize = Math.min(this.batchSize * 2, this.maxBatchSize);
+          this.successStreak = 0;
+        }
       } catch (error: any) {
         if (isBeyondHeadError(error)) {
           logger.debug(`getLogs head not caught up at block ${this.currentBlock}, retrying shortly`);
@@ -170,8 +179,15 @@ export class ENSIndexer {
           err: error,
           code: error.code,
           details: error.shortMessage || error.details
-        }, `Error in index loop at block ${this.currentBlock}`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        }, `Error in index loop at block ${this.currentBlock} (range ${this.batchSize} blocks)`);
+        this.successStreak = 0;
+        if (this.batchSize > 1) {
+          // Most likely too many logs for one call: retry the same start with a smaller range
+          this.batchSize = Math.max(1, Math.floor(this.batchSize / 2));
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
       }
     }
   }
