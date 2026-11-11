@@ -10,6 +10,9 @@ export interface ValidationResult {
   // The order can never be filled again (e.g. an ENSv2 token ID changed): cancel rather
   // than mark unfunded
   permanent?: boolean;
+  // Our own data is at fault, not the seller's (e.g. the stored order is missing): hide the
+  // listing without notifying the seller
+  silent?: boolean;
   checkedAt: Date;
   details?: {
     currentOwner?: string;
