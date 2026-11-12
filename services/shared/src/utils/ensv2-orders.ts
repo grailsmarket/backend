@@ -1,4 +1,4 @@
-import { createPublicClient, http, keccak256, parseAbi, toBytes } from 'viem';
+import { createPublicClient, http, keccak256, parseAbi, stringToBytes } from 'viem';
 import { viemChain, config } from '../config';
 import { getPostgresPool } from '../db/client';
 import { ItemType } from '../types';
@@ -47,7 +47,8 @@ function registryClient() {
 export function ensV2LabelId(name: string): bigint | null {
   const labels = name.split('.');
   if (labels.length !== 2 || labels[1] !== 'eth' || !labels[0]) return null;
-  return BigInt(keccak256(toBytes(labels[0])));
+  // stringToBytes, not toBytes: toBytes reads a "0x…" label as hex ("0x7368756e" as "shun").
+  return BigInt(keccak256(stringToBytes(labels[0])));
 }
 
 /** v1 unwrapped token ID (decimal labelhash) -> the 0x-prefixed labelhash stored in ens_names.labelhash */
