@@ -58,7 +58,7 @@ export async function updateListingStatus(
   validationResult: ValidationResult,
   action?: 'refunded'
 ): Promise<void> {
-  const { isValid, reason, details, permanent } = validationResult;
+  const { isValid, reason, details, permanent, silent } = validationResult;
 
   try {
     if (!isValid && permanent) {
@@ -108,7 +108,9 @@ export async function updateListingStatus(
         RETURNING seller_address
       `, [listingId, reason]);
 
-      if (updateResult.rows.length > 0) {
+      if (updateResult.rows.length > 0 && silent) {
+        console.log(`Listing ${listingId} marked as unfunded without notifying the seller: ${reason}`);
+      } else if (updateResult.rows.length > 0) {
         // Get listing details for notification
         const listing = await pool.query(`
           SELECT l.seller_address, en.name

@@ -135,6 +135,7 @@ export const QUEUE_NAMES = {
   SEND_NOTIFICATION: 'send-notification',
   SEND_ADMIN_BROADCAST: 'send-admin-broadcast',
   RECONCILE_OPENSEA: 'reconcile-opensea',
+  RECONCILE_OPENSEA_FULL: 'reconcile-opensea-full',
   RECONCILE_VISION: 'reconcile-vision',
   UPDATE_HIGHEST_OFFER: 'update-highest-offer',
   RECALCULATE_HIGHEST_OFFER: 'recalculate-highest-offer',

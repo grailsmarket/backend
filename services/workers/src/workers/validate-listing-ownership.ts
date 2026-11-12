@@ -141,9 +141,21 @@ async function validateEnsV2Listing(listing: ListingWithOwner): Promise<Validati
   const orderData = typeof listing.order_data === 'string' ? JSON.parse(listing.order_data) : listing.order_data;
   const params = orderData?.protocol_data?.parameters ?? orderData?.parameters ?? orderData ?? {};
 
-  const itemError = checkEnsV2OrderItem(getOrderNftItem(params, 'listing'), listing.token_id);
+  const item = getOrderNftItem(params, 'listing');
+  if (!item) {
+    // The stored order_data isn't a Seaport order (e.g. an OpenSea stream summary), so there's
+    // nothing to check it against. That's our data, not the seller's order: hide it until
+    // reconcile-opensea refreshes the order from OpenSea, and don't tell the seller.
+    return { isValid: false, permanent: false, silent: true, reason: 'missing_order_data', checkedAt: new Date() };
+  }
+  const itemError = checkEnsV2OrderItem(item, listing.token_id);
   if (itemError) {
-    return { isValid: false, permanent: true, reason: 'token_changed', checkedAt: new Date() };
+    return {
+      isValid: false,
+      permanent: true,
+      reason: itemError.code === 'STALE_TOKEN_ID' ? 'token_changed' : 'invalid_order_item',
+      checkedAt: new Date(),
+    };
   }
   const operator = getOrderOperator(params.conduitKey);
   if (!operator) {
