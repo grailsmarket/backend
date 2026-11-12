@@ -4,7 +4,7 @@ import {
   keccak256,
   namehash,
   parseAbi,
-  toBytes,
+  stringToBytes,
   type Log,
   type PublicClient,
 } from 'viem';
@@ -533,7 +533,8 @@ export class EnsV2Indexer {
     if (viaRenewerV1) {
       // Unmigrated names show their v1 expiry. The v2 newExpiry here is the reserved entry's
       // expiry (v1 expiry + the migration bonus period), so read the v1 one.
-      const labelhash = keccak256(toBytes(rawLabel));
+      // stringToBytes, not toBytes: toBytes reads a "0x…" label as hex ("0x7368756e" as "shun").
+      const labelhash = keccak256(stringToBytes(rawLabel));
       newExpiry = await this.getV1Expiry(labelhash, log.blockNumber!) ?? new Date(Number(args.newExpiry) * 1000);
       const existing = await this.pool.query('SELECT id FROM ens_names WHERE name = $1', [name]);
       if (existing.rows.length > 0) {

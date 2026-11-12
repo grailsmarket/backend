@@ -8,11 +8,13 @@
  * 1. Expiry. For every v1 .eth 2LD row, compare expiry_date with
  *    BaseRegistrar.nameExpires(labelhash). Rows whose v1 token isn't held by an ENSv2
  *    migration contract (Graveyard / migration controllers) and differ are set to the chain
- *    value. Other differences are only reported.
- * 2. Renewal rows. For each repaired row, and every --names row, check every renewal tx the
- *    row carries (renewals, activity_history 'renewal', transactions 'renewal'). A tx whose
- *    receipt has no BaseRegistrar NameRenewed for the name's labelhash renewed a different
- *    token, so those rows are deleted.
+ *    value: `timezone_offset` when the row is off by a whole number of hours up to 5 (an old
+ *    America/New_York conversion, not a wrong token), `expiry_mismatch` otherwise. Other
+ *    differences are only reported.
+ * 2. Renewal rows. For each `expiry_mismatch` row, check every renewal tx the row carries
+ *    (renewals, activity_history 'renewal', transactions 'renewal'). A tx whose receipt has no
+ *    BaseRegistrar NameRenewed for the name's labelhash renewed a different token, so those
+ *    rows are deleted.
  * 3. token_id. Rows whose token_id is neither labelhash(name) nor namehash(name) are reported
  *    (the Transfer/NameRegistered paths could swap it). Not changed.
  *
@@ -31,7 +33,7 @@ import {
   http,
   keccak256,
   parseAbi,
-  toBytes,
+  stringToBytes,
   toEventSelector,
   type Address,
   type Hash,
@@ -62,6 +64,7 @@ const NAME_RENEWED_TOPIC = toEventSelector('NameRenewed(uint256,uint256)');
 
 type Category =
   | 'expiry_mismatch' // fixed with --apply
+  | 'timezone_offset' // fixed with --apply: off by whole hours (<= 5), an old timezone conversion
   | 'ensv2_held' // v1 token held by the Graveyard / a migration controller: expected
   | 'chain_unregistered' // normalized token never registered on v1
   | 'wrapper_expiry_offset' // DB = chain + 90d (NameWrapper expiry stored): not this bug
@@ -125,7 +128,9 @@ function labelOf(name: string): string {
 }
 
 export function labelTokenId(label: string): bigint {
-  return BigInt(keccak256(toBytes(label)));
+  // stringToBytes, not toBytes: toBytes reads a "0x…" label as hex, so "0x7368756e" would
+  // hash as "shun". The registrar hashes the label's UTF-8 bytes.
+  return BigInt(keccak256(stringToBytes(label)));
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -141,7 +146,32 @@ function toSeconds(d: Date): number {
 function iso(seconds: bigint | number | undefined): string {
   if (seconds === undefined) return '';
   const n = Number(seconds);
-  return n === 0 ? '0' : new Date(n * 1000).toISOString();
+  if (n === 0) return '0';
+  // Graveyard re-registrations expire near 2^64 s, which no Date can hold: keep raw seconds.
+  const d = new Date(n * 1000);
+  return Number.isNaN(d.getTime()) ? String(seconds) : d.toISOString();
+}
+
+const FIXABLE = new Set<Category>(['expiry_mismatch', 'timezone_offset']);
+
+/** Off by 1-5 whole hours: the 4h/5h America/New_York offset, or 1h around a DST change. */
+function isTimezoneOffset(diffSeconds: bigint): boolean {
+  const abs = diffSeconds < 0n ? -diffSeconds : diffSeconds;
+  return abs > 0n && abs <= 5n * 3600n && abs % 3600n === 0n;
+}
+
+const CSV_HEADER ='category,id,name,db_expiry,chain_expiry,chain_owner,token_id';
+
+function csvLine(f: Finding): string {
+  return [
+    f.category,
+    f.row.id,
+    JSON.stringify(f.row.name),
+    f.row.expiry_date ? f.row.expiry_date.toISOString() : '',
+    iso(f.chainExpiry),
+    f.chainOwner ?? '',
+    f.row.token_id,
+  ].join(',');
 }
 
 /**
@@ -254,6 +284,8 @@ export async function checkRows(
       findings.push({ category: 'db_expiry_null', ...base });
     } else if (BigInt(toSeconds(d.row.expiry_date)) === d.chainExpiry + BigInt(90 * DAY)) {
       findings.push({ category: 'wrapper_expiry_offset', ...base });
+    } else if (isTimezoneOffset(BigInt(toSeconds(d.row.expiry_date)) - d.chainExpiry)) {
+      findings.push({ category: 'timezone_offset', ...base });
     } else {
       findings.push({ category: 'expiry_mismatch', ...base });
     }
@@ -299,7 +331,19 @@ async function main() {
       AND name NOT LIKE 'token-%' AND name NOT LIKE '#%' AND name NOT LIKE '[%'`;
   const findings: Finding[] = [];
   let scanned = 0;
+  let mismatches = 0;
   let namedRows: Row[] = [];
+
+  // The CSV is appended page by page, so a long sweep that dies or is stopped keeps what it found.
+  const csvFd = args.csv ? fs.openSync(args.csv, 'w') : null;
+  if (csvFd !== null) fs.writeSync(csvFd, `${CSV_HEADER}\n`);
+  const record = (found: Finding[]) => {
+    for (const f of found) {
+      findings.push(f);
+      if (FIXABLE.has(f.category)) mismatches++;
+    }
+    if (csvFd !== null && found.length > 0) fs.writeSync(csvFd, found.map(csvLine).join('\n') + '\n');
+  };
 
   if (args.names) {
     const { rows } = await pool.query<Row & { ens_version: number }>(
@@ -312,7 +356,7 @@ async function main() {
       else if (Number(r.ens_version) !== 1) console.log(`  ${n}: ens_version ${r.ens_version}, skipped (v1 rows only)`);
     }
     namedRows = rows.filter((r) => Number(r.ens_version) === 1 && !isPlaceholderName(r.name));
-    findings.push(...(await checkRows(client, namedRows, ensv2Holders)));
+    record(await checkRows(client, namedRows, ensv2Holders));
     scanned = namedRows.length;
   } else {
     let lastId = 0;
@@ -325,22 +369,29 @@ async function main() {
       if (rows.length === 0) break;
       lastId = rows[rows.length - 1].id;
       const page = rows.filter((r) => !isPlaceholderName(r.name));
-      findings.push(...(await checkRows(client, page, ensv2Holders)));
+      record(await checkRows(client, page, ensv2Holders));
       scanned += rows.length;
-      const fixable = findings.filter((f) => f.category === 'expiry_mismatch').length;
-      process.stdout.write(`  scanned ${scanned} rows (last id ${lastId}), expiry mismatches so far: ${fixable}\r`);
+      process.stdout.write(`  scanned ${scanned} rows (last id ${lastId}), expiry mismatches so far: ${mismatches}\r`);
     }
     process.stdout.write('\n');
   }
+  if (csvFd !== null) {
+    fs.closeSync(csvFd);
+    console.log(`Wrote ${findings.length} findings to ${args.csv}`);
+  }
 
   const byCategory = new Map<Category, Finding[]>();
-  for (const f of findings) byCategory.set(f.category, [...(byCategory.get(f.category) ?? []), f]);
+  for (const f of findings) {
+    const list = byCategory.get(f.category);
+    if (list) list.push(f);
+    else byCategory.set(f.category, [f]);
+  }
 
   console.log(`\nScanned ${scanned} rows. Findings:`);
   for (const [cat, list] of [...byCategory].sort()) console.log(`  ${String(list.length).padStart(7)}  ${cat}`);
 
   for (const [cat, list] of [...byCategory].sort()) {
-    console.log(`\n${cat}${cat === 'expiry_mismatch' ? ' (fixed with --apply)' : ' (report only)'}:`);
+    console.log(`\n${cat}${FIXABLE.has(cat) ? ' (fixed with --apply)' : ' (report only)'}:`);
     for (const f of list.slice(0, 30)) {
       const db = f.row.expiry_date ? f.row.expiry_date.toISOString() : 'null';
       const chain = f.chainExpiry !== undefined ? ` chain ${iso(f.chainExpiry)}` : '';
@@ -351,12 +402,11 @@ async function main() {
   }
 
   // ---- Step 2: renewal rows that belong to another token ----------------------------------
-  const fixes = byCategory.get('expiry_mismatch') ?? [];
+  const fixes = findings.filter((f) => FIXABLE.has(f.category));
+  // Only expiry_mismatch rows can carry another token's renewals; a timezone shift can't.
   const renewalTargets = new Map<number, { row: Row; tokenId: bigint }>();
-  for (const f of fixes) renewalTargets.set(f.row.id, { row: f.row, tokenId: labelTokenId(labelOf(f.row.name)) });
-  for (const r of namedRows) {
-    const label = labelOf(r.name);
-    if (safeNormalize(label) === label) renewalTargets.set(r.id, { row: r, tokenId: labelTokenId(label) });
+  for (const f of byCategory.get('expiry_mismatch') ?? []) {
+    renewalTargets.set(f.row.id, { row: f.row, tokenId: labelTokenId(labelOf(f.row.name)) });
   }
 
   const bogus: RenewalRef[] = [];
@@ -396,23 +446,6 @@ async function main() {
     console.log(`Renewal txs for another token: ${bogus.length}${unreadable ? `, unreadable: ${unreadable}` : ''}`);
   }
 
-  if (args.csv) {
-    const header = 'category,id,name,db_expiry,chain_expiry,chain_owner,token_id';
-    const lines = findings.map((f) =>
-      [
-        f.category,
-        f.row.id,
-        JSON.stringify(f.row.name),
-        f.row.expiry_date ? f.row.expiry_date.toISOString() : '',
-        iso(f.chainExpiry),
-        f.chainOwner ?? '',
-        f.row.token_id,
-      ].join(',')
-    );
-    fs.writeFileSync(args.csv, [header, ...lines].join('\n'));
-    console.log(`\nWrote ${findings.length} findings to ${args.csv}`);
-  }
-
   if (!args.apply) {
     console.log(`\nDry run: would set expiry on ${fixes.length} rows and delete renewal rows for ${bogus.length} txs. Re-run with --apply to write.`);
     return;
@@ -428,7 +461,11 @@ async function main() {
 
   // ---- Apply ------------------------------------------------------------------------------
   const bogusByRow = new Map<number, string[]>();
-  for (const b of bogus) bogusByRow.set(b.ensNameId, [...(bogusByRow.get(b.ensNameId) ?? []), b.txHash]);
+  for (const b of bogus) {
+    const list = bogusByRow.get(b.ensNameId);
+    if (list) list.push(b.txHash);
+    else bogusByRow.set(b.ensNameId, [b.txHash]);
+  }
   const fixById = new Map(fixes.map((f) => [f.row.id, f]));
   const rowIds = new Set([...fixById.keys(), ...bogusByRow.keys()]);
 

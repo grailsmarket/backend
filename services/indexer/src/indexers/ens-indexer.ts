@@ -4,7 +4,7 @@ import {
   decodeEventLog,
   decodeFunctionData,
   keccak256,
-  toBytes,
+  stringToBytes,
   type Log,
   type PublicClient,
   parseAbi,
@@ -1373,7 +1373,8 @@ export class ENSIndexer {
    */
   private canonicalLabel(rawLabel: string, labelhash: string | bigint, context: string): string | null {
     const label = safeNormalize(rawLabel);
-    if (BigInt(keccak256(toBytes(label))) === BigInt(labelhash)) return label;
+    // stringToBytes, not toBytes: toBytes reads a "0x…" label as hex ("0x7368756e" as "shun").
+    if (BigInt(keccak256(stringToBytes(label))) === BigInt(labelhash)) return label;
     logger.warn(`${context}: label "${rawLabel}" is not the normalized name "${label}" (labelhash ${String(labelhash)}), skipping`);
     return null;
   }
