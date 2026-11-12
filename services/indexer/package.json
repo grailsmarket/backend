@@ -15,7 +15,8 @@
     "repair-wrapper-owners": "npm run build && node dist/indexer/src/scripts/repair-wrapper-owners.js",
     "import-listing": "npm run build && node dist/indexer/src/scripts/import-listing.js",
     "import-listing:fix": "npm run build && node dist/indexer/src/scripts/import-listing.js --fix",
-    "fix:emoji-ownership": "npm run build && node dist/indexer/src/scripts/fix-emoji-name-ownership.js"
+    "fix:emoji-ownership": "npm run build && node dist/indexer/src/scripts/fix-emoji-name-ownership.js",
+    "repair:nonnormalized-collisions": "npm run build && node dist/indexer/src/scripts/repair-nonnormalized-collisions.js"
   },
   "dependencies": {
     "p-queue": "^6.6.2",
