@@ -455,7 +455,8 @@ export class ENSIndexer {
 
     try {
       // Resolve the namehash token ID to get the name
-      const resolvedData = await this.resolveTokenName(tokenIdStr, 'Name Wrapper TransferSingle');
+      const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper TransferSingle');
+      if (rejected) return;
 
       if (!resolvedData || !resolvedData.name) {
         logger.warn(`Could not resolve Name Wrapper transfer token ${tokenIdStr}, skipping`);
@@ -584,7 +585,8 @@ export class ENSIndexer {
       `;
 
       // Use the resolved name to find the record
-      const resolvedData = await this.resolveTokenName(tokenIdStr, 'Transfer transaction record');
+      const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Transfer transaction record');
+      if (rejected) return;
       if (resolvedData?.name) {
         await this.pool.query(txQuery, [
           resolvedData.name,
@@ -1346,17 +1348,22 @@ export class ENSIndexer {
    */
 
   /**
-   * Resolve a token to its name, treating a non-normalized registration as unresolved. Callers
-   * then do what they do when the subgraph has no name: skip, or update by token_id (which
-   * only matches the token's own row).
+   * Resolve a token to its name. `rejected` means the subgraph knows the token and it is a
+   * non-normalized name: callers must skip the event entirely. That is different from a failed
+   * lookup (`data` null, not rejected), where some callers fall back to updating by token_id:
+   * an older bug could have left a normalized row holding the non-normalized token's id
+   * (chinese.eth with Chinese's token_id), so a token_id fallback would still write into it.
    */
-  private async resolveTokenName(tokenIdStr: string, context: string): Promise<ResolvedNameData | null> {
+  private async resolveTokenName(
+    tokenIdStr: string,
+    context: string
+  ): Promise<{ data: ResolvedNameData | null; rejected: boolean }> {
     const resolved = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
     if (resolved?.name && !resolved.isNormalized) {
-      logger.warn(`${context}: token ${tokenIdStr} is the non-normalized name "${resolved.originalName}", not ${resolved.name}; not applying it to ${resolved.name}`);
-      return null;
+      logger.warn(`${context}: token ${tokenIdStr} is the non-normalized name "${resolved.originalName}", not ${resolved.name}; skipping the event`);
+      return { data: null, rejected: true };
     }
-    return resolved;
+    return { data: resolved, rejected: false };
   }
 
   /**
@@ -1400,7 +1407,8 @@ export class ENSIndexer {
       if (isNameWrapperTransfer) {
         // Name Wrapper involved - resolve from The Graph to get correct token ID and name
         logger.debug(`Name Wrapper transfer detected for token ${tokenIdStr}, querying The Graph`);
-        const resolvedData = await this.resolveTokenName(tokenIdStr, 'Name Wrapper Transfer');
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper Transfer');
+        if (rejected) return;
 
         // Require successful resolution for Name Wrapper transfers
         if (!resolvedData || !resolvedData.name) {
@@ -1494,7 +1502,8 @@ export class ENSIndexer {
           has_emoji = existingRecord.rows[0].has_emoji;
         } else {
           // New name - try to resolve from The Graph
-          const resolvedData = await this.resolveTokenName(tokenIdStr, 'Transfer');
+          const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Transfer');
+          if (rejected) return;
           if (resolvedData && resolvedData.name) {
             nameToStore = resolvedData.name;
             const attributes = this.calculateNameAttributes(nameToStore);
@@ -1689,7 +1698,8 @@ export class ENSIndexer {
       if (isWrappedRegistration) {
         // Name Wrapper registration - resolve from The Graph to get correct data
         logger.debug(`Name Wrapper registration detected for token ${tokenIdStr}, querying The Graph`);
-        const resolvedData = await this.resolveTokenName(tokenIdStr, 'Name Wrapper NameRegistered');
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper NameRegistered');
+        if (rejected) return;
 
         // Require successful resolution for wrapped registrations
         if (!resolvedData || !resolvedData.name) {
@@ -1733,7 +1743,8 @@ export class ENSIndexer {
         logger.debug(`Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`);
       } else {
         // Standard unwrapped registration - resolve name from The Graph but use event data for ownership
-        const resolvedData = await this.resolveTokenName(tokenIdStr, 'NameRegistered');
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'NameRegistered');
+        if (rejected) return;
 
         if (resolvedData && resolvedData.name) {
           nameToStore = resolvedData.name;
@@ -2036,7 +2047,8 @@ export class ENSIndexer {
     // first and then update by name to handle both wrapped and unwrapped names.
 
     // First, try to resolve the name from The Graph using the labelhash
-    const resolvedData = await this.resolveTokenName(tokenIdStr, 'NameRenewed');
+    const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'NameRenewed');
+    if (rejected) return;
 
     let updateResult;
     let nameForTx: string | null = null;
@@ -2053,8 +2065,8 @@ export class ENSIndexer {
       `;
       updateResult = await this.pool.query(updateQuery, [expiryDate, nameForTx]);
     } else {
-      // Could not resolve from The Graph (or the token is a non-normalized name) - fall back
-      // to token_id lookup, which only matches this token's own row.
+      // Could not resolve from The Graph - fall back to token_id lookup (a token known to be a
+      // non-normalized name never gets here; resolveTokenName rejects it above).
       // This handles unwrapped names that might not be in The Graph yet
       logger.debug(`NameRenewed: could not resolve labelhash ${tokenIdStr}, falling back to token_id lookup`);
 
