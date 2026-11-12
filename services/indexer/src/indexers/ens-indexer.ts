@@ -3,6 +3,8 @@ import {
   http,
   decodeEventLog,
   decodeFunctionData,
+  keccak256,
+  toBytes,
   type Log,
   type PublicClient,
   parseAbi,
@@ -11,7 +13,7 @@ import PQueue from 'p-queue';
 import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize, isEnsV2Name } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
-import { ENSResolver } from '../services/ens-resolver';
+import { ENSResolver, type ResolvedNameData } from '../services/ens-resolver';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // keccak256('Transfer(address,address,uint256)')
@@ -453,7 +455,8 @@ export class ENSIndexer {
 
     try {
       // Resolve the namehash token ID to get the name
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+      const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper TransferSingle');
+      if (rejected) return;
 
       if (!resolvedData || !resolvedData.name) {
         logger.warn(`Could not resolve Name Wrapper transfer token ${tokenIdStr}, skipping`);
@@ -582,7 +585,8 @@ export class ENSIndexer {
       `;
 
       // Use the resolved name to find the record
-      const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+      const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Transfer transaction record');
+      if (rejected) return;
       if (resolvedData?.name) {
         await this.pool.query(txQuery, [
           resolvedData.name,
@@ -687,9 +691,11 @@ export class ENSIndexer {
     // V2 controller uses 'label' for the name string and 'labelhash' for the hash
     // Original controller uses 'name' for the name string and 'label' for the hash
     // Normalize per ENSIP-15 so emoji/keycap labels match the canonical name & token_id
-    // stored by the Graph-driven paths (e.g. keycaps lose the U+FE0F variation selector).
-    const name = safeNormalize(isV2 ? args.label : args.name);
+    // stored by the Graph-driven paths (e.g. keycaps lose the U+FE0F variation selector),
+    // but only when the event's token is that name's token (see canonicalLabel).
     const labelHash = isV2 ? args.labelhash : args.label;
+    const name = this.canonicalLabel(isV2 ? args.label : args.name, labelHash, 'Controller NameRegistered');
+    if (name === null) return;
     const { owner, baseCost, premium, expires } = args;
 
     // Convert BigInt values to strings for storage
@@ -855,8 +861,11 @@ export class ENSIndexer {
   private async handleControllerNameRenewed(args: any, log: Log, isV2: boolean = false) {
     // V2 controller uses 'label' for the name string and 'labelhash' for the hash
     // Original controller uses 'name' for the name string and 'label' for the hash
-    // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name.
-    const name = safeNormalize(isV2 ? args.label : args.name);
+    // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name, but only
+    // when the event's token is that name's token (see canonicalLabel).
+    const labelhash = isV2 ? args.labelhash : args.label;
+    const name = this.canonicalLabel(isV2 ? args.label : args.name, labelhash, 'Controller NameRenewed');
+    if (name === null) return;
     const { cost, expires } = args;
     const referrer = isV2 && args.referrer ? args.referrer : null;
 
@@ -870,7 +879,6 @@ export class ENSIndexer {
     // A real ENSv2 renewal of a wrapped name also emits a cost-0 event here, but its expiry has
     // already moved in the same tx, so it's kept (the ENSv2 indexer fills in the real cost).
     if (BigInt(cost) === 0n && log.blockNumber) {
-      const labelhash = isV2 ? args.labelhash : args.label;
       if (await this.isExpiryUnchanged(labelhash, BigInt(expires), log.blockNumber)) {
         logger.debug(`Controller NameRenewed: ${fullName} cost 0 with unchanged expiry (syncWrapper), skipping (tx ${log.transactionHash})`);
         return;
@@ -1066,9 +1074,11 @@ export class ENSIndexer {
         return;
       }
 
-      const { label: rawLabel, cost, duration, referrer } = decodedLog.args;
-      // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name.
-      const label = safeNormalize(rawLabel);
+      const { label: rawLabel, labelHash: eventLabelHash, cost, duration, referrer } = decodedLog.args;
+      // Normalize per ENSIP-15 so emoji/keycap labels match the canonical stored name, but only
+      // when the event's token is that name's token (see canonicalLabel).
+      const label = this.canonicalLabel(rawLabel, eventLabelHash, 'RenewalReferred');
+      if (label === null) return;
       const costWei = typeof cost === 'bigint' ? cost.toString() : String(cost);
       const durationSeconds = typeof duration === 'bigint' ? Number(duration) : Number(duration);
       const nameLength = this.countGraphemes(label);
@@ -1329,6 +1339,45 @@ export class ENSIndexer {
     return true;
   }
 
+  /*
+   * Non-normalized labels. The registrar contracts hash a label exactly as given, so a label
+   * like "Chinese" is its own token, separate from "chinese". Mapping its events to the
+   * normalized name would write that other token's expiry/owner/token_id onto the real
+   * chinese.eth row (2026-10-27: a 1-day renewal of "Chinese" put chinese.eth in "premium").
+   * ens_names only tracks normalized names, like the ENSv2 indexer and the OpenSea stream.
+   */
+
+  /**
+   * Resolve a token to its name. `rejected` means the subgraph knows the token and it is a
+   * non-normalized name: callers must skip the event entirely. That is different from a failed
+   * lookup (`data` null, not rejected), where some callers fall back to updating by token_id:
+   * an older bug could have left a normalized row holding the non-normalized token's id
+   * (chinese.eth with Chinese's token_id), so a token_id fallback would still write into it.
+   */
+  private async resolveTokenName(
+    tokenIdStr: string,
+    context: string
+  ): Promise<{ data: ResolvedNameData | null; rejected: boolean }> {
+    const resolved = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+    if (resolved?.name && !resolved.isNormalized) {
+      logger.warn(`${context}: token ${tokenIdStr} is the non-normalized name "${resolved.originalName}", not ${resolved.name}; skipping the event`);
+      return { data: null, rejected: true };
+    }
+    return { data: resolved, rejected: false };
+  }
+
+  /**
+   * The normalized form of a controller event's label, or null when the event's labelhash is
+   * not that name's labelhash (the label wasn't normalized, so the event is for another token).
+   * Labels that can't be normalized come back unchanged from safeNormalize and still match.
+   */
+  private canonicalLabel(rawLabel: string, labelhash: string | bigint, context: string): string | null {
+    const label = safeNormalize(rawLabel);
+    if (BigInt(keccak256(toBytes(label))) === BigInt(labelhash)) return label;
+    logger.warn(`${context}: label "${rawLabel}" is not the normalized name "${label}" (labelhash ${String(labelhash)}), skipping`);
+    return null;
+  }
+
   private async handleTransfer(args: any, log: Log) {
     const { from, to, tokenId } = args;
     const tokenIdStr = typeof tokenId === 'bigint' ? tokenId.toString() : String(tokenId);
@@ -1358,7 +1407,8 @@ export class ENSIndexer {
       if (isNameWrapperTransfer) {
         // Name Wrapper involved - resolve from The Graph to get correct token ID and name
         logger.debug(`Name Wrapper transfer detected for token ${tokenIdStr}, querying The Graph`);
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper Transfer');
+        if (rejected) return;
 
         // Require successful resolution for Name Wrapper transfers
         if (!resolvedData || !resolvedData.name) {
@@ -1452,7 +1502,8 @@ export class ENSIndexer {
           has_emoji = existingRecord.rows[0].has_emoji;
         } else {
           // New name - try to resolve from The Graph
-          const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+          const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Transfer');
+          if (rejected) return;
           if (resolvedData && resolvedData.name) {
             nameToStore = resolvedData.name;
             const attributes = this.calculateNameAttributes(nameToStore);
@@ -1647,7 +1698,8 @@ export class ENSIndexer {
       if (isWrappedRegistration) {
         // Name Wrapper registration - resolve from The Graph to get correct data
         logger.debug(`Name Wrapper registration detected for token ${tokenIdStr}, querying The Graph`);
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'Name Wrapper NameRegistered');
+        if (rejected) return;
 
         // Require successful resolution for wrapped registrations
         if (!resolvedData || !resolvedData.name) {
@@ -1691,7 +1743,8 @@ export class ENSIndexer {
         logger.debug(`Name Wrapper registration: correctTokenId ${correctTokenId}, owner ${ownerAddress}, registrant ${registrantAddress}`);
       } else {
         // Standard unwrapped registration - resolve name from The Graph but use event data for ownership
-        const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+        const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'NameRegistered');
+        if (rejected) return;
 
         if (resolvedData && resolvedData.name) {
           nameToStore = resolvedData.name;
@@ -1994,7 +2047,8 @@ export class ENSIndexer {
     // first and then update by name to handle both wrapped and unwrapped names.
 
     // First, try to resolve the name from The Graph using the labelhash
-    const resolvedData = await this.resolver.resolveTokenIdToNameData(tokenIdStr);
+    const { data: resolvedData, rejected } = await this.resolveTokenName(tokenIdStr, 'NameRenewed');
+    if (rejected) return;
 
     let updateResult;
     let nameForTx: string | null = null;
@@ -2011,7 +2065,8 @@ export class ENSIndexer {
       `;
       updateResult = await this.pool.query(updateQuery, [expiryDate, nameForTx]);
     } else {
-      // Could not resolve from The Graph - fall back to token_id lookup
+      // Could not resolve from The Graph - fall back to token_id lookup (a token known to be a
+      // non-normalized name never gets here; resolveTokenName rejects it above).
       // This handles unwrapped names that might not be in The Graph yet
       logger.debug(`NameRenewed: could not resolve labelhash ${tokenIdStr}, falling back to token_id lookup`);
 

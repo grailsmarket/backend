@@ -43,7 +43,7 @@ function hexToDecimal(hex: string): string {
   return BigInt('0x' + cleanHex).toString(10);
 }
 
-interface ResolvedNameData {
+export interface ResolvedNameData {
   name: string;
   correctTokenId: string;
   expiryDate: Date | null;
