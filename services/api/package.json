@@ -15,6 +15,8 @@
     "migrate:dry-run": "tsx scripts/run-migrations.ts --dry-run",
     "migrate:force": "tsx scripts/run-migrations.ts --force",
     "import:poap": "tsx scripts/import-poap-links.ts",
+    "import:anniversary": "tsx scripts/import-anniversary-proofs.ts",
+    "import:anniversary:dry-run": "tsx scripts/import-anniversary-proofs.ts --dry-run",
     "cache": "npm run build && node dist/api/src/scripts/redis-cache.js",
     "import-compromised": "npm run build && node dist/api/src/scripts/import-compromised-names.js"
   },

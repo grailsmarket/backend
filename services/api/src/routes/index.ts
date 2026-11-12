@@ -46,6 +46,7 @@ import { commentsRoutes } from './comments';
 import { feedRoutes } from './feed';
 import { valuationsRoutes } from './valuations';
 import { compromisedNamesRoutes } from './compromised-names';
+import { anniversaryRoutes } from './anniversary';
 
 export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(healthRoutes, { prefix: '/health' });
@@ -95,5 +96,6 @@ export function registerRoutes(fastify: FastifyInstance) {
   fastify.register(commentsRoutes, { prefix: '/api/v1/comments' });
   fastify.register(valuationsRoutes, { prefix: '/api/v1/valuations' });
   fastify.register(compromisedNamesRoutes, { prefix: '/api/v1/compromised-names' });
+  fastify.register(anniversaryRoutes, { prefix: '/api/v1/anniversary' });
   fastify.register(websocketRoutes, { prefix: '/ws' });
 }

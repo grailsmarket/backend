@@ -278,6 +278,11 @@ Query parameters: `period` (24h, 7d, 30d, 90d, all)
 | GET | `/poap/status` | Yes | Check if user has claimed POAP |
 | GET | `/poap/stats` | No | Get POAP statistics |
 
+### Anniversary NFT
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/anniversary/proof/:address` | No | Merkle claim data for `claim(account, tokenId, proof)`: `{ address (checksummed), eligible: true, tokenId, type: special\|generic, proof, merkleRoot }`, or `{ address, eligible: false }` (still 200); 400 `INVALID_ADDRESS`. Cached 60s per lowercase address. Data loaded by `npm run import:anniversary <proofs.json>` (`import:anniversary:dry-run` validates only) |
+
 ### Email Verification
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -523,6 +528,7 @@ curl 'http://localhost:3000/api/v1/search?filters[isGracePeriod]=true&limit=10'
 | `cart_items` | Shopping cart items |
 | `legends` | ENS Legend mint records |
 | `poap_links` | POAP claim links |
+| `anniversary_nft_claims` | Anniversary NFT allowlist: lowercase address → fixed `token_id`, `nft_type` (special/generic), merkle `proof`, `merkle_root`. Replaced wholesale by `scripts/import-anniversary-proofs.ts` |
 | `mutelist` | Addresses to filter from activity broadcasts |
 | `ai_recommendations` | Cached AI similar-name suggestions (label, recommendations JSONB, model, expires_at) |
 | `chats` | Chat threads (direct or group). UUID PK; `dm_key` unique for idempotent direct creation |
