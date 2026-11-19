@@ -1,3 +1,15 @@
+-- PARTIAL MIRROR of the production schema. NOT the source of truth.
+--
+-- The production database is authoritative. Before writing code or SQL that depends on a table
+-- or column, confirm it exists there (information_schema.columns, or \d <table> in psql).
+--   - This file covers only some tables (28 of prod's 62 on 2026-11-19). A table missing here
+--     may still exist in prod; see services/api/migrations/seq/ and the live database.
+--   - Everything defined here must exist in prod. Never add a table here that no applied
+--     migration creates: blockchain_events sat here from the initial design but never existed
+--     in prod, and code written against it froze the ENSv2 indexer on 2026-11-18.
+--   - Migrations in services/api/migrations/seq/ are applied to prod by hand. When one adds or
+--     changes a table that is mirrored here, update this file in the same change.
+
 -- ENS Names table
 CREATE TABLE IF NOT EXISTS ens_names (
     id SERIAL PRIMARY KEY,
@@ -59,20 +71,6 @@ CREATE TABLE IF NOT EXISTS transactions (
     CONSTRAINT valid_type CHECK (transaction_type IN ('sale', 'transfer', 'registration', 'renewal'))
 );
 
--- Events log table (for reorg handling)
-CREATE TABLE IF NOT EXISTS blockchain_events (
-    id SERIAL PRIMARY KEY,
-    block_number BIGINT NOT NULL,
-    transaction_hash VARCHAR(66) NOT NULL,
-    log_index INTEGER NOT NULL,
-    contract_address VARCHAR(42) NOT NULL,
-    event_name VARCHAR(50) NOT NULL,
-    event_data JSONB NOT NULL,
-    processed BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(transaction_hash, log_index)
-);
-
 -- Indexer state table
 CREATE TABLE IF NOT EXISTS indexer_state (
     id SERIAL PRIMARY KEY,
@@ -101,10 +99,6 @@ CREATE INDEX IF NOT EXISTS idx_transactions_block ON transactions(block_number);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(transaction_type);
 CREATE INDEX IF NOT EXISTS idx_transactions_from ON transactions(from_address);
 CREATE INDEX IF NOT EXISTS idx_transactions_to ON transactions(to_address);
-
-CREATE INDEX IF NOT EXISTS idx_events_block ON blockchain_events(block_number);
-CREATE INDEX IF NOT EXISTS idx_events_processed ON blockchain_events(processed);
-CREATE INDEX IF NOT EXISTS idx_events_contract ON blockchain_events(contract_address, event_name);
 
 -- Create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()

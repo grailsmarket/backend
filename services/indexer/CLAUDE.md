@@ -97,7 +97,7 @@ npm run check       # Verify data integrity
 1. **Initial Sync**: Scans historical blocks for past events
 2. **Real-time Monitoring**: Subscribes to new blocks and events
 3. **Gap Filling**: Detects and fills any missing block ranges
-4. **Reorganization Handling**: Manages blockchain reorgs
+4. **Reorg avoidance**: Each indexer only processes blocks `CONFIRMATIONS` behind the chain head (12 in the root `.env`; the code falls back to 0 if the variable is unset). There is no reorg rollback.
 5. **Checkpoint System**: Saves progress to resume after restarts
 
 ## Event Types Processed
@@ -188,6 +188,10 @@ npm run verify:ens <name>
 2. **Corrupt Data**: Reset and re-index from checkpoint
 3. **RPC Issues**: Automatic retry with exponential backoff
 4. **Database Errors**: Transaction rollback and retry
+5. **Skipped ENSv2 events**: An ENSv2 handler that keeps failing for a non-transient reason (bad data, a schema limit, a bug) is retried 3 times, then logged and skipped so one bad event can't stop v2 indexing. Infrastructure errors (database or RPC down) are never skipped; the whole range is retried until they clear.
+   - Skipped events are not stored anywhere. Search the indexer logs for `ENSv2 event SKIPPED`: each line has the block, tx hash, log index, contract, decoded args, error, and the replay command.
+   - After fixing the cause, replay from that block through the current v2 cursor (the `indexer_state` row for the ETHRegistry address): `npm run ensv2-index-range -- --chain <chainId> <fromBlock> <v2 cursor>`. Always pass the end block: the script indexes only `fromBlock` otherwise, and replaying part of a range can roll back later state.
+   - If the v2 cursor stops while the v1 and Seaport cursors keep moving, look for the same `Failed to process ENSv2 ...` error repeating at one block: that event is failing and the skip path isn't completing.
 
 ## Performance Metrics
 - Events per second processed

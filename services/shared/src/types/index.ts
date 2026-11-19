@@ -78,24 +78,11 @@ export const TransactionSchema = z.object({
   createdAt: z.date().optional(),
 });
 
-export const BlockchainEventSchema = z.object({
-  id: z.number().optional(),
-  blockNumber: z.bigint(),
-  transactionHash: z.string(),
-  logIndex: z.number(),
-  contractAddress: z.string(),
-  eventName: z.string(),
-  eventData: z.record(z.any()),
-  processed: z.boolean().default(false),
-  createdAt: z.date().optional(),
-});
-
 export type ENSName = z.infer<typeof ENSNameSchema>;
 export type Listing = z.infer<typeof ListingSchema>;
 export type Offer = z.infer<typeof OfferSchema>;
 export type Sale = z.infer<typeof SaleSchema>;
 export type Transaction = z.infer<typeof TransactionSchema>;
-export type BlockchainEvent = z.infer<typeof BlockchainEventSchema>;
 
 export enum OrderType {
   FULL_OPEN = 0,
