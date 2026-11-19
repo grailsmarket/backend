@@ -191,29 +191,6 @@ export class SeaportIndexer {
     return obj;
   }
 
-  private async saveEvent(event: any) {
-    const query = `
-      INSERT INTO blockchain_events (
-        block_number, transaction_hash, log_index,
-        contract_address, event_name, event_data, processed
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (transaction_hash, log_index) DO NOTHING
-    `;
-
-    // Convert BigInts in eventData to strings for JSON serialization
-    const serializedEventData = this.serializeBigInts(event.eventData);
-
-    await this.pool.query(query, [
-      event.blockNumber?.toString(),
-      event.transactionHash,
-      event.logIndex,
-      event.contractAddress,
-      event.eventName,
-      JSON.stringify(serializedEventData),
-      event.processed,
-    ]);
-  }
-
   private async processEvent(eventName: string, args: any, log: Log) {
     switch (eventName) {
       case 'OrderFulfilled':

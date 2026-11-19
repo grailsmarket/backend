@@ -10,7 +10,7 @@ import {
   parseAbi,
 } from 'viem';
 import PQueue from 'p-queue';
-import { config, viemChain, getPostgresPool, type BlockchainEvent, hasEmoji, getRegistrationSource, safeNormalize, isEnsV2Name } from '../../../shared/src';
+import { config, viemChain, getPostgresPool, hasEmoji, getRegistrationSource, safeNormalize, isEnsV2Name } from '../../../shared/src';
 import { logger } from '../utils/logger';
 import { isBeyondHeadError } from '../utils/rpc-errors';
 import { ENSResolver, type ResolvedNameData } from '../services/ens-resolver';
@@ -361,16 +361,6 @@ export class ENSIndexer {
       }
 
       logger.debug(`Processing ${eventName} event at block ${log.blockNumber}`);
-
-      const blockchainEvent: Partial<BlockchainEvent> = {
-        blockNumber: log.blockNumber || 0n,
-        transactionHash: log.transactionHash || '',
-        logIndex: log.logIndex || 0,
-        contractAddress: log.address,
-        eventName,
-        eventData: decodedLog.args as any,
-        processed: false,
-      };
 
       await this.processEvent(eventName, decodedLog.args, log);
     } catch (error: any) {
@@ -1241,44 +1231,6 @@ export class ENSIndexer {
         transactionHash: log.transactionHash,
       }, `Error processing RenewalReferred log at block ${log.blockNumber}`);
     }
-  }
-
-  private async saveEvent(event: Partial<BlockchainEvent>) {
-    const query = `
-      INSERT INTO blockchain_events (
-        block_number, transaction_hash, log_index,
-        contract_address, event_name, event_data, processed
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (transaction_hash, log_index) DO NOTHING
-    `;
-
-    // Convert BigInts in eventData to strings for JSON serialization
-    const eventData = event.eventData ? this.serializeBigInts(event.eventData) : {};
-
-    await this.pool.query(query, [
-      event.blockNumber?.toString(),
-      event.transactionHash,
-      event.logIndex,
-      event.contractAddress,
-      event.eventName,
-      JSON.stringify(eventData),
-      event.processed,
-    ]);
-  }
-
-  private serializeBigInts(obj: any): any {
-    if (typeof obj === 'bigint') {
-      return obj.toString();
-    } else if (Array.isArray(obj)) {
-      return obj.map(item => this.serializeBigInts(item));
-    } else if (obj !== null && typeof obj === 'object') {
-      const result: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        result[key] = this.serializeBigInts(value);
-      }
-      return result;
-    }
-    return obj;
   }
 
   private calculateNameAttributes(name: string) {

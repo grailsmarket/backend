@@ -293,44 +293,52 @@ export class ElasticsearchSync {
       const totalRows = parseInt(countResult.rows[0].total);
       logger.info(`Total ENS names to sync: ${totalRows}`);
 
-      // Process in database-level batches to avoid loading everything into memory
-      const dbBatchSize = 100; // Fetch 100 rows from DB at a time (reduced for memory)
+      // Keyset pagination: each batch starts after the previous batch's last id, so a query only
+      // reads its own rows. LIMIT/OFFSET re-read every row before the offset, so each batch was
+      // slower than the last (minutes per batch at 3.5M names, holding a lock on ens_names that
+      // blocked DDL) and a full sync never finished. The offer count is a per-name LATERAL
+      // subquery rather than a GROUP BY over the whole ens_names x offers join.
+      const dbBatchSize = 500;
       let processed = 0;
-      let offset = 0;
+      let lastId = 0;
 
-      while (offset < totalRows) {
-        // Query one batch at a time from database
+      while (true) {
         const query = `
           SELECT
             en.*,
-            l.price_wei as listing_price,
-            l.currency_address as listing_currency_address,
-            l.status as listing_status,
-            l.created_at as listing_created_at,
-            l.expires_at as listing_expires_at,
-            COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'pending') as active_offers_count,
+            l.price_wei AS listing_price,
+            l.currency_address AS listing_currency_address,
+            l.status AS listing_status,
+            l.created_at AS listing_created_at,
+            l.expires_at AS listing_expires_at,
+            oc.active_offers_count,
             en.last_sale_date,
             en.last_sale_price,
             en.last_sale_currency,
             en.last_sale_price_usd,
-            (gm.metrics->>'avgMonthlySearches')::integer as google_monthly_searches,
-            (gm.metrics->>'avgCpc')::float as google_avg_cpc
-          FROM ens_names en
+            (gm.metrics->>'avgMonthlySearches')::integer AS google_monthly_searches,
+            (gm.metrics->>'avgCpc')::float AS google_avg_cpc
+          FROM (
+            SELECT * FROM ens_names WHERE id > $1 ORDER BY id LIMIT $2
+          ) en
           LEFT JOIN LATERAL (
-            SELECT * FROM listings
+            SELECT price_wei, currency_address, status, created_at, expires_at
+            FROM listings
             WHERE listings.ens_name_id = en.id
             AND listings.status = 'active'
             ORDER BY created_at DESC
             LIMIT 1
           ) l ON true
-          LEFT JOIN offers o ON o.ens_name_id = en.id
+          LEFT JOIN LATERAL (
+            SELECT COUNT(*) FILTER (WHERE o.status = 'pending') AS active_offers_count
+            FROM offers o
+            WHERE o.ens_name_id = en.id
+          ) oc ON true
           LEFT JOIN google_metrics gm ON gm.name = REPLACE(en.name, '.eth', '') AND gm.status = 'success' AND gm.expires_at > NOW()
-          GROUP BY en.id, l.price_wei, l.currency_address, l.status, l.created_at, l.expires_at, gm.metrics
           ORDER BY en.id
-          LIMIT $1 OFFSET $2
         `;
 
-        const result = await this.pool.query(query, [dbBatchSize, offset]);
+        const result = await this.pool.query(query, [lastId, dbBatchSize]);
 
         if (result.rows.length === 0) {
           break; // No more rows
@@ -365,7 +373,7 @@ export class ElasticsearchSync {
         }
 
         processed += result.rows.length;
-        offset += dbBatchSize;
+        lastId = result.rows[result.rows.length - 1].id;
 
         // Delay to allow garbage collection and prevent overwhelming the system
         await new Promise(resolve => setTimeout(resolve, 250));

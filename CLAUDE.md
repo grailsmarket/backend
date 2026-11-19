@@ -47,7 +47,8 @@ A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates l
 - Monitors ENS Registry and Registrar contracts
 - Tracks ownership, transfers, and expiry dates
 - Maintains historical event data
-- Handles blockchain reorgs
+- Avoids reorgs by trailing the chain head by `CONFIRMATIONS` blocks (12 in the root `.env`; 0 if unset). There is no reorg rollback.
+- ENSv2: an event whose handler keeps failing for a non-transient reason is retried 3 times, then logged as `ENSv2 event SKIPPED` (with the replay command) and skipped. Skipped events are not stored anywhere; see `services/indexer/CLAUDE.md`.
 
 ### 3. WAL Listener Service (`/services/wal-listener`)
 **Purpose**: Real-time database change detection and Elasticsearch synchronization
@@ -66,7 +67,7 @@ A comprehensive ENS (Ethereum Name Service) marketplace system that aggregates l
 - Club stats, price feeds, and analytics refresh
 
 ### 5. Shared (`/services/shared`)
-Common configuration, database client, schema, and migrations used by all backend services.
+Common configuration, database client, and a partial schema mirror (`src/db/schema.sql`; see [Schema source of truth](#schema-source-of-truth)) used by all backend services. Migrations live in `services/api/migrations/seq/`.
 
 ### 6. Docs (`/services/docs`)
 Astro-based documentation site.
@@ -76,7 +77,18 @@ Client SDK for API consumers.
 
 ## Database Schema
 
+### Schema source of truth
+The production database is the only authoritative schema. Before writing code or SQL that depends on a table or column, confirm it exists in the target database (`information_schema.columns`, or `\d <table>` in psql). A table listed in this file or in `schema.sql` is not proof that it exists.
+
+- `services/shared/src/db/schema.sql` is a partial mirror: on 2026-11-19 it covered 28 of prod's 62 tables. Everything in it should exist in prod; a table missing from it may still exist.
+- Migrations live in `services/api/migrations/seq/` and are applied to prod by hand. Prod has no `migrations_log` table.
+- Neither migrate command is how prod is migrated. The root `npm run migrate` executes `schema.sql` as-is, and `npm run migrate` in `services/api` replays every migration in `seq/`. Never run either against prod or Sepolia; a local shell loads the prod `.env` by default.
+- A database built from `schema.sql` is incomplete. New environments are bootstrapped from a schema-only dump of prod (`pg_dump --schema-only --exclude-schema=pgboss`, with a v17 `pg_dump`), plus data for seed tables such as `clubs` and `global_chat_config`.
+- When a migration adds or changes a table that `schema.sql` mirrors, update `schema.sql` in the same change. Never document a table here, or add it to `schema.sql`, unless an applied migration creates it.
+- Why this matters: `blockchain_events` was documented here and in `schema.sql` from the initial design but never existed in prod. Code that wrote to it was written against the docs, and when it first ran (2026-11-18) it froze the ENSv2 indexer for 17 hours.
+
 ### Core Tables
+Columns below were checked against prod on 2026-11-19. Most tables have more columns than listed.
 ```sql
 -- ENS name registry
 ens_names (
@@ -104,13 +116,6 @@ transactions (
   id, ens_name_id, transaction_hash, block_number,
   from_address, to_address, price_wei, transaction_type,
   timestamp, created_at
-)
-
--- Blockchain events log (for reorg handling)
-blockchain_events (
-  id, block_number, transaction_hash, log_index,
-  contract_address, event_name, event_data,
-  processed, created_at
 )
 
 -- Indexer state tracking
@@ -144,7 +149,8 @@ cd grails-backend
 # Install dependencies (npm workspaces)
 npm install
 
-# Setup database
+# Setup database (local development only). `npm run migrate` runs schema.sql, which is
+# incomplete; read "Schema source of truth" first, and never point it at prod or Sepolia.
 createdb grails
 npm run migrate
 ```
@@ -293,9 +299,8 @@ SELECT en.name, l.price_wei, l.status FROM listings l
 JOIN ens_names en ON l.ens_name_id = en.id
 ORDER BY l.created_at DESC LIMIT 10;
 
-# Check blockchain events
-SELECT event_name, COUNT(*) FROM blockchain_events
-GROUP BY event_name;
+# Check indexer cursors (compare last_processed_block with the chain head)
+SELECT contract_address, last_processed_block, updated_at FROM indexer_state;
 ```
 
 ### Testing
@@ -348,4 +353,4 @@ docker-compose up -d
 
 ## Support & Documentation
 - Individual service CLAUDE.md files in each service directory
-- Database schema in services/shared/src/db/schema.sql
+- Partial schema mirror in services/shared/src/db/schema.sql (prod is authoritative; see Database Schema → Schema source of truth)
