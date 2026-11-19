@@ -1,7 +1,7 @@
 -- ENS Names table
 CREATE TABLE IF NOT EXISTS ens_names (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
+    name TEXT UNIQUE NOT NULL,  -- TEXT: ENSv2 names reach 259 chars (255-byte label + .eth); see 0912
     token_id VARCHAR(78) UNIQUE NOT NULL,
     owner_address VARCHAR(42) NOT NULL,
     registrant VARCHAR(42),
