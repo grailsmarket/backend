@@ -9,8 +9,7 @@
  *   npx tsx src/scripts/fix-stale-listings-es.ts --fix    # Check and fix
  */
 
-import { Client as ElasticsearchClient } from '@elastic/elasticsearch';
-import { config, getPostgresPool, closeAllConnections } from '../../../shared/src';
+import { config, getPostgresPool, closeAllConnections, getElasticsearchClient } from '../../../shared/src';
 import { ElasticsearchSync } from '../services/elasticsearch-sync';
 
 const FIX_MODE = process.argv.includes('--fix');
@@ -22,9 +21,7 @@ async function findAndFixStaleListing() {
   console.log(`Mode: ${FIX_MODE ? 'FIX (will update ES)' : 'CHECK ONLY (dry run)'}\n`);
 
   const pool = getPostgresPool();
-  const esClient = new ElasticsearchClient({
-    node: config.elasticsearch.url,
-  });
+  const esClient = getElasticsearchClient();
 
   try {
     // Step 1: Count total names with prices in ES
