@@ -3,16 +3,13 @@
  * for listing status (names showing as 'unlisted' in ES but having active listings in DB)
  */
 
-import { Client as ElasticsearchClient } from '@elastic/elasticsearch';
-import { config, getPostgresPool } from '../../../shared/src';
+import { config, getPostgresPool, getElasticsearchClient } from '../../../shared/src';
 
 async function checkListingDrift() {
   console.log('=== Listing Status Drift Analysis ===\n');
 
   const pool = getPostgresPool();
-  const esClient = new ElasticsearchClient({
-    node: config.elasticsearch.url,
-  });
+  const esClient = getElasticsearchClient();
 
   try {
     // Step 1: Get all ENS names with active listings from the database
