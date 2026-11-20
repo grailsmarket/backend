@@ -367,7 +367,11 @@ export class ElasticsearchSync {
 
         if (response.errors) {
           const errors = response.items?.filter((item: any) => item.index?.error);
-          logger.error(`Bulk indexing had ${errors?.length || 0} errors:`, JSON.stringify(errors?.slice(0, 5), null, 2));
+          // pino takes (obj, msg); a second string argument with no %s placeholder is dropped.
+          logger.error(
+            { errors: errors?.slice(0, 5).map((item: any) => ({ id: item.index?._id, error: item.index?.error })) },
+            `Bulk indexing had ${errors?.length || 0} errors`
+          );
         } else {
           logger.info(`Successfully indexed batch of ${result.rows.length} documents`);
         }
