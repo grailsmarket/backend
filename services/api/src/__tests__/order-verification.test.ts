@@ -20,6 +20,7 @@ import {
 } from 'viem';
 
 const chain = vi.hoisted(() => ({ simulateContract: vi.fn(), readContract: vi.fn() }));
+const db = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('viem', async (importOriginal) => {
   const actual = await importOriginal<typeof import('viem')>();
   return { ...actual, createPublicClient: () => chain };
@@ -31,7 +32,7 @@ vi.mock('../../../shared/src', async () => ({
   ...(await import('../../../shared/src/types')),
   ...(await import('../../../shared/src/services/fees')),
   ...(await import('../../../shared/src/utils/ensv2-orders')),
-  getPostgresPool: () => ({ query: vi.fn() }),
+  getPostgresPool: () => db,
 }));
 
 import { config } from '../../../shared/src/config';
@@ -39,6 +40,7 @@ import {
   parseSeaportOrder,
   recoverOrderSigner,
   seaportOrderHash,
+  verifyListingBatch,
   verifyListingOrder,
   verifyOfferOrder,
   type NameRef,
@@ -154,6 +156,7 @@ async function signedListing(name: NameRef, price?: string) {
 beforeEach(() => {
   chain.simulateContract.mockReset();
   chain.readContract.mockReset();
+  db.query.mockReset();
   chain.simulateContract.mockRejectedValue(new ContractFunctionRevertedError({ abi: [], functionName: 'validate', data: '0x815e1d64' }));
 });
 
@@ -310,6 +313,44 @@ describe('verifyListingOrder', () => {
     chain.readContract.mockResolvedValue(stranger.address);
     expect(await listing(orderData, null, { tokenId: alice.token_id })).toMatchObject({ code: 'NOT_OWNER' });
   });
+  it('checks a placeholder row like a missing one: the order trades its token_id and the seller holds it on-chain', async () => {
+    const placeholder: NameRef = { id: 9, name: `token-${alice.token_id}.eth`, token_id: alice.token_id, owner_address: SELLER, ens_version: 1 };
+    const { orderData } = await signedListing(alice);
+    chain.readContract.mockResolvedValue(seller.address);
+    expect(await listing(orderData, placeholder)).toMatchObject({ ok: true });
+    expect(chain.readContract).toHaveBeenCalledTimes(1);
+    chain.readContract.mockResolvedValue(stranger.address);
+    expect(await listing(orderData, placeholder)).toMatchObject({ code: 'NOT_OWNER' });
+  });
+
+  it('requires the consideration to be fixed amounts of ETH or of one ERC20 token', async () => {
+    const id = BigInt(labelhash('alice'));
+    const mixed = components(SELLER, [nft(REGISTRAR, id)], [pay('1000', SELLER), pay('5', SELLER, USDC)]);
+    const changing = components(SELLER, [nft(REGISTRAR, id)], [{ ...pay('1000', SELLER), endAmount: '2000' }]);
+    const withNft = components(SELLER, [nft(REGISTRAR, id)], [pay('1000', SELLER), { ...nft(REGISTRAR, BigInt(labelhash('junk'))), recipient: SELLER }]);
+    for (const parameters of [mixed, changing, withNft]) {
+      expect(await listing(stored(parameters, await sign(parameters)), alice)).toMatchObject({ code: 'INVALID_PRICE' });
+    }
+  });
+
+  it('reads the offerer\'s Seaport counter when the order leaves it out', async () => {
+    const parameters = { ...listingFor(alice), counter: '3' };
+    const signature = await sign(parameters);
+    const { counter: _counter, ...withoutCounter } = parameters;
+    const orderData = JSON.stringify({ parameters: withoutCounter, signature });
+
+    chain.readContract.mockResolvedValue(3n);
+    expect(await listing(orderData, alice)).toMatchObject({ ok: true });
+    expect(chain.readContract.mock.calls[0][0]).toMatchObject({ functionName: 'getCounter', args: [SELLER] });
+
+    // signed for a counter that's no longer the offerer's current one
+    chain.readContract.mockResolvedValue(4n);
+    expect(await listing(orderData, alice)).toMatchObject({ code: 'INVALID_SIGNATURE' });
+
+    chain.readContract.mockRejectedValue(new Error('fetch failed'));
+    expect(await listing(orderData, alice)).toMatchObject({ status: 503, code: 'CHAIN_CHECK_FAILED' });
+  });
+
 });
 
 describe('verifyOfferOrder', () => {
@@ -345,6 +386,12 @@ describe('verifyOfferOrder', () => {
   it('rejects an offer for a different name', async () => {
     expect(await offer(offerFor(junk))).toMatchObject({ code: 'INVALID_ORDER_ITEM' });
   });
+  it('matches an offer on a placeholder row against its token_id', async () => {
+    const placeholder: NameRef = { id: 9, name: `token-${alice.token_id}.eth`, token_id: alice.token_id, owner_address: STRANGER, ens_version: 1 };
+    expect(await offer(offerFor(alice), placeholder)).toMatchObject({ ok: true });
+    expect(await offer(offerFor(junk), placeholder)).toMatchObject({ code: 'INVALID_ORDER_ITEM' });
+  });
+
 
   it('rejects an offer for more than one NFT, criteria items included', async () => {
     expect(await offer(offerFor(alice, [nameItem('alice'), nameItem('junk')]))).toMatchObject({ code: 'INVALID_ORDER_ITEM' });
@@ -360,6 +407,29 @@ describe('verifyOfferOrder', () => {
     expect(await offer(withFee(BUYER))).toMatchObject({ code: 'INVALID_ORDER_ITEM' });
     process.env.FEE_ENABLED = 'false';
     expect(await offer(withFee(FEE_RECEIVER))).toMatchObject({ code: 'INVALID_ORDER_ITEM' });
+  });
+});
+
+describe('verifyListingBatch', () => {
+  it('returns verified listings with values from their orders, and failures with their index', async () => {
+    const good = await signedListing(alice, '7000');
+    const notOwned = await signedListing(junk);
+    db.query.mockResolvedValue({ rows: [alice] }); // no row for junk's token yet
+    chain.readContract.mockResolvedValue(stranger.address);
+    const listings = [
+      { index: 0, token_id: alice.token_id, order_data: good.orderData, order_hash: '0xclient', price_wei: '1', currency_address: USDC },
+      { index: 1, token_id: junk.token_id, order_data: notOwned.orderData, order_hash: '0xother', price_wei: '1', currency_address: ZERO },
+    ];
+
+    const batch = await verifyListingBatch(listings, SELLER);
+    expect(batch.verified).toEqual([
+      { ...listings[0], price_wei: '7000', currency_address: ZERO, order_hash: JSON.parse(good.orderData).orderHash },
+    ]);
+    expect(batch.failed).toEqual([
+      { index: 1, token_id: junk.token_id, order_hash: '0xother', status: 'failed', error: expect.objectContaining({ code: 'NOT_OWNER' }) },
+    ]);
+    expect(batch.namesByTokenId.get(alice.token_id)).toBe(alice);
+    expect(db.query.mock.calls[0][1]).toEqual([[alice.token_id, junk.token_id], []]);
   });
 });
 

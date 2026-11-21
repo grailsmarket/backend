@@ -6,9 +6,8 @@ import { checkOrderForTokenId } from '../services/ensv2-orders';
 import {
   getNameRefById,
   getNameRefByTokenId,
-  mapWithConcurrency,
+  verifyListingBatch,
   verifyListingOrder,
-  type NameRef,
 } from '../services/order-verification';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
@@ -609,62 +608,23 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         return allFailed();
       }
 
-      // Step 2: Batch query existing ENS names (v2 listings already have theirs, by id)
-      const v2NameIds = validListings.filter(l => l.ensNameId !== undefined).map(l => l.ensNameId!);
-      const lookupTokenIds = validListings.filter(l => l.ensNameId === undefined).map(l => l.token_id);
-      const existingEnsResult = await pool.query<NameRef>(
-        `SELECT id, token_id, name, owner_address, ens_version FROM ens_names
-         WHERE token_id = ANY($1::text[]) OR id = ANY($2::int[])`,
-        [lookupTokenIds, v2NameIds]
-      );
-      const nameById = new Map(existingEnsResult.rows.map(row => [row.id, row]));
-      const nameByTokenId = new Map(existingEnsResult.rows.map(row => [row.token_id, row]));
-
-      // Step 2b: Verify every order: a Seaport order signed by the seller (the authenticated
+      // Step 2: Verify every order: a Seaport order signed by the seller (the authenticated
       // wallet) for that name, which the seller owns. Price, currency and order hash come from
       // the order.
-      const verifications = await mapWithConcurrency(validListings, 8, (listing) => {
-        const isV2 = listing.ensNameId !== undefined;
-        return verifyListingOrder({
-          orderData: listing.order_data,
-          seller: userAddress,
-          name: (isV2 ? nameById.get(listing.ensNameId!) : nameByTokenId.get(listing.token_id)) ?? null,
-          tokenId: listing.token_id,
-          ensV2Checked: isV2,
-        });
-      });
-      const verifiedListings: typeof validListings = [];
-      validListings.forEach((listing, i) => {
-        const verified = verifications[i];
-        if (!verified.ok) {
-          results.push({
-            index: listing.index,
-            token_id: listing.token_id,
-            order_hash: listing.order_hash,
-            status: 'failed',
-            error: { code: verified.code, message: verified.message },
-          });
-          return;
-        }
-        verifiedListings.push({
-          ...listing,
-          price_wei: verified.priceWei,
-          currency_address: verified.currencyAddress,
-          order_hash: verified.orderHash,
-        });
-      });
-      validListings.splice(0, validListings.length, ...verifiedListings);
+      const batch = await verifyListingBatch(validListings, userAddress);
+      results.push(...batch.failed);
+      validListings.splice(0, validListings.length, ...batch.verified);
 
       if (validListings.length === 0) {
         return allFailed();
       }
 
       const tokenIds = validListings.filter(l => l.ensNameId === undefined).map(l => l.token_id);
-      const existingEnsMap = new Map<string, { id: number; name: string }>(
-        tokenIds
-          .filter(id => nameByTokenId.has(id))
-          .map(id => [id, { id: nameByTokenId.get(id)!.id, name: nameByTokenId.get(id)!.name }])
-      );
+      const existingEnsMap = new Map<string, { id: number; name: string }>();
+      for (const id of tokenIds) {
+        const row = batch.namesByTokenId.get(id);
+        if (row) existingEnsMap.set(id, { id: row.id, name: row.name });
+      }
 
       // Step 3: Identify missing ENS names and fetch from The Graph. verifyListingOrder already
       // confirmed on-chain that the seller holds each of these tokens.

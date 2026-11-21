@@ -127,9 +127,10 @@ All endpoints are prefixed with `/api/v1/`
 Every listing and offer a user submits (`POST /orders`, `/orders/bulk`, `/brokered-listings`, `/offers`) goes through `src/services/order-verification.ts` before anything is written.
 
 - The order is a Seaport 1.6 order (`protocol_data` first, as the app's `parseStoredOrder` reads it) signed by the authenticated wallet as `offerer`.
-- Its NFT item is this name's token: BaseRegistrar + labelhash, NameWrapper + namehash, or (checked by `ensv2-orders.ts`) the current ETHRegistry token.
+- Its NFT item is this name's token: BaseRegistrar + labelhash, NameWrapper + namehash, or (checked by `ensv2-orders.ts`) the current ETHRegistry token. Placeholder rows (`token-<token_id>.eth`, created by the `/orders` routes when a name lookup fails) are matched by `token_id`, and their owner is checked on-chain.
 - Listings: the seller owns the name (`ens_names.owner_address`, else `ownerOf` on-chain, since the indexer can lag). Offers: the consideration asks for exactly one NFT (this name; criteria items count), and the only other consideration allowed is the Grails fee.
-- `price_wei` (sum of the consideration) / `offer_amount_wei` (the offer item), `currency_address` and `order_hash` are taken from the order; what the client sends is ignored. Price and offer amount can't be edited afterwards.
+- Listing consideration must be fixed amounts of ETH or of one ERC20 token. `price_wei` (sum of the consideration) / `offer_amount_wei` (the offer item), `currency_address` and `order_hash` are taken from the order; what the client sends is ignored. Price and offer amount can't be edited afterwards.
+- An order without `parameters.counter` (the SDK's builders leave it out) is hashed with the offerer's current Seaport `getCounter`, the one a fill uses.
 - Signatures are checked offline (65/64-byte and Seaport bulk signatures); anything else (EIP-1271 wallets) goes to a `Seaport.validate` eth_call. RPC failure → 503 `CHAIN_CHECK_FAILED`.
 
 ### Watchlist (Auth Required)

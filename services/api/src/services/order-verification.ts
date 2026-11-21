@@ -115,6 +115,7 @@ const SEAPORT_VALIDATE_ABI = [{
 }] as const;
 
 const OWNER_OF_ABI = parseAbi(['function ownerOf(uint256 id) view returns (address)']);
+const GET_COUNTER_ABI = parseAbi(['function getCounter(address offerer) view returns (uint256 counter)']);
 
 export interface SeaportItem {
   itemType: number;
@@ -139,7 +140,8 @@ export interface SeaportOrderComponents {
   zoneHash: Hex;
   salt: bigint;
   conduitKey: Hex;
-  counter: bigint;
+  /** null when the stored order leaves it out; see resolveCounter */
+  counter: bigint | null;
 }
 
 export interface ParsedSeaportOrder {
@@ -199,7 +201,6 @@ function toComponents(p: any): SeaportOrderComponents {
   if (!Array.isArray(p.offer) || !Array.isArray(p.consideration)) {
     throw new OrderParseError('order offer/consideration are missing');
   }
-  if (p.counter === undefined || p.counter === null) throw new OrderParseError('order counter is missing');
   return {
     offerer: toAddress(p.offerer, 'offerer'),
     zone: toAddress(p.zone, 'zone'),
@@ -214,7 +215,7 @@ function toComponents(p: any): SeaportOrderComponents {
     zoneHash: toBytes32(p.zoneHash, 'zoneHash'),
     salt: toUint(p.salt, 'salt'),
     conduitKey: toBytes32(p.conduitKey, 'conduitKey'),
-    counter: toUint(p.counter, 'counter'),
+    counter: p.counter === undefined || p.counter === null ? null : toUint(p.counter, 'counter'),
   };
 }
 
@@ -243,6 +244,7 @@ export function parseSeaportOrder(orderData: unknown): ParsedSeaportOrder | { er
 
 /** Seaport's order hash: the EIP-712 struct hash of OrderComponents (what getOrderHash returns). */
 export function seaportOrderHash(components: SeaportOrderComponents): Hex {
+  if (components.counter === null) throw new Error('order counter is not resolved');
   return hashStruct({ data: components as any, primaryType: 'OrderComponents', types: SEAPORT_TYPES as any });
 }
 
@@ -371,6 +373,26 @@ async function checkSignature(order: ParsedSeaportOrder, orderHash: Hex): Promis
   return fail(400, 'INVALID_SIGNATURE', 'The order is not validly signed by its offerer');
 }
 
+/**
+ * An order saved without `counter` (the SDK's order builders leave it out) is signed for the
+ * offerer's current Seaport counter, which is also the one a fill uses, so read it from Seaport.
+ */
+async function resolveCounter(order: ParsedSeaportOrder): Promise<OrderCheckFailure | null> {
+  if (order.components.counter !== null) return null;
+  try {
+    order.components.counter = await chainClient().readContract({
+      address: config.blockchain.seaportAddress as Address,
+      abi: GET_COUNTER_ABI,
+      functionName: 'getCounter',
+      args: [order.components.offerer],
+    });
+    return null;
+  } catch (error: any) {
+    logger.error({ error: error?.message, offerer: order.components.offerer }, 'Seaport counter lookup failed');
+    return fail(503, 'CHAIN_CHECK_FAILED', 'Could not read the offerer\'s Seaport counter, try again');
+  }
+}
+
 function registrar(): Address {
   return config.blockchain.ensRegistrarAddress.toLowerCase() as Address;
 }
@@ -412,6 +434,14 @@ function matchesV1Token(item: SeaportItem, tokenId: string): boolean {
     ((item.token === registrar() && item.itemType === ItemType.ERC721) ||
       (item.token === nameWrapper() && item.itemType === ItemType.ERC1155))
   );
+}
+
+/**
+ * A row the order routes created for a token whose name they couldn't look up. Its name isn't
+ * the real ENS name and its owner came from the request, so it's checked like a missing row.
+ */
+function isPlaceholderName(name: NameRef): boolean {
+  return name.name === `token-${name.token_id}.eth`;
 }
 
 /** Current holder of a v1 token; null when the registrar reverts (expired or never registered). */
@@ -474,12 +504,13 @@ export interface VerifiedListingOrder {
  * - `seller`: the authenticated wallet; it must be the order's offerer and own the name.
  * - `name`: the ens_names row the listing will be stored against, or null when there's none
  *   yet for `tokenId` (a name registered moments ago), in which case the order's token must
- *   be `tokenId` and the seller must hold it on-chain.
+ *   be `tokenId` and the seller must hold it on-chain. Placeholder rows are checked the same way.
  * - `ensV2Checked`: the ENSv2 checks (ensv2-orders.ts) already matched the order's item to the
  *   name's current ETHRegistry token and checked the seller can transfer it.
  *
  * Returns the order hash, price (sum of the consideration, as the app computes it) and
- * currency to store, in place of whatever the client sent.
+ * currency to store, in place of whatever the client sent. The consideration must be fixed
+ * amounts of ETH or of one ERC20 token, so that price is what a fill pays.
  */
 export async function verifyListingOrder(params: {
   orderData: unknown;
@@ -492,6 +523,9 @@ export async function verifyListingOrder(params: {
   if ('error' in order) return parseFailure(order.error);
   const { components } = order;
   const seller = params.seller.toLowerCase();
+  const placeholder = !!params.name && isPlaceholderName(params.name);
+  const name = placeholder ? null : params.name;
+  const tokenId = placeholder ? params.name!.token_id : params.tokenId;
 
   if (components.offerer !== seller) {
     return fail(403, 'OFFERER_MISMATCH', 'The order must be signed by the seller (offerer is a different address)');
@@ -502,21 +536,34 @@ export async function verifyListingOrder(params: {
     return fail(400, 'INVALID_ORDER_ITEM', 'The order does not offer an ENS name');
   }
   if (!params.ensV2Checked) {
-    if (params.name) {
-      if (!matchesV1Name(item, params.name.name)) {
-        return fail(400, 'INVALID_ORDER_ITEM', `The order does not trade ${params.name.name}`);
+    if (name) {
+      if (!matchesV1Name(item, name.name)) {
+        return fail(400, 'INVALID_ORDER_ITEM', `The order does not trade ${name.name}`);
       }
-    } else if (!params.tokenId || !matchesV1Token(item, params.tokenId)) {
+    } else if (!tokenId || !matchesV1Token(item, tokenId)) {
       return fail(400, 'INVALID_ORDER_ITEM', 'The order does not trade token_id on the ENS registrar or NameWrapper');
     }
   }
 
+  const consideration = components.consideration;
+  const currency = consideration[0]?.token ?? ZERO_ADDRESS;
+  const payable = consideration.every((c) =>
+    (c.itemType === ItemType.NATIVE || c.itemType === ItemType.ERC20) &&
+    c.token === currency &&
+    c.startAmount === c.endAmount
+  );
+  if (!payable) {
+    return fail(400, 'INVALID_PRICE', 'The order\'s consideration must be fixed amounts of ETH or of one ERC20 token');
+  }
+
+  const counterFailure = await resolveCounter(order);
+  if (counterFailure) return counterFailure;
   const orderHash = seaportOrderHash(components);
   const signatureFailure = await checkSignature(order, orderHash);
   if (signatureFailure) return signatureFailure;
 
   // ENSv2 listings already had ownership and transferability checked on-chain
-  if (!params.ensV2Checked && !sameAddress(params.name?.owner_address, seller)) {
+  if (!params.ensV2Checked && !sameAddress(name?.owner_address, seller)) {
     // Our ownership record can lag (a name bought minutes ago): the chain decides
     let owner: string | null;
     try {
@@ -526,7 +573,7 @@ export async function verifyListingOrder(params: {
       return fail(503, 'CHAIN_CHECK_FAILED', 'Could not verify name ownership on-chain, try again');
     }
     if (owner !== seller) {
-      const label = params.name?.name ?? `token ${params.tokenId}`;
+      const label = name?.name ?? `token ${tokenId}`;
       return fail(403, 'NOT_OWNER', `${label} is not owned by the seller`);
     }
   }
@@ -534,8 +581,8 @@ export async function verifyListingOrder(params: {
   return {
     ok: true,
     orderHash,
-    priceWei: components.consideration.reduce((sum, c) => sum + c.startAmount, 0n).toString(),
-    currencyAddress: components.consideration[0]?.token ?? ZERO_ADDRESS,
+    priceWei: consideration.reduce((sum, c) => sum + c.startAmount, 0n).toString(),
+    currencyAddress: currency,
   };
 }
 
@@ -578,7 +625,10 @@ export async function verifyOfferOrder(params: {
     return fail(400, 'INVALID_ORDER_ITEM', 'An offer must be for exactly one ENS name');
   }
   const item = nftItems[0];
-  if (!params.ensV2Checked && !matchesV1Name(item, params.name.name)) {
+  const matchesName = isPlaceholderName(params.name)
+    ? matchesV1Token(item, params.name.token_id)
+    : matchesV1Name(item, params.name.name);
+  if (!params.ensV2Checked && !matchesName) {
     return fail(400, 'INVALID_ORDER_ITEM', `The order does not ask for ${params.name.name}`);
   }
 
@@ -588,6 +638,8 @@ export async function verifyOfferOrder(params: {
     return fail(400, 'INVALID_ORDER_ITEM', 'An offer may only pay the Grails marketplace fee besides the name');
   }
 
+  const counterFailure = await resolveCounter(order);
+  if (counterFailure) return counterFailure;
   const orderHash = seaportOrderHash(components);
   const signatureFailure = await checkSignature(order, orderHash);
   if (signatureFailure) return signatureFailure;
@@ -598,6 +650,80 @@ export async function verifyOfferOrder(params: {
     amountWei: offerItem.startAmount.toString(),
     currencyAddress: offerItem.token,
   };
+}
+
+/** A listing in a POST /orders/bulk request, after the route's fee and ENSv2 checks */
+export interface BatchListing {
+  index: number;
+  token_id: string;
+  order_data: string;
+  order_hash: string;
+  price_wei: string;
+  currency_address: string;
+  /** Set when the ENSv2 checks resolved the name (and verified the order's item against it) */
+  ensNameId?: number;
+}
+
+export interface BatchListingFailure {
+  index: number;
+  token_id: string;
+  order_hash: string;
+  status: 'failed';
+  error: { code: string; message: string };
+}
+
+/**
+ * verifyListingOrder for every listing in a bulk request, all sold by `seller`. Verified
+ * listings come back with the price, currency and order hash taken from their orders;
+ * `namesByTokenId` holds the ens_names rows found for the v1 listings' token IDs.
+ */
+export async function verifyListingBatch<T extends BatchListing>(listings: T[], seller: string): Promise<{
+  verified: T[];
+  failed: BatchListingFailure[];
+  namesByTokenId: Map<string, NameRef>;
+}> {
+  const v2NameIds = listings.filter((l) => l.ensNameId !== undefined).map((l) => l.ensNameId!);
+  const tokenIds = listings.filter((l) => l.ensNameId === undefined).map((l) => l.token_id);
+  const rows = await getPostgresPool().query<NameRef>(
+    `SELECT ${NAME_REF_COLUMNS} FROM ens_names WHERE token_id = ANY($1::text[]) OR id = ANY($2::int[])`,
+    [tokenIds, v2NameIds]
+  );
+  const namesById = new Map(rows.rows.map((row) => [row.id, row]));
+  const namesByTokenId = new Map(rows.rows.map((row) => [row.token_id, row]));
+
+  const results = await mapWithConcurrency(listings, 8, (listing) => {
+    const isV2 = listing.ensNameId !== undefined;
+    return verifyListingOrder({
+      orderData: listing.order_data,
+      seller,
+      name: (isV2 ? namesById.get(listing.ensNameId!) : namesByTokenId.get(listing.token_id)) ?? null,
+      tokenId: listing.token_id,
+      ensV2Checked: isV2,
+    });
+  });
+
+  const verified: T[] = [];
+  const failed: BatchListingFailure[] = [];
+  listings.forEach((listing, i) => {
+    const result = results[i];
+    if (result.ok) {
+      verified.push({
+        ...listing,
+        price_wei: result.priceWei,
+        currency_address: result.currencyAddress,
+        order_hash: result.orderHash,
+      });
+    } else {
+      failed.push({
+        index: listing.index,
+        token_id: listing.token_id,
+        order_hash: listing.order_hash,
+        status: 'failed',
+        error: { code: result.code, message: result.message },
+      });
+    }
+  });
+  return { verified, failed, namesByTokenId };
 }
 
 /** Run `fn` over `items` with at most `limit` in flight, keeping order */

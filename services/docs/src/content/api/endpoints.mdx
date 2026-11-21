@@ -270,7 +270,8 @@ Every listing is verified before it is stored:
 - the order is a Seaport 1.6 order signed by the authenticated wallet (its `offerer`)
 - the ENS name it offers is this name's token (BaseRegistrar labelhash, NameWrapper namehash, or the current ENSv2 ETHRegistry token)
 - the seller owns the name
-- `price_wei` (the sum of the order's consideration), `currency_address` and `order_hash` are taken from the order, not the request
+- the consideration is fixed amounts of ETH or of one ERC20 token; `price_wei` (its sum), `currency_address` and `order_hash` are taken from the order, not the request
+- `parameters.counter` may be left out (as the SDK's order builders do): the offerer's current Seaport counter is used
 
 </APIEndpoint>
 
