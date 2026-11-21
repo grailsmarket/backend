@@ -125,13 +125,8 @@ const nameListings = await grails.listings.getByName('vitalik.eth');
 // Get single listing
 const listing = await grails.listings.get(123);
 
-// Create listing (requires auth)
-const newListing = await grails.listings.create({
-  ensNameId: 123,
-  sellerAddress: '0x...',
-  priceWei: '1000000000000000000',
-  orderData: { /* Seaport order */ },
-});
+// Create listings (requires auth) with signed Seaport orders: see orders.save() / orders.bulkSave().
+// The API verifies each order (signed by you, for a name you own) and takes the price from it.
 
 // Cancel listing
 await grails.listings.cancel(123);

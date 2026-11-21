@@ -3,7 +3,7 @@
  */
 
 export { AuthAPI } from './auth.js';
-export { ListingsAPI, type CreateListingParams, type UpdateListingParams, type CancelListingResponse } from './listings.js';
+export { ListingsAPI, type UpdateListingParams, type CancelListingResponse } from './listings.js';
 export { OffersAPI, type CreateOfferParams, type UpdateOfferParams, type CancelOfferResponse } from './offers.js';
 export {
   OrdersAPI,

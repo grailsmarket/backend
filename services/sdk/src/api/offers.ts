@@ -28,9 +28,7 @@ export interface CreateOfferParams {
  * Update offer parameters
  */
 export interface UpdateOfferParams {
-  /** New offer amount in wei */
-  offerAmountWei?: string;
-  /** New status */
+  /** New status. The amount is part of the signed order and can't be edited: cancel and make a new offer. */
   status?: 'pending' | 'accepted' | 'rejected' | 'expired' | 'unfunded';
 }
 

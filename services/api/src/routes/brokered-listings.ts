@@ -8,6 +8,7 @@ import {
 import { buildSearchResults } from '../utils/response-builder';
 import { requireAuth } from '../middleware/auth';
 import { checkOrderForTokenId } from '../services/ensv2-orders';
+import { getNameRefById, getNameRefByTokenId, verifyListingOrder } from '../services/order-verification';
 
 const CreateBrokeredListingSchema = z.object({
   token_id: z.string(),
@@ -131,30 +132,40 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      let ensNameId: number;
-      let ensName: string;
-      if (v2Check?.ok && v2Check.ensNameId) {
-        ensNameId = v2Check.ensNameId;
-        const nameResult = await pool.query('SELECT name FROM ens_names WHERE id = $1', [ensNameId]);
-        ensName = nameResult.rows[0].name;
-      } else {
-        // Look up the ENS name by token_id - it must already exist in the database
-        const ensQuery = `SELECT id, name FROM ens_names WHERE token_id = $1 LIMIT 1`;
-        const ensResult = await pool.query(ensQuery, [body.token_id]);
+      // Look up the ENS name (v2 names by the id the v2 check resolved, others by token_id);
+      // it must already exist in the database
+      const v2NameId = v2Check?.ok ? v2Check.ensNameId : undefined;
+      const name = v2NameId !== undefined
+        ? await getNameRefById(v2NameId)
+        : await getNameRefByTokenId(body.token_id);
 
-        if (ensResult.rows.length === 0) {
-          return reply.status(404).send({
-            success: false,
-            error: {
-              code: 'ENS_NAME_NOT_FOUND',
-              message: `ENS name with token_id "${body.token_id}" not found`,
-            },
-            meta: { timestamp: new Date().toISOString() },
-          });
-        }
+      if (!name) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'ENS_NAME_NOT_FOUND',
+            message: `ENS name with token_id "${body.token_id}" not found`,
+          },
+          meta: { timestamp: new Date().toISOString() },
+        });
+      }
+      const ensNameId = name.id;
+      const ensName = name.name;
 
-        ensNameId = ensResult.rows[0].id;
-        ensName = ensResult.rows[0].name;
+      // A Seaport order signed by the seller for this name, which the seller owns. The price,
+      // currency and order hash stored below come from the order.
+      const verified = await verifyListingOrder({
+        orderData: body.order_data,
+        seller: body.seller_address,
+        name,
+        ensV2Checked: v2NameId !== undefined,
+      });
+      if (!verified.ok) {
+        return reply.status(verified.status).send({
+          success: false,
+          error: { code: verified.code, message: verified.message },
+          meta: { timestamp: new Date().toISOString() },
+        });
       }
 
       // Parse order data to get expiry time
@@ -173,10 +184,10 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
         AND source = 'grails'
         AND status = 'active'
         RETURNING id
-      `, [body.order_hash]);
+      `, [verified.orderHash]);
 
       if (cancelledResult.rows.length > 0) {
-        fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash}`);
+        fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${verified.orderHash}`);
       }
 
       // Insert the brokered listing (or update if order_hash/source already exists)
@@ -213,9 +224,9 @@ export async function brokeredListingsRoutes(fastify: FastifyInstance) {
       const result = await pool.query(insertQuery, [
         ensNameId,
         body.seller_address.toLowerCase(),
-        body.price_wei,
-        body.currency_address.toLowerCase(),
-        body.order_hash,
+        verified.priceWei,
+        verified.currencyAddress,
+        verified.orderHash,
         body.order_data,
         expiresAt,
         body.broker_address.toLowerCase(),
