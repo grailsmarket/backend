@@ -1,18 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Listing, sqlWithinGracePeriod, ensNameIdForName } from '../../../shared/src';
-import { checkOrderForName } from '../services/ensv2-orders';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
-
-const CreateListingSchema = z.object({
-  ensNameId: z.number(),
-  sellerAddress: z.string(),
-  priceWei: z.string(),
-  currencyAddress: z.string().optional(),
-  orderData: z.any(),
-  expiresAt: z.string().optional(),
-});
 
 const UpdateListingSchema = z.object({
   priceWei: z.string().optional(),
@@ -259,138 +249,34 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     return reply.send(response);
   });
 
-  fastify.post('/', { preHandler: requireAuth }, async (request, reply) => {
-    const body = CreateListingSchema.parse(request.body);
-
-    // Verify seller address matches authenticated user
-    if (body.sellerAddress.toLowerCase() !== request.user!.address.toLowerCase()) {
-      return reply.status(403).send({
-        success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'Seller address does not match authenticated user',
-        },
-        meta: { timestamp: new Date().toISOString() },
-      });
-    }
-
-    // ENSv2 names: the order must trade the current ETHRegistry token and the name must be transferable
-    const ensv2Check = await checkOrderForName({
-      ensNameId: body.ensNameId,
-      orderData: body.orderData,
-      side: 'listing',
-      seller: body.sellerAddress,
+  // Listings are created through POST /orders/bulk, /orders or /brokered-listings, which verify
+  // the Seaport order (services/order-verification.ts).
+  fastify.post('/', async (_request, reply) => {
+    return reply.status(410).send({
+      success: false,
+      error: {
+        code: 'ENDPOINT_REMOVED',
+        message: 'POST /listings has been removed. Create listings with POST /api/v1/orders/bulk and a signed Seaport order.',
+      },
+      meta: { timestamp: new Date().toISOString() },
     });
-    if (!ensv2Check.ok) {
-      return reply.status(ensv2Check.status).send({
-        success: false,
-        error: { code: ensv2Check.code, message: ensv2Check.message },
-        meta: { timestamp: new Date().toISOString() },
-      });
-    }
-
-    const query = `
-      INSERT INTO listings (
-        ens_name_id,
-        seller_address,
-        price_wei,
-        currency_address,
-        order_data,
-        status,
-        expires_at
-      ) VALUES ($1, $2, $3, $4, $5, 'active', $6)
-      RETURNING *
-    `;
-
-    try {
-      const result = await pool.query(query, [
-        body.ensNameId,
-        body.sellerAddress.toLowerCase(), // Normalize to lowercase
-        body.priceWei,
-        body.currencyAddress?.toLowerCase() || '0x0000000000000000000000000000000000000000',
-        JSON.stringify(body.orderData),
-        body.expiresAt ? new Date(body.expiresAt) : null,
-      ]);
-
-      const listing = result.rows[0];
-
-      // Publish queue jobs for new listing
-      try {
-        const { getQueueClient, QUEUE_NAMES } = await import('../queue');
-        const boss = await getQueueClient();
-
-        // 1. Schedule expiry job if expires_at is set
-        if (listing.expires_at) {
-          await boss.send(
-            QUEUE_NAMES.EXPIRE_ORDERS,
-            { type: 'listing', id: listing.id },
-            { startAfter: new Date(listing.expires_at) }
-          );
-          fastify.log.info({ listingId: listing.id, expiresAt: listing.expires_at }, 'Scheduled expiry job');
-        }
-
-        // 2. Trigger immediate ENS metadata sync
-        const ensNameResult = await pool.query(
-          'SELECT token_id, name FROM ens_names WHERE id = $1',
-          [body.ensNameId]
-        );
-
-        if (ensNameResult.rows.length > 0 && ensNameResult.rows[0].name) {
-          await boss.send(QUEUE_NAMES.SYNC_ENS_DATA, {
-            ensNameId: body.ensNameId,
-            nameHash: ensNameResult.rows[0].token_id,
-            name: ensNameResult.rows[0].name,
-            priority: 'high',
-          });
-          fastify.log.info({ ensNameId: body.ensNameId }, 'Scheduled ENS sync job');
-        }
-
-        // 3. Update club floor price if this ENS name is in any clubs
-        const clubs = await getClubsForEnsName(pool, body.ensNameId);
-        if (clubs.length > 0) {
-          await boss.send('update-club-floor-price', {
-            clubNames: clubs,
-            eventType: 'create',
-            listingPrice: body.priceWei,
-          });
-          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update');
-        }
-      } catch (queueError) {
-        // Don't fail the request if queue publishing fails
-        fastify.log.error({ error: queueError }, 'Failed to publish queue jobs for listing');
-      }
-
-      const response: APIResponse<Listing> = {
-        success: true,
-        data: listing,
-        meta: {
-          timestamp: new Date().toISOString(),
-          version: '1.0.0',
-        },
-      };
-
-      return reply.status(201).send(response);
-    } catch (error: any) {
-      if (error.code === '23503') {
-        return reply.status(404).send({
-          success: false,
-          error: {
-            code: 'ENS_NAME_NOT_FOUND',
-            message: 'ENS name not found',
-          },
-          meta: {
-            timestamp: new Date().toISOString(),
-          },
-        });
-      }
-
-      throw error;
-    }
   });
 
   fastify.put('/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = UpdateListingSchema.parse(request.body);
+
+    // The price is part of the signed Seaport order, so it can't be edited
+    if (body.priceWei !== undefined) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'PRICE_NOT_EDITABLE',
+          message: 'The price is part of the signed order. Cancel the listing and create a new one to change it.',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
 
     // Verify the listing belongs to the authenticated user
     const ownerCheck = await pool.query(
@@ -421,12 +307,6 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
-
-    if (body.priceWei !== undefined) {
-      updates.push(`price_wei = $${paramCount}`);
-      values.push(body.priceWei);
-      paramCount++;
-    }
 
     if (body.expiresAt !== undefined) {
       updates.push(`expires_at = $${paramCount}`);
@@ -473,26 +353,6 @@ export async function listingsRoutes(fastify: FastifyInstance) {
     }
 
     const updatedListing = result.rows[0];
-
-    // Update club floor price if price was changed
-    if (body.priceWei !== undefined) {
-      try {
-        const { getQueueClient } = await import('../queue');
-        const boss = await getQueueClient();
-        const clubs = await getClubsForEnsName(pool, updatedListing.ens_name_id);
-
-        if (clubs.length > 0) {
-          await boss.send('update-club-floor-price', {
-            clubNames: clubs,
-            eventType: 'update',
-            listingPrice: body.priceWei,
-          });
-          fastify.log.info({ clubs, listingPrice: body.priceWei }, 'Scheduled club floor price update after price change');
-        }
-      } catch (queueError) {
-        fastify.log.error({ error: queueError }, 'Failed to publish club stats job for listing update');
-      }
-    }
 
     const response: APIResponse<Listing> = {
       success: true,

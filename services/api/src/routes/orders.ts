@@ -3,6 +3,12 @@ import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type SeaportOrder, validateFeeInOrder, config } from '../../../shared/src';
 import { createSeaportOrder, validateSeaportOrder } from '../services/seaport';
 import { checkOrderForTokenId } from '../services/ensv2-orders';
+import {
+  getNameRefById,
+  getNameRefByTokenId,
+  verifyListingBatch,
+  verifyListingOrder,
+} from '../services/order-verification';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToListingRows } from '../services/compromised-names';
 
@@ -123,88 +129,98 @@ export async function ordersRoutes(fastify: FastifyInstance) {
             meta: { timestamp: new Date().toISOString() },
           });
         }
-        if (ensv2Check?.ok && ensv2Check.ensNameId) {
-          ensNameId = ensv2Check.ensNameId;
+        const v2NameId = ensv2Check?.ok ? ensv2Check.ensNameId : undefined;
+        const name = v2NameId !== undefined
+          ? await getNameRefById(v2NameId)
+          : await getNameRefByTokenId(body.token_id);
+
+        // A Seaport order signed by the seller (the authenticated wallet) for this name, which
+        // the seller owns. The price, currency and order hash stored below come from the order.
+        const verified = await verifyListingOrder({
+          orderData: body.order_data,
+          seller: userAddress,
+          name,
+          tokenId: body.token_id,
+          ensV2Checked: v2NameId !== undefined,
+        });
+        if (!verified.ok) {
+          return reply.status(verified.status).send({
+            success: false,
+            error: { code: verified.code, message: verified.message },
+            meta: { timestamp: new Date().toISOString() },
+          });
         }
+        ensNameId = v2NameId ?? name?.id ?? null;
 
         if (ensNameId === null) {
-          // Try to find existing ENS name by token_id
-          const ensQuery = `
-            SELECT id, name FROM ens_names WHERE token_id = $1 LIMIT 1
-          `;
-          const ensResult = await pool.query(ensQuery, [body.token_id]);
+          // No row for this token yet (registered moments ago); verifyListingOrder confirmed
+          // on-chain that the seller holds it. Fetch ENS name from blockchain
+          let ensName = `token-${body.token_id}.eth`;
 
-          if (ensResult.rows.length > 0) {
-            ensNameId = ensResult.rows[0].id;
-          } else {
-            // Fetch ENS name from blockchain
-            let ensName = `token-${body.token_id}.eth`;
+          try {
+            // Use the configured RPC to fetch the ENS name
+            const response = await fetch(config.blockchain.rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'eth_call',
+                params: [
+                  {
+                    to: config.blockchain.ensRegistrarAddress, // ENS Base Registrar
+                    data: '0xc87b56dd' + body.token_id.toString().padStart(64, '0'), // tokenURI(uint256)
+                  },
+                  'latest'
+                ],
+                id: 1,
+              }),
+            });
 
-            try {
-              // Use the configured RPC to fetch the ENS name
-              const response = await fetch(config.blockchain.rpcUrl, {
+            if (response.ok) {
+              const data = await response.json();
+              // Try to parse the name from metadata
+              // For now, we'll try a simpler approach: fetch from ENS subgraph
+              const subgraphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: subgraphHeaders(),
                 body: JSON.stringify({
-                  jsonrpc: '2.0',
-                  method: 'eth_call',
-                  params: [
-                    {
-                      to: config.blockchain.ensRegistrarAddress, // ENS Base Registrar
-                      data: '0xc87b56dd' + body.token_id.toString().padStart(64, '0'), // tokenURI(uint256)
-                    },
-                    'latest'
-                  ],
-                  id: 1,
+                  query: `
+                    query GetDomain($tokenId: String!) {
+                      domain(id: $tokenId) {
+                        name
+                        labelhash
+                      }
+                    }
+                  `,
+                  variables: {
+                    tokenId: '0x' + BigInt(body.token_id).toString(16).padStart(64, '0'),
+                  },
                 }),
               });
 
-              if (response.ok) {
-                const data = await response.json();
-                // Try to parse the name from metadata
-                // For now, we'll try a simpler approach: fetch from ENS subgraph
-                const subgraphResponse = await fetch(config.theGraph.ensSubgraphUrl, {
-                  method: 'POST',
-                  headers: subgraphHeaders(),
-                  body: JSON.stringify({
-                    query: `
-                      query GetDomain($tokenId: String!) {
-                        domain(id: $tokenId) {
-                          name
-                          labelhash
-                        }
-                      }
-                    `,
-                    variables: {
-                      tokenId: '0x' + BigInt(body.token_id).toString(16).padStart(64, '0'),
-                    },
-                  }),
-                });
-
-                if (subgraphResponse.ok) {
-                  const subgraphData: any = await subgraphResponse.json();
-                  if (subgraphData.data?.domain?.name) {
-                    ensName = subgraphData.data.domain.name;
-                  }
+              if (subgraphResponse.ok) {
+                const subgraphData: any = await subgraphResponse.json();
+                if (subgraphData.data?.domain?.name) {
+                  ensName = subgraphData.data.domain.name;
                 }
               }
-            } catch (error: any) {
-              fastify.log.warn(`Failed to fetch ENS name for token ${body.token_id}:`, error);
             }
-
-            // Create ENS name record
-            const insertEnsQuery = `
-              INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
-              VALUES ($1, $2, $3, NOW(), NOW())
-              RETURNING id
-            `;
-            const insertResult = await pool.query(insertEnsQuery, [
-              body.token_id,
-              ensName,
-              body.seller_address || '0x0000000000000000000000000000000000000000',
-            ]);
-            ensNameId = insertResult.rows[0].id;
+          } catch (error: any) {
+            fastify.log.warn(`Failed to fetch ENS name for token ${body.token_id}:`, error);
           }
+
+          // Create ENS name record
+          const insertEnsQuery = `
+            INSERT INTO ens_names (token_id, name, owner_address, created_at, updated_at)
+            VALUES ($1, $2, $3, NOW(), NOW())
+            RETURNING id
+          `;
+          const insertResult = await pool.query(insertEnsQuery, [
+            body.token_id,
+            ensName,
+            body.seller_address || '0x0000000000000000000000000000000000000000',
+          ]);
+          ensNameId = insertResult.rows[0].id;
         }
 
         // Parse order data to get expiry time
@@ -225,12 +241,12 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         `;
 
         const cancelledResult = await pool.query(checkExistingQuery, [
-          body.order_hash,
+          verified.orderHash,
           body.source,
         ]);
 
         if (cancelledResult.rows.length > 0) {
-          fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${body.order_hash} and source ${body.source}`);
+          fastify.log.info(`Auto-cancelled ${cancelledResult.rows.length} existing listing(s) with order_hash ${verified.orderHash} and source ${body.source}`);
         }
 
         // Validate fee for Grails marketplace orders
@@ -267,9 +283,9 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         const result = await pool.query(insertListingQuery, [
           ensNameId,
           body.seller_address,
-          body.price_wei,
-          body.currency_address,
-          body.order_hash,
+          verified.priceWei,
+          verified.currencyAddress,
+          verified.orderHash,
           body.order_data,
           body.status,
           body.source,
@@ -573,35 +589,45 @@ export async function ordersRoutes(fastify: FastifyInstance) {
         }
       }
 
+      const allFailed = () => reply.status(207).send({
+        success: false,
+        data: {
+          summary: {
+            total: listings.length,
+            succeeded: 0,
+            failed: results.length,
+            skipped: 0,
+          },
+          results,
+        },
+        meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
+      });
+
       if (validListings.length === 0) {
         // All listings failed fee validation
-        return reply.status(207).send({
-          success: false,
-          data: {
-            summary: {
-              total: listings.length,
-              succeeded: 0,
-              failed: results.length,
-              skipped: 0,
-            },
-            results,
-          },
-          meta: { timestamp: new Date().toISOString(), version: '1.0.0' },
-        });
+        return allFailed();
       }
 
-      // Step 2: Batch query existing ENS names (v2 listings already have theirs)
-      const tokenIds = validListings.filter(l => l.ensNameId === undefined).map(l => l.token_id);
-      const existingEnsQuery = `
-        SELECT id, token_id, name FROM ens_names
-        WHERE token_id = ANY($1::text[])
-      `;
-      const existingEnsResult = await pool.query(existingEnsQuery, [tokenIds]);
-      const existingEnsMap = new Map<string, { id: number; name: string }>(
-        existingEnsResult.rows.map(row => [row.token_id, { id: row.id, name: row.name }])
-      );
+      // Step 2: Verify every order: a Seaport order signed by the seller (the authenticated
+      // wallet) for that name, which the seller owns. Price, currency and order hash come from
+      // the order.
+      const batch = await verifyListingBatch(validListings, userAddress);
+      results.push(...batch.failed);
+      validListings.splice(0, validListings.length, ...batch.verified);
 
-      // Step 3: Identify missing ENS names and fetch from The Graph
+      if (validListings.length === 0) {
+        return allFailed();
+      }
+
+      const tokenIds = validListings.filter(l => l.ensNameId === undefined).map(l => l.token_id);
+      const existingEnsMap = new Map<string, { id: number; name: string }>();
+      for (const id of tokenIds) {
+        const row = batch.namesByTokenId.get(id);
+        if (row) existingEnsMap.set(id, { id: row.id, name: row.name });
+      }
+
+      // Step 3: Identify missing ENS names and fetch from The Graph. verifyListingOrder already
+      // confirmed on-chain that the seller holds each of these tokens.
       const missingTokenIds = tokenIds.filter(id => !existingEnsMap.has(id));
 
       if (missingTokenIds.length > 0) {

@@ -7,30 +7,10 @@ import type { Listing, ListingFilters } from '../types/index.js';
 import type { PaginatedListingsResponse } from '../types/api.js';
 
 /**
- * Create listing parameters
- */
-export interface CreateListingParams {
-  /** ENS name ID */
-  ensNameId: number;
-  /** Seller address */
-  sellerAddress: string;
-  /** Price in wei */
-  priceWei: string;
-  /** Currency address (default: ETH) */
-  currencyAddress?: string;
-  /** Seaport order data */
-  orderData: Record<string, unknown>;
-  /** Expiration time (ISO string) */
-  expiresAt?: string;
-}
-
-/**
  * Update listing parameters
  */
 export interface UpdateListingParams {
-  /** New price in wei */
-  priceWei?: string;
-  /** New expiration time (ISO string) */
+  /** New expiration time (ISO string). The price is part of the signed order and can't be edited: cancel and relist. */
   expiresAt?: string;
 }
 
@@ -89,23 +69,6 @@ export class ListingsAPI {
    */
   async getByName(name: string): Promise<Listing[]> {
     return this.http.get<Listing[]>(`/listings/name/${encodeURIComponent(name)}`);
-  }
-
-  /**
-   * Create a new listing
-   *
-   * @param params - Listing parameters
-   * @returns Created listing
-   */
-  async create(params: CreateListingParams): Promise<Listing> {
-    return this.http.post<Listing>('/listings', {
-      ensNameId: params.ensNameId,
-      sellerAddress: params.sellerAddress,
-      priceWei: params.priceWei,
-      currencyAddress: params.currencyAddress,
-      orderData: params.orderData,
-      expiresAt: params.expiresAt,
-    });
   }
 
   /**

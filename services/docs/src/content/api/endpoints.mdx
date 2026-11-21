@@ -262,23 +262,20 @@ See [Search & Filters](/api/search) for detailed filter documentation.
 
 </APIEndpoint>
 
-<APIEndpoint method="POST" path="/api/v1/listings" description="Create new listing">
+<APIEndpoint method="POST" path="/api/v1/listings" description="Removed: returns 410 ENDPOINT_REMOVED">
 
-**Request Body:**
-```json
-{
-  "ensNameId": 1,
-  "sellerAddress": "0x123...",
-  "priceWei": "1000000000000000000",
-  "currencyAddress": "0x0000000000000000000000000000000000000000",
-  "orderData": {},
-  "expiresAt": "2024-12-31T23:59:59.000Z"
-}
-```
+Create listings with a signed Seaport order through `POST /api/v1/orders/bulk` (or `POST /api/v1/orders`, `POST /api/v1/brokered-listings`).
+Every listing is verified before it is stored:
+
+- the order is a Seaport 1.6 order signed by the authenticated wallet (its `offerer`)
+- the ENS name it offers is this name's token (BaseRegistrar labelhash, NameWrapper namehash, or the current ENSv2 ETHRegistry token)
+- the seller owns the name
+- the consideration is fixed amounts of ETH or of one ERC20 token; `price_wei` (its sum), `currency_address` and `order_hash` are taken from the order, not the request
+- `parameters.counter` may be left out (as the SDK's order builders do): the offerer's current Seaport counter is used
 
 </APIEndpoint>
 
-<APIEndpoint method="PUT" path="/api/v1/listings/{id}" description="Update listing price or expiration" />
+<APIEndpoint method="PUT" path="/api/v1/listings/{id}" description="Update listing expiration (the price is part of the signed order: cancel and relist to change it)" />
 
 <APIEndpoint method="DELETE" path="/api/v1/listings/{id}" description="Cancel listing" />
 
@@ -295,10 +292,12 @@ See [Search & Filters](/api/search) for detailed filter documentation.
   "buyerAddress": "0x789...",
   "offerAmountWei": "900000000000000000",
   "currencyAddress": "0x0000000000000000000000000000000000000000",
-  "orderData": {},
+  "orderData": { "parameters": { }, "signature": "0x..." },
   "expiresAt": "2024-12-31T23:59:59.000Z"
 }
 ```
+
+`orderData` must be a Seaport 1.6 order signed by the authenticated wallet whose consideration asks for exactly one NFT, this name. The only other consideration allowed is the Grails fee. `offerAmountWei` and `currencyAddress` are taken from the order's offer item, not the request.
 
 </APIEndpoint>
 
@@ -310,7 +309,7 @@ See [Search & Filters](/api/search) for detailed filter documentation.
 
 </APIEndpoint>
 
-<APIEndpoint method="PUT" path="/api/v1/offers/{id}" description="Update offer amount or status" />
+<APIEndpoint method="PUT" path="/api/v1/offers/{id}" description="Update offer status (the amount is part of the signed order: cancel and make a new offer to change it)" />
 
 ---
 

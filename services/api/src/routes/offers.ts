@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { getPostgresPool, type APIResponse, type Offer, validateFeeInOrder, ensNameIdForName } from '../../../shared/src';
 import { checkOrderForName } from '../services/ensv2-orders';
+import { getNameRefById, verifyOfferOrder } from '../services/order-verification';
 import { requireAuth, optionalAuth } from '../middleware/auth';
 import { applyCompromisedToOfferRows, getOfferBlockReason } from '../services/compromised-names';
 
@@ -77,6 +78,31 @@ export async function offersRoutes(fastify: FastifyInstance) {
       });
     }
 
+    const name = await getNameRefById(body.ensNameId);
+    if (!name) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'ENS_NAME_NOT_FOUND', message: 'ENS name not found' },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
+    // A Seaport offer signed by the buyer for exactly this name; the amount and currency stored
+    // below come from the order
+    const verified = await verifyOfferOrder({
+      orderData: body.orderData,
+      buyer: request.user!.address,
+      name,
+      ensV2Checked: ensv2Check.ensNameId !== undefined,
+    });
+    if (!verified.ok) {
+      return reply.status(verified.status).send({
+        success: false,
+        error: { code: verified.code, message: verified.message },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
     const query = `
       WITH inserted_offer AS (
         INSERT INTO offers (
@@ -99,8 +125,8 @@ export async function offersRoutes(fastify: FastifyInstance) {
       const result = await pool.query(query, [
         body.ensNameId,
         body.buyerAddress.toLowerCase(), // Normalize to lowercase
-        body.offerAmountWei,
-        body.currencyAddress?.toLowerCase() || '0x0000000000000000000000000000000000000000',
+        verified.amountWei,
+        verified.currencyAddress,
         JSON.stringify(body.orderData),
         body.expiresAt ? new Date(body.expiresAt) : null,
       ]);
@@ -290,6 +316,18 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = UpdateOfferSchema.parse(request.body);
 
+    // The amount is part of the signed Seaport order, so it can't be edited
+    if (body.offerAmountWei !== undefined) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'AMOUNT_NOT_EDITABLE',
+          message: 'The offer amount is part of the signed order. Cancel the offer and make a new one to change it.',
+        },
+        meta: { timestamp: new Date().toISOString() },
+      });
+    }
+
     // Verify the user is authorized to update this offer
     const offerCheck = await pool.query(`
       SELECT o.buyer_address, o.status, en.owner_address
@@ -363,12 +401,6 @@ export async function offersRoutes(fastify: FastifyInstance) {
     const values: any[] = [];
     let paramCount = 1;
 
-    if (body.offerAmountWei !== undefined) {
-      updates.push(`offer_amount_wei = $${paramCount}`);
-      values.push(body.offerAmountWei);
-      paramCount++;
-    }
-
     if (body.status !== undefined) {
       updates.push(`status = $${paramCount}`);
       values.push(body.status);
@@ -423,17 +455,6 @@ export async function offersRoutes(fastify: FastifyInstance) {
     try {
       const { getQueueClient } = await import('../queue');
       const boss = await getQueueClient();
-
-      // If offer amount changed and still pending, update highest offer
-      if (body.offerAmountWei !== undefined && updatedOffer.status === 'pending') {
-        await boss.send('update-highest-offer', {
-          ensNameId: updatedOffer.ens_name_id,
-          offerId: updatedOffer.id,
-          offerAmountWei: updatedOffer.offer_amount_wei,
-          currencyAddress: updatedOffer.currency_address,
-        });
-        fastify.log.info({ offerId: updatedOffer.id }, 'Published highest offer update for amount change');
-      }
 
       // If status changed from pending to something else, recalculate highest offer
       if (body.status !== undefined && body.status !== 'pending') {

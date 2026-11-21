@@ -100,8 +100,8 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/listings` | Optional | Get paginated listings |
 | GET | `/listings/search` | Optional | Search listings with Elasticsearch |
 | GET | `/listings/:name` | Optional | Get listing by ENS name |
-| POST | `/listings` | Yes | Create new listing |
-| PATCH | `/listings/:id` | Yes | Update listing |
+| POST | `/listings` | - | **Removed** (410 `ENDPOINT_REMOVED`): create listings through `/orders/bulk` |
+| PUT | `/listings/:id` | Yes | Update listing expiry (`priceWei` → 400 `PRICE_NOT_EDITABLE`: the price is signed) |
 | DELETE | `/listings/:id` | Yes | Cancel listing |
 
 ### Offers
@@ -110,17 +110,28 @@ All endpoints are prefixed with `/api/v1/`
 | GET | `/offers` | Optional | Get offers with filters |
 | GET | `/offers/:name` | Optional | Get offers for specific ENS name |
 | GET | `/offers/address/:address` | Optional | Get offers by address |
-| POST | `/offers` | Yes | Submit new offer |
+| POST | `/offers` | Yes | Submit new offer (verified, see [Order verification](#order-verification)) |
 | DELETE | `/offers/:id` | Yes | Cancel offer |
 
 ### Orders (Seaport)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/orders` | No | Save order (listing/offer) to database |
+| POST | `/orders` | Yes | Save a listing (verified, see [Order verification](#order-verification)) |
+| POST | `/orders/bulk` | Yes | Save up to 500 listings (verified per listing; failures come back per item, HTTP 207) |
 | POST | `/orders/create` | No | Create Seaport order structure |
 | POST | `/orders/validate` | No | Validate Seaport order |
 | GET | `/orders/:id` | No | Get order by hash or ID |
 | DELETE | `/orders/:id` | No | Cancel order (mark as cancelled) |
+
+### Order verification
+Every listing and offer a user submits (`POST /orders`, `/orders/bulk`, `/brokered-listings`, `/offers`) goes through `src/services/order-verification.ts` before anything is written.
+
+- The order is a Seaport 1.6 order (`protocol_data` first, as the app's `parseStoredOrder` reads it) signed by the authenticated wallet as `offerer`.
+- Its NFT item is this name's token: BaseRegistrar + labelhash, NameWrapper + namehash, or (checked by `ensv2-orders.ts`) the current ETHRegistry token. Placeholder rows (`token-<token_id>.eth`, created by the `/orders` routes when a name lookup fails) are matched by `token_id`, and their owner is checked on-chain.
+- Listings: the seller owns the name (`ens_names.owner_address`, else `ownerOf` on-chain, since the indexer can lag). Offers: the consideration asks for exactly one NFT (this name; criteria items count), and the only other consideration allowed is the Grails fee.
+- Listing consideration must be fixed amounts of ETH or of one ERC20 token. `price_wei` (sum of the consideration) / `offer_amount_wei` (the offer item), `currency_address` and `order_hash` are taken from the order; what the client sends is ignored. Price and offer amount can't be edited afterwards.
+- An order without `parameters.counter` (the SDK's builders leave it out) is hashed with the offerer's current Seaport `getCounter`, the one a fill uses.
+- Signatures are checked offline (65/64-byte and Seaport bulk signatures); anything else (EIP-1271 wallets) goes to a `Seaport.validate` eth_call. RPC failure → 503 `CHAIN_CHECK_FAILED`.
 
 ### Watchlist (Auth Required)
 | Method | Path | Auth | Description |

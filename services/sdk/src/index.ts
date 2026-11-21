@@ -27,7 +27,6 @@ export {
   OrdersAPI,
   NamesAPI,
   SearchAPI,
-  type CreateListingParams,
   type UpdateListingParams,
   type CancelListingResponse,
   type CreateOfferParams,

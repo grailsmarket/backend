@@ -77,7 +77,6 @@ examples/                     # Usage examples
 | `listings.list()` | `GET /api/v1/listings` |
 | `listings.get()` | `GET /api/v1/listings/:id` |
 | `listings.getByName()` | `GET /api/v1/listings/name/:name` |
-| `listings.create()` | `POST /api/v1/listings` |
 | `offers.getByName()` | `GET /api/v1/offers/name/:name` |
 | `offers.getByBuyer()` | `GET /api/v1/offers/buyer/:address` |
 | `orders.save()` | `POST /api/v1/orders` |
